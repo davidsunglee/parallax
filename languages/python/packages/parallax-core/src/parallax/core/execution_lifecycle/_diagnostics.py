@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parallax.core.db_error import Category, DatabaseError, as_category
-from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for, exact_str, guarded
+from parallax.core.internal.db_error import Category, DatabaseError, as_category
+from parallax.core.internal.diagnostics import FailureDiagnostic, diagnostic_for, exact_str, guarded
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ type ActivityFailure = DirectFailure | CausedFailure
 def _category(exc: DatabaseError) -> Category | None:
     """``exc``'s already-classified category, narrowed to the closed set.
 
-    Narrowed rather than trusted: :class:`~parallax.core.db_error.DatabaseError`
+    Narrowed rather than trusted: :class:`~parallax.core.internal.db_error.DatabaseError`
     declares the attribute, but a subclass may shadow it with anything, and a
     diagnostic states a category only where the closed set has one to state.
     Made exact BEFORE narrowing, because membership is decided by equality: a

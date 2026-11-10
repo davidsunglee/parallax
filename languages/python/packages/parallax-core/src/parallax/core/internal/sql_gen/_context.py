@@ -1,0 +1,820 @@
+from __future__ import annotations
+
+from bisect import bisect_left
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass, field
+from functools import cache
+from itertools import islice
+from typing import ClassVar, Final, Literal, Protocol, cast
+
+from parallax.core.internal.base import (
+    INFINITY,
+    INFINITY_LITERAL,
+    JSON,
+    STRING,
+    InternalError,
+    Json,
+    ManagedValue,
+    NeutralType,
+    StructuredDocument,
+    UsageError,
+    detach_json_container,
+)
+from parallax.core.internal.dialect import JSON_NULL, ArrayBind, Dialect
+from parallax.core.internal.inheritance import InheritanceFacet
+from parallax.core.internal.metamodel import (
+    AttributeMetadata,
+    CompiledEntity,
+    EntityIdentity,
+    Metamodel,
+)
+from parallax.core.internal.predicate import StringOp
+from parallax.core.internal.predicate._execution_values import ExecutionValueSource, source_order
+from parallax.core.internal.storage_layout import StorageLayoutFacet, TableLayout
+from parallax.core.internal.wire import WireValue, decode_wire, encode_wire
+
+type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
+type _TypedBindSlot = tuple[NeutralType, _BindForm]
+
+
+class _NoWireBindOverride:
+    pass
+
+
+_NO_WIRE_BIND_OVERRIDE = _NoWireBindOverride()
+
+
+@dataclass(frozen=True, slots=True)
+class _TypedBindSpan:
+    start: int
+    stop: int
+    neutral_type: NeutralType
+    form: _BindForm
+
+    def indices(self) -> range:
+        return range(self.start, self.stop)
+
+    def shifted(self, offset: int) -> _TypedBindSpan:
+        return _TypedBindSpan(self.start + offset, self.stop + offset, self.neutral_type, self.form)
+
+
+@dataclass(frozen=True, slots=True)
+class _RepeatedTypedBindSpan:
+    start: int
+    width: int
+    stride: int
+    repetitions: int
+    neutral_type: NeutralType
+    form: _BindForm
+
+    def indices(self) -> Iterator[int]:
+        return (
+            self.start + repetition * self.stride + offset
+            for repetition in range(self.repetitions)
+            for offset in range(self.width)
+        )
+
+    def shifted(self, offset: int) -> _RepeatedTypedBindSpan:
+        return _RepeatedTypedBindSpan(
+            self.start + offset,
+            self.width,
+            self.stride,
+            self.repetitions,
+            self.neutral_type,
+            self.form,
+        )
+
+
+type _BindSpan = _TypedBindSpan | _RepeatedTypedBindSpan
+
+
+@dataclass(frozen=True, slots=True)
+class _WireBindOverride:
+    index: int
+    value: WireValue
+
+
+@dataclass(frozen=True, slots=True)
+class LoweredStatement:
+    """Canonical SQL, driver binds, and compact canonical-Wire bind metadata."""
+
+    sql: str
+    binds: tuple[object, ...] = ()
+    _typed_bind_spans: tuple[_BindSpan, ...] = field(default=(), repr=False)
+    _wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
+
+    @property
+    def typed_bind_spans(self) -> tuple[_BindSpan, ...]:
+        return self._typed_bind_spans
+
+    @property
+    def wire_bind_overrides(self) -> tuple[_WireBindOverride, ...]:
+        return self._wire_bind_overrides
+
+    def wire_binds(self) -> tuple[WireValue, ...]:
+        unprojected = object()
+        projected: list[WireValue | object] = [unprojected] * len(self.binds)
+        for span in self._typed_bind_spans:
+            for index in span.indices():
+                projected[index] = _typed_wire_bind(self.binds[index], span.neutral_type, span.form)
+        for override in self._wire_bind_overrides:
+            projected[override.index] = override.value
+        for index, value in enumerate(projected):
+            if value is unprojected:
+                projected[index] = _wire_bind(self.binds[index])
+        return cast("tuple[WireValue, ...]", tuple(projected))
+
+    def execution_value_positions(self) -> tuple[ExecutionValuePositions, ...]:
+        """Every deferred execution value's positions, one group per source and
+        form in canonical source order."""
+        found: dict[_ExecutionValueMarker, list[int]] = {}
+        for index, value in enumerate(self.binds):
+            if isinstance(value, _ExecutionValueMarker):
+                found.setdefault(value, []).append(index)
+        groups = [
+            ExecutionValuePositions(marker, tuple(indices)) for marker, indices in found.items()
+        ]
+        groups.sort(key=lambda group: (source_order(group.source), group.indices[0]))
+        return tuple(groups)
+
+    def with_execution_values(
+        self,
+        values: Iterable[tuple[ExecutionValuePositions, object]],
+        *,
+        sql: str,
+    ) -> LoweredStatement:
+        """This statement as ``sql``, with each value at every position of its
+        group. A value that expands takes one position per element at each of its
+        positions: a typed span covering them grows and later metadata moves.
+        When nothing grows, the statement's own metadata is reused."""
+        binds = list(self.binds)
+        expansions: list[tuple[int, Sequence[object]]] = []
+        for positions, value in values:
+            if positions.form.expands:
+                elements = cast("Sequence[object]", value)
+                expansions.extend((index, elements) for index in positions.indices)
+            else:
+                for index in positions.indices:
+                    binds[index] = value
+        if not expansions:
+            return LoweredStatement(
+                sql,
+                tuple(binds),
+                self._typed_bind_spans,
+                self._wire_bind_overrides,
+            )
+        expansions.sort(key=_position)
+        return self._expanded(binds, expansions, sql=sql)
+
+    def _expanded(
+        self,
+        binds: list[object],
+        expansions: list[tuple[int, Sequence[object]]],
+        *,
+        sql: str,
+    ) -> LoweredStatement:
+        """``binds`` with each ascending expanding position replaced by its
+        elements, and the metadata after each position moved by the growth of
+        every position before it."""
+        expanding: list[int] = []
+        grown = [0]
+        bound: list[object] = []
+        start = 0
+        for index, elements in expansions:
+            expanding.append(index)
+            grown.append(grown[-1] + len(elements) - 1)
+            bound += islice(binds, start, index)
+            bound += elements
+            start = index + 1
+        bound += islice(binds, start, None)
+        if not grown[-1]:
+            return LoweredStatement(
+                sql,
+                tuple(bound),
+                self._typed_bind_spans,
+                self._wire_bind_overrides,
+            )
+
+        def moved(index: int) -> int:
+            return index + grown[bisect_left(expanding, index)]
+
+        spans = tuple(
+            [
+                _TypedBindSpan(moved(span.start), moved(span.stop), span.neutral_type, span.form)
+                if isinstance(span, _TypedBindSpan)
+                else span.shifted(moved(span.start) - span.start)
+                for span in self._typed_bind_spans
+            ]
+        )
+        overrides = tuple(
+            [
+                _WireBindOverride(moved(override.index), override.value)
+                for override in self._wire_bind_overrides
+            ]
+        )
+        return LoweredStatement(sql, tuple(bound), spans, overrides)
+
+
+def _position(expansion: tuple[int, Sequence[object]]) -> int:
+    return expansion[0]
+
+
+EXPANDING_PLACEHOLDER: Final = "\0expanding\0"
+"""The SQL text an expanding execution value's placeholder stands in until its
+template renders one placeholder per element.
+
+Neither PostgreSQL nor MariaDB admits NUL in an identifier, so no identifier in
+a statement's SQL can spell this placeholder."""
+
+_KEYS: Final[ExecutionValueSource] = ("keys",)
+_UNRENDERED: Final = "a deferred execution value has no Wire projection until its template renders"
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedOperandForm:
+    """An authored operand bound as its managed value."""
+
+    neutral_type: NeutralType
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, "MANAGED"
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonTextForm:
+    """An authored operand bound as the codec's comparison text of its value."""
+
+    neutral_type: NeutralType
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, "COMPARISON_TEXT"
+
+
+@dataclass(frozen=True, slots=True)
+class AffixForm:
+    """A string match's authored pattern, bound as the pattern its operator
+    and case folding make of it."""
+
+    op: StringOp
+    case_insensitive: bool
+    typed_slot: ClassVar[tuple[NeutralType, _BindForm]] = (STRING, "COMPARISON_TEXT")
+    expands: ClassVar[bool] = False
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationCarrierForm:
+    """A carrier the database already evaluated, bound as itself under the
+    typed metadata of the expression it is compared against."""
+
+    neutral_type: NeutralType
+    bind_form: _BindForm
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, self.bind_form
+
+
+@dataclass(frozen=True, slots=True)
+class PageCapForm:
+    """A page's cap, bound structurally."""
+
+    typed_slot: ClassVar[None] = None
+    expands: ClassVar[bool] = False
+
+
+PAGE_CAP: Final = PageCapForm()
+
+
+@dataclass(frozen=True, slots=True)
+class GatheredKeysForm:
+    """A child read's gathered parent keys: one :class:`ArrayBind` of the keys'
+    own type, or one managed bind per key in place of an expanding
+    placeholder."""
+
+    neutral_type: NeutralType
+    array: bool
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm] | None:
+        return None if self.array else (self.neutral_type, "MANAGED")
+
+    @property
+    def expands(self) -> bool:
+        return not self.array
+
+
+@dataclass(frozen=True, slots=True)
+class MembershipForm:
+    """An authored membership's elements, each managed or its comparison text:
+    one :class:`ArrayBind`, or one bind per element in place of an expanding
+    placeholder."""
+
+    neutral_type: NeutralType
+    comparison_text: bool
+    array: bool
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm] | None:
+        if self.array:
+            return None
+        return self.neutral_type, "COMPARISON_TEXT" if self.comparison_text else "MANAGED"
+
+    @property
+    def expands(self) -> bool:
+        return not self.array
+
+
+# Forms are stateless, so equivalent ones are shared: a template retains one
+# form per distinct classification rather than one per bound operand.
+managed_operand_form: Final[Callable[[NeutralType], ManagedOperandForm]] = cache(ManagedOperandForm)
+comparison_text_form: Final[Callable[[NeutralType], ComparisonTextForm]] = cache(ComparisonTextForm)
+affix_form: Final[Callable[[StringOp, bool], AffixForm]] = cache(AffixForm)
+continuation_carrier_form: Final[Callable[[NeutralType, _BindForm], ContinuationCarrierForm]] = (
+    cache(ContinuationCarrierForm)
+)
+gathered_keys_form: Final[Callable[[NeutralType, bool], GatheredKeysForm]] = cache(GatheredKeysForm)
+membership_form: Final[Callable[[NeutralType, bool, bool], MembershipForm]] = cache(MembershipForm)
+
+
+type ExecutionValueForm = (
+    ManagedOperandForm
+    | ComparisonTextForm
+    | AffixForm
+    | ContinuationCarrierForm
+    | PageCapForm
+    | GatheredKeysForm
+    | MembershipForm
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionValueMarker:
+    source: ExecutionValueSource
+    form: ExecutionValueForm
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionValuePositions:
+    """The ascending bind positions one deferred execution value fills."""
+
+    marker: _ExecutionValueMarker
+    indices: tuple[int, ...]
+
+    @property
+    def source(self) -> ExecutionValueSource:
+        return self.marker.source
+
+    @property
+    def form(self) -> ExecutionValueForm:
+        return self.marker.form
+
+
+def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) -> WireValue:
+    if isinstance(value, _ExecutionValueMarker):
+        raise InternalError(SQL_GENERATION_FAILED, _UNRENDERED)
+    if form == "MANAGED":
+        return encode_wire(neutral_type, cast("ManagedValue", value))
+    return cast("str", value)
+
+
+def _wire_bind(value: object) -> WireValue:
+    if isinstance(value, _ExecutionValueMarker):
+        raise InternalError(SQL_GENERATION_FAILED, _UNRENDERED)
+    if isinstance(value, ArrayBind):
+        return _array_wire_bind(value)
+    if isinstance(value, StructuredDocument):
+        value = detach_json_container(value.document)
+    return _document_wire_bind(value)
+
+
+def _document_wire_bind(value: object) -> WireValue:
+    if value is None:
+        return None
+    try:
+        managed = decode_wire(JSON, cast("WireValue", value))
+        return encode_wire(JSON, managed)
+    except UsageError as error:
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}",
+        ) from error
+
+
+def _array_wire_bind(array: ArrayBind) -> WireValue:
+    element_type = array.element_type
+    if isinstance(element_type, Json):
+        # A literal JSON null projects as null, exactly as `StructuredDocument(None)` does alone.
+        return [
+            None if element is JSON_NULL else _document_wire_bind(detach_json_container(element))
+            for element in array.values
+        ]
+    return [
+        None
+        if element is None
+        else INFINITY_LITERAL
+        if element is INFINITY
+        else encode_wire(element_type, cast("ManagedValue", element))
+        for element in array.values
+    ]
+
+
+SQL_GENERATION_FAILED: Final = "sql-generation-failed"
+"""The code of the :class:`~parallax.core.internal.base.InternalError` lowering raises
+where the plan it was handed breaks an invariant lowering relies on: a node
+or reference no accepted plan produces."""
+
+
+def table_layout(
+    storage: StorageLayoutFacet, facet: InheritanceFacet, entity: EntityIdentity
+) -> TableLayout:
+    """The canonical layout of the one Table a read of ``entity``'s rows selects.
+
+    Total at every call site: a table-per-hierarchy position reads the root's
+    shared Table and a concrete subtype reads its own, so only a
+    table-per-concrete-subtype abstract position owns none — and such a position
+    fans out to its concretes, each carrying its own layout, before a layout is
+    ever asked for.
+    """
+    view = facet.entity(entity)
+    container = None if view is None else view.container
+    if container is None:  # pragma: no cover - an abstract position never reads one table
+        raise InternalError(
+            SQL_GENERATION_FAILED,
+            f"{entity.canonical}: this inheritance position has no Table Layout",
+        )
+    layout = storage.table(container)
+    if layout is None:  # pragma: no cover - every accepted Table compiles exactly one layout
+        raise InternalError(
+            SQL_GENERATION_FAILED, f"{container.name}: the model compiles no layout for this table"
+        )
+    return layout
+
+
+# the concrete resolution scope; neither exposes `bind`, `binds`, nor the `ctx` #
+
+
+class ColumnScope(Protocol):
+    """Renders one of the active target's own columns.
+
+    The whole capability a guard FRAGMENT needs: which alias (if any) qualifies
+    this statement's own columns. No resolution, no allocation, no binding.
+    """
+
+    def own_column(self, column: str) -> str: ...
+
+
+class CandidateRenderScope(ColumnScope, Protocol):
+    """What rendering one relationship candidate may do: render its parent's
+    and its own columns, read the family's tag values, and ALLOCATE an alias —
+    nothing else.
+
+    Alias allocation is deliberately included: a relationship candidate takes its
+    alias at the point it renders, before anything descends into its interior,
+    which is what keeps the `t0, t1, …` sequence depth-first in source order
+    (m-sql rule 1). Allocation is order-visible but not order-FRAGILE — an alias
+    is consumed by the very fragment that took it.
+
+    Binding is the opposite, and is deliberately absent: `bind` / `binds` appear
+    nowhere here, so candidate rendering cannot push a bind even by accident.
+    Guard binds travel out as VALUES and are pushed by the caller, after it has
+    rendered its own interior predicate.
+
+    :meth:`child` returns another ``CandidateRenderScope`` rather than the
+    concrete scope, so descending never widens the capability back out.
+    """
+
+    @property
+    def facet(self) -> InheritanceFacet: ...
+
+    def column_for(self, attribute: AttributeMetadata) -> str: ...
+
+    def next_alias(self) -> str: ...
+
+    def child(self, entity: CompiledEntity, alias: str) -> CandidateRenderScope: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedSourceBinding[RowScope]:
+    """A rendered shared source: the ``target`` scope its joined row resolves
+    under and the ``origin`` scope its correlation was rendered against."""
+
+    target: RowScope
+    origin: RowScope
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedOwnerResultsBinding:
+    """A rendered owner-results relation: its ``alias`` and its result
+    ``columns``, one per planned cell in cell order."""
+
+    alias: str
+    columns: tuple[str, ...]
+
+
+class ScopePlanView(Protocol):
+    """A lexical plan as the statement builder holds it: what it must find
+    rendered before the statement finishes."""
+
+    @property
+    def sources(self) -> tuple[object, ...]: ...
+
+    @property
+    def owner_results(self) -> tuple[object, ...]: ...
+
+
+class StatementPlanView(Protocol):
+    """A statement plan as the statement builder holds it: the lexical plans
+    its scope ids index."""
+
+    @property
+    def lexical_scopes(self) -> Sequence[ScopePlanView]: ...
+
+
+class PlanEntryRefView[Kind: str](Protocol):
+    """A reference to entry ``index`` of one kind in lexical plan ``scope_id``."""
+
+    @property
+    def kind(self) -> Kind: ...
+
+    @property
+    def scope_id(self) -> int: ...
+
+    @property
+    def index(self) -> int: ...
+
+
+class StatementBuilder[RowScope = object]:
+    """One statement's aliases, role-classified bind sequence, and the rendered
+    bindings of the lexical plans it renders.
+
+    ``RowScope`` is the row-scope type its shared-source bindings retain.
+    """
+
+    __slots__ = (
+        "_binds",
+        "_next_alias_index",
+        "_next_relation_index",
+        "_owner_results_bindings",
+        "_row_count",
+        "_row_signature",
+        "_row_start",
+        "_source_bindings",
+        "_typed_spans",
+        "_wire_overrides",
+        "dialect",
+        "facet",
+        "meta",
+        "storage",
+    )
+
+    def __init__(
+        self,
+        meta: Metamodel,
+        facet: InheritanceFacet,
+        storage: StorageLayoutFacet,
+        dialect: Dialect,
+    ) -> None:
+        self.meta = meta
+        self.facet = facet
+        self.storage = storage
+        self.dialect = dialect
+        self._binds: list[object] = []
+        self._typed_spans: list[_BindSpan] = []
+        self._wire_overrides: dict[int, WireValue] = {}
+        self._row_signature: tuple[_TypedBindSlot | None, ...] = ()
+        self._row_start = 0
+        self._row_count = 0
+        self._next_alias_index = 1
+        self._next_relation_index = 0
+        self._source_bindings: dict[int, list[RenderedSourceBinding[RowScope] | None]] = {}
+        self._owner_results_bindings: dict[int, list[RenderedOwnerResultsBinding | None]] = {}
+
+    def next_alias(self) -> str:
+        index = self._next_alias_index
+        self._next_alias_index = index + 1
+        return f"t{index}"
+
+    def next_relation_alias(self) -> str:
+        """The next derived result relation's alias, `r0`, `r1`, …: a relation
+        is no table source, so it takes no place in the `t<n>` sequence."""
+        index = self._next_relation_index
+        self._next_relation_index = index + 1
+        return f"r{index}"
+
+    def select_scope_plan(self, statement: StatementPlanView, scope_id: int) -> None:
+        """Take on rendering the shared sources and owner results of
+        ``statement``'s lexical plan ``scope_id``."""
+        plan = statement.lexical_scopes[scope_id]
+        self._source_bindings[scope_id] = [None] * len(plan.sources)
+        self._owner_results_bindings[scope_id] = [None] * len(plan.owner_results)
+
+    def record_source_binding(
+        self, ref: PlanEntryRefView[Literal["source"]], *, target: RowScope, origin: RowScope
+    ) -> None:
+        self._source_bindings[ref.scope_id][ref.index] = RenderedSourceBinding(target, origin)
+
+    def source_binding(
+        self, ref: PlanEntryRefView[Literal["source"]]
+    ) -> RenderedSourceBinding[RowScope]:
+        return cast(
+            "RenderedSourceBinding[RowScope]", self._source_bindings[ref.scope_id][ref.index]
+        )
+
+    def record_owner_results_binding(
+        self,
+        ref: PlanEntryRefView[Literal["owner_results"]],
+        *,
+        alias: str,
+        columns: tuple[str, ...],
+    ) -> None:
+        self._owner_results_bindings[ref.scope_id][ref.index] = RenderedOwnerResultsBinding(
+            alias, columns
+        )
+
+    def owner_results_binding(
+        self, ref: PlanEntryRefView[Literal["owner_results"]]
+    ) -> RenderedOwnerResultsBinding:
+        return cast(
+            "RenderedOwnerResultsBinding", self._owner_results_bindings[ref.scope_id][ref.index]
+        )
+
+    def bind_structural(self, value: object) -> None:
+        self._append(value)
+
+    def bind_structural_all(self, values: Sequence[object]) -> None:
+        for value in values:
+            self.bind_structural(value)
+
+    def bind_document(self, value: StructuredDocument) -> None:
+        self._append(value)
+
+    def bind_array(self, value: ArrayBind) -> None:
+        self._append(value)
+
+    def bind_managed(self, value: object, neutral_type: NeutralType) -> None:
+        self._bind_typed(value, neutral_type, "MANAGED")
+
+    def bind_comparison_text(self, value: object, neutral_type: NeutralType) -> None:
+        self._bind_typed(value, neutral_type, "COMPARISON_TEXT")
+
+    def bind_concrete(self, value: object, form: ExecutionValueForm) -> None:
+        """Bind ``value`` now, under the classification ``form`` selects."""
+        slot = form.typed_slot
+        if slot is None:
+            self._append(value)
+        else:
+            self._bind_typed(value, *slot)
+
+    def bind_deferred(self, source: ExecutionValueSource, form: ExecutionValueForm) -> None:
+        """Bind the marker a template fills from ``source`` when it renders,
+        under the classification ``form`` selects."""
+        self.bind_concrete(_ExecutionValueMarker(source, form), form)
+
+    def bind_framework(
+        self,
+        value: object,
+        *,
+        wire_value: WireValue | _NoWireBindOverride = _NO_WIRE_BIND_OVERRIDE,
+    ) -> None:
+        """Bind outside every typed span; managed infinity is observed as its
+        canonical literal unless ``wire_value`` supplies another observation."""
+        index = len(self._binds)
+        self._append(value)
+        if not isinstance(wire_value, _NoWireBindOverride):
+            self._wire_overrides[index] = wire_value
+        elif value is INFINITY:
+            self._wire_overrides[index] = INFINITY_LITERAL
+
+    def bind_framework_all(self, values: Sequence[object]) -> None:
+        for value in values:
+            self.bind_framework(value)
+
+    def bind_managed_rows(
+        self,
+        rows: Sequence[Sequence[object]],
+        pattern: Sequence[_TypedBindSlot | None],
+    ) -> None:
+        """Append ``rows`` as one closed run of :meth:`bind_managed_row`."""
+        for row in rows:
+            self.bind_managed_row(row, pattern)
+        self._seal_typed_rows()
+
+    def bind_managed_row(
+        self, row: Sequence[object], pattern: Sequence[_TypedBindSlot | None]
+    ) -> None:
+        """Append ``row``, whose every value its write already admitted at the
+        slot ``pattern`` gives it, without judging any value again.
+
+        A row of another width than ``pattern`` is refused and binds nothing,
+        so every earlier bind and its metadata stand. Consecutive rows form one
+        run whose typed spans are recorded when it seals — at the next other
+        bind, fragment, or :meth:`finish`: rows of one actual signature share a
+        repeated span per run of equal slots, and a row of another signature
+        starts the next group. A row's signature is its pattern but where a
+        value is null or the open upper bound, which binds outside every span.
+        """
+        if len(row) != len(pattern):
+            raise InternalError(
+                SQL_GENERATION_FAILED, "a repeated bind pattern has inconsistent row widths"
+            )
+        signature = tuple(
+            [
+                None if value is None or value is INFINITY else slot
+                for value, slot in zip(row, pattern, strict=True)
+            ]
+        )
+        binds = self._binds
+        if not self._row_count or signature != self._row_signature:
+            self._seal_typed_rows()
+            self._row_signature = signature
+            self._row_start = len(binds)
+        self._row_count += 1
+        for value in row:
+            if value is INFINITY:
+                self._wire_overrides[len(binds)] = INFINITY_LITERAL
+            binds.append(value)
+
+    def _seal_typed_rows(self) -> None:
+        """Record the open run's spans: each run of equal non-null slots in its
+        signature becomes one span, repeated across a group of several rows or
+        plain for a group of one."""
+        repetitions = self._row_count
+        if not repetitions:
+            return
+        self._row_count = 0
+        signature = self._row_signature
+        start = self._row_start
+        run_start = 0
+        run_slot: _TypedBindSlot | None = None
+        for offset, slot in enumerate((*signature, None)):
+            if slot == run_slot:
+                continue
+            if run_slot is not None:
+                run_type, run_form = run_slot
+                if repetitions == 1:
+                    self._append_typed_span(
+                        _TypedBindSpan(start + run_start, start + offset, run_type, run_form)
+                    )
+                else:
+                    self._typed_spans.append(
+                        _RepeatedTypedBindSpan(
+                            start + run_start,
+                            offset - run_start,
+                            len(signature),
+                            repetitions,
+                            run_type,
+                            run_form,
+                        )
+                    )
+            run_start = offset
+            run_slot = slot
+
+    def append_fragment(self, statement: LoweredStatement) -> None:
+        """Append a finished compiler fragment without discarding bind provenance."""
+        self._seal_typed_rows()
+        offset = len(self._binds)
+        self._binds.extend(statement.binds)
+        for span in statement.typed_bind_spans:
+            self._append_typed_span(span.shifted(offset))
+        for override in statement.wire_bind_overrides:
+            self._wire_overrides[offset + override.index] = override.value
+
+    def finish(self, sql: str) -> LoweredStatement:
+        """Seal the statement with its bind metadata."""
+        self._seal_typed_rows()
+        spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
+        overrides = tuple(
+            _WireBindOverride(index, value) for index, value in sorted(self._wire_overrides.items())
+        )
+        return LoweredStatement(sql, tuple(self._binds), spans, overrides)
+
+    def _append(self, value: object) -> None:
+        if self._row_count:
+            self._seal_typed_rows()
+        self._binds.append(value)
+
+    def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
+        index = len(self._binds)
+        self._append(value)
+        self._append_typed_span(_TypedBindSpan(index, index + 1, neutral_type, form))
+
+    def _append_typed_span(self, span: _BindSpan) -> None:
+        if (
+            isinstance(span, _TypedBindSpan)
+            and self._typed_spans
+            and isinstance(self._typed_spans[-1], _TypedBindSpan)
+            and self._typed_spans[-1].stop == span.start
+            and self._typed_spans[-1].neutral_type == span.neutral_type
+            and self._typed_spans[-1].form == span.form
+        ):
+            previous = self._typed_spans[-1]
+            self._typed_spans[-1] = _TypedBindSpan(
+                previous.start, span.stop, span.neutral_type, span.form
+            )
+        else:
+            self._typed_spans.append(span)

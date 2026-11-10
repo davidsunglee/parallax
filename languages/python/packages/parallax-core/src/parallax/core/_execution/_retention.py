@@ -4,24 +4,24 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._unit_work.evidence import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
-from parallax.core.concurrency import ExplicitVersion, TransactionTimeVersion
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.temporal_read import (
+from parallax.core.internal import concurrency, inheritance, temporal_read
+from parallax.core.internal.concurrency import ExplicitVersion, TransactionTimeVersion
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import (
     NON_TEMPORAL,
     Bitemporal,
     Pin,
     TemporalFacet,
     TransactionTimeOnly,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     EntityStateRow,
     ObjectKey,
     ObjectStateKey,
@@ -315,10 +315,10 @@ def defer_read_evidence(
     only once that state is reachable and valid.
 
     Evidence is addressed by the exact state it is about
-    (:func:`~parallax.core.write_plan.object_state_key_from_observation`), so a second read of
-    one primary key that resolves to a different version or milestone is
-    evidence about the row it saw rather than an overwrite of the first read's.
-    The identity half is the :class:`~parallax.core.write_plan.ObjectKey` a later
+    (:func:`~parallax.core.internal.write_plan.object_state_key_from_observation`), so a
+    second read of one primary key that resolves to a different version or milestone
+    is evidence about the row it saw rather than an overwrite of the first read's.
+    The identity half is the :class:`~parallax.core.internal.write_plan.ObjectKey` a later
     keyed write computes, over the row's own resolved concrete Entity (never
     family-normalized to the root), which is what ``tx.amend(copy)`` resolves
     its instance's class to.

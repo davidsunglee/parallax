@@ -60,17 +60,17 @@ from types import MappingProxyType
 from typing import Any, Final, cast
 
 from parallax.core._execution._publication import read_projection
-from parallax.core.db_port import Row
-from parallax.core.entity import UNLOADED, Entity
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution import (
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.entity import UNLOADED, Entity
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.execution import (
     ModelSelection,
     prepare_model,
 )
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_planning import NarrowedViewKeys
-from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import ReadEvidence
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_planning import NarrowedViewKeys
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.unit_work import ReadEvidence
 from parallax.snapshot import Database, Snapshot
 from parallax.snapshot._inspection import (
     NarrowedViews,

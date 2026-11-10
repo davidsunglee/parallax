@@ -27,8 +27,8 @@ from parallax.conformance.guide_authority_recipes import (
     rename_a_customer,
 )
 from parallax.conformance.guide_models import SHOP_MODEL, Customer, Order
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity import model_of
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity import model_of
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import Database, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write

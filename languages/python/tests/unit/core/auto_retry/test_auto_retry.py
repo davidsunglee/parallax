@@ -23,7 +23,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import ConflictError, InternalError, UsageError
-from parallax.core.auto_retry import (
+from parallax.core.internal.auto_retry import (
     AdaptiveBackoff,
     RetryPolicy,
     RetryTiming,
@@ -32,8 +32,8 @@ from parallax.core.auto_retry import (
     retry_policy,
     run_with_retry,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.unit_work import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.unit_work import (
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,

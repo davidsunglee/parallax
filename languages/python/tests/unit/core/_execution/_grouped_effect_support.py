@@ -8,15 +8,15 @@ import datetime as dt
 from collections.abc import Mapping, Sequence
 from typing import Final, cast
 
-from parallax.core import inheritance
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
     OPTIMISTIC_CONFLICT,

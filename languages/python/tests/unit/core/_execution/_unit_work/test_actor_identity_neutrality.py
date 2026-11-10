@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from decimal import Decimal
 
 from parallax.conformance import models
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
@@ -16,12 +15,13 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import INFINITY
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import (
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
     AdmittedWrite,
     DatabaseLoginActor,
     KeyedWriteInstruction,
@@ -32,8 +32,8 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     object_key,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     StateObservation,

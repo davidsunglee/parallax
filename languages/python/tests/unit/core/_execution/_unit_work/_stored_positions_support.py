@@ -9,13 +9,13 @@ from dataclasses import dataclass, field
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import RowConsumer, RowRequest
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.write_plan import PredecessorRow
-from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
+from parallax.core.internal.write_plan import PredecessorRow
+from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import (
     Finite,
     MilestoneTarget,
     PlannedClose,

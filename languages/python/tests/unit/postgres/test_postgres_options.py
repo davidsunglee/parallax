@@ -20,7 +20,7 @@ from typing import Any, cast
 import psycopg
 import pytest
 
-from parallax.core.db_port import DRIVER_MANAGED, Password
+from parallax.core.internal.db_port import DRIVER_MANAGED, Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 
 _SECRET = Password("hunter2")

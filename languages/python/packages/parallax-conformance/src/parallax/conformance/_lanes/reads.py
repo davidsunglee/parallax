@@ -25,9 +25,9 @@ from parallax.conformance._mechanism.model_facts import (
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import read_only, transact
-from parallax.core import read_delivery
-from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import (
+from parallax.core.internal import read_delivery
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     CompiledEntity,
     MemberIdentity,
@@ -35,11 +35,11 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import Clock
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.unit_work import Clock
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -577,7 +577,7 @@ def _stored_data_records(
 def _stored_data_record(
     record: read_delivery.InvalidData[object], model: AcceptedMetamodel
 ) -> dict[str, object]:
-    """One published :class:`~parallax.core.read_delivery.InvalidData` on the wire.
+    """One published :class:`~parallax.core.internal.read_delivery.InvalidData` on the wire.
 
     ``hydrated`` states the one thing the graph position cannot: whether the
     ``null`` at that position means "no value could be produced without inventing

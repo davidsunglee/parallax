@@ -35,12 +35,12 @@ from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
-from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
-from parallax.core.write_plan import ObjectKey
-from parallax.core.write_plan.managed_row import ManagedRow
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import Bitemporal, Pin, TimeInterval
+from parallax.core.internal.write_plan import ObjectKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 __all__ = [
     "TRANSACTION_TIME_PIN_READ_ONLY",
@@ -336,7 +336,7 @@ def keyed_instruction(
 def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     """Reject a mutation sourced from a view pinned at a FINITE Transaction-Time
     instant (`m-temporal-read`'s finite-pin mutation row): raise
-    a :class:`~parallax.core.base.UsageError` with
+    a :class:`~parallax.core.internal.base.UsageError` with
     :data:`TRANSACTION_TIME_PIN_READ_ONLY` at the verb call, before any
     buffering, so no DML is ever emitted. An absent pin, a ``LATEST``
     Transaction-Time pin, and a finite Valid-Time pin all pass — the finite

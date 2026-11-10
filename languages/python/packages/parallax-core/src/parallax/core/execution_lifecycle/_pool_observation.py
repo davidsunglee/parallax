@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from parallax.core.db_port import PoolMetricsSource, report_unregistration_failure
+from parallax.core.internal.db_port import PoolMetricsSource, report_unregistration_failure
 
 __all__ = [
     "PoolMetricsObserver",

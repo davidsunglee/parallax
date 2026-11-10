@@ -1,4 +1,4 @@
-"""Unit pins for ``parallax.core.batch_write`` (m-batch-write's injected
+"""Unit pins for ``parallax.core.internal.batch_write`` (m-batch-write's injected
 collapse-eligibility vocabulary) and for the composition layer's own batch
 grouping.
 
@@ -20,28 +20,28 @@ from typing import Literal
 import pytest
 
 from parallax.conformance import models
-from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.base import INT64, UsageError
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import (
+from parallax.core.internal import batch_write
+from parallax.core.internal.base import INT64, UsageError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     CompiledEntity,
     EntityIdentity,
     Metamodel,
 )
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import (
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     WritePlanningRequest,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan.payload import AssignmentPayload, WritePayloadPreparer
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan.payload import AssignmentPayload, WritePayloadPreparer
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     ExactCount,
     KeyTarget,

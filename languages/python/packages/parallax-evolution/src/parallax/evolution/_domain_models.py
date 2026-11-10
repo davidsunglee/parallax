@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import overload
 
-from parallax.core.entity._model import DomainModel, model_of
-from parallax.evolution.model_evolution import (
+from parallax.core.internal.entity._model import DomainModel, model_of
+from parallax.evolution.internal.model_evolution import (
     Absent,
     Evolution,
     UnilateralEvolution,

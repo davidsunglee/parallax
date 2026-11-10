@@ -8,10 +8,10 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core import inheritance
-from parallax.core.base import FrozenMap
-from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
-from parallax.core.write_plan.managed_row import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import FrozenMap
+from parallax.core.internal.metamodel import AttributeIdentity, ValueObjectIdentity
+from parallax.core.internal.write_plan.managed_row import (
     ManagedRow,
     RowSelection,
     empty_row,

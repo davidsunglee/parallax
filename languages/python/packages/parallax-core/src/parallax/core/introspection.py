@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from parallax.core.entity import EntityMetadata, EntityProfile
-from parallax.core.metamodel import (
+from parallax.core.internal.entity import EntityMetadata, EntityProfile
+from parallax.core.internal.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
@@ -25,7 +25,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.relationship import RelationshipMetadata
+from parallax.core.internal.relationship import RelationshipMetadata
 
 __all__ = [
     "AsOfAxisMetadata",

@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     CompiledEntity,
     CompiledMetadata,

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import psycopg
 import psycopg.conninfo
 
-from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged
+from parallax.core.internal.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged
 from parallax.postgres._options import OnDemandOptions, PoolOptions, RetentionOptions
 
 if TYPE_CHECKING:
@@ -117,16 +117,16 @@ class PostgresEndpoint:
 
     ``credentials`` says HOW the login that string names authenticates, and is
     required: either a
-    :class:`~parallax.core.db_port.CredentialSource` — a
-    :class:`~parallax.core.db_port.Password`, or a provider's own source, asked
+    :class:`~parallax.core.internal.db_port.CredentialSource` — a
+    :class:`~parallax.core.internal.db_port.Password`, or a provider's own source, asked
     where each physical connection is established — or
-    :data:`~parallax.core.db_port.DRIVER_MANAGED`, which declares that Parallax
+    :data:`~parallax.core.internal.db_port.DRIVER_MANAGED`, which declares that Parallax
     supplies no secret and leaves authentication to the driver and the server
     (peer, trust, a client certificate, Kerberos, or libpq's own environment:
     ``PGPASSWORD``, ``.pgpass``, a ``service`` file). There is no default and no
     ``None``, so which of the two a deployment chose is visible on the line. It
     is kept out of this value's representation for the same reason the string
-    is: :class:`~parallax.core.db_port.Password` hides its own secret, but a
+    is: :class:`~parallax.core.internal.db_port.Password` hides its own secret, but a
     source is any object a provider wrote, and one holding broker material in an
     ordinary repr would otherwise reach every log line this value does.
 

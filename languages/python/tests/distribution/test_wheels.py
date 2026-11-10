@@ -77,7 +77,7 @@ def test_production_wheels_pin_the_release_and_ship_licence_notices(wheelhouse: 
 
 
 def test_core_distributions_ship_normative_reserved_words(wheelhouse: Wheelhouse) -> None:
-    resource = "parallax/core/dialect/dialect-reserved-words.json"
+    resource = "parallax/core/internal/dialect/dialect-reserved-words.json"
     source = (REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes()
     with zipfile.ZipFile(wheelhouse.wheels["parallax-core"]) as archive:
         assert archive.read(resource) == source
@@ -92,8 +92,17 @@ def test_core_distributions_ship_normative_reserved_words(wheelhouse: Wheelhouse
 def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
     names = _names(wheelhouse, "parallax-core")
     assert "parallax/core/__init__.py" in names
-    assert "parallax/core/base/__init__.py" in names
-    assert "parallax/core/predicate/__init__.py" in names
+    assert "parallax/core/internal/base/__init__.py" in names
+    assert "parallax/core/internal/predicate/__init__.py" in names
+    # The application modules and private support sit at the top; every
+    # first-party module ships beneath `internal`.
+    assert _modules_directly_in(wheelhouse, "parallax-core", "parallax/core/") == {
+        "parallax/core/__init__.py",
+        "parallax/core/_formation_profile.py",
+        "parallax/core/_stored_data.py",
+        "parallax/core/introspection.py",
+    }
+    assert "parallax/core/internal/__init__.py" in names
 
 
 def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
@@ -103,19 +112,19 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     # exact set would not otherwise reach — the old single-file compiler sits
     # beside the package rather than inside it, which is what a stale build or a
     # half-applied split looks like.
-    assert _modules_directly_in(wheelhouse, "parallax-core", "parallax/core/sql_gen/") == {
-        "parallax/core/sql_gen/__init__.py",
-        "parallax/core/sql_gen/_compile.py",
-        "parallax/core/sql_gen/_context.py",
-        "parallax/core/sql_gen/_inheritance.py",
-        "parallax/core/sql_gen/_navigation.py",
-        "parallax/core/sql_gen/_planning.py",
-        "parallax/core/sql_gen/_predicate.py",
-        "parallax/core/sql_gen/_seek.py",
-        "parallax/core/sql_gen/_select_list.py",
-        "parallax/core/sql_gen/_write.py",
+    assert _modules_directly_in(wheelhouse, "parallax-core", "parallax/core/internal/sql_gen/") == {
+        "parallax/core/internal/sql_gen/__init__.py",
+        "parallax/core/internal/sql_gen/_compile.py",
+        "parallax/core/internal/sql_gen/_context.py",
+        "parallax/core/internal/sql_gen/_inheritance.py",
+        "parallax/core/internal/sql_gen/_navigation.py",
+        "parallax/core/internal/sql_gen/_planning.py",
+        "parallax/core/internal/sql_gen/_predicate.py",
+        "parallax/core/internal/sql_gen/_seek.py",
+        "parallax/core/internal/sql_gen/_select_list.py",
+        "parallax/core/internal/sql_gen/_write.py",
     }
-    assert "parallax/core/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")
+    assert "parallax/core/internal/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")
 
 
 def test_evolution_wheel_ships_each_of_its_scopes(wheelhouse: Wheelhouse) -> None:
@@ -131,25 +140,30 @@ def test_evolution_wheel_ships_each_of_its_scopes(wheelhouse: Wheelhouse) -> Non
         "parallax/evolution/operations.py",
     }
     assert _modules_directly_in(
-        wheelhouse, "parallax-evolution", "parallax/evolution/model_evolution/"
+        wheelhouse, "parallax-evolution", "parallax/evolution/internal/"
     ) == {
-        "parallax/evolution/model_evolution/__init__.py",
-        "parallax/evolution/model_evolution/_classify.py",
-        "parallax/evolution/model_evolution/_diff.py",
-        "parallax/evolution/model_evolution/_impacts.py",
-        "parallax/evolution/model_evolution/_matching.py",
-        "parallax/evolution/model_evolution/_values.py",
+        "parallax/evolution/internal/__init__.py",
     }
     assert _modules_directly_in(
-        wheelhouse, "parallax-evolution", "parallax/evolution/schema_delta/"
+        wheelhouse, "parallax-evolution", "parallax/evolution/internal/model_evolution/"
     ) == {
-        "parallax/evolution/schema_delta/__init__.py",
-        "parallax/evolution/schema_delta/_naming.py",
-        "parallax/evolution/schema_delta/_order.py",
-        "parallax/evolution/schema_delta/_physical.py",
-        "parallax/evolution/schema_delta/_plan.py",
-        "parallax/evolution/schema_delta/_render.py",
-        "parallax/evolution/schema_delta/_values.py",
+        "parallax/evolution/internal/model_evolution/__init__.py",
+        "parallax/evolution/internal/model_evolution/_classify.py",
+        "parallax/evolution/internal/model_evolution/_diff.py",
+        "parallax/evolution/internal/model_evolution/_impacts.py",
+        "parallax/evolution/internal/model_evolution/_matching.py",
+        "parallax/evolution/internal/model_evolution/_values.py",
+    }
+    assert _modules_directly_in(
+        wheelhouse, "parallax-evolution", "parallax/evolution/internal/schema_delta/"
+    ) == {
+        "parallax/evolution/internal/schema_delta/__init__.py",
+        "parallax/evolution/internal/schema_delta/_naming.py",
+        "parallax/evolution/internal/schema_delta/_order.py",
+        "parallax/evolution/internal/schema_delta/_physical.py",
+        "parallax/evolution/internal/schema_delta/_plan.py",
+        "parallax/evolution/internal/schema_delta/_render.py",
+        "parallax/evolution/internal/schema_delta/_values.py",
     }
 
 

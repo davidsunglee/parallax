@@ -20,7 +20,8 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import (
+from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.internal import (
     concurrency,
     inheritance,
     read_planning,
@@ -28,30 +29,32 @@ from parallax.core import (
     storage_layout,
     temporal_read,
 )
-from parallax.core import object_query as oq
-from parallax.core import predicate as oa
-from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import DATE as DATE_TYPE
-from parallax.core.base import INFINITY, INT64, STRING, InternalError, ManagedValue
-from parallax.core.concurrency import _compile as concurrency_compile
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.inheritance import _compile as inheritance_compile
-from parallax.core.metamodel import (
+from parallax.core.internal import object_query as oq
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import DATE as DATE_TYPE
+from parallax.core.internal.base import INFINITY, INT64, STRING, InternalError, ManagedValue
+from parallax.core.internal.concurrency import _compile as concurrency_compile
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.inheritance import _compile as inheritance_compile
+from parallax.core.internal.metamodel import (
     Metamodel,
 )
-from parallax.core.navigate import (
+from parallax.core.internal.navigate import (
     NoRootSelections,
     PropagatedRootSelections,
     RootSelections,
     TemporalResolution,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query import TemporalSelection
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._resolved import ResolvedLatestSelection, ResolvedObjectQuery
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.object_query import TemporalSelection
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.object_query._resolved import (
+    ResolvedLatestSelection,
+    ResolvedObjectQuery,
+)
+from parallax.core.internal.predicate._resolved import (
     ResolvedComparison,
     ResolvedConstant,
     ResolvedPredicate,
@@ -60,15 +63,15 @@ from parallax.core.predicate._resolved import (
     deferred_membership,
     managed_comparison,
 )
-from parallax.core.read_delivery._row_decoding import row_coordinates
-from parallax.core.relationship import _compile as relationship_compile
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal.read_delivery._row_decoding import row_coordinates
+from parallax.core.internal.relationship import _compile as relationship_compile
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
 )
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._context import (
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     SQL_GENERATION_FAILED,
     AffixForm,
@@ -76,10 +79,10 @@ from parallax.core.sql_gen._context import (
     ExecutionValueForm,
     ManagedOperandForm,
 )
-from parallax.core.sql_gen._predicate import affix_needs_escape
-from parallax.core.sql_gen._predicate import prepared_operand as prepare_operand
-from parallax.core.storage_layout import _compile as storage_layout_compile
-from parallax.core.temporal_read import _compile as temporal_read_compile
+from parallax.core.internal.sql_gen._predicate import affix_needs_escape
+from parallax.core.internal.sql_gen._predicate import prepared_operand as prepare_operand
+from parallax.core.internal.storage_layout import _compile as storage_layout_compile
+from parallax.core.internal.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._records import Attribute, Entity, Inheritance
 from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metadata
@@ -231,14 +234,14 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
 
 
 # --------------------------------------------------------------------------- #
-# The supported interface itself. `parallax.core.sql_gen` exports exactly one    #
+# The supported interface itself. `parallax.core.internal.sql_gen` exports exactly one    #
 # name; every compiler operation and compiler product is private implementation. #
 # --------------------------------------------------------------------------- #
 def test_the_package_exports_only_the_statement_value() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
     # regression this guards, and a superset assertion would not see it. Canonical
     # column order is `m-inheritance`'s export, so its absence here is the point.
-    import parallax.core.sql_gen as sql_gen
+    import parallax.core.internal.sql_gen as sql_gen
 
     assert set(sql_gen.__all__) == {"LoweredStatement"}
     assert sql_gen.LoweredStatement is LoweredStatement

@@ -40,10 +40,10 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
-from parallax.core.db_port import MappingRow
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, TablePerConcreteSubtype, entity_by_name
+from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, TablePerConcreteSubtype, entity_by_name
 
 __all__ = [
     "FAMILIES",

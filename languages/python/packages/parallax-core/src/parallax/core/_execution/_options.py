@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.auto_retry import RetryPolicy, retry_policy
-from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
-from parallax.core.db_port import IsolationLevel, isolation_level
+from parallax.core.internal.auto_retry import RetryPolicy, retry_policy
+from parallax.core.internal.concurrency import ConcurrencyPreference, concurrency_preference
+from parallax.core.internal.db_port import IsolationLevel, isolation_level
 
 __all__ = [
     "OMITTED",

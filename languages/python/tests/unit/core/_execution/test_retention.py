@@ -28,7 +28,6 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import concurrency, inheritance, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._retention import (
@@ -38,19 +37,20 @@ from parallax.core._execution._retention import (
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal import concurrency, inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     ViewSchema,
     entity_state,
     page_rows,
 )
-from parallax.core.temporal_read import Edge, Pin
-from parallax.core.unit_work import (
+from parallax.core.internal.temporal_read import Edge, Pin
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
     ReadEvidence,
@@ -59,13 +59,13 @@ from parallax.core.unit_work import (
     UnitOfWork,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectStateKey,
     TemporalObservation,
     VersionObservation,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key

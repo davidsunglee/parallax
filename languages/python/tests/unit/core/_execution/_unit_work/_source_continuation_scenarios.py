@@ -21,7 +21,7 @@ from decimal import Decimal
 from typing import Any, Final, Literal
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import INFINITY
+from parallax.core.internal.base import INFINITY
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write

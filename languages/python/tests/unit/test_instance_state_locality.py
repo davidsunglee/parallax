@@ -1,14 +1,14 @@
 """The claim about the instance-state Module that only its source settles.
 
 It is not a behavior a value can be asked about, so it is stated over the
-source of ``parallax.core.entity`` and graded there.
+source of ``parallax.core.internal.entity`` and graded there.
 
 **Presence is asked one member at a time.** A published value keeps no
 ``set[str]``; the set a caller sees is synthesized from its bitmap on request.
 So an internal read that asks for the whole set builds one per value it looks at,
 and nothing about the answer would say it had. What forbids that is not a rule to
 remember but the shape of the Interface — internal code has
-:func:`~parallax.core.entity._instance_state.is_present`, a membership test over
+:func:`~parallax.core.internal.entity._instance_state.is_present`, a membership test over
 one bit — and the inventory below is what keeps the second operation out of
 reach.
 
@@ -138,7 +138,8 @@ def test_that_inventory_names_a_reader_that_asked_for_the_whole_set() -> None:
                     "def row(value):\n    return {name for name in value.model_fields_set}\n"
                 ),
                 f"{ENTITY_PACKAGE}._new_storage_reader": (
-                    "from parallax.core.entity._pydantic_storage import instance_presence\n"
+                    "from parallax.core.internal.entity._pydantic_storage "
+                    "import instance_presence\n"
                     "\n"
                     "def row(value):\n    return {name for name in instance_presence(value)}\n"
                 ),

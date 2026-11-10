@@ -4,7 +4,7 @@ import re
 import sys
 from typing import Final
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -80,7 +80,7 @@ def format_type_spelling(neutral: NeutralType) -> str:
 
     ``decimal`` is the sole parameterized spelling: its precision and scale are
     written as unsigned canonical digits with no interior whitespace, so the
-    result round-trips back to the same bounded :class:`~parallax.core.base.Numeric`.
+    result round-trips back to the same bounded :class:`~parallax.core.internal.base.Numeric`.
     Every other variant has a single lowercase token. Total over a precision of
     any digit count, matching the unbounded ``m-core`` domain.
     """

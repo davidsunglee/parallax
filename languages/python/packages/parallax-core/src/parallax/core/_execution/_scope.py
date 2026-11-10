@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from parallax.core import read_planning
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import (
@@ -22,21 +21,22 @@ from parallax.core._execution._routing import OperationRouting, resolved_read_po
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.auto_retry import RetryPolicy
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
-from parallax.core.execution_authority._authority import ExecutionAuthority
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     StreamBatchActivity,
     refuse_reentry,
 )
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._page_reader import StreamPageResult
-from parallax.core.read_delivery._paging import At, PagingPlan
-from parallax.core.read_delivery._publication import Publication
-from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
+from parallax.core.internal import read_planning
+from parallax.core.internal.auto_retry import RetryPolicy
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
+from parallax.core.internal.execution_authority._authority import ExecutionAuthority
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._page_reader import StreamPageResult
+from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._publication import Publication
+from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
 
 __all__ = ["ExecutionScope"]
 

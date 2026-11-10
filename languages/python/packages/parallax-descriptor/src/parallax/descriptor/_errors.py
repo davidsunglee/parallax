@@ -4,7 +4,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
-from parallax.core.base import UsageError
+from parallax.core.internal.base import UsageError
 
 __all__ = [
     "DESCRIPTOR_INVALID_SYNTAX",

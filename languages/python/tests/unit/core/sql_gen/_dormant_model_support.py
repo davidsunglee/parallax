@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 from parallax.conformance.models import accepted_model
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.metamodel import Metamodel
 
 
 def dormant_target_model(strategy: Literal["tph", "tpcs"]) -> Metamodel:

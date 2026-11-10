@@ -31,10 +31,10 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity._errors import MetamodelDefinitionCode
-from parallax.core.entity._model import model_of
-from parallax.core.inheritance import inheritance_facet_of
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.entity._errors import MetamodelDefinitionCode
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.model_formation import MetamodelValidationError
 from tests._support.errors import raises_code
 
 _SPEC_CODES = frozenset(

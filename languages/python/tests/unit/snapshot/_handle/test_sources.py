@@ -27,10 +27,10 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
 )
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core.base import StructuredDocument, UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.base import StructuredDocument, UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._typed_writes import TypedKeyedInsertSource, TypedKeyedWriteSource
 from parallax.snapshot._handle._wire_writes import WireKeyedInsertSource, WireKeyedWriteSource

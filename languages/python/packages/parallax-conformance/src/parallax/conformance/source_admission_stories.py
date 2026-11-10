@@ -6,8 +6,8 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel, UsageError
-from parallax.core.db_port import DatabaseAdapter
-from parallax.core.unit_work import WRITE_EVIDENCE_UNAVAILABLE
+from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.core.internal.unit_work import WRITE_EVIDENCE_UNAVAILABLE
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [

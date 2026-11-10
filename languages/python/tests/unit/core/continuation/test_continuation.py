@@ -1,6 +1,6 @@
 """Continuation pure page-plan unit tests (`m-read-delivery` streaming).
 
-Exercises `parallax.core.continuation.plan` with no port and no database, the
+Exercises `parallax.core.internal.continuation.plan` with no port and no database, the
 way `test_read_planning.py` exercises its neighbour: the Continuation Order a page
 node carries, the seek `after` composes onto the caller's own predicate, and the
 query shape a page plan refuses outright.
@@ -33,19 +33,19 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import continuation, read_planning, temporal_read
-from parallax.core.base import INFINITY, InternalError
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import (
+from parallax.core.internal import continuation, read_planning, temporal_read
+from parallax.core.internal.base import INFINITY, InternalError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Metamodel,
     PrimaryKey,
     entity_by_name,
 )
-from parallax.core.metamodel import TemporalDimension as AxisKind
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.object_query import (
+from parallax.core.internal.metamodel import TemporalDimension as AxisKind
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.object_query import (
     AsOf,
     AsOfRange,
     History,
@@ -55,12 +55,12 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._resolved import (
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.object_query._resolved import (
     ContinuationCoordinate,
     ResolvedObjectQuery,
 )
-from parallax.core.predicate import (
+from parallax.core.internal.predicate import (
     Comparison,
     FieldSubject,
     Or,
@@ -68,9 +68,9 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
-from parallax.core.predicate._resolved import ResolvedConstant
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._context import LoweredStatement
+from parallax.core.internal.predicate._resolved import ResolvedConstant
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import formed

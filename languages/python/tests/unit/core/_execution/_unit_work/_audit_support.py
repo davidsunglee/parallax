@@ -14,8 +14,8 @@ from dataclasses import dataclass, field, replace
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.strategy import ActorIdentity
-from parallax.core.metamodel import AttributeIdentity
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.metamodel import AttributeIdentity
+from parallax.core.internal.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedUpdate,

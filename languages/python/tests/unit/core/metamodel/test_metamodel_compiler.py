@@ -8,8 +8,8 @@ from typing import Any, TypeGuard, assert_type, cast
 
 import pytest
 
-from parallax.core import base, inheritance, relationship
-from parallax.core.metamodel import (
+from parallax.core.internal import base, inheritance, relationship
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -43,8 +43,8 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     accept_metamodel,
 )
-from parallax.core.metamodel._accepted import FacetKey
-from parallax.core.metamodel._compile import compile_metadata
+from parallax.core.internal.metamodel._accepted import FacetKey
+from parallax.core.internal.metamodel._compile import compile_metadata
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,

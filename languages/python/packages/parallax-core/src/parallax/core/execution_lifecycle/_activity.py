@@ -9,28 +9,7 @@ from types import TracebackType
 from typing import ClassVar, Final, Literal, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
-from parallax.core import auto_retry
 from parallax.core._execution._unit_work.uow import FlushTrigger
-from parallax.core.auto_retry import RetryPolicy
-from parallax.core.base import UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import (
-    AccessMode,
-    AcquisitionReason,
-    CleanupResult,
-    CommitFailed,
-    ConfirmedWriteOutcome,
-    ConnectionAcquisitionError,
-    IsolationLevel,
-    OrderedWriteResult,
-    OrderedWriteResultComplete,
-    RollbackTrigger,
-    RoutePolicy,
-    RouteSelection,
-    StatementFailed,
-    StatementNotExecuted,
-)
-from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     CausedFailure,
@@ -98,7 +77,28 @@ from parallax.core.execution_lifecycle._events import (
     TransactionInvocationFinished,
     TransactionInvocationStarted,
 )
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal import auto_retry
+from parallax.core.internal.auto_retry import RetryPolicy
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import (
+    AccessMode,
+    AcquisitionReason,
+    CleanupResult,
+    CommitFailed,
+    ConfirmedWriteOutcome,
+    ConnectionAcquisitionError,
+    IsolationLevel,
+    OrderedWriteResult,
+    OrderedWriteResultComplete,
+    RollbackTrigger,
+    RoutePolicy,
+    RouteSelection,
+    StatementFailed,
+    StatementNotExecuted,
+)
+from parallax.core.internal.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
+from parallax.core.internal.sql_gen import LoweredStatement
 
 type _ReadPurpose = ResultRepresentation | Literal["row-acquisition"]
 

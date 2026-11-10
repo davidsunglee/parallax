@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core.base import UsageError
-from parallax.core.inheritance._rules import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.inheritance._rules import (
     CONCRETE_WITHOUT_ABSTRACT_ROOT,
     CYCLE,
     DUPLICATE_TAG_VALUE,
@@ -48,7 +48,7 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
     parent resolution, acyclicity, the root-only declaration of strategy,
     temporality, optimistic locking, and layout, each family's root and
     concrete membership, and the strategy's table and tag rules. It raises a
-    :class:`~parallax.core.base.UsageError` whose code is the violated rule, or
+    :class:`~parallax.core.internal.base.UsageError` whose code is the violated rule, or
     :class:`~parallax.descriptor.DescriptorError` for a document whose shape is
     not a descriptor at all, and returns ``None`` for a document that
     passes — including one declaring no inheritance at all. It says nothing
@@ -91,7 +91,7 @@ def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
 
 def validate_families(metamodel: Metamodel) -> None:
     """Validate the raw-walk inheritance family invariants, raising a
-    :class:`~parallax.core.base.UsageError` coded with the violated rule.
+    :class:`~parallax.core.internal.base.UsageError` coded with the violated rule.
 
     The check order pins each corpus ``rejectedRule``: parent resolution,
     acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,

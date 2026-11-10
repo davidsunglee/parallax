@@ -19,9 +19,9 @@ import pytest
 
 from parallax.conformance import case_format, concurrency_runner
 from parallax.conformance.concurrency_runner import ConcurrencyStep, RoundsRun
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.dialect import POSTGRES, Dialect
 
 
 def _case(document: dict[str, Any], *, case_id: str = "m-concurrency-944") -> case_format.Case:

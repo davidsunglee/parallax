@@ -10,8 +10,8 @@ from typing import Any, cast
 import pytest
 from pydantic import PrivateAttr
 
-import parallax.core.entity._entity as entity_frontend
-import parallax.core.entity._value_object as value_object_frontend
+import parallax.core.internal.entity._entity as entity_frontend
+import parallax.core.internal.entity._value_object as value_object_frontend
 from parallax.core import (
     AbstractRoot,
     Attr,

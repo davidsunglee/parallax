@@ -12,10 +12,10 @@ from collections.abc import Callable, Hashable, Iterator, Mapping
 
 import pytest
 
-from parallax.core.metamodel import AttributeIdentity
-from parallax.core.write_plan import PlannedInsert
-from parallax.core.write_plan.keys import ObjectKey, VersionedObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.metamodel import AttributeIdentity
+from parallax.core.internal.write_plan import PlannedInsert
+from parallax.core.internal.write_plan.keys import ObjectKey, VersionedObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
@@ -25,7 +25,7 @@ from parallax.core.write_plan.plan import (
     WriteEffects,
     WriteGroup,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     NEW_LINEAGE,
     UNVERSIONED,

@@ -11,7 +11,7 @@ import pytest
 
 from parallax.conformance import case_format, edit_runner, engine
 from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
-from parallax.core.base import UsageError
+from parallax.core.internal.base import UsageError
 from parallax.snapshot import connect, pin_of
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

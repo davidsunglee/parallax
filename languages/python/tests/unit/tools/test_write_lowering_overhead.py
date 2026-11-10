@@ -27,7 +27,7 @@ from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     INT64,
     JSON,
@@ -37,7 +37,7 @@ from parallax.core.base import (
     String,
     detach_json_container,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     JSON_NULL,
     ArrayBind,
     CanonicalWriteStatement,
@@ -47,8 +47,8 @@ from parallax.core.db_port import (
     Row,
     StructuredDocument,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.write_plan.steps import PlannedInsert
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.write_plan.steps import PlannedInsert
 from production_origins import ORIGINS_FIELD
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _scalar_type_support as scalar_support

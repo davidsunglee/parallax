@@ -3,16 +3,21 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final
 
-from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
     PreparedInstruction,
     PreparedKeyedInstruction,
     WriteInstruction,
 )
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity, Metamodel, entity_by_name
-from parallax.core.write_plan.keys import ObjectKey
-from parallax.core.write_plan.steps import MaxPlusOne
+from parallax.core.internal import inheritance
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    CompiledEntity,
+    Metamodel,
+    entity_by_name,
+)
+from parallax.core.internal.write_plan.keys import ObjectKey
+from parallax.core.internal.write_plan.steps import MaxPlusOne
 
 __all__ = [
     "object_key",

@@ -15,11 +15,11 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.unit_work import NO_AUDIT, SubjectActor, WritePlanner
+from parallax.core.internal.unit_work import NO_AUDIT, SubjectActor, WritePlanner
 from tests._support.clock_probes import inert_instant
 
 if TYPE_CHECKING:
-    from parallax.core.metamodel import Metamodel
+    from parallax.core.internal.metamodel import Metamodel
 
 _ACCOUNT = models.load_models()["account"]
 

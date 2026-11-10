@@ -12,7 +12,7 @@ from parallax.core import (
     TxnOptions,
     UsageError,
 )
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [

@@ -1,7 +1,7 @@
 """m-metamodel: document-shape values and lookup."""
 
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     MemberShape,
     Multiplicity,
     OccurrenceDefinition,

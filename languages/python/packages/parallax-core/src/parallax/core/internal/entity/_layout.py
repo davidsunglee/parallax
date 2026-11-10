@@ -1,0 +1,271 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Protocol
+
+from parallax.core.internal.inheritance import (
+    EntityMemberSelection,
+    InheritanceEntityView,
+    inheritance_facet_of,
+)
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityIdentity,
+    MemberIdentity,
+    Metamodel,
+    Multiplicity,
+    RelationshipIdentity,
+    ValueObjectMetadata,
+)
+from parallax.core.internal.relationship import RelationshipMetadata, relationship_facet_of
+
+__all__ = [
+    "CatalogedModel",
+    "EntityLayout",
+]
+
+
+class NarrowableView(Protocol):
+    """One relationship view to place in canonical order.
+
+    Structural rather than nominal because the view key itself belongs to the
+    materializing runtime above this scope: a layout orders views without
+    naming the type that spells one.
+    """
+
+    @property
+    def relationship(self) -> RelationshipIdentity: ...
+    @property
+    def narrowed_view(self) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class EntityLayout:
+    """Member rows contain ancestry-ordered Attributes, then Value Objects.
+
+    ``primary_key`` locates the family's key Attribute in that row. ``family``
+    is the logical family root under either storage strategy. Relationship positions use whole
+    identities and ancestry-first declaration order. ``wire_type`` is the canonical
+    Entity name a family node publishes; standalone Entities have none.
+    """
+
+    concrete: EntityIdentity
+    family: EntityIdentity
+    member_selection: EntityMemberSelection
+    temporal_ends: frozenset[AttributeIdentity]
+    relationships: tuple[RelationshipIdentity, ...]
+    relationship_index: Mapping[RelationshipIdentity, int]
+    to_many: frozenset[RelationshipIdentity]
+    primary_key: tuple[int, ...]
+    temporal_starts: tuple[int, ...] = ()
+    wire_type: str | None = None
+
+    @property
+    def members(self) -> Sequence[MemberIdentity]:
+        return self.member_selection.identities
+
+    @property
+    def attribute_count(self) -> int:
+        return self.member_selection.attribute_count
+
+    @property
+    def index_of(self) -> Mapping[MemberIdentity, int]:
+        return self.member_selection.index
+
+    @property
+    def attributes(self) -> Sequence[AttributeMetadata]:
+        return self.member_selection.attributes
+
+    @property
+    def occurrences(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
+
+    @property
+    def value_objects(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
+
+    def ordered[V: NarrowableView](self, views: Iterable[V]) -> tuple[V, ...]:
+        """``views`` in canonical slot order: each relationship's own declaration
+        position with a direction this concrete does not navigate last, the
+        broad view before that relationship's narrowed ones, and narrowed views
+        by their derived key."""
+        return tuple(sorted(views, key=self._rank))
+
+    def _rank(self, view: NarrowableView) -> tuple[int, int, str]:
+        position = self.relationship_index.get(view.relationship, len(self.relationship_index))
+        return position, int(view.narrowed_view is not None), view.narrowed_view or ""
+
+
+class LayoutCatalog:
+    """One accepted Metamodel's exact-Entity layouts, every one derived at
+    construction.
+
+    Constructing a catalog lays out every Entity the model declares, so the
+    constructor is the one fallible point: a model whose accepted metadata
+    fixes no row for some Entity refuses the whole catalog rather than
+    surfacing at the first read that happens to address that Entity. After
+    construction every entry is immutable and shared, so a lookup allocates
+    nothing and can fail only by naming an Entity this model does not declare.
+
+    Every entry is a pure function of the accepted immutable metadata, so two
+    catalogs over one model are interchangeable and nothing compares a layout
+    by identity.
+    """
+
+    __slots__ = ("_layouts", "_model")
+
+    def __init__(self, model: Metamodel) -> None:
+        """Derive every Entity's layout, or raise.
+
+        Raises :class:`ValueError` when the accepted metadata cannot fix one row
+        for some Entity — two members claiming one position, or a family
+        primary key the row does not express.
+        """
+        self._model = model
+        self._layouts: Mapping[EntityIdentity, EntityLayout] = MappingProxyType(
+            {entity.identity: self._build(entity.identity) for entity in model.entities}
+        )
+
+    def entity(self, identity: EntityIdentity) -> EntityLayout:
+        """``identity``'s layout.
+
+        Raises :class:`ValueError` when this model declares no such Entity.
+        """
+        layout = self._layouts.get(identity)
+        if layout is None:
+            raise ValueError(
+                f"this model declares no Entity {identity.canonical!r}, "
+                "so it lays out no row for one"
+            )
+        return layout
+
+    def _build(self, identity: EntityIdentity) -> EntityLayout:
+        facet = inheritance_facet_of(self._model)
+        position = facet.entity(identity)
+        if (
+            position is None
+        ):  # pragma: no cover - an accepted model positions every Entity it declares
+            raise ValueError(
+                f"this model declares no Entity {identity.canonical!r}, "
+                "so it lays out no row for one"
+            )
+        selection = position.member_selection
+        index_of = selection.index
+        navigable = _navigable_relationships(self._model, position.ancestry)
+        relationships = tuple(direction.identity for direction in navigable)
+        return EntityLayout(
+            concrete=identity,
+            family=position.root,
+            member_selection=selection,
+            temporal_ends=self._temporal_ends(position.root),
+            relationships=relationships,
+            relationship_index=MappingProxyType(
+                {direction: position for position, direction in enumerate(relationships)}
+            ),
+            to_many=frozenset(
+                direction.identity
+                for direction in navigable
+                if direction.cardinality.target is Multiplicity.MANY
+            ),
+            primary_key=self._key_positions(position, index_of),
+            temporal_starts=self._temporal_start_positions(position.root, index_of),
+            wire_type=None if position.strategy is None else identity.canonical,
+        )
+
+    def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:
+        """The family's interval-closing Attributes, under the identities a
+        concrete descendant reaches them by."""
+        declaring = self._model.entity(root)
+        if declaring is None:  # pragma: no cover - an accepted model declares every family root
+            return frozenset()
+        return frozenset(axis.end_attribute for axis in declaring.declared_as_of_axes)
+
+    def _temporal_start_positions(
+        self, root: EntityIdentity, index_of: Mapping[MemberIdentity, int]
+    ) -> tuple[int, ...]:
+        """The family's axis starts in canonical rank, as row positions."""
+        declaring = self._model.entity(root)
+        if declaring is None:  # pragma: no cover - an accepted model declares every family root
+            return ()
+        return tuple(
+            index_of[axis.start_attribute]
+            for axis in sorted(declaring.declared_as_of_axes, key=lambda axis: axis.dimension.value)
+        )
+
+    @staticmethod
+    def _key_positions(
+        position: InheritanceEntityView, index_of: Mapping[MemberIdentity, int]
+    ) -> tuple[int, ...]:
+        """Where the family's primary key sits in this concrete's member row.
+
+        The family root owns the key even when a descendant is what a row
+        resolved to, so the position is the family key Attribute located in the
+        concrete's own family-effective row. A key that does not locate there is
+        a model defect: no row of such an Entity could carry a graph-local
+        identity at all.
+        """
+        at = index_of.get(position.primary_key.identity)
+        if at is None:
+            raise ValueError(
+                f"{position.entity.canonical} carries no position for the primary key its "
+                f"family {position.root.canonical} declares, so no row of it names a "
+                "logical node"
+            )
+        return (at,)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogedModel:
+    """One accepted Metamodel and the layouts derived from it, as one value.
+
+    A layout is a function of the model it came from, so a catalog beside a
+    Metamodel that did not produce it names a state nothing downstream could
+    detect. The record derives its own catalog from the one Metamodel it is
+    constructed over, so that state is unrepresentable rather than merely
+    checked: there is no second half for a caller to supply, no seam can thread
+    the two apart and rejoin them wrongly, and a consumer reads its member
+    layouts from the same value it reads its accepted metadata from.
+
+    Constructing one therefore derives the whole catalog, and is the complete,
+    fallible layout derivation for a model: it raises where the metadata fixes
+    no row for some Entity, and a record that exists lays out every Entity. A
+    runtime that must share one model's layouts holds one record rather than
+    forming a second beside it.
+
+    ``layouts`` stays out of comparison: it is a function of ``meta``, so it
+    distinguishes no two records that ``meta`` does not, while comparing it
+    would compare a catalog by identity — which nothing may do — and so make
+    two records over one model unequal for having each derived an
+    interchangeable catalog. A record is therefore the model it carries.
+    """
+
+    meta: Metamodel
+    layouts: LayoutCatalog = field(init=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "layouts", LayoutCatalog(self.meta))
+
+
+def _navigable_relationships(
+    model: Metamodel, ancestry: Sequence[EntityIdentity]
+) -> tuple[RelationshipMetadata, ...]:
+    """Every navigable direction in accepted declaration order, ancestry first.
+
+    A relationship declared on an inheritance ancestor is reached by every
+    concrete descendant under the ancestor's own identity and is never
+    redeclared, so the navigable set is the ancestry chain's directions with each
+    name taken from the nearest declaration.
+
+    The whole declaration rather than the identity alone, so a caller needing a
+    further fact of a direction takes it from the walk that placed the direction
+    rather than by looking that direction up again.
+    """
+    facet = relationship_facet_of(model)
+    order: dict[str, RelationshipMetadata] = {}
+    for ancestor in ancestry:
+        for direction in facet.relationships(ancestor) or ():
+            order.setdefault(direction.identity.name, direction)
+    return tuple(order.values())

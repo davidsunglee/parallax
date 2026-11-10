@@ -7,8 +7,8 @@ from dataclasses import replace
 
 import pytest
 
-from parallax.core import base
-from parallax.core.metamodel import (
+from parallax.core.internal import base
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AsOfAxisLocation,
@@ -52,7 +52,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     default_column_name,
 )
-from parallax.core.metamodel._resolve import (
+from parallax.core.internal.metamodel._resolve import (
     AS_OF_ATTRIBUTE_DUPLICATE,
     AS_OF_ATTRIBUTE_MISSING,
     AS_OF_ATTRIBUTE_NONCANONICAL,

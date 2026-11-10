@@ -5,7 +5,7 @@ from collections.abc import Collection, Generator
 from contextlib import contextmanager
 from typing import Final, Literal
 
-from parallax.core.base import ParallaxError, UsageError
+from parallax.core.internal.base import ParallaxError, UsageError
 
 __all__ = [
     "TRANSACTION_ESCAPED",

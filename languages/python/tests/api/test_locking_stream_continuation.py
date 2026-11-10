@@ -17,10 +17,10 @@ from parallax.core import (
     Entity,
     attr,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import DatabaseCallFailed, DatabaseCallFinished
-from parallax.core.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import TablePerConcreteSubtype
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root

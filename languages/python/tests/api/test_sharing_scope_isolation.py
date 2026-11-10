@@ -16,9 +16,9 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.core import MANY_TO_ONE, ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
-from parallax.core.db_port import IsolationLevel
-from parallax.core.entity import model_of
-from parallax.core.read_delivery import InvalidDataError
+from parallax.core.internal.db_port import IsolationLevel
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.snapshot import (
     ScopedDatabase,
     SharingScope,

@@ -32,26 +32,26 @@ from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     STRING,
     TIMESTAMP,
     StructuredDocument,
     UsageError,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     MappingRow,
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._expressions import AuthoredQuery
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     Column,
     ConcreteSubtype,
@@ -65,14 +65,20 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.predicate import TrueNode
-from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
-from parallax.core.read_planning import IncludeTree
-from parallax.core.read_planning._include_tree import build_include_tree
-from parallax.core.temporal_read import Edge, Pin
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.object_query._fluent import typed_read_query
+from parallax.core.internal.predicate import TrueNode
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.read_delivery._page import (
+    ABSENT,
+    ROOT_LEVEL,
+    Page,
+    PageBuilder,
+    ViewSchema,
+)
+from parallax.core.internal.read_planning import IncludeTree
+from parallax.core.internal.read_planning._include_tree import build_include_tree
+from parallax.core.internal.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
     ScopedDatabase,

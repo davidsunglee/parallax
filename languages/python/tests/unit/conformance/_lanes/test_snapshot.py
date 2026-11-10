@@ -25,19 +25,19 @@ from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import Emission, ScenarioRun, UnclassifiedEngineError
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     UsageError,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseConnection,
     MappingRow,
     TransactionOutcome,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.temporal_read import Pin
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort

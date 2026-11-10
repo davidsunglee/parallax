@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg.sql import SQL, Composed, Identifier
 
-from parallax.core.base import UsageError
-from parallax.core.db_port import AUTHORIZATION_INVALID
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import AUTHORIZATION_INVALID
 from parallax.postgres._connection import (
     _complete_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers
     _start_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers

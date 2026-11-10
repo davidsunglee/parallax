@@ -182,20 +182,6 @@ from parallax.core import (
     ExecutionLifecycleProvider,
     FanoutLifecycleProvider,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    Bind,
-    CommitFailed,
-    Committed,
-    DatabaseAdapter,
-    DatabaseConnection,
-    DocumentReadOrdinals,
-    RolledBack,
-    Row,
-    TransactionOutcome,
-)
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     JoinedInvocation,
@@ -219,6 +205,20 @@ from parallax.core.execution_lifecycle._activity import (
     open_stream_root,
     open_transaction_root,
 )
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    Bind,
+    CommitFailed,
+    Committed,
+    DatabaseAdapter,
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

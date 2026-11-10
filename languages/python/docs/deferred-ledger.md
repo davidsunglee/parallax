@@ -34,7 +34,7 @@ Entry numbering is continuous and never reused. The next new number is **D-99**.
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
 *Low — one concurrency mode of a legal read shape is unreachable from
-`TxnContext.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_union_read`,
+`TxnContext.find`.* Relates to `parallax.core.internal.sql_gen._inheritance._plan_tpcs_union_read`,
 `m-sql` *Ordered or limited abstract read*.
 
 **What.** `_plan_tpcs_union_read` refuses a union-all read that requests a shared row
@@ -187,9 +187,9 @@ unobserved lane is one that opens no Handle at all and says so.
 
 *Medium — two identical mapping builds are 62% of a published `model_dump`, and
 1.55x of it is recoverable with retained memory measured flat.* Relates to
-`parallax.core.entity._instance_state._DeclaredState.__get__`,
-`parallax.core.entity._instance_state.plan_of`,
-`parallax.core.entity._instance_state._PresentedState`.
+`parallax.core.internal.entity._instance_state._DeclaredState.__get__`,
+`parallax.core.internal.entity._instance_state.plan_of`,
+`parallax.core.internal.entity._instance_state._PresentedState`.
 
 A published value's serialization cost is an accepted part of the Interface:
 `_DeclaredState`'s docstring states that a published value's presentation is
@@ -343,9 +343,9 @@ whose gates are about representation rather than about serialization speed.
 
 *Medium — 4.3x on the read itself, structural, and the price of the retained-byte
 reduction rather than a defect in it.* Relates to
-`parallax.core.entity._members.Attr.__get__`,
-`parallax.core.entity._members.ElementAttr.__get__`,
-`parallax.core.entity._instance_state.COMPACT_STATE_SLOT`.
+`parallax.core.internal.entity._members.Attr.__get__`,
+`parallax.core.internal.entity._members.ElementAttr.__get__`,
+`parallax.core.internal.entity._instance_state.COMPACT_STATE_SLOT`.
 
 A published value's cost on serialization is stated at the seam and carried by
 D-82. This is the same fact from the other side, on the operation the claim was
@@ -605,7 +605,7 @@ measurement retention rule, with an explicit conclusion that closes this gap.
 conformance engine carries a second model of it.* Relates to
 `core/spec/m-edit.md`, `core/spec/m-navigate.md`,
 `docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
-`parallax.core.entity._edit`, `parallax.snapshot._inspection`,
+`parallax.core.internal.entity._edit`, `parallax.snapshot._inspection`,
 `parallax.conformance._lanes.snapshot`,
 [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production-snapshot).
 Owner: this target's Wire public interface; a second language target composing a
@@ -657,7 +657,7 @@ an unrelated obligation.
 ## Forwarding pointers
 
 - **D-72** → closed by [COR-223](https://linear.app/flimflam/issue/COR-223/make-predicate-writes-readless-only-and-add-replace-where). A predicate write is one readless statement and preparation refuses every target that would need its rows read (`core/spec/m-batch-write.md`), so no write stages a read that could meet an issue-bearing row.
-- **D-97** → fixed. `parallax.core.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
+- **D-97** → fixed. `parallax.core.internal.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
 - **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels.
 - **D-80** → fixed. Duplicate projections are compared before decode by their exact, type-sensitive positional Payload Witness. Equal witnesses share one Page-owned Entity State; unequal witnesses in one Root View raise `InvalidDataError` with code `snapshot-fetched-row-conflict`, so no first-projection-wins premise remains.
@@ -691,7 +691,7 @@ prose.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`scenario._refuse_materialized_case_state`, marked by `simulated_temporal_store.SimulatedTemporalStore.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
 - **D-67** → closed by [COR-171](https://linear.app/flimflam/issue/COR-171/grade-inheritance-graph-nodes-by-one-per-variant-shape-and-close-d-67). `core/spec/m-case-format.md` states one per-variant node shape for `then.graph` at every level, so every case the exception held grades through plain `compare_graph` and `tests/_support/graph_residuals.py` is gone. `m-read-planning-030` gained a Typed story; `m-inheritance-073` and `-077` stay outside the Typed lane, because no idiomatic spelling reaches a path-root guard naming two subtypes, and `api_suite.py` records that.
-- **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/conformance/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
+- **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.internal.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/conformance/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
 - **D-76** → closed by the decision it asked for. An invalid scenario `mutate` `set` is a **case-authoring failure**: `core/spec/m-case-format.md` states it in the register the bare write row already uses, and the corpus's own model-aware validation (`reference_harness.schema_validate._validate_scenario_edit`, run by `just core-check-schemas`) refuses such a case before either executor sees it. Undeclarability is the design rather than a gap — an edit refusal is deliberately not an `expectError` member — so what the entry called a divergence is now one rule with one enforcement point, and the Python lane's own verdict (`engine._judged_assignments`) is a restatement rather than the portability mechanism.
 - **D-71** → fixed. `document_codec.classify_effective_change` is the one operation every write asks whether an assignment changes anything, and the rule it applies is stated once by `core/spec/m-document-codec.md` *Managed documents and the effective change set*.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.

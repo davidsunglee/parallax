@@ -38,16 +38,16 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ArrayBind, ConnectionAcquisitionError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.execution import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import ArrayBind, ConnectionAcquisitionError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.read_delivery._read_plan import ReadPlanCache
-from parallax.core.sql_gen._compile import CompiledTemplate
+from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
+from parallax.core.internal.sql_gen._compile import CompiledTemplate
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.snapshot import TxnContext, connect
 from tests._support.ended_sessions import end_backend, named_backend
@@ -142,7 +142,7 @@ def test_a_startup_that_cannot_reach_a_server_publishes_no_handle(profile_run: A
     # Readiness is proved before publication, so a destination nothing answers
     # at is a composition failure rather than a handle that fails later.
     del profile_run  # the fixture is what admits this test to the database lane
-    from parallax.core.db_port import DRIVER_MANAGED, DatabaseStartupError
+    from parallax.core.internal.db_port import DRIVER_MANAGED, DatabaseStartupError
     from parallax.postgres import PostgresAdapter, PostgresEndpoint
 
     unreachable = PostgresAdapter(

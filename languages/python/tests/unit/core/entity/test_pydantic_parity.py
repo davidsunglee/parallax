@@ -40,7 +40,7 @@ from pydantic import (
     model_serializer,
 )
 
-from parallax.core.entity import (
+from parallax.core.internal.entity import (
     AbstractRoot,
     Attr,
     ConcreteSubtype,
@@ -48,8 +48,8 @@ from parallax.core.entity import (
     ValueObject,
     attr,
 )
-from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel
-from parallax.core.metamodel import TablePerHierarchy
+from parallax.core.internal.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel
+from parallax.core.internal.metamodel import TablePerHierarchy
 from tests.unit.core.entity._compact_support import published
 
 _NS = "parity"
@@ -712,9 +712,9 @@ def test_iteration_exposes_no_relationship_sentinel_or_lifecycle_state() -> None
     # carry it, because the two exclusions have different mechanisms — a slot is
     # not in an ordinary value's storage, and a published value's presentation is
     # derived from its row.
-    from parallax.core.entity import MANY_TO_ONE, Rel, rel
-    from parallax.core.entity._entity import attach_lifecycle_state, lifecycle_state
-    from parallax.core.entity._pydantic_storage import attach_instance_state
+    from parallax.core.internal.entity import MANY_TO_ONE, Rel, rel
+    from parallax.core.internal.entity._entity import attach_lifecycle_state, lifecycle_state
+    from parallax.core.internal.entity._pydantic_storage import attach_instance_state
 
     class Bay(Entity, table="bay", namespace=_NS):
         id: Attr[int] = attr(primary_key=True)

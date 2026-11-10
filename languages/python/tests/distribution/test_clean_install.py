@@ -108,16 +108,16 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # modules fails here and nowhere else in the clean-install lane.
     _run(
         python,
-        "from parallax.core import sql_gen\n"
-        "from parallax.core.dialect import POSTGRES\n"
+        "from parallax.core.internal import sql_gen\n"
+        "from parallax.core.internal.dialect import POSTGRES\n"
         "assert POSTGRES.quote('constraint') == '\"constraint\"'\n"
         "assert POSTGRES.quote('position') == 'position'\n"
         "assert POSTGRES.quote('owner') == 'owner'\n",
     )
     # The execution runtime and read delivery are core's own: both cold-import
     # with no lifecycle extension installed.
-    assert _import_ok(python, "parallax.core.execution")
-    assert _import_ok(python, "parallax.core.read_delivery")
+    assert _import_ok(python, "parallax.core.internal.execution")
+    assert _import_ok(python, "parallax.core.internal.read_delivery")
     # Unselected interchange, lifecycle, adapter, driver, and dev tooling are all
     # absent — the Descriptor Frontend and both of the dependencies it alone
     # declares included, so `parallax-core`'s manifest really is Pydantic only.
@@ -259,8 +259,8 @@ def test_core_and_evolution(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # The scope resolves out of the installed wheel, not merely off the source
     # tree: a private module missing from the built package, or a cycle among the
     # private modules, fails here and nowhere else in the clean-install lane.
-    assert _import_ok(python, "parallax.evolution.model_evolution")
-    assert _import_ok(python, "parallax.evolution.schema_delta")
+    assert _import_ok(python, "parallax.evolution.internal.model_evolution")
+    assert _import_ok(python, "parallax.evolution.internal.schema_delta")
     assert _import_ok(python, "parallax.evolution.operations")
     # No Descriptor Frontend, descriptor parser, schema validator, sibling
     # lifecycle, adapter, driver, or conformance harness.

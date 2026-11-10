@@ -5,8 +5,8 @@ from collections.abc import Mapping
 
 import yaml
 
-from parallax.core.entity._model import DomainModel, model_of
-from parallax.core.metamodel import UnresolvedMetamodel
+from parallax.core.internal.entity._model import DomainModel, model_of
+from parallax.core.internal.metamodel import UnresolvedMetamodel
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._export import ExportTarget, export_defect
 from parallax.descriptor._export import export_document as _document_of_model
@@ -31,7 +31,7 @@ def domain_model_from_document(document: Mapping[str, object]) -> DomainModel:
     door shares: ``descriptor-schema-invalid`` for a canonical-schema
     violation, then ``descriptor-value-invalid`` for a schema-valid but
     unconstructible value — both before any hub exists — and
-    finally :class:`~parallax.core.model_formation.MetamodelValidationError` for
+    finally :class:`~parallax.core.internal.model_formation.MetamodelValidationError` for
     every semantic model rule, still inside this call. The document uses the
     schema's two top-level forms: ``entity:`` for one Entity or ``entities:``
     for several.
@@ -70,7 +70,7 @@ def export_document(model: DomainModel) -> dict[str, object]:
     hub-state check and has no state failure to propagate; it renews no
     validation, performs no state change, and retains no descriptor cache.
     Repeated results are structurally equal. A conversion defect raises
-    :class:`~parallax.core.base.InternalError` with ``descriptor-export-failed``,
+    :class:`~parallax.core.internal.base.InternalError` with ``descriptor-export-failed``,
     naming target ``document`` and raised from the original defect; it returns
     no partial output and leaves ``model`` unchanged.
     """

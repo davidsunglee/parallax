@@ -4,10 +4,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from typing import ClassVar, Final, Literal, Self, cast
 
-from parallax.core.base import ParallaxError
-from parallax.core.metamodel import EntityIdentity, MemberIdentity
-from parallax.core.temporal_read import Edge
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.base import ParallaxError
+from parallax.core.internal.metamodel import EntityIdentity, MemberIdentity
+from parallax.core.internal.temporal_read import Edge
+from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = [
     "CONTINUATION_ORDER_NOT_TOTAL",

@@ -19,12 +19,12 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import INFINITY as OPEN
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, Metamodel, entity_by_name
-from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import INFINITY as OPEN
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, Metamodel, entity_by_name
+from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
     STALE_WRITE,

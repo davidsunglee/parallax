@@ -11,7 +11,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core.metamodel import MemberDefinition, MemberShape, Multiplicity, ScalarDefinition
+from parallax.core.internal.metamodel import (
+    MemberDefinition,
+    MemberShape,
+    Multiplicity,
+    ScalarDefinition,
+)
 
 __all__ = ["positional_row"]
 

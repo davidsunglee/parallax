@@ -25,16 +25,23 @@ from parallax.core._execution._routing import OperationRouting, read_only_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
-from parallax.core.auto_retry import (
+from parallax.core.execution_lifecycle._activity import (
+    InstalledLifecycle,
+    TransactionAttemptActivity,
+    TransactionInvocationActivity,
+    open_transaction_root,
+    refuse_reentry,
+)
+from parallax.core.internal.auto_retry import (
     RetryPolicy,
     _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - only the runner hands the loop a candidate
     retry_eligible,
     retry_policy,
     run_with_retry,
 )
-from parallax.core.base import ParallaxError, UsageError
-from parallax.core.concurrency import ConcurrencyPreference, concurrency_preference
-from parallax.core.db_port import (
+from parallax.core.internal.base import ParallaxError, UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference, concurrency_preference
+from parallax.core.internal.db_port import (
     AccessMode,
     BeginFailed,
     Committed,
@@ -47,15 +54,8 @@ from parallax.core.db_port import (
     RoutePolicy,
     isolation_level,
 )
-from parallax.core.execution_authority._authority import ExecutionAuthority, same_authority
-from parallax.core.execution_lifecycle._activity import (
-    InstalledLifecycle,
-    TransactionAttemptActivity,
-    TransactionInvocationActivity,
-    open_transaction_root,
-    refuse_reentry,
-)
-from parallax.core.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.execution_authority._authority import ExecutionAuthority, same_authority
+from parallax.core.internal.read_delivery._read_plan import ReadPlanner
 
 __all__ = [
     "TRANSACTION_ACCESS_MODE_MISMATCH",

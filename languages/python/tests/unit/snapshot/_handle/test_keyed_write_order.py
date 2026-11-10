@@ -34,9 +34,9 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core.base import UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.entity import EditError
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.entity import EditError
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write

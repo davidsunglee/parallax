@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from parallax.core._execution._family import entity_layout, family_view
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.write_plan.managed_row import ManagedRow
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 __all__ = [
     "collapse_group_key",

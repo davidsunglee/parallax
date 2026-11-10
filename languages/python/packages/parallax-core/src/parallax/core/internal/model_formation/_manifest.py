@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any, Final
+
+from parallax.core.internal.metamodel import IssueCode
+from parallax.core.internal.metamodel._accepted import FacetKey
+
+__all__ = [
+    "FIXED_RESOLVER",
+    "METADATA_COMPILER_REQUIRED",
+    "MODEL_FORMATION_MODULE",
+    "REQUIRED_RULE_SET",
+    "FixedResolver",
+    "FormationManifest",
+    "FormationManifestEntry",
+    "MetadataCompilerRequirement",
+    "ModelCompilerRequirement",
+    "ModuleIdentity",
+    "RequiredRuleSet",
+]
+
+type ModuleIdentity = str
+"""A canonical ``m-<slug>`` identity from the core module catalog."""
+
+MODEL_FORMATION_MODULE: Final[ModuleIdentity] = "m-model-formation"
+"""The catalog identity of this scope.
+
+A contributing module's manifest row declares the modules it depends on, and
+every contributor depends on this one for the protocols it implements, so the
+identity is stated once here rather than spelled in each composition root."""
+
+
+@dataclass(frozen=True, slots=True)
+class FixedResolver:
+    """The owner's validation is the fixed foundational resolver.
+
+    The resolver is not a profile contributor, so this row declares Issue Codes
+    the runner validates resolver output against while requiring no supplied
+    Rule Set.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredRuleSet:
+    """The owner must supply a Model Formation Rule Set."""
+
+
+type RuleSetRequirement = FixedResolver | RequiredRuleSet
+"""What a manifest row demands in the Rule Set position; absence is ``None``."""
+
+FIXED_RESOLVER: Final[FixedResolver] = FixedResolver()
+"""The Rule Set position of the one row whose validation is the fixed resolver.
+
+Exactly one manifest row carries it. The requirement variants are stateless, so
+one instance serves every row that names it."""
+
+REQUIRED_RULE_SET: Final[RequiredRuleSet] = RequiredRuleSet()
+"""The Rule Set position of a row whose owner must supply a Rule Set.
+
+A row with neither this nor :data:`FIXED_RESOLVER` demands no validation, and a
+profile that supplies a Rule Set for it is drift."""
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataCompilerRequirement:
+    """The owner supplies the one mandatory Metadata Compiler; it has no facet."""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCompilerRequirement:
+    """The owner supplies a Model Compiler producing the facet under ``facet_key``."""
+
+    facet_key: FacetKey[Any]
+
+
+type CompilerRequirement = MetadataCompilerRequirement | ModelCompilerRequirement
+"""What a manifest row demands in the compiler position; absence is ``None``."""
+
+METADATA_COMPILER_REQUIRED: Final[MetadataCompilerRequirement] = MetadataCompilerRequirement()
+"""The compiler position of the one row demanding the mandatory Metadata Compiler.
+
+Exactly one manifest row carries it and its owner is ``m-metamodel``; every other
+compiling row carries a :class:`ModelCompilerRequirement` naming a facet key."""
+
+
+@dataclass(frozen=True, slots=True)
+class FormationManifestEntry:
+    """One module's complete formation contract.
+
+    ``issue_codes`` is the owner's exclusive, complete code set: a Rule Set that
+    emits anything outside it, or a second row that claims one of its codes, is
+    a contract failure rather than a model issue.
+    """
+
+    owner: ModuleIdentity
+    rule_set: RuleSetRequirement | None = None
+    issue_codes: frozenset[IssueCode] = frozenset()
+    compiler: CompilerRequirement | None = None
+    required_modules: frozenset[ModuleIdentity] = frozenset()
+    required_facets: frozenset[FacetKey[Any]] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class FormationManifest:
+    """The nonempty ordered set of manifest entries one formation is measured against.
+
+    An empty manifest, or one that names an owner twice, raises
+    :class:`ValueError`: the runner resolves every contributor by owner, so a
+    manifest that cannot answer "what does this owner contribute?" unambiguously
+    is unconstructible rather than a runtime failure mode.
+    """
+
+    entries: tuple[FormationManifestEntry, ...]
+
+    def __post_init__(self) -> None:
+        if not self.entries:
+            raise ValueError("a Formation Manifest declares at least one entry")
+        repeated = sorted(
+            owner
+            for owner, count in Counter(entry.owner for entry in self.entries).items()
+            if count > 1
+        )
+        if repeated:
+            raise ValueError(f"a Formation Manifest names each owner once; {repeated} repeat")

@@ -19,38 +19,45 @@ import pytest
 
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core import continuation, read_planning
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, INT64, InternalError, TemporalBound
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.navigate import (
+from parallax.core.internal import continuation, read_planning
+from parallax.core.internal.base import INFINITY, INT64, InternalError, TemporalBound
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.navigate import (
     NoRootSelections,
     PropagatedRootSelections,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query import deserialize
-from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
-from parallax.core.predicate._execution_values import ExecutionValueSources
-from parallax.core.predicate._resolved import ResolvedAnd, ResolvedComparison, ResolvedMembership
-from parallax.core.read_delivery import _read_plan
-from parallax.core.read_delivery._delivery import find
-from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
-from parallax.core.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
-from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.sql_gen import _compile as _compile_module
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.object_query._resolved import (
+    ContinuationCoordinate,
+    ResolvedObjectQuery,
+)
+from parallax.core.internal.predicate._execution_values import ExecutionValueSources
+from parallax.core.internal.predicate._resolved import (
+    ResolvedAnd,
+    ResolvedComparison,
+    ResolvedMembership,
+)
+from parallax.core.internal.read_delivery import _read_plan
+from parallax.core.internal.read_delivery._delivery import find
+from parallax.core.internal.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
+from parallax.core.internal.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
+from parallax.core.internal.sql_gen import _compile as _compile_module
+from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
     compile_read,
     compile_write_predicate,
 )
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.sql_gen._inheritance import ReadResultContract
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._inheritance import ReadResultContract
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database

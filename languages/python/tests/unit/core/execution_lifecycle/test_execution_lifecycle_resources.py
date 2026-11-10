@@ -40,20 +40,6 @@ from parallax.core import (
     FanoutLifecycleProvider,
     RootExecution,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    RESOURCE_LOGGER_NAME,
-    CleanupIssue,
-    ConnectionAcquisitionError,
-    Invalidated,
-    ReleaseUnconfirmed,
-    Returned,
-    RouteCapabilities,
-    RouteSelection,
-    report_resource_issues,
-)
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -69,6 +55,20 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    RESOURCE_LOGGER_NAME,
+    CleanupIssue,
+    ConnectionAcquisitionError,
+    Invalidated,
+    ReleaseUnconfirmed,
+    Returned,
+    RouteCapabilities,
+    RouteSelection,
+    report_resource_issues,
+)
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import Database, ScopedDatabase, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from parallax.core.base import STRING
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     Column,

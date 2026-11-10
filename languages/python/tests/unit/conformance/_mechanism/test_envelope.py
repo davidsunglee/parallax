@@ -12,9 +12,9 @@ import datetime as dt
 import decimal
 
 from parallax.conformance._mechanism.envelope import Emission
-from parallax.core.base import STRING, InternalError, NeutralType, Numeric
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import (
+from parallax.core.internal.base import STRING, InternalError, NeutralType, Numeric
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import (
     SQL_GENERATION_FAILED,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage] - unit test builds sql_gen's private bind records directly
 )

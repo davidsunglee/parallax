@@ -1,0 +1,2210 @@
+from __future__ import annotations
+
+import datetime as _dt
+import decimal as _decimal
+import enum
+import re
+import sys
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType, NoneType, UnionType
+from typing import (
+    Any,
+    ClassVar,
+    Final,
+    ForwardRef,
+    NamedTuple,
+    Never,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
+
+from pydantic import ConfigDict, field_validator
+from pydantic._internal._model_construction import ModelMetaclass
+
+from parallax.core.internal.base import (
+    FLOAT32,
+    INT32,
+    Float32,
+    Int32,
+    NeutralType,
+    Numeric,
+    UsageError,
+    coerce_neutral_input,
+    matches_typed_carrier,
+    typed_converter,
+)
+from parallax.core.internal.base import infer_neutral_type as _infer_neutral_type
+from parallax.core.internal.document_codec._plan import (
+    BORROWED_DOCUMENTS,
+    AuthoringCatalog,
+    AuthoringLane,
+)
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._errors import (
+    ENTITY_ANNOTATION_INVALID,
+    ENTITY_BASE_INVALID,
+    ENTITY_CANONICAL_NAME_COLLISION,
+    ENTITY_HEADER_INVALID_VALUE,
+    ENTITY_HEADER_MISSING_OPTION,
+    ENTITY_HEADER_UNKNOWN_OPTION,
+    ENTITY_MEMBER_VALUE_INVALID,
+    ENTITY_OPTION_CONTEXT_INVALID,
+    ENTITY_OPTION_INVALID_VALUE,
+    ENTITY_RESERVED_MEMBER_NAME,
+)
+from parallax.core.internal.entity._expressions import (
+    EXPRESSION_OPERATION_NAMES,
+    AttributeRef,
+    RelationshipRef,
+    snake_to_camel,
+)
+from parallax.core.internal.entity._instance_state import PublicationPlan
+from parallax.core.internal.entity._instance_state import install as install_publication_plan
+from parallax.core.internal.entity._members import (
+    AbstractSubtype,
+    Attr,
+    AttrSpec,
+    ConcreteSubtype,
+    DefiningRelSpec,
+    Document,
+    ElementAttr,
+    IndexSpec,
+    InheritanceRole,
+    Rel,
+    RelSpec,
+    ReverseRelSpec,
+)
+from parallax.core.internal.metamodel import (
+    NOT_PRIMARY_KEY,
+    AbstractRoot,
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    AttributeMetadata,
+    AttributeReference,
+    AuthoringViolation,
+    Column,
+    Columns,
+    DerivedAxis,
+    EntityIdentity,
+    EntityReference,
+    ExactEntityReference,
+    IndexIdentity,
+    IndexMetadata,
+    MemberDefinition,
+    MemberShape,
+    Multiplicity,
+    NestedValueObjectOccurrenceDeclaration,
+    NullPlacement,
+    PersistenceMode,
+    RelationshipIdentity,
+    RelationshipReference,
+    RelativeEntityReference,
+    ScalarDefinition,
+    StorageContainer,
+    StorageLayout,
+    Table,
+    TablePerConcreteSubtype,
+    TablePerHierarchy,
+    TemporalDimension,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedInheritance,
+    UnresolvedRelationshipDeclaration,
+    UnresolvedRelationshipJoin,
+    UnresolvedRelationshipOrder,
+    UnresolvedReverseRelationshipDeclaration,
+    ValueObjectAttributeDeclaration,
+    ValueObjectMetadata,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
+    default_column_name,
+    derive_primary_key_index,
+    derive_temporal_structure,
+    designate_framework_owned,
+    temporality_profile,
+    value_object_metadata,
+)
+from parallax.core.internal.metamodel import AbstractSubtype as AcceptedAbstractSubtype
+from parallax.core.internal.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+from parallax.core.internal.metamodel._temporal_structure import TEMPORAL_MEMBERS
+
+__all__ = [
+    "DECLARATION_MEMBER_NAMES",
+    "FRAMEWORK_MINT",
+    "LIFECYCLE_STATE_SLOT",
+    "DeclarationKind",
+    "EntityHeader",
+    "ValueObjectShape",
+    "WireNames",
+    "build_class",
+    "declaration_of",
+    "is_entity_class",
+    "members_of",
+    "shape_of",
+    "wire_names_of",
+]
+
+
+class DeclarationKind(enum.Enum):
+    """Which frontend a declaration belongs to."""
+
+    ENTITY = "entity"
+    VALUE_OBJECT = "value_object"
+
+
+FRAMEWORK_MINT: Final = object()
+"""Capability token authorizing an inert framework-root class.
+
+Only the two frontend modules hold it. It guards against a mistyped header
+rather than against a determined caller: anyone willing to import a private
+module can obtain it, and the result is an inert class that declares nothing and
+is never a Domain Model candidate.
+"""
+
+FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
+"""The prefix carried by the framework's own private bindings, which no
+declaration of any kind may author: the class markers the engine puts on a
+declared class, the private slots it puts on an instance, and the document and
+authoring capabilities every Value Object exposes to framework internals.
+
+The framework's public bindings sit outside this prefix, and each is reserved by
+the rule that owns it rather than by this one: the copy verb ``edit``, the pickle
+entry point ``__reduce_ex__``, and the query-root and introspection spellings by
+name (:data:`RESERVED_MEMBER_NAMES`), Pydantic's ``model_config`` by the
+``model_*`` namespace rule, and the injected temporal members by the
+canonical-name rule that runs on a family extending a temporal root. What the
+prefix covers is only what a declaration never names, which is why reserving the
+whole prefix rather than enumerating it stays correct as markers and slots are
+added, and why the reservation can be total: it applies to every Entity and Value
+Object class body alike, and only a framework root — the framework declaring
+itself — binds under it.
+
+What it protects is that no class body shadows one of those bindings: a body
+binding under one of these names answers every ordinary read the framework's own
+value would answer, and a ``functools.cached_property`` spelled under one is
+worse than a shadow — the edit surface reads a derived cache off the class, so
+such a binding would have an edited copy recompute the author's answer in place
+of the state it carried. The rule reads the class body as authored, which makes
+it an authoring rule and not a barrier: a name a descriptor's ``__set_name__``
+installs is outside the pre-creation namespace scan this rule performs, and a
+name assigned once the class exists is outside class-creation checks altogether.
+Auditing the constructed class would catch the descriptor and still not prevent
+the later assignment, which is why the rule stays where the collision is
+written."""
+
+_KIND: Final = "__parallax_kind__"
+_AXES: Final = "__parallax_framework_axes__"
+_DECLARATION: Final = "__parallax_declaration__"
+_MEMBERS: Final = "__parallax_members__"
+_WIRE_NAMES: Final = "__parallax_wire_names__"
+_SHAPE: Final = "__parallax_shape__"
+_VALIDATION: Final = "__parallax_member_validation__"
+
+LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
+"""The one per-instance slot a materialized node's lifecycle state occupies.
+
+Entity Graph Construction attaches whatever opaque value the publishing
+lifecycle answered for the node and never interprets it, so a lifecycle
+package's own state — the Snapshot slice's views, pin, and edge, or a future
+managed slice's entirely different record — travels under one name Entity
+exposes nowhere and interprets never. One slot rather than a per-fact family is
+what keeps Entity free of every lifecycle's vocabulary.
+
+It is a real slot on the ``Entity`` root rather than an entry in the instance
+storage, which is what lets a published node have no storage at all; Value
+Objects have no lifecycle and are given no such slot. Being a slot also keeps it
+outside everything Pydantic reads — the field set, canonical serialization,
+equality, and ``repr`` all reach a value's declared state and none of them reach
+here — and outside every mapping a copy is derived from, so an edit carries it
+across explicitly rather than by riding along.
+
+Pickling is the one conversion it does not merely disappear from: a lifecycle's
+private record of a live read has no truthful form on the other side of a process
+boundary, so a value carrying state here is refused at the pickle entry point.
+That refusal is the one thing Entity reads this slot for, and it reads the slot's
+own descriptor: a node whose lifecycle answered ``None`` as its state is one
+every reader of a lifecycle sees nothing on, and a pickle of it can claim
+nothing untrue. That is a
+different read from ``lifecycle_state_of``, which resolves the name through the
+class, so a class body binding ``__getattr__``, ``__getattribute__``, or a class
+attribute at this very name can make the two disagree. Every write the framework
+makes — a read's attachment and an edit's carry-forward alike — goes to the slot,
+so what such a class buys is blinding its own lifecycle's readers rather than a
+pickle of a node a read published: the state is opaque here, and the lifecycle
+that would grant anything for it authenticates what it attached itself."""
+
+_ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
+_REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)
+_OPTIONAL_TEXT = re.compile(r"^Optional\[(?P<inner>.+)\]$", re.DOTALL)
+_TUPLE_TEXT = re.compile(r"^tuple\[(?P<inner>.+)\]$", re.DOTALL)
+
+DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "identity",
+        "container",
+        "persistence",
+        "layout",
+        "attributes",
+        "relationships",
+        "value_objects",
+        "as_of_axes",
+        "inheritance",
+        "indices",
+    }
+)
+"""The ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on
+the class object itself."""
+
+_COPY_VERB_NAME: Final = "edit"
+"""The instance-level copy verb both frontends install.
+
+A declared member of this name installs its descriptor over the verb and silently
+disables editing for that class, which is the same harm on either kind — so this
+is one of the two public framework bindings reserved against an Entity Class and
+a Value Object Class alike.
+"""
+
+_CORE_SCHEMA_HOOK_NAME: Final = "__get_pydantic_core_schema__"
+"""Pydantic's advanced schema-construction seam, which the framework owns.
+
+A schema hook decides what validation and serialization a class gets, whole, and
+an authored one replaces rather than composes. A published value serializes as
+itself only because Pydantic's own compiled serializer runs over what
+:data:`_STATE_PRESENTATION_NAMES` present, so a class rewriting that schema
+decides what publication means for its own instances — which is the one Pydantic
+extension point a declaration may not take. Its JSON-schema sibling
+``__get_pydantic_json_schema__`` is deliberately NOT reserved: the framework
+installs none, so an authored one composes with Pydantic's own.
+
+The reservation holds on either kind, because a Value Object is published the
+same way an Entity is.
+"""
+
+_STATE_PRESENTATION_NAMES: Final[frozenset[str]] = frozenset(
+    {"__dict__", "__pydantic_fields_set__"}
+)
+"""The two names a value's instance state is presented under, which the framework
+owns.
+
+Pydantic reads what a model physically holds by these names rather than through
+the interpreter's own struct pointer, so what a framework root binds under them
+decides what every Pydantic implementation over instance state sees — equality,
+hashing, repr, the compiled serializer, and validation alike. A class body
+binding either one takes that decision for its own instances, and a published
+value of it would answer Pydantic with whatever the binding returned. The seam's
+integrity rests on this reservation, which is why it is stated rather than
+assumed.
+
+It holds on either kind, for the reason the schema seam above does.
+"""
+
+_STATE_CONTAINER_NAMES: Final[frozenset[str]] = frozenset(
+    {"__pydantic_extra__", "__pydantic_private__"}
+)
+"""The two mutable containers Pydantic lays out beside a value's instance state.
+
+Pydantic keys on these names rather than on the descriptors behind them: every
+extra field and every ``PrivateAttr`` is read and written under one of them, and
+deriving a copy gives the copy its own outer mapping of each so that a write
+through the copy is not a write to its source. A class body binding either name
+therefore replaces the container itself for its own instances, and a private
+attribute read, a Pydantic model copy, and an edit all reach whatever was bound
+in place of a mapping.
+
+It holds on either kind, because both kinds are Pydantic models and a copy of
+either is derived the same way.
+"""
+
+_INSTANCE_LAYOUT_NAME: Final = "__slots__"
+"""The class-body name that decides a value's object layout, which the framework
+owns whole on either kind.
+
+Every slot a declared value carries is one the framework laid out and can
+therefore classify — the four a derived copy rebuilds from semantic state and
+the two containers above — and that is true *by construction* only while no
+class body adds a seventh: a body may not extend a foreign base
+(``entity-base-invalid``), so its own ``__slots__`` is the one remaining route
+to a slot nothing classifies, and a slot taking one of the framework's own names
+is that framework container for its instances rather than state beside it.
+
+Reserving the name rather than reading it is what makes the refusal
+spelling-proof: ``__slots__`` accepts a bare name, any iterable, a one-shot
+iterator, and an object offering the sequence protocol alone, and what is
+checked here is that the body carries the key at all.
+"""
+
+_PICKLE_ENTRY_NAME: Final = "__reduce_ex__"
+"""The pickle entry point, which the framework owns on either kind.
+
+``pickle``'s own dispatch asks a value for this one name; ``__reduce__`` and
+``__getstate__`` are what ``object.__reduce_ex__`` consults once it has been
+entered. So this is where an Entity refuses to let a materialized node's
+lifecycle state cross a process boundary, and a class body authoring the name
+would replace that refusal rather than run after it. Reserving exactly this name
+is also what keeps the other two authorable: an authored ``__reduce__`` or
+``__getstate__`` still runs, downstream of a guard that has already passed. The
+reservation judges the class body as authored, which is one namespace at one
+moment rather than a hold on the attribute for the life of the class: a later
+assignment onto the class, and a descriptor whose ``__set_name__`` installs the
+name once the body has been judged, both land outside it. Neither can it reach
+whoever answers for the name instead of binding it — a pickling site that
+replaces the dispatch, and a class body authoring ``__getattribute__``, which the
+lookup for this name goes through.
+
+The reservation holds on a Value Object Class for the reason the copy verb's
+does — what a value of either kind becomes outside the process is derived from
+instance state the framework owns, so neither kind authors the door it leaves
+through.
+"""
+
+# The reserved query-root and introspection spellings plus the declaration
+# members above. A member reusing one either loses to the metaclass declaration at
+# class level or wins over the frontend's own binding, so the collision is
+# rejected where it is authored. Every name here is part of the Entity surface: a
+# Value Object Class carries no query root and no declaration, so the family is
+# Entity-only, and only the copy verb beside it holds on both kinds.
+RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "all",
+        "where",
+        "is_a",
+        "include",
+        "as_of",
+        "as_of_range",
+        "history",
+        "meta",
+        "descriptor",
+        _COPY_VERB_NAME,
+        *DECLARATION_MEMBER_NAMES,
+    }
+)
+
+
+def _python_spelling(canonical: str) -> str:
+    """The Python member spelling a framework member's canonical name comes from.
+
+    The authoring boundary converts a member's Python spelling to its canonical
+    name with :func:`snake_to_camel`, and the shared convention table declares
+    the framework's own members canonically, so the spelling an author reads and
+    queries through is that conversion inverted — the same lowercase-and-split
+    fold :func:`default_column_name` applies.
+    """
+    return default_column_name(canonical)
+
+
+_RESERVED_TEMPORAL_NAMES: Final[frozenset[str]] = frozenset(
+    endpoint.name for endpoints in TEMPORAL_MEMBERS.values() for endpoint in endpoints
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EntityHeader:
+    """The seven class-header keywords, exactly as the class statement spelled them.
+
+    Deliberately untyped: the metaclass types the keywords for the developer's
+    type checker, while the engine still has to validate what a dynamically
+    created class actually passed, and each rejection carries a stable code.
+    """
+
+    table: object = None
+    name: object = None
+    namespace: object = None
+    persistence: object = None
+    layout: object = None
+    inheritance: object = None
+    indices: object = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntityDeclaration:
+    """One Entity Class's complete local declaration.
+
+    The exact ``UnresolvedEntityDeclaration`` shape: reference-free facts are
+    already their final Metadata values, and only relationship and inheritance
+    references remain unresolved.
+    """
+
+    identity: EntityIdentity
+    container: StorageContainer | None
+    persistence: PersistenceMode | None
+    layout: StorageLayout | None
+    attributes: tuple[AttributeMetadata, ...]
+    relationships: tuple[UnresolvedRelationshipDeclaration, ...]
+    value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
+    as_of_axes: tuple[AsOfAxisMetadata, ...]
+    inheritance: UnresolvedInheritance | None
+    indices: tuple[IndexMetadata, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipAnnotation:
+    """The shape one ``Rel[...]`` annotation spells, kept for realization.
+
+    Multiplicity and optionality are Python facts the declaration itself does
+    not carry: the model derives a direction's multiplicity from cardinality and
+    its loaded-null answer from the join, so agreement between the two can only
+    be checked once an accepted model exists.
+    """
+
+    py_name: str
+    multiplicity: Multiplicity
+    nullable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MemberNames:
+    """One Entity Class's own Python-side member facts.
+
+    The name correspondences and the relationship annotation shapes are built
+    from the same walk the declaration is built from, so neither can drift from
+    the declared member it belongs to. Merging a family's maps across the MRO
+    belongs to the caller.
+
+    Each map is read-only because the class retains this value for the process's
+    life and a family of one shares these exact maps with its
+    :class:`WireNames`, so one write here would be seen by every later reader of
+    either.
+    """
+
+    column_to_py: Mapping[str, str]
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    relationship_py: Mapping[str, str]
+    relationship_shapes: Mapping[str, RelationshipAnnotation]
+    members: Mapping[str, AttributeMetadata | ValueObjectMetadata]
+    """Each Python member name to the accepted Metadata its declaration built —
+    the same object the ``Attr`` descriptor installs, so a rule stated over a
+    member reaches the identical facts from a name and from an expression."""
+    pk_py: frozenset[str]
+    vo_classes: Mapping[str, type]
+
+
+@dataclass(frozen=True, slots=True)
+class WireNames:
+    """One Entity Class's family-merged Python-name correspondences.
+
+    Built from the same declaration walk the model facts are built from, so the
+    two can never drift. A family member's maps include every Parallax ancestor's
+    declared members, merged base-first so a descendant's own declaration wins.
+
+    Each map is read-only because the class retains this one value for the
+    process's life and every reader is handed it rather than a copy; a family of
+    one shares its :class:`MemberNames` maps outright, so a write reached through
+    either name would be seen through both.
+    """
+
+    column_to_py: Mapping[str, str]
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    relationship_py: Mapping[str, str]
+    relationship_identities: Mapping[str, RelationshipIdentity]
+    """Each Python relationship name to the Identity its own declaration built,
+    so an inherited relationship keeps the declaring Entity a descendant reaches
+    it through cannot supply."""
+    members: Mapping[str, AttributeMetadata | ValueObjectMetadata]
+    """Each Python member name to the accepted Metadata that decides what may be
+    written to it. Which members are assignable is not recorded here as a name
+    set: that is :func:`~parallax.core.internal.metamodel.judge_assignment`'s verdict, and
+    a second spelling of it here is exactly the drift the single judgement
+    exists to prevent."""
+    pk_py: frozenset[str]
+    vo_classes: Mapping[str, type]
+
+    @property
+    def framework_owned_py(self) -> frozenset[str]:
+        """The members whose values the framework supplies and the caller never
+        authors, read off :attr:`members` rather than recorded beside it — one
+        designation, projected where a Python-name question needs it."""
+        return frozenset(
+            py_name
+            for py_name, member in self.members.items()
+            if isinstance(member, AttributeMetadata) and member.framework_owned
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ValueObjectShape:
+    """One Value Object Class's reusable shape and its member correspondences.
+
+    ``shape`` carries a single Shape Key minted once per class, so every
+    occurrence of the class reuses one declaration node — exactly the reuse the
+    formation-time reuse and containment-cycle rules are stated over.
+    The declaration owns the matching codec-ready tree, composed at class
+    creation with nested class trees shared by reference.
+    """
+
+    shape: ValueObjectShapeDeclaration
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    nested_classes: Mapping[str, type]
+    nested_shapes: Mapping[str, ValueObjectShape]
+    many_py: frozenset[str]
+
+    @property
+    def document_shape(self) -> MemberShape:
+        return self.shape.member_shape
+
+
+def declaration_of(cls: type) -> EntityDeclaration:
+    """``cls``'s own Entity declaration, or a loud rejection when it has none."""
+    declaration = cls.__dict__.get(_DECLARATION)
+    if not isinstance(declaration, EntityDeclaration):
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
+    return declaration
+
+
+def members_of(cls: type) -> MemberNames:
+    """``cls``'s own declared member correspondences (never an ancestor's)."""
+    names = cls.__dict__.get(_MEMBERS)
+    if not isinstance(names, MemberNames):
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
+    return names
+
+
+def wire_names_of(cls: type) -> WireNames:
+    """``cls``'s family-merged member correspondences, stamped at class creation."""
+    names = cls.__dict__.get(_WIRE_NAMES)
+    if not isinstance(names, WireNames):
+        raise UsageError(ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity Class")
+    return names
+
+
+def shape_of(cls: type) -> ValueObjectShape:
+    """``cls``'s reusable Value Object shape, or a loud rejection when it has none."""
+    shape = cls.__dict__.get(_SHAPE)
+    if not isinstance(shape, ValueObjectShape):
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{cls.__name__} is not a Parallax Value Object Class"
+        )
+    return shape
+
+
+class MemberValidation:
+    """One declared class's model-free judgment of a member value: the Typed
+    lane of the authoring plans a write is prepared through, in their
+    validation-only mode, compiled on first use and held for the class's
+    lifetime."""
+
+    __slots__ = ("_catalog",)
+
+    def __init__(self) -> None:
+        self._catalog: AuthoringCatalog | None = None
+
+    def __call__(self, member: MemberDefinition, value: object) -> AuthoringViolation | None:
+        catalog = self._catalog
+        if catalog is None:
+            lane = AuthoringLane(typed_converter, BORROWED_DOCUMENTS)
+            catalog = self._catalog = AuthoringCatalog((lane,), absent=ABSENT)
+        return catalog.violation(member, value, lane=0)
+
+
+def member_validation(cls: type) -> MemberValidation:
+    """The member judgment ``cls``'s edits and assignments share."""
+    validation = getattr(cls, _VALIDATION, None)
+    if not isinstance(validation, MemberValidation):
+        raise UsageError(
+            ENTITY_BASE_INVALID, f"{cls.__name__} is not a Parallax Entity or Value Object Class"
+        )
+    return validation
+
+
+def is_declared_class(candidate: object, kind: DeclarationKind) -> bool:
+    """Whether ``candidate`` is a class this engine built for ``kind``."""
+    return isinstance(candidate, type) and getattr(candidate, _KIND, None) is kind
+
+
+def is_entity_class(candidate: object) -> bool:
+    """Whether ``candidate`` is a domain Entity Class — a model candidate.
+
+    The total, nonthrowing counterpart of :func:`declaration_of`. A framework
+    root carries the Entity kind marker but no declaration, so it answers false
+    here exactly as it is refused as a Domain Model argument.
+    """
+    return is_declared_class(candidate, DeclarationKind.ENTITY) and isinstance(
+        cast("type", candidate).__dict__.get(_DECLARATION), EntityDeclaration
+    )
+
+
+def inherited_axes(bases: tuple[type, ...]) -> tuple[TemporalDimension, ...]:
+    """The reserved temporal axes this declaration inherits from its framework root.
+
+    Read off the MRO by marker, so no frontend class object is imported or
+    compared by identity — the fact travels with whichever root was extended.
+    """
+    for base in bases:
+        for entry in base.__mro__:
+            axes = entry.__dict__.get(_AXES)
+            if axes is not None:
+                return cast("tuple[TemporalDimension, ...]", axes)
+    return ()
+
+
+def build_class(
+    mcs: type,
+    cls_name: str,
+    bases: tuple[type, ...],
+    ns: dict[str, object],
+    *,
+    kind: DeclarationKind,
+    mint: object | None,
+    axes: tuple[TemporalDimension, ...],
+    header: EntityHeader | None,
+    ignored_types: tuple[type, ...] = (),
+) -> type:
+    """Build one declared class, rejecting anything outside the grammar.
+
+    Every Parallax class is implicitly frozen, so the engine sets the Pydantic
+    configuration itself and forwards no class-header keyword to Pydantic. A
+    framework root carries markers only: no identity, no declaration payload, no
+    header rules, and it is never a Domain Model candidate.
+
+    ``ignored_types`` is the frontend's own class-body descriptor vocabulary —
+    a query-root descriptor a frontend base installs is a class attribute
+    Pydantic would otherwise refuse as an unannotated field at import time. The
+    engine still owns the configuration; a frontend contributes only the types
+    its own bases install. It reaches ONLY a framework root's own configuration,
+    the one body that installs such a descriptor: a declared class body carries
+    members and nothing else, so it keeps Pydantic's unannotated-attribute
+    rejection whole rather than inheriting a blanket exemption for a type it
+    never binds. Nothing else is exempted anywhere — the shadow the engine seeds
+    around class creation is a ``property``, which Pydantic passes over already
+    (:class:`_InheritedMemberShadow`).
+    """
+    if mint is None:
+        # Every declared kind, and before the configuration below, which itself
+        # binds a reserved ``model_*`` name: the rejection is about what the
+        # class body authored. Only a framework root is exempt, because the
+        # framework's own markers and slots are what the reservation protects.
+        _reject_shadowed_class_names(cls_name, ns, kind)
+    frontend_types = ignored_types if mint is not None else ()
+    ns["model_config"] = ConfigDict(frozen=True, ignored_types=frontend_types)
+    if mint is not None:
+        if mint is not FRAMEWORK_MINT:
+            raise UsageError(
+                ENTITY_HEADER_UNKNOWN_OPTION, f"{cls_name}: '_mint' is not a declaration option"
+            )
+        ns[_KIND] = kind
+        ns[_AXES] = axes
+        return _pydantic_class(mcs, cls_name, bases, ns)
+    if kind is DeclarationKind.ENTITY:
+        return _build_entity(mcs, cls_name, bases, ns, header or EntityHeader())
+    return _build_value_object(mcs, cls_name, bases, ns)
+
+
+class _InheritedMemberShadow(property):
+    """A stand-in that hides an installed descriptor from Pydantic's field collection.
+
+    Pydantic reads a field's default off the class under construction with
+    ``getattr``, so on a subtype the descriptor installed for an inherited member
+    answers with that member's query-authoring seed and the seed becomes the
+    field's default — deep-copied into every hydrated instance, and read back in
+    place of the value whenever a construction omits the member. A member the
+    class body declares is already emptied out of the namespace before the class
+    is built; this restores the same emptiness for a member the body inherits, so
+    Pydantic takes its ordinary inheritance path and the subtype's field is the
+    declaring class's own.
+
+    Raising ``AttributeError`` is what makes ``getattr`` report "no assigned
+    value" rather than a value — including the class access field collection
+    makes, where an ordinary ``property`` would answer with itself and become the
+    default. The shadow lives only for the duration of class creation:
+    :func:`_pydantic_class` removes it once the class exists, leaving the
+    inherited descriptor reachable through the MRO again.
+
+    It extends ``property`` so that a namespace carrying one needs no exemption
+    of its own: Pydantic already passes over a ``property`` when it rejects
+    unannotated class attributes, so seeding these leaves that rejection exactly
+    as wide as Pydantic's own — where an ``ignored_types`` entry would have
+    exempted this type from every declared class body as well as from the
+    engine's own seeding.
+    """
+
+    __slots__ = ()
+
+    def __get__(self, obj: object | None, owner: type | None = None) -> Never:
+        raise AttributeError("an inherited member is unreadable while its class is being built")
+
+
+def _pydantic_class(
+    mcs: type, cls_name: str, bases: tuple[type, ...], ns: dict[str, object]
+) -> type:
+    shadowed = _shadow_inherited_members(bases, ns)
+    cls = ModelMetaclass.__new__(
+        cast("type[ModelMetaclass]", mcs), cls_name, bases, cast("dict[str, Any]", ns)
+    )
+    for py_name in shadowed:
+        delattr(cls, py_name)
+    return cls
+
+
+def _shadow_inherited_members(bases: tuple[type, ...], ns: dict[str, object]) -> tuple[str, ...]:
+    """Shadow every Pydantic field this body inherits rather than binds.
+
+    The inherited names are read from the bases' own collected fields, which is
+    the same source Pydantic's inheritance path reads, so a member is shadowed
+    exactly when that path would otherwise have supplied it. A name the body
+    binds is left alone whether it annotated the binding or not: the annotated
+    case is this class's own member, and the unannotated one is Pydantic's own
+    refusal to let a field be overridden without an annotation.
+    """
+    inherited: set[str] = set()
+    for base in bases:
+        inherited.update(cast("dict[str, object]", getattr(base, "__pydantic_fields__", {})))
+    declared = ns.get("__annotations__")
+    if isinstance(declared, dict):
+        inherited.difference_update(cast("dict[str, object]", declared))
+    shadowed = tuple(sorted(inherited - set(ns)))
+    for py_name in shadowed:
+        ns[py_name] = _InheritedMemberShadow()
+    return shadowed
+
+
+# Class-body annotations
+
+
+def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
+    """Return a fresh mapping from eager or deferred class-body annotations."""
+    eager = ns.get("__annotations__")
+    if isinstance(eager, dict):
+        return dict(cast("dict[str, object]", eager))
+    annotate = ns.pop("__annotate_func__", None)
+    if annotate is None:
+        return {}
+    return _resolve_deferred(annotate)
+
+
+def _resolve_deferred(annotate: object) -> dict[str, object]:
+    import annotationlib
+
+    function = cast("Callable[[annotationlib.Format], dict[str, Any]]", annotate)
+    return dict(annotationlib.call_annotate_function(function, annotationlib.Format.VALUE))
+
+
+def _module_globals(ns: dict[str, object]) -> dict[str, Any]:
+    module_name = ns.get("__module__")
+    module = sys.modules.get(module_name) if isinstance(module_name, str) else None
+    return dict(getattr(module, "__dict__", {}))
+
+
+def _resolve(text: str, globalns: dict[str, Any], localns: dict[str, object]) -> object | None:
+    """A stringized annotation fragment as a live object, or ``None``.
+
+    Resolved against the class body before module globals, so a Value Object
+    shape declared lexically inside its owner resolves under
+    ``from __future__ import annotations``. The source is the developer's own
+    annotation, already executed as a class body.
+    """
+    try:
+        return eval(text, globalns, dict(localns))
+    except Exception:
+        return None
+
+
+# Annotation shapes
+
+
+@dataclass(frozen=True, slots=True)
+class _Shape:
+    """One member annotation's resolved shape.
+
+    ``base`` is the live inner type when it resolved, and ``spelling`` carries
+    the textual inner instead for a relationship target that does not exist yet.
+    """
+
+    base: object
+    spelling: str | None
+    multiplicity: Multiplicity
+    nullable: bool
+
+
+def _classify(
+    annotation: object, globalns: dict[str, Any], localns: dict[str, object]
+) -> tuple[str, object] | None:
+    """The member kind and raw inner of a class-body annotation.
+
+    ``class_var`` is the third kind and declares no member. It is classified here
+    rather than by the callers because a class variable is a live typing form on
+    one annotation path and text on the other, and the two paths must pass over
+    the same declarations.
+    """
+    if isinstance(annotation, str):
+        text = annotation.strip()
+        if (match := _ATTR_TEXT.match(text)) is not None:
+            return "attr", match.group("inner")
+        if (match := _REL_TEXT.match(text)) is not None:
+            return "rel", match.group("inner")
+        resolved = _resolve(text, globalns, localns)
+        return None if resolved is None else _classify(resolved, globalns, localns)
+    origin = get_origin(annotation)
+    if origin is Attr:
+        return "attr", get_args(annotation)[0]
+    if origin is Rel:
+        return "rel", get_args(annotation)[0]
+    if annotation is ClassVar or origin is ClassVar:
+        return "class_var", None
+    return None
+
+
+def _annotation_text(inner: object) -> str | None:
+    """The spelling behind an unevaluated annotation fragment, if it is one.
+
+    A ``ForwardRef`` and a quoted fragment are one fact reached by the two
+    annotation paths: a name the class body wrote as text.
+    """
+    if isinstance(inner, ForwardRef):
+        return inner.__forward_arg__.strip()
+    if isinstance(inner, str):
+        return _unquote(inner)
+    return None
+
+
+def _shape_of_annotation(
+    inner: object,
+    *,
+    where: str,
+    globalns: dict[str, Any],
+    localns: dict[str, object],
+    relationship_target: bool,
+) -> _Shape:
+    """The multiplicity, optionality, and inner type an annotation declares.
+
+    A relationship target is read as a spelling and never evaluated: the composed
+    candidate set is the only scope a target resolves in, so a class object is
+    Exact and every text form is a name — qualified or relative to the declaring
+    Entity — however the annotation path happened to deliver it. Every other
+    annotation names a Python type, so a spelling is resolved against the class
+    body before module globals.
+    """
+    text = _annotation_text(inner)
+    if text is None:
+        return _live_shape(
+            inner,
+            where=where,
+            globalns=globalns,
+            localns=localns,
+            relationship_target=relationship_target,
+        )
+    if relationship_target:
+        return _text_shape(text, where=where)
+    return _live_shape(
+        _resolved(text, where=where, globalns=globalns, localns=localns),
+        where=where,
+        globalns=globalns,
+        localns=localns,
+        relationship_target=relationship_target,
+    )
+
+
+def _resolved(
+    text: str, *, where: str, globalns: dict[str, Any], localns: dict[str, object]
+) -> object:
+    resolved = _resolve(text, globalns, localns)
+    if resolved is None:
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: cannot resolve the annotation {text!r}"
+        )
+    return resolved
+
+
+def _live_shape(
+    inner: object,
+    *,
+    where: str,
+    globalns: dict[str, Any],
+    localns: dict[str, object],
+    relationship_target: bool,
+) -> _Shape:
+    multiplicity = Multiplicity.ONE
+    nullable = False
+    origin = get_origin(inner)
+    if origin is UnionType or origin is Union:
+        members = [arg for arg in get_args(inner) if arg is not NoneType]
+        if len(members) != 1 or len(get_args(inner)) != 2:
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: only an `X | None` union is a declarable annotation",
+            )
+        inner = members[0]
+        nullable = True
+        origin = get_origin(inner)
+    if origin is tuple:
+        args = get_args(inner)
+        if len(args) != 2 or args[1] is not Ellipsis:
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID, f"{where}: a many member is spelled `tuple[X, ...]`"
+            )
+        inner = args[0]
+        multiplicity = Multiplicity.MANY
+    text = _annotation_text(inner)
+    if text is not None:
+        if relationship_target:
+            return _Shape(None, text, multiplicity, nullable)
+        inner = _resolved(text, where=where, globalns=globalns, localns=localns)
+    return _Shape(inner, None, multiplicity, nullable)
+
+
+def _text_shape(text: str, *, where: str) -> _Shape:
+    """The shape a relationship-target spelling declares.
+
+    The wrappers are stripped in the order the live reading strips them, so one
+    spelling declares one shape whichever path delivered it.
+    """
+    body = text.strip()
+    nullable = False
+    if (match := _OPTIONAL_TEXT.match(body)) is not None:
+        body = _unquote(match.group("inner"))
+        nullable = True
+    elif "|" in body:
+        members = [part.strip() for part in body.split("|")]
+        named = [part for part in members if part != "None"]
+        if len(members) != 2 or len(named) != 1:
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: only an `X | None` union is a declarable annotation",
+            )
+        body = _unquote(named[0])
+        nullable = True
+    multiplicity = Multiplicity.ONE
+    if (match := _TUPLE_TEXT.match(body)) is not None:
+        head, _, tail = match.group("inner").rpartition(",")
+        if tail.strip() != "...":
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: a many relationship is spelled `tuple[Target, ...]`",
+            )
+        body = _unquote(head)
+        multiplicity = Multiplicity.MANY
+    return _Shape(None, body, multiplicity, nullable)
+
+
+def _unquote(text: str) -> str:
+    body = text.strip()
+    if len(body) >= 2 and body[0] in "\"'" and body[-1] == body[0]:
+        return body[1:-1].strip()
+    return body
+
+
+# Scalar members
+
+
+def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
+    """The Neutral Type a scalar member declares.
+
+    The annotation names the family and the declaration narrows it: ``type=``
+    selects the 32-bit member of the two two-variant families, and
+    ``precision=``/``scale=`` supply the parametric Decimal variant's required
+    parameters.
+    """
+    if spec.type is not None:
+        if isinstance(spec.type, Int32) and base is int:
+            return INT32
+        if isinstance(spec.type, Float32) and base is float:
+            return FLOAT32
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: type= narrows an `Attr[int]` to Int32 or an `Attr[float]` to "
+            "Float32 and applies to no other annotation",
+        )
+    if base is _decimal.Decimal:
+        if spec.precision is None or spec.scale is None:
+            raise UsageError(
+                ENTITY_OPTION_CONTEXT_INVALID,
+                f"{where}: a decimal member declares precision= and scale=",
+            )
+        try:
+            return Numeric(spec.precision, spec.scale)
+        except ValueError as error:
+            raise UsageError(ENTITY_OPTION_INVALID_VALUE, f"{where}: {error}") from error
+    if spec.precision is not None:
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: precision= and scale= apply only to a decimal member",
+        )
+    neutral = _infer_neutral_type(base)
+    if neutral is None:
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: {base!r} is not a declarable member type"
+        )
+    return neutral
+
+
+def _reject_nullable_collection(shape: _Shape, where: str) -> None:
+    """Refuse a nullable scalar collection, whose empty tuple is its only zero."""
+    if shape.multiplicity is Multiplicity.MANY and shape.nullable:
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID,
+            f"{where}: a scalar collection is never nullable — spell it `tuple[X, ...]`, "
+            "whose empty tuple is the empty collection",
+        )
+
+
+def _reject_entity_only_options(spec: AttrSpec, where: str, *, allow_column: bool) -> None:
+    """Reject the options a Value Object member has no place for.
+
+    A Value Object attribute carries no storage, key, generation, locking, or
+    length bound; only a top-level occurrence owns a Storage Location, so
+    ``column=`` is admitted exactly there.
+    """
+    offending = [
+        option
+        for option, present in (
+            ("primary_key", spec.primary_key is not NOT_PRIMARY_KEY),
+            ("column", spec.column is not None and not allow_column),
+            ("max_length", spec.max_length is not None),
+            ("read_only", spec.read_only),
+            ("optimistic_locking", spec.optimistic_locking),
+        )
+        if present
+    ]
+    if offending:
+        raise UsageError(
+            ENTITY_OPTION_CONTEXT_INVALID,
+            f"{where}: {', '.join(offending)} is an Entity-only option",
+        )
+
+
+# Value Object classes
+
+
+def _build_value_object(
+    mcs: type, cls_name: str, bases: tuple[type, ...], ns: dict[str, object]
+) -> type:
+    if len(bases) != 1 or not is_declared_class(bases[0], DeclarationKind.VALUE_OBJECT):
+        raise UsageError(
+            ENTITY_BASE_INVALID,
+            f"{cls_name}: a Value Object Class extends exactly one ValueObject base",
+        )
+    annotations = _class_body_annotations(ns)
+    attributes: list[ValueObjectAttributeDeclaration] = []
+    nested: list[NestedValueObjectOccurrenceDeclaration] = []
+    py_to_name: dict[str, str] = {}
+    nested_classes: dict[str, type] = {}
+    collections: dict[str, ScalarDefinition] = {}
+    shapes: dict[str, _Shape] = {}
+
+    body = _body_members(cls_name, annotations, ns, DeclarationKind.VALUE_OBJECT)
+    for py_name, where, _kind, declared_spec, shape, canonical in body:
+        spec = cast("AttrSpec", declared_spec)
+        py_to_name[py_name] = canonical
+        shapes[py_name] = shape
+        _reject_entity_only_options(spec, where, allow_column=False)
+
+        if is_declared_class(shape.base, DeclarationKind.VALUE_OBJECT):
+            if spec.type is not None or spec.precision is not None:
+                raise UsageError(
+                    ENTITY_OPTION_CONTEXT_INVALID,
+                    f"{where}: a Value Object occurrence declares no scalar type",
+                )
+            nested_class = cast("type", shape.base)
+            nested_classes[py_name] = nested_class
+            nested.append(
+                NestedValueObjectOccurrenceDeclaration(
+                    name=canonical,
+                    shape=shape_of(nested_class).shape,
+                    multiplicity=shape.multiplicity,
+                    nullable=shape.nullable,
+                )
+            )
+            continue
+        _reject_nullable_collection(shape, where)
+        declared = ValueObjectAttributeDeclaration(
+            name=canonical,
+            type=_scalar_type(shape.base, spec, where),
+            nullable=shape.nullable,
+            multiplicity=shape.multiplicity,
+        )
+        attributes.append(declared)
+        if declared.multiplicity is Multiplicity.MANY:
+            collections[py_name] = declared.definition
+
+    _install_fields(
+        annotations,
+        ns,
+        shapes,
+        nested_classes,
+        collections,
+        framework_owned=frozenset(),
+    )
+    declared_attributes = tuple(attributes)
+    declared_nested = tuple(nested)
+    ns[_VALIDATION] = MemberValidation()
+    ns[_SHAPE] = ValueObjectShape(
+        shape=ValueObjectShapeDeclaration(
+            key=ValueObjectShapeKey(),
+            attributes=declared_attributes,
+            value_objects=declared_nested,
+        ),
+        name_to_py=MappingProxyType(
+            {canonical: py_name for py_name, canonical in py_to_name.items()}
+        ),
+        py_to_name=MappingProxyType(py_to_name),
+        nested_classes=MappingProxyType(nested_classes),
+        nested_shapes=MappingProxyType(
+            {py_name: shape_of(nested_class) for py_name, nested_class in nested_classes.items()}
+        ),
+        many_py=frozenset(
+            py_name
+            for py_name in nested_classes
+            if shapes[py_name].multiplicity is Multiplicity.MANY
+        ),
+    )
+    cls = _pydantic_class(mcs, cls_name, bases, ns)
+    plan = install_publication_plan(
+        cls,
+        members=(
+            *(py_name for py_name in py_to_name if py_name not in nested_classes),
+            *(py_name for py_name in py_to_name if py_name in nested_classes),
+        ),
+        occurrences=nested_classes,
+        relationships=(),
+    )
+    owner = shape_of(cls)
+    for py_name in py_to_name:
+        setattr(cls, py_name, ElementAttr(py_name, plan.indices[py_name], owner))
+    return cls
+
+
+# Entity classes
+
+
+def _build_entity(
+    mcs: type,
+    cls_name: str,
+    bases: tuple[type, ...],
+    ns: dict[str, object],
+    header: EntityHeader,
+) -> type:
+    parent = _domain_parent(cls_name, bases)
+    role = _inheritance_role(cls_name, header, parent)
+    identity = EntityIdentity(_namespace(cls_name, header), _entity_name(cls_name, header))
+    axes = inherited_axes(bases)
+    shape_owner = parent is None and bool(axes)
+
+    annotations = _class_body_annotations(ns)
+    if axes:
+        _reject_temporal_redeclaration(cls_name, annotations, ns)
+    axis_members = _declare_temporal_members(identity, annotations, ns, axes) if shape_owner else ()
+
+    attributes: list[AttributeMetadata] = []
+    relationships: list[UnresolvedRelationshipDeclaration] = []
+    occurrences: list[ValueObjectOccurrenceDeclaration] = []
+    # Each installed descriptor's own member Metadata, which is what makes an
+    # assignment judgeable without a model. A Value Object occurrence is expanded
+    # through the compiler's own seam, so a descriptor carries the identical shape
+    # the accepted model publishes.
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
+    column_to_py: dict[str, str] = {}
+    name_to_py: dict[str, str] = {}
+    py_to_name: dict[str, str] = {}
+    relationship_py: dict[str, str] = {}
+    relationship_shapes: dict[str, RelationshipAnnotation] = {}
+    pk_py: set[str] = set()
+    vo_classes: dict[str, type] = {}
+    collections: dict[str, ScalarDefinition] = {}
+    shapes: dict[str, _Shape] = {}
+
+    body = _body_members(cls_name, annotations, ns, DeclarationKind.ENTITY)
+    for py_name, where, member_kind, spec, shape, canonical in body:
+        if member_kind == "rel":
+            del annotations[py_name]  # a relationship is never a stored Pydantic field
+            ns.pop(py_name, None)
+            relationships.append(
+                _relationship(identity, canonical, cast("RelSpec", spec), shape, where)
+            )
+            relationship_py[canonical] = py_name
+            relationship_shapes[canonical] = RelationshipAnnotation(
+                py_name=py_name, multiplicity=shape.multiplicity, nullable=shape.nullable
+            )
+            continue
+
+        attr_spec = cast("AttrSpec", spec)
+        py_to_name[py_name] = canonical
+        name_to_py[canonical] = py_name
+        shapes[py_name] = shape
+        column = (
+            attr_spec.column if attr_spec.column is not None else default_column_name(canonical)
+        )
+        column_to_py[column] = py_name
+
+        if is_declared_class(shape.base, DeclarationKind.VALUE_OBJECT):
+            if attr_spec.primary_key is not NOT_PRIMARY_KEY or attr_spec.optimistic_locking:
+                raise UsageError(
+                    ENTITY_OPTION_CONTEXT_INVALID,
+                    f"{where}: a Value Object occurrence carries no key or version",
+                )
+            vo_class = cast("type", shape.base)
+            vo_classes[py_name] = vo_class
+            occurrence = ValueObjectOccurrenceDeclaration(
+                name=canonical,
+                storage=Column(column),
+                shape=shape_of(vo_class).shape,
+                multiplicity=shape.multiplicity,
+                nullable=shape.nullable,
+            )
+            occurrences.append(occurrence)
+            members[canonical] = value_object_metadata(identity, occurrence)
+            continue
+        _reject_nullable_collection(shape, where)
+        if attr_spec.primary_key is not NOT_PRIMARY_KEY:
+            pk_py.add(py_name)
+        attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
+        attributes.append(attribute)
+        members[canonical] = attribute
+        if attribute.multiplicity is Multiplicity.MANY:
+            collections[py_name] = attribute.definition
+
+    # Both frontends derive the designation through the one shared rule, and the
+    # descriptors installed below carry the designated Metadata — which is what
+    # lets a class composed into no model judge an assignment the way the whole
+    # model would.
+    declared_attributes = designate_framework_owned(attributes, axis_members)
+    members.update({attribute.identity.name: attribute for attribute in declared_attributes})
+    framework_owned_py = frozenset(
+        name_to_py[attribute.identity.name]
+        for attribute in declared_attributes
+        if attribute.framework_owned
+    )
+    _install_fields(
+        annotations, ns, shapes, vo_classes, collections, framework_owned=framework_owned_py
+    )
+    container = _container(cls_name, header)
+    ns[_DECLARATION] = EntityDeclaration(
+        identity=identity,
+        container=container,
+        persistence=_persistence(cls_name, header),
+        layout=_layout(cls_name, header),
+        attributes=declared_attributes,
+        relationships=tuple(relationships),
+        value_objects=tuple(occurrences),
+        as_of_axes=axis_members,
+        inheritance=_accepted_inheritance(role, parent),
+        indices=_indices(
+            identity, container, declared_attributes, axis_members, header.indices, py_to_name
+        ),
+    )
+    ns[_MEMBERS] = MemberNames(
+        column_to_py=MappingProxyType(column_to_py),
+        name_to_py=MappingProxyType(name_to_py),
+        py_to_name=MappingProxyType(py_to_name),
+        relationship_py=MappingProxyType(relationship_py),
+        relationship_shapes=MappingProxyType(relationship_shapes),
+        members=MappingProxyType(
+            {py_name: members[canonical] for py_name, canonical in py_to_name.items()}
+        ),
+        pk_py=frozenset(pk_py),
+        vo_classes=MappingProxyType(vo_classes),
+    )
+    family, ns[_WIRE_NAMES] = _family_facts(bases[0], ns)
+    validation = ns[_VALIDATION] = MemberValidation()
+    cls = _pydantic_class(mcs, cls_name, bases, ns)
+    plan = install_publication_plan(
+        cls,
+        members=family.members,
+        occurrences=family.occurrences,
+        relationships=family.relationships,
+    )
+    # Every reference this class hands out is seeded with the Entity's EXACT
+    # canonical spelling, so everything downstream that re-emits it — a
+    # serialized query, a durable write document — carries an identity two
+    # namespaces sharing a local name cannot confuse. Nothing downstream builds
+    # a spelling of its own; they all re-emit this one.
+    for py_name, canonical in py_to_name.items():
+        setattr(
+            cls,
+            py_name,
+            Attr(
+                AttributeRef(identity.canonical, canonical),
+                plan.indices[py_name],
+                members[canonical],
+                validation,
+                None if py_name not in vo_classes else shape_of(vo_classes[py_name]),
+            ),
+        )
+    for canonical, py_name in relationship_py.items():
+        setattr(
+            cls,
+            py_name,
+            Rel(
+                RelationshipRef(identity.canonical, canonical),
+                py_name,
+                plan.relationships[py_name],
+                many=relationship_shapes[canonical].multiplicity is Multiplicity.MANY,
+            ),
+        )
+    _install_inherited_descriptors(cls, plan, own=set(py_to_name) | set(relationship_py.values()))
+    return cls
+
+
+# Class body members
+
+
+class _BodyMember(NamedTuple):
+    """One member a class body declares, resolved and named but not yet built."""
+
+    py_name: str
+    where: str
+    kind: str
+    spec: AttrSpec | RelSpec
+    shape: _Shape
+    canonical: str
+
+
+_ADMITTED_MEMBERS: Final[Mapping[DeclarationKind, tuple[frozenset[str], str]]] = {
+    DeclarationKind.ENTITY: (
+        frozenset({"attr", "rel"}),
+        "a member is annotated Attr[...] or Rel[...]",
+    ),
+    DeclarationKind.VALUE_OBJECT: (
+        frozenset({"attr"}),
+        "a Value Object member is annotated Attr[...]",
+    ),
+}
+
+
+def _body_members(
+    cls_name: str, annotations: dict[str, object], ns: dict[str, object], kind: DeclarationKind
+) -> Iterator[_BodyMember]:
+    """Each member the class body declares, in body order; a class variable declares none.
+
+    A member is refused here for a reserved name, an annotation ``kind`` does not
+    admit, a declaration value its annotation does not take, or a canonical name
+    an earlier member already resolved to. The annotations are read from a
+    snapshot taken when iteration starts, so the caller may rewrite them while it
+    iterates.
+    """
+    admitted, refusal = _ADMITTED_MEMBERS[kind]
+    globalns = _module_globals(ns)
+    canonical_seen: set[str] = set()
+    for py_name, annotation in list(annotations.items()):
+        where = f"{cls_name}.{py_name}"
+        _reject_reserved(where, py_name, kind)
+        classified = _classify(annotation, globalns, ns)
+        if classified is not None and classified[0] == "class_var":
+            continue
+        if classified is None or classified[0] not in admitted:
+            raise UsageError(ENTITY_ANNOTATION_INVALID, f"{where}: {refusal}")
+        member_kind, inner = classified
+        if py_name in EXPRESSION_OPERATION_NAMES:
+            raise UsageError(
+                ENTITY_RESERVED_MEMBER_NAME,
+                f"{where}: reuses `{py_name}`, an operation every member expression offers, "
+                "so dotted access could never reach the member; give it another Python "
+                f"name and keep the canonical one with name={py_name!r}",
+            )
+        spec = _member_spec(ns.get(py_name), where, expect=member_kind)
+        shape = _shape_of_annotation(
+            inner,
+            where=where,
+            globalns=globalns,
+            localns=ns,
+            relationship_target=member_kind == "rel",
+        )
+        canonical = _declared_name(spec, py_name)
+        if canonical in canonical_seen:
+            raise UsageError(
+                ENTITY_CANONICAL_NAME_COLLISION,
+                f"{cls_name}: two members resolve to the canonical name {canonical!r}",
+            )
+        canonical_seen.add(canonical)
+        yield _BodyMember(py_name, where, member_kind, spec, shape, canonical)
+
+
+@dataclass(frozen=True, slots=True)
+class _FamilyPublicationFacts:
+    """The class side of one exact Entity's published row.
+
+    The member order is the family-effective one an accepted Metamodel fixes for
+    the same concrete — every contributor's attributes root-first, then every
+    contributor's Value Object occurrences the same way — derived here from the
+    Python inheritance chain and each contributor's own declared members. The two
+    derivations read different material and are compared where a model and a
+    class first meet.
+    """
+
+    members: tuple[str, ...]
+    occurrences: Mapping[str, type]
+    relationships: tuple[str, ...]
+
+
+def _family_facts(base: type, ns: dict[str, object]) -> tuple[_FamilyPublicationFacts, WireNames]:
+    """The pending class's family-effective published row and merged correspondences.
+
+    One walk answers both, so the row's order and the maps a row is spelled
+    through are read off the same contributors in the same base-first order.
+
+    The contributors are read from the single Parallax base and the namespace
+    rather than from a finished class, so the merged maps are already in the
+    namespace the class object is built from: everything that observes the class
+    while it is being created — an inherited ``__pydantic_init_subclass__``
+    above all — sees the same stamp every later reader does.
+    """
+    chain: list[Mapping[str, Any]] = [
+        ancestor.__dict__
+        for ancestor in base.__mro__
+        if isinstance(ancestor.__dict__.get(_MEMBERS), MemberNames)
+    ]
+    chain.reverse()
+    chain.append(ns)
+    attributes: list[str] = []
+    occurrences: list[str] = []
+    vo_classes: dict[str, type] = {}
+    relationships: list[str] = []
+    column_to_py: dict[str, str] = {}
+    name_to_py: dict[str, str] = {}
+    py_to_name: dict[str, str] = {}
+    relationship_py: dict[str, str] = {}
+    relationship_identities: dict[str, RelationshipIdentity] = {}
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
+    pk_py: set[str] = set()
+    for contributor in chain:
+        names = cast("MemberNames", contributor[_MEMBERS])
+        for py_name in names.py_to_name:
+            (occurrences if py_name in names.vo_classes else attributes).append(py_name)
+        vo_classes.update(names.vo_classes)
+        relationships.extend(names.relationship_py.values())
+        column_to_py.update(names.column_to_py)
+        name_to_py.update(names.name_to_py)
+        py_to_name.update(names.py_to_name)
+        relationship_py.update(names.relationship_py)
+        relationship_identities.update(
+            {
+                names.relationship_py[declaration.identity.name]: declaration.identity
+                for declaration in cast(
+                    "EntityDeclaration", contributor[_DECLARATION]
+                ).relationships
+            }
+        )
+        members.update(names.members)
+        pk_py.update(names.pk_py)
+    # A family of one merged nothing, so the class keeps the maps its own body
+    # built instead of retaining equal copies of them for the process's life.
+    sole = cast("MemberNames", chain[0][_MEMBERS]) if len(chain) == 1 else None
+    merged_vo_classes = MappingProxyType(vo_classes)
+    return (
+        _FamilyPublicationFacts(
+            members=(*attributes, *occurrences),
+            occurrences=merged_vo_classes,
+            relationships=tuple(relationships),
+        ),
+        WireNames(
+            column_to_py=MappingProxyType(column_to_py) if sole is None else sole.column_to_py,
+            name_to_py=MappingProxyType(name_to_py) if sole is None else sole.name_to_py,
+            py_to_name=MappingProxyType(py_to_name) if sole is None else sole.py_to_name,
+            relationship_py=(
+                MappingProxyType(relationship_py) if sole is None else sole.relationship_py
+            ),
+            relationship_identities=MappingProxyType(relationship_identities),
+            members=MappingProxyType(members) if sole is None else sole.members,
+            pk_py=frozenset(pk_py) if sole is None else sole.pk_py,
+            vo_classes=merged_vo_classes if sole is None else sole.vo_classes,
+        ),
+    )
+
+
+def _install_inherited_descriptors(cls: type, plan: PublicationPlan, *, own: set[str]) -> None:
+    """Give every member this class inherits a descriptor addressing THIS row.
+
+    Only an attribute's position survives inheritance, because ancestry
+    contributes attributes root-first; an occurrence and a relationship both sit
+    after the exact class's own attribute count, which is a fact about the
+    concrete rather than the family. So one inherited descriptor cannot carry one
+    position for a whole family, and each descendant installs its own — derived
+    from the declaring class's, so the reference it hands out and the target it
+    names are unchanged at every depth.
+
+    They are installed once the class exists, never seeded into the namespace
+    Pydantic collects fields from: a descriptor reachable under a member's name
+    while the class is being built becomes that member's collected DEFAULT, which
+    is the defect :class:`_InheritedMemberShadow` exists to prevent.
+    """
+    for py_name, index in (*plan.indices.items(), *plan.relationships.items()):
+        if py_name in own:
+            continue
+        setattr(cls, py_name, _declaring_descriptor(cls, py_name).rebound(index))
+
+
+def _declaring_descriptor(cls: type, py_name: str) -> Attr[Any] | Rel[Any]:
+    """The descriptor an ancestor installed for ``py_name``.
+
+    Read out of the owning class's own namespace rather than through attribute
+    access, because class access to a member yields its query-authoring seed
+    rather than the descriptor that produced it. Only an Entity family inherits
+    members at all, so only those two descriptors are ever looked for: a Value
+    Object Class extends the framework root and nothing else.
+    """
+    for ancestor in cls.__mro__:
+        bound = ancestor.__dict__.get(py_name)
+        if isinstance(bound, Attr | Rel):
+            return cast("Attr[Any] | Rel[Any]", bound)
+    raise UsageError(  # pragma: no cover - every inherited member declares one
+        ENTITY_BASE_INVALID, f"{cls.__name__}.{py_name} is inherited from no Parallax declaration"
+    )
+
+
+def _attribute(
+    identity: EntityIdentity,
+    canonical: str,
+    column: str,
+    spec: AttrSpec,
+    shape: _Shape,
+    where: str,
+) -> AttributeMetadata:
+    """One scalar Attribute, with local invariant failures translated to declaration errors."""
+    try:
+        return AttributeMetadata(
+            identity=AttributeIdentity(identity, canonical),
+            type=_scalar_type(shape.base, spec, where),
+            storage=Column(column),
+            primary_key=spec.primary_key,
+            nullable=shape.nullable,
+            max_length=spec.max_length,
+            read_only=spec.read_only,
+            optimistic_locking=spec.optimistic_locking,
+            multiplicity=shape.multiplicity,
+        )
+    except ValueError as error:
+        raise UsageError(ENTITY_OPTION_CONTEXT_INVALID, f"{where}: {error}") from error
+
+
+def _domain_parent(cls_name: str, bases: tuple[type, ...]) -> type | None:
+    """The single domain Entity base this declaration extends, or ``None``.
+
+    Exactly one Parallax base is legal and a non-Parallax mixin is outside the
+    grammar, so both the count and the shape of ``bases`` are checked here.
+    """
+    invalid = UsageError(
+        ENTITY_BASE_INVALID,
+        f"{cls_name}: an Entity Class extends exactly one Parallax base — a framework "
+        "root (Entity, TxTemporal, Bitemporal) or one domain Entity parent",
+    )
+    if len(bases) != 1 or not is_declared_class(bases[0], DeclarationKind.ENTITY):
+        raise invalid
+    return bases[0] if _DECLARATION in bases[0].__dict__ else None
+
+
+def _container(cls_name: str, header: EntityHeader) -> StorageContainer | None:
+    if header.table is None:
+        return None
+    if not isinstance(header.table, str) or not header.table:
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: table= takes a nonempty string, got {header.table!r}",
+        )
+    return Table(header.table)
+
+
+def _persistence(cls_name: str, header: EntityHeader) -> PersistenceMode | None:
+    if header.persistence is None or isinstance(header.persistence, PersistenceMode):
+        return header.persistence
+    raise UsageError(
+        ENTITY_HEADER_INVALID_VALUE,
+        f"{cls_name}: persistence= takes READ_ONLY, got {header.persistence!r}",
+    )
+
+
+def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
+    """The Storage Layout this class itself declares, or absence for ``Columns``.
+
+    ``Document`` and ``Columns`` carry no required payload, so a class object
+    reads as naturally as an instance. ``Columns`` states the default, so it
+    normalizes to the absence omission leaves; whether this class may declare a
+    layout at all is a family-wide question formation answers.
+    """
+    declared: object = header.layout
+    if declared is Document:
+        declared = Document()
+    if declared is None or declared is Columns or isinstance(declared, Columns):
+        return None
+    if not isinstance(declared, Document):
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: layout= takes Document, Document(column=...), or Columns, "
+            f"got {declared!r}",
+        )
+    # A frozen dataclass records its payload without checking it, so the declared
+    # field type is a promise to the type checker rather than a fact about what a
+    # header actually passed.
+    column = cast("object", declared.column)
+    if not isinstance(column, str) or not column:
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: Document(column=) takes a nonempty string, got {column!r}",
+        )
+    return declared
+
+
+def _entity_name(cls_name: str, header: EntityHeader) -> str:
+    if header.name is None:
+        return cls_name
+    if not isinstance(header.name, str) or not header.name or "." in header.name:
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: name= takes a nonempty dot-free string, got {header.name!r}",
+        )
+    return header.name
+
+
+def _namespace(cls_name: str, header: EntityHeader) -> str | None:
+    if header.namespace is None:
+        return None
+    if not isinstance(header.namespace, str) or not header.namespace:
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: namespace= takes a nonempty string, got {header.namespace!r}",
+        )
+    return header.namespace
+
+
+def _inheritance_role(
+    cls_name: str, header: EntityHeader, parent: type | None
+) -> InheritanceRole | None:
+    """The normalized inheritance role, with the bare class spellings accepted.
+
+    ``AbstractSubtype`` and ``ConcreteSubtype`` carry no payload in the common
+    case, so the class object reads as naturally as an instance. A payload-
+    carrying variant has no such reading, so a root's strategy is checked here
+    rather than left to fail later as an unmatched pattern.
+    """
+    role: object = header.inheritance
+    if role is AbstractSubtype:
+        role = AbstractSubtype()
+    elif role is ConcreteSubtype:
+        role = ConcreteSubtype()
+    if role is not None and not isinstance(role, (AbstractRoot, AbstractSubtype, ConcreteSubtype)):
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{cls_name}: inheritance= takes AbstractRoot(...), AbstractSubtype, or "
+            f"ConcreteSubtype(...), got {role!r}",
+        )
+    if isinstance(role, AbstractRoot):
+        # A frozen dataclass records its payload without checking it, so the
+        # declared field type is a promise to the type checker rather than a
+        # fact about what a header actually passed.
+        strategy = cast("object", role.strategy)
+        if not isinstance(strategy, (TablePerHierarchy, TablePerConcreteSubtype)):
+            raise UsageError(
+                ENTITY_HEADER_INVALID_VALUE,
+                f"{cls_name}: AbstractRoot(...) takes TablePerHierarchy(...) or "
+                f"TABLE_PER_CONCRETE_SUBTYPE, got {strategy!r}",
+            )
+    if parent is None:
+        if isinstance(role, (AbstractSubtype, ConcreteSubtype)):
+            raise UsageError(
+                ENTITY_HEADER_INVALID_VALUE,
+                f"{cls_name}: a subtype role needs a domain Entity parent; subclass the "
+                "family's root",
+            )
+        if role is None and header.table is None:
+            raise UsageError(
+                ENTITY_HEADER_MISSING_OPTION, f"{cls_name}: a standalone Entity declares table="
+            )
+    elif role is None:
+        raise UsageError(
+            ENTITY_BASE_INVALID,
+            f"{cls_name}: a domain-Entity subclass declares inheritance=; a role is never implicit",
+        )
+    return role
+
+
+def _accepted_inheritance(
+    role: InheritanceRole | None, parent: type | None
+) -> UnresolvedInheritance | None:
+    """The accepted inheritance position, with the parent supplied by subclassing."""
+    match role:
+        case None:
+            return None
+        case AbstractRoot():
+            return role
+        case AbstractSubtype():
+            return AcceptedAbstractSubtype(_parent_reference(parent))
+        case ConcreteSubtype(tag_value):
+            return AcceptedConcreteSubtype(_parent_reference(parent), tag_value)
+
+
+def _parent_reference(parent: type | None) -> EntityReference:
+    if parent is None:  # pragma: no cover - a subtype role without a parent is rejected earlier
+        raise UsageError(ENTITY_BASE_INVALID, "a subtype role needs a domain Entity parent")
+    return ExactEntityReference(declaration_of(parent).identity)
+
+
+def _indices(
+    identity: EntityIdentity,
+    container: StorageContainer | None,
+    attributes: tuple[AttributeMetadata, ...],
+    as_of_axes: tuple[AsOfAxisMetadata, ...],
+    declared: object,
+    py_to_name: dict[str, str],
+) -> tuple[IndexMetadata, ...]:
+    """The derived primary-key Index followed by the declared ones.
+
+    A declared component names a Python member; an unknown name lowers through
+    the deterministic conversion so foundational resolution can locate and report
+    it. The primary-key Index is never declared, so the two sets are disjoint.
+    """
+    derived = derive_primary_key_index(
+        entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
+    )
+    authored = _declared_indices(identity, declared, py_to_name)
+    return authored if derived is None else (derived, *authored)
+
+
+def _declared_indices(
+    identity: EntityIdentity, declared: object, py_to_name: dict[str, str]
+) -> tuple[IndexMetadata, ...]:
+    if not isinstance(declared, tuple):
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{identity.name}: indices= takes a tuple of index(...) values",
+        )
+    entries = cast("tuple[object, ...]", declared)
+    if any(not isinstance(entry, IndexSpec) for entry in entries):
+        raise UsageError(
+            ENTITY_HEADER_INVALID_VALUE,
+            f"{identity.name}: indices= takes a tuple of index(...) values",
+        )
+    specs = cast("tuple[IndexSpec, ...]", entries)
+    return tuple(
+        IndexMetadata(
+            identity=IndexIdentity(identity, spec.name),
+            attributes=tuple(
+                AttributeIdentity(identity, py_to_name.get(member, snake_to_camel(member)))
+                for member in spec.members
+            ),
+            unique=spec.unique,
+        )
+        for spec in specs
+    )
+
+
+def _declared_name(spec: AttrSpec | RelSpec, py_name: str) -> str:
+    return spec.name if spec.name is not None else snake_to_camel(py_name)
+
+
+def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpec:
+    """The assignment slot's declaration value, or the default for an empty slot.
+
+    The slot holds one factory value matching the annotation and nothing else: a
+    bare value, or the wrong factory for the annotation, is rejected here.
+    """
+    if expect == "attr":
+        if value is None:
+            return AttrSpec()
+        if isinstance(value, AttrSpec):
+            return value
+        if isinstance(value, (DefiningRelSpec, ReverseRelSpec)):
+            raise UsageError(
+                ENTITY_MEMBER_VALUE_INVALID,
+                f"{where}: a rel(...) value under an Attr[...] annotation",
+            )
+        raise UsageError(
+            ENTITY_MEMBER_VALUE_INVALID,
+            f"{where}: an Attr[...] member holds at most one attr(...) value",
+        )
+    if isinstance(value, (DefiningRelSpec, ReverseRelSpec)):
+        return value
+    if isinstance(value, AttrSpec):
+        raise UsageError(
+            ENTITY_MEMBER_VALUE_INVALID, f"{where}: an attr(...) value under a Rel[...] annotation"
+        )
+    raise UsageError(
+        ENTITY_MEMBER_VALUE_INVALID,
+        f"{where}: a Rel[...] member declares exactly one rel(...) value",
+    )
+
+
+def _reject_reserved(where: str, py_name: str, kind: DeclarationKind) -> None:
+    reason = _reserved_name_reason(py_name, kind)
+    if reason is not None:
+        raise UsageError(ENTITY_RESERVED_MEMBER_NAME, f"{where}: {reason}")
+
+
+def _reject_shadowed_class_names(
+    cls_name: str, ns: dict[str, object], kind: DeclarationKind
+) -> None:
+    """Reject a class-body name that would take a reserved class-level name.
+
+    The declaration surface answers only names the class object does not already
+    carry, so a body binding — a member's declaration value, a method, or a class
+    variable — reusing one makes the declaration unreachable rather than merely
+    shadowing it. An annotation-only member is caught by the member walk instead,
+    which is why both frontends run both checks.
+
+    The ``model_*`` prefix is checked here for the same reason it is checked
+    there: an unannotated ``def model_copy`` is a binding rather than a declared
+    member, and admitting it would reinstate a copy door the edit surface
+    refuses. This runs against the body as authored, before the engine installs
+    its own configuration under one of those names — which is also what lets the
+    framework's own prefix be reserved against the body while the engine keeps
+    binding markers under it.
+
+    ``__slots__`` needs no reading of its own: the name is reserved
+    (:data:`_INSTANCE_LAYOUT_NAME`), so a body carrying it is refused here before
+    class creation could turn any entry of it into a class-level descriptor. That
+    is why the loop below can be over the namespace's keys alone — the one way a
+    body reaches a class-level name without binding a key is the one way it may
+    not take.
+    """
+    for name in sorted(ns):
+        reason = _reserved_name_reason(name, kind)
+        if reason is not None:
+            raise UsageError(ENTITY_RESERVED_MEMBER_NAME, f"{cls_name}.{name}: {reason}")
+
+
+def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
+    """Why a class body of ``kind`` may not author ``py_name``, or ``None``.
+
+    The reservations that hold whatever a declaration is come first: the
+    framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`), because what a binding
+    under it takes is one of the framework's own private bindings rather than a
+    member surface; Pydantic's namespace, because both kinds are Pydantic models;
+    the copy verb, because both kinds install one; the schema seam, because an
+    authored one would redefine what publication means for its own instances; the
+    two names a value's instance state is presented under, because the framework
+    binds both; the two containers Pydantic lays out beside that state, because
+    the framework decides what a copy of each is; the object layout itself,
+    because every slot of a declared value's is one the framework classifies; and
+    the pickle entry point, because it is the name ``pickle``'s own dispatch asks
+    either kind for. Only the Entity surface names follow.
+    """
+    if py_name.startswith(FRAMEWORK_NAME_PREFIX):
+        return (
+            f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own private bindings — "
+            "its class markers, its instance slots, and the document and authoring capabilities "
+            "a Value Object exposes to framework internals — which a declaration may not bind"
+        )
+    if py_name.startswith("model_"):
+        return "the `model_*` namespace is reserved by Pydantic"
+    if py_name == _COPY_VERB_NAME:
+        return (
+            f"reuses the instance-level copy verb `{_COPY_VERB_NAME}`, which a declared member "
+            "of that name would overwrite"
+        )
+    if py_name == _CORE_SCHEMA_HOOK_NAME:
+        return (
+            f"reuses `{_CORE_SCHEMA_HOOK_NAME}`, the schema seam the framework owns — an "
+            "authored one replaces a declared class's whole validation and serialization "
+            "rather than composing with it, so what publication means for its instances "
+            "would be the class's to redefine; author `__get_pydantic_json_schema__`, a "
+            "field or model serializer, a computed field, or a validator instead, all of "
+            "which still run"
+        )
+    if py_name in _STATE_PRESENTATION_NAMES:
+        return (
+            f"reuses `{py_name}`, one of the two names a value's instance state is "
+            "presented to Pydantic under — the framework binds both, and an authored one "
+            "decides what Pydantic reads of every instance of this class, including a "
+            "published one that holds no instance dictionary at all"
+        )
+    if py_name in _STATE_CONTAINER_NAMES:
+        return (
+            f"reuses `{py_name}`, one of the two containers Pydantic lays out beside a "
+            "value's instance state — Pydantic keys extra fields and every private "
+            "attribute on the name rather than on what is bound under it, so an authored "
+            "one is what every read of them, and every copy derived from this class's "
+            "values, would reach in place of a mapping"
+        )
+    if py_name == _INSTANCE_LAYOUT_NAME:
+        return (
+            f"declares `{_INSTANCE_LAYOUT_NAME}`, and a declared class's object layout is "
+            "the framework's alone — every slot of it is one the framework lays out and a "
+            "derived copy therefore knows how to carry, which a body laying out slots of "
+            "its own would no longer be true of; hold non-field per-instance state in a "
+            "`PrivateAttr` instead, which an edit carries and which costs a value no slot "
+            "of its own"
+        )
+    if py_name == _PICKLE_ENTRY_NAME:
+        return (
+            f"reuses `{_PICKLE_ENTRY_NAME}`, the pickle entry point the framework owns — an "
+            "authored one replaces the refusal that keeps a materialized node's lifecycle "
+            "state from crossing a process boundary; author `__reduce__` or `__getstate__` "
+            "instead, both of which still run"
+        )
+    if kind is DeclarationKind.ENTITY and py_name in RESERVED_MEMBER_NAMES:
+        return "reuses a reserved query-root or introspection name"
+    return None
+
+
+def _reject_temporal_redeclaration(
+    cls_name: str, annotations: dict[str, object], ns: dict[str, object]
+) -> None:
+    """Reject a class-body name below a temporal base that takes a framework temporal name.
+
+    The reservation is on the *canonical* name the body would resolve to, so one
+    rule covers the Python spelling the framework injects, a literal canonical
+    spelling, and an explicit ``name=`` that renames onto one. It runs before the
+    injection so a redeclaration can never be silently overwritten.
+    """
+    declared = sorted(
+        py_name
+        for py_name in set(annotations) | set(ns)
+        if _body_canonical_name(py_name, ns.get(py_name)) in _RESERVED_TEMPORAL_NAMES
+    )
+    if declared:
+        raise UsageError(
+            ENTITY_RESERVED_MEMBER_NAME,
+            f"{cls_name}.{declared[0]}: the framework temporal base supplies the standard "
+            "temporal members family-wide",
+        )
+
+
+def _body_canonical_name(py_name: str, value: object) -> str:
+    if isinstance(value, (AttrSpec, DefiningRelSpec, ReverseRelSpec)) and value.name is not None:
+        return value.name
+    return snake_to_camel(py_name)
+
+
+def _declare_temporal_members(
+    identity: EntityIdentity,
+    annotations: dict[str, object],
+    ns: dict[str, object],
+    axes: tuple[TemporalDimension, ...],
+) -> tuple[AsOfAxisMetadata, ...]:
+    """Append the framework temporal members after every authored one, and return
+    the As-Of Axes they carry.
+
+    The shared derivation supplies the endpoints, so a class declaration and a
+    descriptor declaring the same Temporality Profile reach the seam carrying the
+    same members in the same canonical axis order — Valid Time first.
+    """
+    derived = _derived_axes(axes)
+    for axis in derived:
+        for endpoint in (axis.start, axis.end):
+            py_name = _python_spelling(endpoint.name)
+            annotations[py_name] = Attr[_dt.datetime]
+            ns[py_name] = AttrSpec(column=endpoint.column)
+    return tuple(
+        AsOfAxisMetadata(
+            dimension=axis.dimension,
+            start_attribute=AttributeIdentity(identity, axis.start.name),
+            end_attribute=AttributeIdentity(identity, axis.end.name),
+        )
+        for axis in derived
+    )
+
+
+def _derived_axes(axes: tuple[TemporalDimension, ...]) -> tuple[DerivedAxis, ...]:
+    """The As-Of Axes the temporal base's dimensions derive.
+
+    A framework temporal base selects dimensions where a descriptor spells a
+    profile, so the dimensions are routed back through the profile they name to
+    reach the one derivation both frontends share.
+    """
+    return derive_temporal_structure(temporality_profile(axes))
+
+
+def _relationship(
+    identity: EntityIdentity, canonical: str, spec: RelSpec, shape: _Shape, where: str
+) -> UnresolvedRelationshipDeclaration:
+    if shape.multiplicity is Multiplicity.MANY and shape.nullable:
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID,
+            f"{where}: a to-many relationship is never `| None` — loaded-empty is `()`",
+        )
+    target = _entity_reference(shape, where)
+    relationship = RelationshipIdentity(identity, canonical)
+    order_by = tuple(
+        UnresolvedRelationshipOrder(
+            snake_to_camel(term.member),
+            term.direction,
+            term.nulls if term.nulls is not None else NullPlacement.NULLS_LAST,
+        )
+        for term in spec.order_by
+    )
+    if isinstance(spec, ReverseRelSpec):
+        return UnresolvedReverseRelationshipDeclaration(
+            identity=relationship,
+            reverse_of=RelationshipReference(entity=target, name=snake_to_camel(spec.reverse_of)),
+            order_by=order_by,
+        )
+    return UnresolvedDefiningRelationshipDeclaration(
+        identity=relationship,
+        cardinality=spec.cardinality,
+        join=UnresolvedRelationshipJoin(
+            source=AttributeIdentity(identity, snake_to_camel(spec.join[0])),
+            target=AttributeReference(entity=target, name=snake_to_camel(spec.join[1])),
+        ),
+        dependent=spec.dependent,
+        order_by=order_by,
+    )
+
+
+def _entity_reference(shape: _Shape, where: str) -> EntityReference:
+    """The Entity Reference a ``Rel[T]`` annotation names.
+
+    A class target and a qualified string are already exact; a bare string is
+    relative to the declaring Entity's namespace. Resolution never consults
+    module globals — the composed candidate set is the only scope.
+    """
+    if shape.base is not None:
+        if not isinstance(shape.base, type) or _DECLARATION not in shape.base.__dict__:
+            raise UsageError(
+                ENTITY_ANNOTATION_INVALID,
+                f"{where}: a relationship target is an Entity Class or its name",
+            )
+        return ExactEntityReference(declaration_of(shape.base).identity)
+    namespace, dot, name = (shape.spelling or "").rpartition(".")
+    if not name:
+        raise UsageError(
+            ENTITY_ANNOTATION_INVALID, f"{where}: a relationship target names a nonempty Entity"
+        )
+    if not dot:
+        return RelativeEntityReference(name)
+    return ExactEntityReference(EntityIdentity(namespace, name))
+
+
+# Pydantic field installation
+
+
+def _install_fields(
+    annotations: dict[str, object],
+    ns: dict[str, object],
+    shapes: dict[str, _Shape],
+    vo_classes: dict[str, type],
+    collections: Mapping[str, ScalarDefinition],
+    *,
+    framework_owned: frozenset[str],
+) -> None:
+    """Rewrite the class body into ordinary Pydantic field declarations.
+
+    ``Attr[T]`` collapses to ``T`` so Pydantic builds an inner-typed field, the
+    declaration value leaves the namespace, and a member whose absence is
+    representable takes the matching Python default: ``None`` for a nullable
+    member or a framework-owned one, and the empty tuple for a Many occurrence.
+
+    A framework-owned member is defaulted because the caller never supplies its
+    value and is refused for trying, so requiring one at construction would make
+    the Entity unconstructible; the value the framework supplies arrives by
+    hydration, which enters no Pydantic constructor at all.
+    """
+    for py_name, shape in shapes.items():
+        annotations[py_name] = _field_annotation(shape)
+        if shape.multiplicity is Multiplicity.MANY:
+            ns[py_name] = ()
+        elif shape.nullable or py_name in framework_owned:
+            ns[py_name] = None
+        else:
+            ns.pop(py_name, None)
+    for py_name in framework_owned:
+        ns[f"_reject_framework_owned_{py_name}"] = _framework_owned_validator(py_name)
+    for py_name, vo_class in vo_classes.items():
+        multiplicity = shapes[py_name].multiplicity
+        ns[f"_validate_vo_{py_name}"] = _value_object_validator(py_name, vo_class, multiplicity)
+    for py_name, leaf in collections.items():
+        ns[f"_validate_collection_{py_name}"] = _scalar_collection_validator(py_name, leaf)
+    ns["__annotations__"] = annotations
+
+
+def _field_annotation(shape: _Shape) -> object:
+    inner = cast("type", shape.base)
+    if shape.multiplicity is Multiplicity.MANY:
+        return tuple[inner, ...]
+    if shape.nullable:
+        return inner | None
+    return inner
+
+
+def _framework_owned_validator(py_name: str) -> Any:
+    """A ``mode="before"`` validator refusing a caller-authored framework-owned value.
+
+    The refusal belongs at construction, where the mistake is, rather than
+    several steps later when a row is derived. It raises ``ValueError`` so
+    Pydantic reports it as an ordinary ``ValidationError`` alongside every other
+    rejection of that call — construction is not an edit, so it is deliberately
+    not the edit family's refusal. Hydration is unaffected: it enters no Pydantic
+    constructor at all, so it never reaches this validator.
+
+    A defaulted member skips its validators, so omitting the member is how a
+    caller legitimately constructs one.
+    """
+
+    def _validate(_cls: type, value: object) -> object:
+        # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
+        # one only by `isinstance(func, classmethod)`, hence the explicit wrap
+        # below even though this validator never reads `cls`.
+        raise ValueError(
+            f"{py_name}: framework-owned members are supplied by the framework and are never "
+            "authored — omit it and let the write path stamp it"
+        )
+
+    bound = cast("Any", classmethod(_validate))
+    return field_validator(py_name, mode="before")(bound)
+
+
+def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
+    """A ``mode="before"`` validator enforcing "a scalar collection is a tuple of
+    its element type's carriers".
+
+    Pydantic would otherwise accept any sequence for a ``tuple[X, ...]`` field
+    and convert elements the Python input policy refuses — ``True`` into an
+    integer, a ``float`` into a ``Decimal`` — erasing them before any write
+    admission sees them. So the exact immutable carrier and each element's
+    carrier are required here, before Pydantic's own element validation runs.
+    That validation refuses only what it refuses for an ordinary scalar, such as
+    a non-finite ``Decimal``; the rest of each element's value space is judged
+    by the write that admits it, and by an edit or ``.set(...)`` that assigns
+    the collection.
+    """
+    declared = leaf.type
+
+    def _validate(_cls: type, value: object) -> object:
+        # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
+        # one only by `isinstance(func, classmethod)`, hence the explicit wrap
+        # below even though this validator never reads `cls`.
+        carrier: type = type(value)
+        if carrier is not tuple:
+            raise TypeError(
+                f"{py_name}: a scalar collection member requires a tuple, not {carrier.__name__!r}"
+            )
+        for index, element in enumerate(cast("tuple[object, ...]", value)):
+            if not matches_typed_carrier(element, declared):
+                coerced = coerce_neutral_input(element, declared)
+                raise ValueError(
+                    f"{py_name}[{index}]: value {coerced!r} does not match the "
+                    f"declared element type {declared}"
+                )
+        return value
+
+    bound = cast("Any", classmethod(_validate))
+    return field_validator(py_name, mode="before")(bound)
+
+
+def _value_object_validator(py_name: str, vo_class: type, multiplicity: Multiplicity) -> Any:
+    """A ``mode="before"`` validator enforcing "a Value Object member is an instance".
+
+    Pydantic coerces a plain mapping into a declared nested model even under
+    strict mode, so this explicit check is the enforcement point for the Python binding's
+    Value Object input policy.
+    """
+
+    def _validate(_cls: type, value: object) -> object:
+        # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
+        # one only by `isinstance(func, classmethod)`, hence the explicit wrap
+        # below even though this validator never reads `cls`.
+        if value is None:
+            return value
+        if multiplicity is Multiplicity.MANY:
+            if not isinstance(value, tuple):
+                raise TypeError(
+                    f"{py_name}: a many Value Object member requires a tuple of "
+                    f"{vo_class.__name__!r} instances, not {type(value).__name__!r}"
+                )
+            items = cast("tuple[object, ...]", value)
+            for item in items:
+                if not isinstance(item, vo_class):
+                    raise TypeError(
+                        f"{py_name}: element {item!r} is not a {vo_class.__name__!r} instance "
+                        "(Value Objects are instances only, never a raw mapping)"
+                    )
+            return items
+        if not isinstance(value, vo_class):
+            raise TypeError(
+                f"{py_name}: a Value Object member requires a {vo_class.__name__!r} instance, "
+                f"not {type(value).__name__!r} (never a raw mapping)"
+            )
+        return value
+
+    bound = cast("Any", classmethod(_validate))
+    return field_validator(py_name, mode="before")(bound)

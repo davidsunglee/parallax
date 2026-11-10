@@ -65,41 +65,45 @@ from parallax.core import (
     TablePerHierarchy,
     ValueObject,
     attr,
-    read_planning,
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, StructuredDocument
-from parallax.core.db_port import DocumentReadOrdinals, Row
-from parallax.core.dialect import POSTGRES, Dialect, scalar_result
-from parallax.core.document_codec import (
+from parallax.core.execution_lifecycle._activity import INERT
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import SQL_NULL, DocumentValue, ManagedValue, StructuredDocument
+from parallax.core.internal.db_port import DocumentReadOrdinals, Row
+from parallax.core.internal.dialect import POSTGRES, Dialect, scalar_result
+from parallax.core.internal.document_codec import (
     MemberShape,
     OccurrenceDefinition,
     ScalarDefinition,
     encode_leaf,
     occurrence_shape,
 )
-from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.entity._model import model_of
-from parallax.core.execution_lifecycle._activity import INERT
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     EntityIdentity,
     Metamodel,
     Multiplicity,
     entity_by_name,
 )
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._page import ABSENT, Page, page_rows
-from parallax.core.read_delivery._page_reader import (
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._page import ABSENT, Page, page_rows
+from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
     PageReader,
     _RootRead,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead, ReadPlan
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.storage_layout import DirectColumn, TableLayout, storage_layout_facet_of
-from parallax.core.unit_work import ReadEvidence
+from parallax.core.internal.read_delivery._read_plan import (
+    UNCACHED_READ_PLANNER,
+    EmptyRead,
+    ReadPlan,
+)
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.storage_layout import DirectColumn, TableLayout, storage_layout_facet_of
+from parallax.core.internal.unit_work import ReadEvidence
 from tests._support.db_port import ConnectsAsItself
 from tests._support.document_reads import fold_mapping_rows
 

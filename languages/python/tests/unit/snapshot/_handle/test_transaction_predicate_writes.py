@@ -45,24 +45,24 @@ from parallax.core import (
 from parallax.core._execution._family import comparison_shape
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     UsageError,
 )
-from parallax.core.document_codec import (
+from parallax.core.internal.document_codec import (
     MemberShape,
     prepare_effective_change,
 )
-from parallax.core.entity._authored_resolver import typed_predicate_interpretation
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._expressions import AuthoredMemberPath, UnfinishedOperation
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import DomainModel as _Fixed
-from parallax.core.entity._model import class_index, model_of
-from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.metamodel import UnresolvedEntityDeclaration
-from parallax.core.predicate._interpretation import COMPARE
-from parallax.core.unit_work import (
+from parallax.core.internal.entity._authored_resolver import typed_predicate_interpretation
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._expressions import AuthoredMemberPath, UnfinishedOperation
+from parallax.core.internal.entity._layout import LayoutCatalog
+from parallax.core.internal.entity._model import DomainModel as _Fixed
+from parallax.core.internal.entity._model import class_index, model_of
+from parallax.core.internal.execution import ServingModel, prepare_model
+from parallax.core.internal.metamodel import UnresolvedEntityDeclaration
+from parallax.core.internal.predicate._interpretation import COMPARE
+from parallax.core.internal.unit_work import (
     PredicateWriteInstruction,
 )
 from parallax.snapshot import (

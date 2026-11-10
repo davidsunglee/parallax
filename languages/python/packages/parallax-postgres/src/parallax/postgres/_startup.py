@@ -3,8 +3,8 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     CleanupResult,
     ConnectionAcquisitionError,
     DatabaseStartupError,

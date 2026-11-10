@@ -6,9 +6,14 @@ from parallax.core._execution._retention import (
     RecordedFetchedRows,
     defer_read_evidence,
 )
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import Page, hydrates, judged_entity_state, page_rows
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery._page import (
+    Page,
+    hydrates,
+    judged_entity_state,
+    page_rows,
+)
 
 __all__ = ["ReadEvidenceCollector"]
 

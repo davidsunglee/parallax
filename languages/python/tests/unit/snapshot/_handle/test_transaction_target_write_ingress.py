@@ -29,12 +29,12 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     serialize,
 )
-from parallax.core.base import InvalidValueError, UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity import AttributeAssignment, DomainModel
-from parallax.core.entity._expressions import AttributeRef
-from parallax.core.entity._model import model_of
-from parallax.core.unit_work import TargetWriteInstruction
+from parallax.core.internal.base import InvalidValueError, UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity import AttributeAssignment, DomainModel
+from parallax.core.internal.entity._expressions import AttributeRef
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import TargetWriteInstruction
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm

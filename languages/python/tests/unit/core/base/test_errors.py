@@ -26,10 +26,13 @@ from parallax.core import (
     UsageError,
     WritePreconditionError,
 )
-from parallax.core.metamodel import EntityIdentity, EntityLocation, MetamodelIssue
-from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
-from parallax.core.read_delivery._page import CONTINUATION_ORDER_NOT_TOTAL, invalid_result_refusal
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.metamodel import EntityIdentity, EntityLocation, MetamodelIssue
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
+from parallax.core.internal.read_delivery._page import (
+    CONTINUATION_ORDER_NOT_TOTAL,
+    invalid_result_refusal,
+)
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.descriptor import DescriptorError, DescriptorViolation
 
 _ORDER = EntityIdentity("shop", "Order")

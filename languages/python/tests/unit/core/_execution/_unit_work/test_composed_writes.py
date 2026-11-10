@@ -9,7 +9,6 @@ from decimal import Decimal
 
 import pytest
 
-from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
@@ -24,9 +23,10 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
-from parallax.core.base import INFINITY, InternalError, UsageError
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import (
+from parallax.core.internal import temporal_read
+from parallax.core.internal.base import INFINITY, InternalError, UsageError
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedMutation,
     KeyedWriteInstruction,
@@ -35,7 +35,7 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     SUPERSEDED,
     TERMINATED,
     ObjectKey,
@@ -45,12 +45,12 @@ from parallax.core.write_plan import (
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import (
+from parallax.core.internal.write_plan.keys import (
     TemporalObjectStateKey,
     VersionedObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.plan import (
     Openings,
     SettledWrite,
     TemporalRowCoordinates,
@@ -58,9 +58,9 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (

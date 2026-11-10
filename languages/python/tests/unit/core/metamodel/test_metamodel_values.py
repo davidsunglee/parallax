@@ -10,9 +10,9 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core import base
-from parallax.core.base._neutral import ManagedValueExclusion, utc_instant
-from parallax.core.metamodel import (
+from parallax.core.internal import base
+from parallax.core.internal.base._neutral import ManagedValueExclusion, utc_instant
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,

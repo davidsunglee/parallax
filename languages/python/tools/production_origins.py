@@ -43,11 +43,11 @@ NOT_LOADED: Final = "not-loaded"
 ORIGINS_FIELD: Final = "productionOrigins"
 
 MEASURED_MODULES: Final = (
-    "parallax.core.read_delivery._row_recording",
-    "parallax.core.read_delivery._page._rows",
-    "parallax.core.read_delivery._convert",
-    "parallax.core.document_codec._document",
-    "parallax.core.entity._row_fill",
+    "parallax.core.internal.read_delivery._row_recording",
+    "parallax.core.internal.read_delivery._page._rows",
+    "parallax.core.internal.read_delivery._convert",
+    "parallax.core.internal.document_codec._document",
+    "parallax.core.internal.entity._row_fill",
     "parallax.snapshot._publication._graph_view",
     "parallax.snapshot._publication._wire_render",
 )

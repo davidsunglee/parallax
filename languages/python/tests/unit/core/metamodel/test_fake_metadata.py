@@ -8,9 +8,9 @@ from typing import cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import inheritance
 from parallax.core._formation_profile import BUILTIN_MANIFEST, form_metamodel
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.metamodel import (
     CompiledEntity,
     EntityIdentity,
     Metamodel,
@@ -19,8 +19,8 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectAttributeMetadata,
 )
-from parallax.core.model_formation import ModelCompilerRequirement
-from parallax.core.relationship import relationship_facet_of
+from parallax.core.internal.model_formation import ModelCompilerRequirement
+from parallax.core.internal.relationship import relationship_facet_of
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document

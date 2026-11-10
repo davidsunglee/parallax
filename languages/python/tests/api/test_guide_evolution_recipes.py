@@ -29,10 +29,10 @@ from parallax.conformance.guide_evolution_recipes import (
 )
 from parallax.conformance.guide_models import BankTransfer, CardPayment, Customer, Order, Payment
 from parallax.core import DomainModel
-from parallax.core.entity import model_of
-from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_delivery import InvalidDataError
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.execution import ServingModel, prepare_model
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.descriptor import export_yaml
 from parallax.evolution import (
     CoordinatedEvolution,

@@ -34,27 +34,27 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     TemporalIntent,
 )
-from parallax.core.base import ManagedValue
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity
-from parallax.core.temporal_read import (
+from parallax.core.internal.base import ManagedValue
+from parallax.core.internal.inheritance import InheritanceEntityView
+from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
     valid_time_coverage,
 )
-from parallax.core.temporal_write.coverage import CoverageTransform
-from parallax.core.temporal_write.expansion import (
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
+from parallax.core.internal.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
     TemporalFacts,
 )
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.observe import PredecessorRow, TemporalObservation
+from parallax.core.internal.write_plan.payload import WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import (
     AcquisitionSpan,
     BoundRange,
     DeferredRange,
@@ -63,8 +63,8 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.predecessor_rows import PredecessorRows
-from parallax.core.write_plan.steps import KeyTarget, PlannedStep
+from parallax.core.internal.write_plan.predecessor_rows import PredecessorRows
+from parallax.core.internal.write_plan.steps import KeyTarget, PlannedStep
 
 __all__ = [
     "DeferredTemporalRange",

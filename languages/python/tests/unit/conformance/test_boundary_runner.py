@@ -25,9 +25,9 @@ from parallax.conformance.boundary_runner import (
 )
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.base import UsageError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     BeginFailed,
     Bind,
     ConnectionAcquisitionError,
@@ -47,13 +47,13 @@ from parallax.core.db_port import (
     StatementNotExecuted,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.execution import (
     AdaptiveBackoff,
     RetryPolicy,
     TxnOptions,
 )
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (

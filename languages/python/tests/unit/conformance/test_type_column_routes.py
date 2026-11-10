@@ -18,7 +18,7 @@ from parallax.core import (
     TablePerHierarchy,
     attr,
 )
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import DescriptorError, domain_model_from_document
 
 _COLLISION = "inheritance-materialization-key-collision"

@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Protocol
 
-from parallax.core.document_codec import apply_prepared_patches
-from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import CurrentRowOutput, EffectSpan, WriteEffects
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.document_codec import apply_prepared_patches
+from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.plan import CurrentRowOutput, EffectSpan, WriteEffects
+from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
     PlannedTemporalRevision,
@@ -59,7 +59,7 @@ class ExecuteCountedStep(Protocol):
 
 class _CurrentRowCapture:
     """The current rows the writes of one running Write Group describe
-    (:attr:`~parallax.core.write_plan.plan.WriteEffects.current_outputs`),
+    (:attr:`~parallax.core.internal.write_plan.plan.WriteEffects.current_outputs`),
     each staged with the document its emitter's payload stores as normal
     lowering demands that payload, until its write completes.
 

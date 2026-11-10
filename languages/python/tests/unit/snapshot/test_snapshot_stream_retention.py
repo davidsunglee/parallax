@@ -85,7 +85,7 @@ from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.conformance.workloads import catalog
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     ArrayBind,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -93,9 +93,9 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.read_delivery._page import Page, PageRows
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.read_delivery._page import Page, PageRows
 from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._typed import TypedRootPublisher

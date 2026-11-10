@@ -10,15 +10,20 @@ from decimal import Decimal as PyDecimal
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, ValueObject, attr, storage_layout
-from parallax.core.base import INT32, INT64, JSON, STRING, FrozenMap, InternalError
-from parallax.core.entity import Document
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.storage_layout import RelationalDocument
-from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape, StorageCatalog
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import INT32, INT64, JSON, STRING, FrozenMap, InternalError
+from parallax.core.internal.entity import Document
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
+from parallax.core.internal.storage_layout import RelationalDocument
+from parallax.core.internal.write_payload._storage import (
+    ROW_SLOTS_PER_ENTITY,
+    EffectShape,
+    StorageCatalog,
+)
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,

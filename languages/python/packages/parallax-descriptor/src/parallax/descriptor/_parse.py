@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal, cast
 
-from parallax.core.metamodel import default_column_name, derive_temporal_structure
+from parallax.core.internal.metamodel import default_column_name, derive_temporal_structure
 from parallax.descriptor._errors import DESCRIPTOR_SCHEMA_INVALID, DescriptorError
 from parallax.descriptor._records import (
     TEMPORAL_DIMENSIONS,

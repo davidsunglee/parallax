@@ -15,24 +15,35 @@ from typing import Literal
 
 import pytest
 
-from parallax.core import InternalError, storage_layout
-from parallax.core.base import STRING
-from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
-from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.storage_layout import _temporal as temporal_naming
+from parallax.core import InternalError
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import STRING
+from parallax.core.internal.dialect import POSTGRES, Dialect, PhysicalIndexName
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    Column,
+    EntityIdentity,
+    IndexIdentity,
+    Table,
+)
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.storage_layout import _temporal as temporal_naming
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
-from parallax.evolution.schema_delta import PHYSICAL_INDEX_NAME_COLLISION, schema_delta
-from parallax.evolution.schema_delta import _naming as naming
-from parallax.evolution.schema_delta._naming import NamedIndex, census, collision_groups
-from parallax.evolution.schema_delta._physical import (
+from parallax.evolution.internal.model_evolution import (
+    ABSENT,
+    UnilateralEvolution,
+    evolve_metamodels,
+)
+from parallax.evolution.internal.schema_delta import PHYSICAL_INDEX_NAME_COLLISION, schema_delta
+from parallax.evolution.internal.schema_delta import _naming as naming
+from parallax.evolution.internal.schema_delta._naming import NamedIndex, census, collision_groups
+from parallax.evolution.internal.schema_delta._physical import (
     IndexDefinition,
     PhysicalColumn,
     TemporalBackingIndex,
 )
-from parallax.evolution.schema_delta._plan import temporal_backing_indices
-from parallax.evolution.schema_delta._values import (
+from parallax.evolution.internal.schema_delta._plan import temporal_backing_indices
+from parallax.evolution.internal.schema_delta._values import (
     CollidingTemporalConstraint,
     CollisionGroup,
     IndexPresence,

@@ -30,12 +30,12 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity import IncludePath
-from parallax.core.entity._expressions import authored_include_path
-from parallax.core.entity._model import model_of
-from parallax.core.object_query import validate_object_query
-from parallax.core.object_query._nodes import IncludePathNode
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import IncludePath
+from parallax.core.internal.entity._expressions import authored_include_path
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.object_query import validate_object_query
+from parallax.core.internal.object_query._nodes import IncludePathNode
 from tests._support.errors import raises_code
 from tests._support.query_probes import canonical_query
 from tests.unit import _deep_include_support as deep

@@ -5,16 +5,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
-from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.inheritance import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import STRING
+from parallax.core.internal.inheritance import (
     AttributeTableContributor,
     InheritanceTableGroup,
     TableGroupContributor,
     TopLevelValueObjectTableContributor,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeMetadata,

@@ -3,8 +3,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import cast
 
-from parallax.core.base import TIMESTAMP, ManagedValue, NeutralType, matches_neutral_type
-from parallax.core.wire import encode_wire
+from parallax.core.internal.base import TIMESTAMP, ManagedValue, NeutralType, matches_neutral_type
+from parallax.core.internal.wire import encode_wire
 
 
 def normalize_case_literal(neutral_type: NeutralType, value: object | None) -> object | None:

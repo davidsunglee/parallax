@@ -13,7 +13,6 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core import ExecutionLifecycleHandler, ExecutionLifecycleHandlerError, RootExecution
-from parallax.core.db_port import Returned
 from parallax.core.execution_lifecycle import (
     AcquisitionFinished,
     AcquisitionStarted,
@@ -27,6 +26,7 @@ from parallax.core.execution_lifecycle import (
     ReleaseFinished,
     ReleaseStarted,
 )
+from parallax.core.internal.db_port import Returned
 from parallax.snapshot import connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures

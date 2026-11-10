@@ -25,9 +25,9 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, attr
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle import DatabaseCallStarted, FlushStarted
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
 from tests._support.root_ownership import own_root
 

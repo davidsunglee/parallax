@@ -14,7 +14,7 @@ from typing import Any, assert_type
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
-from parallax.core.entity import model_of
+from parallax.core.internal.entity import model_of
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import (
     ABSENT,
@@ -23,7 +23,11 @@ from parallax.evolution import (
     UnilateralEvolution,
     evolve,
 )
-from parallax.evolution.model_evolution import EntityAdded, EntityRemoved, evolve_metamodels
+from parallax.evolution.internal.model_evolution import (
+    EntityAdded,
+    EntityRemoved,
+    evolve_metamodels,
+)
 
 
 class Widget(Entity, table="widget", namespace="shop"):

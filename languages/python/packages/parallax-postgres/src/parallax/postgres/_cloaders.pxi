@@ -14,7 +14,7 @@ from datetime import UTC
 from psycopg import DataError
 from psycopg.pq import Format
 
-from parallax.core.base import INFINITY, nearest_binary32_of_spelling
+from parallax.core.internal.base import INFINITY, nearest_binary32_of_spelling
 
 
 cdef extern from "Python.h":

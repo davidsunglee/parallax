@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     BeginFailed,
     Bind,
     Committed,
@@ -23,7 +23,7 @@ from parallax.core.db_port import (
     RolledBack,
     Row,
 )
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.dialect import POSTGRES
 from tests._support.db_port import (
     BeginCall,
     CommitCall,

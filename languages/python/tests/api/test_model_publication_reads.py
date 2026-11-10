@@ -20,12 +20,12 @@ from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.base import UsageError
-from parallax.core.execution import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.read_delivery import InvalidDataError
+from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.snapshot import TxnContext, connect
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures

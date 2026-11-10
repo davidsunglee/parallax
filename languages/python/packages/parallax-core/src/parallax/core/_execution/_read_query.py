@@ -3,16 +3,16 @@ from __future__ import annotations
 from typing import Final
 
 from parallax.core._execution._features import deferred_feature_refusal, deferred_features
-from parallax.core.base import UsageError
-from parallax.core.metamodel import Metamodel, entity_by_name
-from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.object_query import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import Metamodel, entity_by_name
+from parallax.core.internal.metamodel._states import ambiguous_entity_spellings
+from parallax.core.internal.object_query import (
     InterpretedQuery,
     QueryInput,
     validate_object_query,
 )
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate import REFERENCE_AMBIGUOUS_ENTITY_NAME
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.predicate import REFERENCE_AMBIGUOUS_ENTITY_NAME
 
 __all__ = ["QUERY_TARGET_NOT_IN_MODEL", "resolve_read_query"]
 
@@ -33,10 +33,10 @@ def resolve_read_query(query: QueryInput, *, model: Metamodel) -> ResolvedObject
     Target resolution follows the reference-position rule every validator and
     lowering site resolves a spelling by, so "read-query resolution accepted this
     target" implies "planning resolves it". Raises a
-    :class:`~parallax.core.base.UsageError` coded ``query-target-not-in-model``
+    :class:`~parallax.core.internal.base.UsageError` coded ``query-target-not-in-model``
     when ``model`` declares no Entity for it, a ``UsageError`` with the rule's
     code when a clause is not applicable from that resolved root, and an
-    :class:`~parallax.core.base.UnsupportedError` coded
+    :class:`~parallax.core.internal.base.UnsupportedError` coded
     ``execution-feature-deferred`` when the query is applicable but requires a
     Feature this implementation has not built yet. Performs no SQL generation,
     Database Port or connection work, transaction demarcation, or

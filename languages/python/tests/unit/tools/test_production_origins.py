@@ -71,8 +71,9 @@ def test_the_checkouts_own_sources_and_an_abi_matched_loader_extension_break_no_
             _source(f"{_CORE}/parallax/core/__init__.py"),
             path=[_source(f"{_CORE}/parallax/core")],
         ),
-        "parallax.core.entity._row_fill": _module(
-            "parallax.core.entity._row_fill", _source(f"{_CORE}/parallax/core/entity/_row_fill.py")
+        "parallax.core.internal.entity._row_fill": _module(
+            "parallax.core.internal.entity._row_fill",
+            _source(f"{_CORE}/parallax/core/internal/entity/_row_fill.py"),
         ),
         "parallax.postgres._cloaders_binary": _module(
             "parallax.postgres._cloaders_binary",
@@ -88,20 +89,23 @@ def test_the_checkouts_own_sources_and_an_abi_matched_loader_extension_break_no_
     ("module", "finding"),
     [
         (
-            _module("parallax.core.entity._row_fill", "/site-packages/parallax/core/_row_fill.py"),
+            _module(
+                "parallax.core.internal.entity._row_fill",
+                "/site-packages/parallax/core/_row_fill.py",
+            ),
             "outside the checkout's package sources",
         ),
         (
             _module(
-                "parallax.core.entity._row_fill",
-                _source(f"{_CORE}/parallax/core/entity/_row_fill{ABI}"),
+                "parallax.core.internal.entity._row_fill",
+                _source(f"{_CORE}/parallax/core/internal/entity/_row_fill{ABI}"),
             ),
             "which is not a .py source",
         ),
         (
             _module(
-                "parallax.core.entity._row_fill",
-                _source(f"{_CORE}/parallax/core/entity/__pycache__/_row_fill.pyc"),
+                "parallax.core.internal.entity._row_fill",
+                _source(f"{_CORE}/parallax/core/internal/entity/__pycache__/_row_fill.pyc"),
                 loader=importlib.machinery.SourcelessFileLoader("_row_fill", "x.pyc"),
             ),
             "which is not a .py source",
@@ -143,7 +147,7 @@ def test_a_process_holding_a_foreign_production_module_is_refused_by_name(
 
 def test_loaded_origins_record_only_what_was_loaded() -> None:
     loaded, *unloaded = origins.MEASURED_MODULES
-    relative = "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py"
+    relative = "packages/parallax-core/src/parallax/core/internal/read_delivery/_row_recording.py"
     record = origins.loaded_origins({loaded: _module(loaded, _source(relative))})
     assert record == {loaded: relative, **dict.fromkeys(unloaded, origins.NOT_LOADED)}
 
@@ -194,9 +198,11 @@ def test_checking_a_process_imports_nothing_it_had_not_loaded() -> None:
 
 
 def test_stale_extensions_are_found_outside_the_compiled_distribution(tmp_path: Path) -> None:
-    stale = tmp_path / "packages/parallax-core/src/parallax/core/entity" / f"_row_fill{ABI}"
+    stale = (
+        tmp_path / "packages/parallax-core/src/parallax/core/internal/entity" / f"_row_fill{ABI}"
+    )
     shipped = tmp_path / "packages/parallax-postgres/src/parallax/postgres" / f"_loaders{ABI}"
-    source = tmp_path / "packages/parallax-core/src/parallax/core/entity/_row_fill.py"
+    source = tmp_path / "packages/parallax-core/src/parallax/core/internal/entity/_row_fill.py"
     for path in (stale, shipped, source):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"")

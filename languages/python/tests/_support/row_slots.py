@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import cast
 
-from parallax.core.write_plan.payload import RowSlots
-from parallax.core.write_plan.steps import WriteRow
+from parallax.core.internal.write_plan.payload import RowSlots
+from parallax.core.internal.write_plan.steps import WriteRow
 
 __all__ = ["observed_slots"]
 

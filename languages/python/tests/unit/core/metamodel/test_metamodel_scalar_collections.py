@@ -13,8 +13,8 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core.base import STRING, TIMESTAMP, UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal.base import STRING, TIMESTAMP, UsageError
+from parallax.core.internal.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
@@ -29,7 +29,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeDeclaration,
     judge_assignment,
 )
-from parallax.core.metamodel._resolve import AS_OF_ATTRIBUTE_TYPE
+from parallax.core.internal.metamodel._resolve import AS_OF_ATTRIBUTE_TYPE
 from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, codes, identity, key, source
 

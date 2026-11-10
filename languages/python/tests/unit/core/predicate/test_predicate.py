@@ -17,9 +17,9 @@ from typing import Any, cast, get_args
 
 import pytest
 
-from parallax.core import predicate
-from parallax.core.base import UsageError
-from parallax.core.predicate import QueryDefinitionCode
+from parallax.core.internal import predicate
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.predicate import QueryDefinitionCode
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.corpus import case_document
 from tests._support.errors import raises_code

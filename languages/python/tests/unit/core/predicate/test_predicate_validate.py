@@ -15,10 +15,10 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import inheritance
-from parallax.core.base import INFINITY, InvalidValueError, UsageError
-from parallax.core.metamodel import AttributeMetadata, accept_metamodel
-from parallax.core.object_query import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
+from parallax.core.internal.metamodel import AttributeMetadata, accept_metamodel
+from parallax.core.internal.object_query import (
     AsOf,
     History,
     IncludeSegment,
@@ -27,9 +27,9 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.object_query import validate as query_validation
-from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
-from parallax.core.predicate import (
+from parallax.core.internal.object_query import validate as query_validation
+from parallax.core.internal.object_query._nodes import IncludePathNode, TemporalDimension
+from parallax.core.internal.predicate import (
     CURRENT_SCALAR_ELEMENT,
     And,
     Comparison,
@@ -52,8 +52,8 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
-from parallax.core.predicate import validate as predicate_validation
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate import validate as predicate_validation
+from parallax.core.internal.predicate._resolved import (
     CURRENT,
     ELEMENT,
     RelatedObject,

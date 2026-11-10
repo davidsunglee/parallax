@@ -15,11 +15,11 @@ import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
-from parallax.core.base import INT32, INT64, NeutralType
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.base import INT32, INT64, NeutralType
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import connect
 from tests._support.root_ownership import own_root
 

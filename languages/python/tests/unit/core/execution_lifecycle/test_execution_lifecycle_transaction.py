@@ -28,27 +28,6 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import ConflictError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    Bind,
-    CommitFailed,
-    Committed,
-    DatabaseAdapter,
-    DatabaseConnection,
-    DocumentReadOrdinals,
-    IsolationLevel,
-    Returned,
-    RolledBack,
-    Row,
-    TransactionOutcome,
-)
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution import (
-    RetryPolicy,
-    ServingModel,
-    TransactionRollbackError,
-    prepare_model,
-)
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -77,8 +56,29 @@ from parallax.core.execution_lifecycle._events import (
     TransactionAttemptOutcome,
     TransactionInvocationOutcome,
 )
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    Bind,
+    CommitFailed,
+    Committed,
+    DatabaseAdapter,
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    IsolationLevel,
+    Returned,
+    RolledBack,
+    Row,
+    TransactionOutcome,
+)
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.execution import (
+    RetryPolicy,
+    ServingModel,
+    TransactionRollbackError,
+    prepare_model,
+)
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -307,7 +307,10 @@ def test_a_begin_failure_finishes_the_attempt_that_adopted_and_fails_the_invocat
     # the same object rendered once.
     assert isinstance(begin_failed.failure, CausedFailure)
     assert begin_failed.failure.cause_activity_id == 3
-    assert begin_failed.failure.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
+    assert (
+        begin_failed.failure.diagnostic.qualified_type
+        == "parallax.core.internal.db_error.DatabaseError"
+    )
     failed = _finished(root)
     assert isinstance(failed, OuterInvocationFailed)
     # Caused by the attempt, under the ordinary chaining rule: the attempt
@@ -389,7 +392,9 @@ def test_a_rollback_failure_reports_both_live_failures() -> None:
     assert isinstance(outcome, AttemptRollbackFailed)
     assert outcome.triggering_failure.phase == "callback"
     assert outcome.triggering_failure.failure.diagnostic.qualified_type == "builtins.ValueError"
-    assert outcome.rollback_failure.qualified_type == "parallax.core.db_error.DatabaseError"
+    assert (
+        outcome.rollback_failure.qualified_type == "parallax.core.internal.db_error.DatabaseError"
+    )
     # The invocation raises an error of its own rather than the trigger, so its
     # failure describes THAT error directly instead of naming an attempt whose
     # failure it does not describe.

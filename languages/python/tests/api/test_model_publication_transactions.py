@@ -17,7 +17,7 @@ from parallax.conformance import engine
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.execution import (
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )

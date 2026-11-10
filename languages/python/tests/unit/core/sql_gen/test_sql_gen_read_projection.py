@@ -23,12 +23,12 @@ from typing import Literal, cast
 
 import pytest
 
-from parallax.core import predicate as oa
-from parallax.core.base import StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _read_projection_support as support
 from tests.unit.core.sql_gen._delivery_support import deliver

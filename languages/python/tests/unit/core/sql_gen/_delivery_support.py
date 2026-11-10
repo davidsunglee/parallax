@@ -19,18 +19,18 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     ViewSchema,
     entity_state,
     page_rows,
 )
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_delivery._row_converter import bind
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.temporal_read import Pin
 from tests._support.document_reads import fold_mapping_rows
 from tests.unit.snapshot._snapshot_page_support import rendered_members
 

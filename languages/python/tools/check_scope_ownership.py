@@ -42,7 +42,8 @@ Unowned package interfaces
 
 ``check_dag_sync.py`` derives the import-linter roots from the declared scopes,
 and from those the **unowned production interfaces**: each root outside the
-conformance tree that is not itself a scope, whose one interface module every
+conformance tree that is not itself a scope, and each package between such a
+root and the scopes beneath it, whose one interface module every
 package-scoped contract misses and which the generator therefore sources
 exactly in one further contract. Those interfaces are the only files this tool
 exempts, and the exemption set is verified to be exactly that derived set: an
@@ -167,8 +168,16 @@ EXEMPTIONS: Mapping[str, str] = {
     "parallax-evolution/src/parallax/evolution/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.evolution` surface "
         "(`evolve`, `schema_delta`, `ABSENT`, and their results) across the "
-        "`parallax.evolution._domain_models`, `parallax.evolution.model_evolution`, and "
-        "`parallax.evolution.schema_delta` scopes, so no single scope owns it"
+        "`parallax.evolution._domain_models`, `parallax.evolution.internal.model_evolution`, and "
+        "`parallax.evolution.internal.schema_delta` scopes, so no single scope owns it"
+    ),
+    "parallax-core/src/parallax/core/internal/__init__.py": (
+        "first-party package interface: holds the `parallax.core.internal.*` scopes "
+        "and re-exports nothing, so no single scope owns it"
+    ),
+    "parallax-evolution/src/parallax/evolution/internal/__init__.py": (
+        "first-party package interface: holds the `parallax.evolution.internal.*` "
+        "scopes and re-exports nothing, so no single scope owns it"
     ),
 }
 
@@ -409,8 +418,8 @@ def production_files() -> list[str]:
 
 def unowned_interfaces() -> frozenset[str]:
     """The package interfaces the generator sources exactly, as modules: every
-    derived import-linter root outside the conformance tree that no production
-    scope owns."""
+    derived import-linter root outside the conformance tree, and every package
+    between one and its scopes, that no production scope owns."""
     return dag.unowned_production_interfaces(dag.production_scopes(), dag.root_packages())
 
 

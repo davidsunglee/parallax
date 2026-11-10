@@ -38,17 +38,15 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core import (
-    read_planning as deep_fetch_module,
-)
 from parallax.core._execution import _read_query as read_query_module
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.entity._graph_construction import require_correspondence
-from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.read_delivery import InvalidData
-from parallax.core.temporal_read import Edge, Pin
+from parallax.core.internal import read_planning as deep_fetch_module
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.entity._graph_construction import require_correspondence
+from parallax.core.internal.execution import ServingModel, prepare_model
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
     ScopedDatabase,

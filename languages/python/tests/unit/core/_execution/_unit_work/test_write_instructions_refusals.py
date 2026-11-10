@@ -23,7 +23,7 @@ import pytest
 
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -39,7 +39,7 @@ from parallax.core.base import (
     NeutralType,
     Numeric,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -58,7 +58,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.unit_work import KeyedMutation, KeyedWriteInstruction
+from parallax.core.internal.unit_work import KeyedMutation, KeyedWriteInstruction
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 

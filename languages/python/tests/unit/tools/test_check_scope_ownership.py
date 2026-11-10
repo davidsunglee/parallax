@@ -66,7 +66,8 @@ def _scratch_package_path(relative: str) -> Path:
 # --------------------------------------------------------------------------
 def test_module_path_folds_package_interfaces() -> None:
     assert (
-        own.module_path("parallax-core/src/parallax/core/base/__init__.py") == "parallax.core.base"
+        own.module_path("parallax-core/src/parallax/core/internal/base/__init__.py")
+        == "parallax.core.internal.base"
     )
     assert (
         own.module_path("parallax-core/src/parallax/core/_execution/_read_pipeline.py")
@@ -117,7 +118,14 @@ def test_the_exemptions_are_exactly_the_derived_package_interfaces() -> None:
     # The interfaces are derived from the declared scopes, so the exemption list
     # carries only the physical path and the reason for each — never which
     # files there are.
-    assert own.unowned_interfaces() == frozenset({"parallax.core", "parallax.evolution"})
+    assert own.unowned_interfaces() == frozenset(
+        {
+            "parallax.core",
+            "parallax.core.internal",
+            "parallax.evolution",
+            "parallax.evolution.internal",
+        }
+    )
     assert {own.module_path(relative) for relative in own.EXEMPTIONS} == own.unowned_interfaces()
 
 
@@ -194,12 +202,12 @@ def test_unowned_production_file_fails(capsys: pytest.CaptureFixture[str]) -> No
 def test_undeclared_nested_scope_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Declaring `parallax.core.entity._members` as a scope without registering it
-    # as a child of `parallax.core.entity` is precisely the state in which the
+    # Declaring `parallax.core.internal.entity._members` as a scope without registering it
+    # as a child of `parallax.core.internal.entity` is precisely the state in which the
     # generator emits it into its parent's forbidden row and import-linter skips
     # it. The ownership check refuses it instead.
     tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
-    tampered["parallax.core.entity._members"] = frozenset({"parallax.core.base"})
+    tampered["parallax.core.internal.entity._members"] = frozenset({"parallax.core.internal.base"})
     monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
 
     assert own.main([]) == 1
@@ -212,15 +220,15 @@ def test_a_declared_nested_scope_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     # The same nested scope, correctly registered, passes — so the failure above
     # is the missing declaration, not the nesting itself.
     tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
-    tampered["parallax.core.entity._members"] = frozenset({"parallax.core.base"})
+    tampered["parallax.core.internal.entity._members"] = frozenset({"parallax.core.internal.base"})
     monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
     monkeypatch.setattr(
         dag,
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            "parallax.core.entity._members": dag.ChildScope(
-                parent="parallax.core.entity", policy="ordinary"
+            "parallax.core.internal.entity._members": dag.ChildScope(
+                parent="parallax.core.internal.entity", policy="ordinary"
             ),
         },
     )
@@ -245,11 +253,11 @@ def test_dropping_a_child_declaration_fails(
 # --------------------------------------------------------------------------
 # Canary 3: an import-free module beside a zero-grant scope.
 # --------------------------------------------------------------------------
-_STDLIB_LEAF = "parallax-core/src/parallax/core/entity/_stdlib_leaf.py"
+_STDLIB_LEAF = "parallax-core/src/parallax/core/internal/entity/_stdlib_leaf.py"
 _IMPORT_FREE = '"""Deliberately import-free, and outside every declared child scope."""\n'
 _FIRST_PARTY = (
     f"{_IMPORT_FREE}\n"
-    "from parallax.core.metamodel import EntityDescriptor\n"
+    "from parallax.core.internal.metamodel import EntityDescriptor\n"
     "\n"
     "_ = EntityDescriptor\n"
 )
@@ -270,7 +278,7 @@ def test_import_free_module_beside_a_zero_grant_scope_fails(
         leaf.unlink()
     err = capsys.readouterr().err
     assert "_stdlib_leaf.py" in err
-    assert "parallax.core.entity._construction_input cannot name it" in err
+    assert "parallax.core.internal.entity._construction_input cannot name it" in err
     assert own.main([]) == 0
 
 
@@ -295,12 +303,12 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
     # and an import-free sibling is no longer any row's blind spot.
     zero_grant = own.zero_grant_scopes()
     assert zero_grant == {
-        "parallax.core.entity._construction_input": "parallax.core.entity",
-        "parallax.core.entity._pydantic_storage": "parallax.core.entity",
+        "parallax.core.internal.entity._construction_input": "parallax.core.internal.entity",
+        "parallax.core.internal.entity._pydantic_storage": "parallax.core.internal.entity",
     }
     tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     for scope in zero_grant:
-        tampered[scope] = frozenset({"parallax.core.base"})
+        tampered[scope] = frozenset({"parallax.core.internal.base"})
     monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
     assert own.zero_grant_scopes() == {}
     leaf = _scratch_package_path(_STDLIB_LEAF)
@@ -311,7 +319,7 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
         leaf.unlink()
 
 
-_NEST = "parallax-core/src/parallax/core/entity/_nest"
+_NEST = "parallax-core/src/parallax/core/internal/entity/_nest"
 _NESTED = '"""Declared beneath a sibling scope, and import-free."""\n'
 
 
@@ -328,8 +336,8 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
         "PYTHON_FIRST_PARTY_GRANTS",
         {
             **dag.PYTHON_FIRST_PARTY_GRANTS,
-            "parallax.core.entity._nest": frozenset({"parallax.core.base"}),
-            "parallax.core.entity._nest._leaf": frozenset({"parallax.core.base"}),
+            "parallax.core.internal.entity._nest": frozenset({"parallax.core.internal.base"}),
+            "parallax.core.internal.entity._nest._leaf": frozenset({"parallax.core.internal.base"}),
         },
     )
     monkeypatch.setattr(
@@ -337,16 +345,16 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            "parallax.core.entity._nest": dag.ChildScope(
-                parent="parallax.core.entity", policy="ordinary"
+            "parallax.core.internal.entity._nest": dag.ChildScope(
+                parent="parallax.core.internal.entity", policy="ordinary"
             ),
-            "parallax.core.entity._nest._leaf": dag.ChildScope(
-                parent="parallax.core.entity._nest", policy="ordinary"
+            "parallax.core.internal.entity._nest._leaf": dag.ChildScope(
+                parent="parallax.core.internal.entity._nest", policy="ordinary"
             ),
         },
     )
-    assert "parallax.core.entity._nest" in dag.scope_siblings(
-        "parallax.core.entity._construction_input"
+    assert "parallax.core.internal.entity._nest" in dag.scope_siblings(
+        "parallax.core.internal.entity._construction_input"
     )
     nest = _scratch_package_path(_NEST)
     nest.mkdir()
@@ -354,11 +362,11 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     (nest / "_leaf.py").write_text(_NESTED)
     try:
         assert own.owning_scopes(
-            "parallax.core.entity._nest._leaf", dag.declared_first_party_scopes()
+            "parallax.core.internal.entity._nest._leaf", dag.declared_first_party_scopes()
         ) == [
-            "parallax.core.entity",
-            "parallax.core.entity._nest",
-            "parallax.core.entity._nest._leaf",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.entity._nest",
+            "parallax.core.internal.entity._nest._leaf",
         ]
         assert own.main([]) == 0
     finally:
@@ -370,7 +378,7 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
 def test_first_party_imports_sees_every_import_form() -> None:
     source = (
         "import os\n"
-        "import parallax.core.base\n"
+        "import parallax.core.internal.base\n"
         "from parallax.snapshot._handle import _errors\n"
         "from . import sibling\n"
         "from .child import leaf\n"
@@ -378,7 +386,7 @@ def test_first_party_imports_sees_every_import_form() -> None:
         "from .star import *\n"
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
-        "    from parallax.core.metamodel import EntityDescriptor\n"
+        "    from parallax.core.internal.metamodel import EntityDescriptor\n"
     )
     # An imported NAME is carried as a possible submodule beside the package it
     # came from, because `from p import q` is how a submodule is imported and
@@ -386,7 +394,7 @@ def test_first_party_imports_sees_every_import_form() -> None:
     # contributes a dotted path no scope declares, which costs nothing.
     assert own.first_party_imports(source, "parallax.snapshot._handle") == frozenset(
         {
-            "parallax.core.base",
+            "parallax.core.internal.base",
             "parallax.snapshot._handle",
             "parallax.snapshot._handle._errors",
             "parallax.snapshot._handle.sibling",
@@ -395,8 +403,8 @@ def test_first_party_imports_sees_every_import_form() -> None:
             "parallax.snapshot._handle.star",
             "parallax.snapshot._publication",
             "parallax.snapshot._publication.view",
-            "parallax.core.metamodel",
-            "parallax.core.metamodel.EntityDescriptor",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.metamodel.EntityDescriptor",
         }
     )
     assert own.first_party_imports("import os\nfrom typing import Final\n", "p.q") == frozenset()
@@ -404,9 +412,9 @@ def test_first_party_imports_sees_every_import_form() -> None:
 
 def test_first_party_reaches_keep_a_package_form_import_whole() -> None:
     source = (
-        "import parallax.core.base\n"
-        "from parallax.core.entity import _layout\n"
-        "from parallax.core.entity._layout import EntityLayout\n"
+        "import parallax.core.internal.base\n"
+        "from parallax.core.internal.entity import _layout\n"
+        "from parallax.core.internal.entity._layout import EntityLayout\n"
         "from . import sibling\n"
         "from .star import *\n"
     )
@@ -416,13 +424,19 @@ def test_first_party_reaches_keep_a_package_form_import_whole() -> None:
     # weighing the import against a rule reads it at whichever candidate the rule
     # covers. A star import binds no name that could be a submodule, so it
     # reaches its own module alone.
-    assert own.first_party_reaches(source, "parallax.core.entity._probe") == frozenset(
+    assert own.first_party_reaches(source, "parallax.core.internal.entity._probe") == frozenset(
         {
-            ("parallax.core.base",),
-            ("parallax.core.entity._layout", "parallax.core.entity"),
-            ("parallax.core.entity._layout.EntityLayout", "parallax.core.entity._layout"),
-            ("parallax.core.entity._probe.sibling", "parallax.core.entity._probe"),
-            ("parallax.core.entity._probe.star",),
+            ("parallax.core.internal.base",),
+            ("parallax.core.internal.entity._layout", "parallax.core.internal.entity"),
+            (
+                "parallax.core.internal.entity._layout.EntityLayout",
+                "parallax.core.internal.entity._layout",
+            ),
+            (
+                "parallax.core.internal.entity._probe.sibling",
+                "parallax.core.internal.entity._probe",
+            ),
+            ("parallax.core.internal.entity._probe.star",),
         }
     )
 
@@ -511,8 +525,8 @@ def test_the_isolated_scope_may_import_its_own_parent() -> None:
 # --------------------------------------------------------------------------
 # Canary 5: a sealed scope reaching its own parent package.
 # --------------------------------------------------------------------------
-_BACKING = "parallax.core.entity._instance_state"
-_BACKING_FILE = "parallax-core/src/parallax/core/entity/_instance_state.py"
+_BACKING = "parallax.core.internal.entity._instance_state"
+_BACKING_FILE = "parallax-core/src/parallax/core/internal/entity/_instance_state.py"
 
 
 def _without_sibling_grants(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -539,16 +553,17 @@ def test_a_sealed_scope_reaching_its_parent_package_fails(
     err = capsys.readouterr().err
     assert "imports of its own parent package a sealed scope's contract cannot reject" in err
     assert (
-        f"{_BACKING_FILE} (imports parallax.core.entity._construction_input, which {_BACKING}"
-        in err
+        f"{_BACKING_FILE} (imports parallax.core.internal.entity._construction_input, "
+        f"which {_BACKING}" in err
     )
     assert (
-        f"{_BACKING_FILE} (imports parallax.core.entity._pydantic_storage, which {_BACKING}" in err
+        f"{_BACKING_FILE} (imports parallax.core.internal.entity._pydantic_storage, "
+        f"which {_BACKING}" in err
     )
 
 
-_PROBE = "parallax-core/src/parallax/core/entity/_probe.py"
-_PROBE_SCOPE = "parallax.core.entity._probe"
+_PROBE = "parallax-core/src/parallax/core/internal/entity/_probe.py"
+_PROBE_SCOPE = "parallax.core.internal.entity._probe"
 
 
 def _sealed_probe_scope(monkeypatch: pytest.MonkeyPatch, granted: str) -> None:
@@ -563,24 +578,28 @@ def _sealed_probe_scope(monkeypatch: pytest.MonkeyPatch, granted: str) -> None:
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            _PROBE_SCOPE: dag.ChildScope(parent="parallax.core.entity", policy="sealed"),
+            _PROBE_SCOPE: dag.ChildScope(parent="parallax.core.internal.entity", policy="sealed"),
         },
     )
 
 
 def _spellings(module: str, name: str) -> list[tuple[str, str, str]]:
-    """Every way one file reaches `parallax.core.entity.<module>`, with what escapes.
+    """Every way one file reaches `parallax.core.internal.entity.<module>`, with what escapes.
 
     The third element is the module a reach touching no grant is reported at:
     the package-form spellings bind the sibling through its parent, and the
     parent is the candidate that certainly is a module.
     """
-    dotted = f"parallax.core.entity.{module}"
+    dotted = f"parallax.core.internal.entity.{module}"
     return [
         (f"from {dotted} import {name}", name, dotted),
         (f"from .{module} import {name}", name, dotted),
-        (f"from parallax.core.entity import {module}", module, "parallax.core.entity"),
-        (f"from . import {module}", module, "parallax.core.entity"),
+        (
+            f"from parallax.core.internal.entity import {module}",
+            module,
+            "parallax.core.internal.entity",
+        ),
+        (f"from . import {module}", module, "parallax.core.internal.entity"),
         (f"import {dotted}", dotted, dotted),
     ]
 
@@ -604,14 +623,14 @@ def test_a_sealed_scope_reaching_what_its_row_already_permits_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The reach no contract could report, which is the whole reason to seal a
-    # scope: `parallax.core.entity._errors` imports the accepted Metamodel and
+    # scope: `parallax.core.internal.entity._errors` imports the accepted Metamodel and
     # nothing else, so a neighbour granted the Metamodel reaches it without any
     # chain leaving the row for import-linter to name. Declared here as a scope
     # of its own so the shape is stated over a file written for it, rather than
     # over the committed source of a scope that does not make this reach. Every
     # spelling is the same reach, including the two that bind the neighbour
     # through the parent package and are reported there.
-    _sealed_probe_scope(monkeypatch, "parallax.core.metamodel")
+    _sealed_probe_scope(monkeypatch, "parallax.core.internal.metamodel")
     _write_probe(statement, bound)
     try:
         assert own.main([]) == 1
@@ -635,7 +654,7 @@ def test_a_sealed_scope_reaching_a_granted_sibling_passes_in_every_spelling(
     # import sibling` binds the sibling exactly as its dotted path does, so
     # reading that form as a reach at the parent alone would reject a dependency
     # §7 grants — and would make the seal a rule about spelling, not about reach.
-    _sealed_probe_scope(monkeypatch, "parallax.core.entity._layout")
+    _sealed_probe_scope(monkeypatch, "parallax.core.internal.entity._layout")
     _write_probe(statement, bound)
     try:
         assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
@@ -676,18 +695,18 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
         "CHILD_SCOPES",
         {
             **dag.CHILD_SCOPES,
-            "parallax.core.entity._expressions": dag.ChildScope(
-                parent="parallax.core.entity", policy="sealed"
+            "parallax.core.internal.entity._expressions": dag.ChildScope(
+                parent="parallax.core.internal.entity", policy="sealed"
             ),
         },
     )
     assert own.imports_escaping_a_sealed_child_row(own.production_files()) == [
-        "parallax-core/src/parallax/core/entity/_expressions.py "
-        "(imports parallax.core.entity._declaration, which "
-        "parallax.core.entity._expressions's own row cannot reject)",
-        "parallax-core/src/parallax/core/entity/_expressions.py "
-        "(imports parallax.core.entity._errors, which "
-        "parallax.core.entity._expressions's own row cannot reject)",
+        "parallax-core/src/parallax/core/internal/entity/_expressions.py "
+        "(imports parallax.core.internal.entity._declaration, which "
+        "parallax.core.internal.entity._expressions's own row cannot reject)",
+        "parallax-core/src/parallax/core/internal/entity/_expressions.py "
+        "(imports parallax.core.internal.entity._errors, which "
+        "parallax.core.internal.entity._expressions's own row cannot reject)",
     ]
 
 
@@ -719,8 +738,8 @@ def test_model_publication_seal_allows_its_declared_imports(
     source = tmp_path / relative
     source.parent.mkdir(parents=True)
     source.write_text(
-        "from parallax.core.entity import DomainModel\n"
-        "from parallax.core.unit_work import WritePlanner\n"
+        "from parallax.core.internal.entity import DomainModel\n"
+        "from parallax.core.internal.unit_work import WritePlanner\n"
     )
     monkeypatch.setattr(own, "PACKAGES", tmp_path)
 

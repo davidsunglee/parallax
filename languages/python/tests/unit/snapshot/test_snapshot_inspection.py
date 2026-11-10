@@ -31,10 +31,10 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._publication import read_projection
-from parallax.core.base import UsageError
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.execution import ModelSelection, ServingModel, prepare_model
-from parallax.core.temporal_read import Edge, Pin, milestone_edge
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import UnloadedRelationshipError
+from parallax.core.internal.execution import ModelSelection, ServingModel, prepare_model
+from parallax.core.internal.temporal_read import Edge, Pin, milestone_edge
 from parallax.snapshot import (
     Database,
     TxnContext,

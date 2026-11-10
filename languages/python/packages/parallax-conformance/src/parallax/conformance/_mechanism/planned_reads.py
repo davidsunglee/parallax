@@ -6,7 +6,7 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.sole_connection import ConnectsAsItself, body_outcome
 from parallax.conformance._mechanism.transaction_control import read_only, transact
 from parallax.conformance.case_format import TransactionKeywords, read_only_keywords
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -14,10 +14,10 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import Dialect
-from parallax.core.execution import ServingModel, TxnOptions
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.execution import ServingModel, TxnOptions
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = ["planned_read"]

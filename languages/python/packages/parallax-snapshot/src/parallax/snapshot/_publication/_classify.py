@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core import temporal_read
-from parallax.core.concurrency import ConcurrencyFacet
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal import temporal_read
+from parallax.core.internal.concurrency import ConcurrencyFacet
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery._page import (
     InvalidData,
     InvalidRootInput,
     StoredDataIssue,
@@ -16,8 +16,8 @@ from parallax.core.read_delivery._page import (
     observed_object_key,
     observed_version,
 )
-from parallax.core.temporal_read import Edge
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.temporal_read import Edge
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = [

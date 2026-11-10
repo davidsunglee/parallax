@@ -21,10 +21,10 @@ from parallax.conformance import case_format, engine, models, vo_models, write_v
 from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
-from parallax.core.base import SQL_NULL, StructuredDocument
-from parallax.core.db_port import DatabaseAdapter, MappingRow
-from parallax.core.entity import DomainModel, Entity
-from parallax.core.execution import prepare_model
+from parallax.core.internal.base import SQL_NULL, StructuredDocument
+from parallax.core.internal.db_port import DatabaseAdapter, MappingRow
+from parallax.core.internal.entity import DomainModel, Entity
+from parallax.core.internal.execution import prepare_model
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.db_port import (
     Read,

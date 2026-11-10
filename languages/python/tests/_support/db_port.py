@@ -50,9 +50,9 @@ from parallax.conformance._mechanism.sole_connection import (
     SoleConnectionScope,
     body_outcome,
 )
-from parallax.core.base import DocumentValue, Json
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import DocumentValue, Json
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     JSON_NULL,
     AccessMode,
     ArrayBind,
@@ -86,7 +86,7 @@ from parallax.core.db_port import (
     StructuredDocument,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.document_reads import fold_mapping_rows
 
 __all__ = [

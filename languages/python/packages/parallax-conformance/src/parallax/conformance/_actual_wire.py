@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core import inheritance, storage_layout
-from parallax.core.base import (
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal.base import (
     INFINITY,
     INFINITY_LITERAL,
     JSON,
@@ -12,8 +12,8 @@ from parallax.core.base import (
     NeutralType,
     UsageError,
 )
-from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import (
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     CompiledEntity,
@@ -25,14 +25,14 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.storage_layout import RelationalDocument, TableLayout
-from parallax.core.temporal_read import Pin
-from parallax.core.wire import (
+from parallax.core.internal.storage_layout import RelationalDocument, TableLayout
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.wire import (
     WireValue,
     decode_canonical_wire,
     encode_wire,
 )
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = ["ActualWireProjection"]
 
@@ -162,7 +162,7 @@ class ActualWireProjection:
 
     def pin(self, pin: Pin) -> dict[str, object]:
         """One milestone pin with each present axis encoded as Timestamp."""
-        from parallax.core.base import TIMESTAMP
+        from parallax.core.internal.base import TIMESTAMP
 
         coordinates = (
             ("valid-time", pin.valid_time),

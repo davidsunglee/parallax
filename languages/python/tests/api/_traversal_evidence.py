@@ -24,8 +24,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
-from parallax.core.base import INFINITY
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.dialect import POSTGRES
 
 MANIFEST_VERSION: Final = 1
 ENVIRONMENT_PREFIX: Final = "PARALLAX_TO_ONE_PERFORMANCE_"

@@ -4,7 +4,6 @@ import datetime as dt
 from collections.abc import Callable, Mapping, Sequence, Set
 from typing import Any, cast
 
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     ResolvedKeyedInsert,
@@ -33,12 +32,13 @@ from parallax.core._execution._unit_work.instructions import (
     WriteAssignment,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import refuse_reentry
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.wire import decode_wire
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.wire import decode_wire
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,
@@ -181,7 +181,7 @@ class WirePredicateWriteAdapter:
     The Wire spelling of the ``_where`` family: a Typed selection or the
     canonical ``{entity, predicate}`` one, plus an authored changes document, a
     replacement's data, or a node Parallax published, lowered to the SAME
-    :class:`~parallax.core.unit_work.PredicateWriteInstruction` the Typed verbs
+    :class:`~parallax.core.internal.unit_work.PredicateWriteInstruction` the Typed verbs
     build. No second set-based write semantics are introduced — this adapter
     only states the target and the payload differently.
 
@@ -610,7 +610,7 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
 
     One refusal covers every non-source a caller can reach for — an ordinary
     mapping, ``dict(node)``, a JSON or pickle round trip, an
-    :class:`~parallax.core.read_delivery.InvalidData` wrapper, and every node
+    :class:`~parallax.core.internal.read_delivery.InvalidData` wrapper, and every node
     published as diagnostic data under an invalid root. They differ only in how
     the provenance is absent; none can authorize a keyed write.
     """

@@ -11,8 +11,8 @@ from parallax.conformance.cost_envelope import Provenance
 from production_origins import MEASURED_MODULES, NOT_LOADED
 
 CHILD_ORIGINS: Final = dict.fromkeys(MEASURED_MODULES, NOT_LOADED) | {
-    "parallax.core.read_delivery._row_recording": (
-        "packages/parallax-core/src/parallax/core/read_delivery/_row_recording.py"
+    "parallax.core.internal.read_delivery._row_recording": (
+        "packages/parallax-core/src/parallax/core/internal/read_delivery/_row_recording.py"
     )
 }
 """What a measurement child that loaded one read-construction module reports."""

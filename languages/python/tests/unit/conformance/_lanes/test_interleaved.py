@@ -22,10 +22,10 @@ from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core.base import INFINITY
-from parallax.core.db_port import MappingRow, Row
-from parallax.core.dialect import Dialect
-from parallax.core.execution import RetryPolicy, TxnOptions
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_port import MappingRow, Row
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from parallax.snapshot import ScopedDatabase
 from tests._support.case_corpus import case as corpus_case
 from tests._support.root_ownership import own_root

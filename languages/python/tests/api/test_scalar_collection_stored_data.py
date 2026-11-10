@@ -17,14 +17,14 @@ from typing import Any, Literal
 import pytest
 
 from parallax.core import Attr, Document, DomainModel, Entity, Int32, ValueObject, attr
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.root_ownership import own_root
 

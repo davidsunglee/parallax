@@ -27,7 +27,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
 
 from parallax.core import UsageError
-from parallax.core.entity import (
+from parallax.core.internal.entity import (
     MANY_TO_ONE,
     UNLOADED,
     Attr,
@@ -37,8 +37,8 @@ from parallax.core.entity import (
     attr,
     rel,
 )
-from parallax.core.entity._errors import EditError
-from parallax.core.entity._instance_state import (
+from parallax.core.internal.entity._errors import EditError
+from parallax.core.internal.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
     auxiliary,

@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance import engine
-from parallax.core.db_port import StructuredDocument
+from parallax.core.internal.db_port import StructuredDocument
 from tests._support.case_corpus import case as corpus_case
 from tests._support.driver_writes import (
     RecordingCaseDatabase,

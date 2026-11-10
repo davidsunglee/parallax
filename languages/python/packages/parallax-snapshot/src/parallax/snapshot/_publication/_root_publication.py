@@ -6,8 +6,8 @@ from types import MappingProxyType
 from typing import Final, NamedTuple
 
 from parallax.core._execution._unit_work.evidence import ReadEvidence
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery._page import (
     Page,
     StoredDataIssueInput,
     page_cadence,
@@ -18,7 +18,7 @@ from parallax.core.read_delivery._page import (
     release_page_rows,
     undecodable_data_refusal,
 )
-from parallax.core.temporal_read import Edge, Pin, TemporalShape
+from parallax.core.internal.temporal_read import Edge, Pin, TemporalShape
 from parallax.snapshot._publication._graph_view import GraphView
 
 __all__ = [

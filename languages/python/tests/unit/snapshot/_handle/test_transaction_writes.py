@@ -29,26 +29,19 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import (
-    LATEST,
-    Attr,
-    ConflictError,
-    DomainModel,
-    Entity,
-    attr,
-    unit_work,
-)
+from parallax.core import LATEST, Attr, ConflictError, DomainModel, Entity, attr
 from parallax.core._execution._options import OMITTED
-from parallax.core.base import INT64, DocumentValue, StructuredDocument, UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import ArrayBind, MappingRow
-from parallax.core.dialect import POSTGRES
-from parallax.core.execution import (
+from parallax.core.internal import unit_work
+from parallax.core.internal.base import INT64, DocumentValue, StructuredDocument, UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import ArrayBind, MappingRow
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.execution import (
     KeyedWriteValueCode,
     RetryPolicy,
 )
-from parallax.core.read_delivery import InvalidData
-from parallax.core.unit_work import (
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     STALE_WRITE,
     WRITE_INSTRUCTION_INVALID,

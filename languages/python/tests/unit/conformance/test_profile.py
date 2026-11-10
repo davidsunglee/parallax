@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from parallax.conformance.profile import profile_for
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.dialect import POSTGRES
 
 
 def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() -> None:

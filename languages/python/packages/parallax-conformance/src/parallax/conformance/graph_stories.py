@@ -56,7 +56,7 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core import LATEST, TX_TIME
-from parallax.core.unit_work import Clock
+from parallax.core.internal.unit_work import Clock
 from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
@@ -67,7 +67,7 @@ class GraphStory:
     """One executable public-API story mirroring a corpus graph-shaped case.
 
     ``clock`` is an optional zero-argument
-    :class:`~parallax.core.unit_work.Clock` factory, carrying the same contract
+    :class:`~parallax.core.internal.unit_work.Clock` factory, carrying the same contract
     :data:`~parallax.conformance.stories.WriteStory.clock` does: a story whose
     own write takes a Transaction-Time boundary sets it so the instant it
     captures is the one its mirrored case authored, rather than whenever the

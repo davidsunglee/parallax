@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 
-from parallax.core.base import SQL_NULL, SqlNull, StructuredDocument, is_document_value
-from parallax.core.db_port import DocumentReadOrdinals, MappingRow, Row
+from parallax.core.internal.base import SQL_NULL, SqlNull, StructuredDocument, is_document_value
+from parallax.core.internal.db_port import DocumentReadOrdinals, MappingRow, Row
 
 
 def fold_mapping_document_reads(

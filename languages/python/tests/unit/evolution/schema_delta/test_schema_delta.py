@@ -24,28 +24,28 @@ from types import ModuleType
 
 import pytest
 
-from parallax.core.base import STRING
-from parallax.core.dialect import (
+from parallax.core.internal.base import STRING
+from parallax.core.internal.dialect import (
     POSTGRES,
     Dialect,
 )
-from parallax.core.metamodel import Column, Table
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.storage_layout import ColumnSlot
+from parallax.core.internal.metamodel import Column, Table
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.storage_layout import ColumnSlot
 from parallax.descriptor._ingest import ingest_document
-from parallax.evolution.model_evolution import (
+from parallax.evolution.internal.model_evolution import (
     ABSENT,
     CoordinatedEvolution,
     UnilateralEvolution,
     evolve_metamodels,
 )
-from parallax.evolution.schema_delta import (
+from parallax.evolution.internal.schema_delta import (
     PhysicalLocation,
     SchemaDelta,
     schema_delta,
 )
-from parallax.evolution.schema_delta._order import order
-from parallax.evolution.schema_delta._physical import (
+from parallax.evolution.internal.schema_delta._order import order
+from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateTable,
@@ -54,8 +54,8 @@ from parallax.evolution.schema_delta._physical import (
     location_of,
     member_key,
 )
-from parallax.evolution.schema_delta._plan import plan
-from parallax.evolution.schema_delta._render import render
+from parallax.evolution.internal.schema_delta._plan import plan
+from parallax.evolution.internal.schema_delta._render import render
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._document_layout_support import document_model
 from tests.unit._inheritance_family_support import (

@@ -50,12 +50,6 @@ from parallax.conformance._wire_submission import (
     read_submissions,
 )
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import (
-    batch_write,
-    inheritance,
-    storage_layout,
-    temporal_read,
-)
 from parallax.core._execution._planning import build_write_planner, build_write_preparation
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import instructions
@@ -67,24 +61,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import (
-    ConflictError,
-    InternalError,
-    UnsupportedError,
-    UsageError,
-    normalize_instant,
-)
-from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyPreference, concurrency_facet_of
-from parallax.core.db_port import (
-    DatabaseAdapter,
-    DatabaseConnection,
-    MappingRow,
-)
-from parallax.core.dialect import Dialect
-from parallax.core.execution import (
-    ServingModel,
-    TxnOptions,
-)
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFinished,
@@ -93,15 +69,38 @@ from parallax.core.execution_lifecycle import (
     FlushFinished,
     TransactionAttemptStarted,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal import batch_write, inheritance, storage_layout, temporal_read
+from parallax.core.internal.base import (
+    ConflictError,
+    InternalError,
+    UnsupportedError,
+    UsageError,
+    normalize_instant,
+)
+from parallax.core.internal.concurrency import (
+    INITIAL_VERSION,
+    ConcurrencyPreference,
+    concurrency_facet_of,
+)
+from parallax.core.internal.db_port import (
+    DatabaseAdapter,
+    DatabaseConnection,
+    MappingRow,
+)
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.execution import (
+    ServingModel,
+    TxnOptions,
+)
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     PrimaryKey,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
     INSERT_MUTATIONS,
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
@@ -124,14 +123,14 @@ from parallax.core.unit_work import (
     object_key,
     settled_evidence,
 )
-from parallax.core.wire import WireValue, decode_wire
-from parallax.core.write_plan import (
+from parallax.core.internal.wire import WireValue, decode_wire
+from parallax.core.internal.write_plan import (
     ObjectKey,
     ObjectStateKey,
     StateObservation,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
 
 __all__ = [
@@ -321,7 +320,7 @@ def _binds_row_observations(
     What a bound observation changes is that the planner refuses to merge that
     row at all, which is exactly the point — a merged multi-row instruction has
     nowhere to carry a per-row observed version. The question is answered with
-    :func:`~parallax.core.batch_write.collapses`, the same injected
+    :func:`~parallax.core.internal.batch_write.collapses`, the same injected
     `m-batch-write` collapse-eligibility vocabulary the planner consults, so
     binding an observation never contradicts the planner's own eligibility
     answer.
@@ -474,7 +473,7 @@ def _resolve_entries(
 
 class _SimulatedUnit:
     """The unit of work one simulated transaction buffers its writes through:
-    an ordinary :class:`~parallax.core.unit_work.UnitOfWork`, so what the lane
+    an ordinary :class:`~parallax.core.internal.unit_work.UnitOfWork`, so what the lane
     buffers is admitted, composed, planned, and executed Write Group by Write
     Group exactly as an attempt's own writes are.
 
@@ -494,7 +493,7 @@ class _SimulatedUnit:
     write that unit of work refuses to admit is refused as the case's
     composition rather than leaked as the production refusal. A target write is
     buffered as the attempt's own is, through
-    :meth:`~parallax.core.unit_work.UnitOfWork.buffer_target`: under Locking
+    :meth:`~parallax.core.internal.unit_work.UnitOfWork.buffer_target`: under Locking
     its confirmation reads the stored row, which :func:`_simulated_unit` refuses.
 
     Each object's latest insertion identity, the handle a source of that

@@ -52,9 +52,9 @@ from parallax.core._execution._options import (
     OMITTED,
     Omitted,
 )
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import (
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import (
     AccessMode,
     Bind,
     DatabaseConnection,
@@ -64,14 +64,14 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.execution import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity import UnloadedRelationshipError
+from parallax.core.internal.execution import (
     RetryPolicy,
     ServingModel,
     prepare_model,
 )
-from parallax.core.unit_work import Clock
+from parallax.core.internal.unit_work import Clock
 from parallax.snapshot import (
     Database,
     ScopedDatabase,

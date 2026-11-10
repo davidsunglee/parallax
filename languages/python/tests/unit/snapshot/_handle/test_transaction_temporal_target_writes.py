@@ -26,23 +26,23 @@ from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
-from parallax.core.base import DocumentValue
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow, StructuredDocument
-from parallax.core.execution import RetryPolicy
-from parallax.core.metamodel import (
+from parallax.core.internal.base import DocumentValue
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import MappingRow, StructuredDocument
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.unit_work import (
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     WritePreconditionError,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import PredecessorRows
-from parallax.core.write_plan.payload import AssignmentPayload
-from parallax.core.write_plan.plan import BoundRange
-from parallax.core.write_plan.steps import PlannedAssignments
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import PredecessorRows
+from parallax.core.internal.write_plan.payload import AssignmentPayload
+from parallax.core.internal.write_plan.plan import BoundRange
+from parallax.core.internal.write_plan.steps import PlannedAssignments
 from parallax.snapshot import ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

@@ -44,12 +44,12 @@ from parallax.core import (
     UnsupportedError,
     ValueObject,
     attr,
-    read_planning,
     rel,
 )
 from parallax.core._execution._features import deferred_feature_refusal
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import (
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import (
     INFINITY,
     INT64,
     InternalError,
@@ -58,8 +58,8 @@ from parallax.core.base import (
     TooManyResultsFound,
     UsageError,
 )
-from parallax.core.concurrency import concurrency_facet_of
-from parallax.core.db_port import (
+from parallax.core.internal.concurrency import concurrency_facet_of
+from parallax.core.internal.db_port import (
     ArrayBind,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -68,32 +68,32 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.execution import (
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
     RelationshipIdentity,
 )
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.predicate._resolved import ResolvedMembership
-from parallax.core.read_delivery import (
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.predicate._resolved import ResolvedMembership
+from parallax.core.internal.read_delivery import (
     InvalidData,
     InvalidDataError,
     StoredDataIssue,
     _read_plan,
 )
-from parallax.core.read_delivery._delivery import find, find_history
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.read_delivery._delivery import find, find_history
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     CONTINUATION_ORDER_NOT_TOTAL,
     RESULT_DATA_INVALID,
@@ -104,16 +104,16 @@ from parallax.core.read_delivery._page import (
     page_edges,
     page_rows,
 )
-from parallax.core.read_delivery._page_reader import (
+from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
     HistoryPageResult,
 )
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.temporal_read import Pin, valid_time_coverage
-from parallax.core.unit_work import ReadEvidence
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.temporal_read import Pin, valid_time_coverage
+from parallax.core.internal.unit_work import ReadEvidence
+from parallax.core.internal.write_plan import ObjectKey
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import (

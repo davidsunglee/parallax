@@ -36,9 +36,9 @@ import pytest
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.scripted_clock import FixedClock, ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, Document, DomainModel, Entity, TxTemporal, attr
-from parallax.core.base import UsageError
-from parallax.core.entity._model import model_of
-from parallax.core.unit_work import WritePreconditionError
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.root_ownership import own_root
 

@@ -5,9 +5,9 @@ from typing import Any
 
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity import Entity as EntityBase
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity import Entity as EntityBase
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
@@ -130,7 +130,7 @@ class TxnContext:
         An object whose insertion still stands is not opened twice: a repeated
         insert of it — the same instance again, or another instance of the same
         primary key, through either interface — is refused at the verb
-        (:class:`~parallax.core.base.UsageError`,
+        (:class:`~parallax.core.internal.base.UsageError`,
         ``write-value-already-stored``) rather than left for the database to
         refuse at commit. Once everything the insertion opened has been removed,
         or a pending write removes it, the object may be inserted again: the new
@@ -172,7 +172,7 @@ class TxnContext:
 
         ``source`` supplies the write's authority, and the method takes no
         condition of its own: a value no read of this store produced is
-        refused (:class:`~parallax.core.base.UsageError`,
+        refused (:class:`~parallax.core.internal.base.UsageError`,
         ``write-value-not-stored``) unless THIS transaction admitted its insert.
         The version column, if any, is never authored here — it is
         framework-owned end to end (`m-concurrency`; ADR 0013): the write seam
@@ -219,7 +219,7 @@ class TxnContext:
         through a read of this transaction instead. A retried callback states
         the same revision again. Under the Optimistic strategy the stated
         revision gates the write, and a row no longer standing at it raises
-        :class:`~parallax.core.unit_work.WritePreconditionError` at flush, which
+        :class:`~parallax.core.internal.unit_work.WritePreconditionError` at flush, which
         no retry repeats. Under Locking the stored row is read under the shared
         lock now — reading nothing it already holds, and executing no pending
         write — and a mismatch raises that error here. An object this
@@ -309,7 +309,7 @@ class TxnContext:
         instance, read, or source is consulted. A deletion has no empty form:
         under the Optimistic strategy the stated version gates the ``delete``,
         and an object no longer standing at it — revised or already gone —
-        raises :class:`~parallax.core.unit_work.WritePreconditionError` at
+        raises :class:`~parallax.core.internal.unit_work.WritePreconditionError` at
         flush rather than deleting nothing; under Locking the stored row is
         read under the shared lock now, and a mismatch or a missing row raises
         that error here. A temporal ``entity`` refuses the verb and names
@@ -345,7 +345,7 @@ class TxnContext:
         window reaches is ended under its own current revision, even one
         another writer changed after the caller's query. A missing or revised
         starting milestone raises
-        :class:`~parallax.core.unit_work.WritePreconditionError`, never an
+        :class:`~parallax.core.internal.unit_work.WritePreconditionError`, never an
         empty termination. A non-temporal ``entity`` refuses the verb and names
         :meth:`delete_if`. ``valid_from`` and ``until`` follow :meth:`insert`'s
         rules."""
@@ -363,7 +363,7 @@ class TxnContext:
         key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
         all carry valid primary-key values). A source view pinned at a
         finite Transaction-Time instant is read-only and raises
-        :class:`~parallax.core.base.UsageError`
+        :class:`~parallax.core.internal.base.UsageError`
         (``transaction-time-pin-read-only``) before any buffering, exactly as
         every other keyed verb does.
 

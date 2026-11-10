@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from parallax.core.base import UsageError
-from parallax.core.execution_authority._authority import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.execution_authority._authority import (
     LoginAuthority,
     PrincipalAuthority,
     capture_database_login,

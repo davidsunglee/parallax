@@ -8,8 +8,8 @@ from typing import Final
 import pytest
 
 from parallax.conformance import models
-from parallax.core import concurrency
-from parallax.core.concurrency import (
+from parallax.core.internal import concurrency
+from parallax.core.internal.concurrency import (
     CONCURRENCY_PREFERENCES,
     ConcurrencyPreference,
     ConcurrencyStrategy,
@@ -19,7 +19,7 @@ from parallax.core.concurrency import (
     Unversioned,
     concurrency_preference,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 
 _MODELS = models.load_models()
 _PREFERENCES: Final[tuple[ConcurrencyPreference, ...]] = ("locking", "optimistic")

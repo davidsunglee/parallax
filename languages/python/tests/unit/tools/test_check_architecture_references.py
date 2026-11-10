@@ -227,11 +227,11 @@ def test_the_check_counts_every_reference(tmp_path: Path, workspace: Workspace) 
 def test_main_reports_findings_against_named_pages(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    page = write_file(tmp_path, "page.md", "`parallax.core.read_delivery:NoSuchName`\n")
+    page = write_file(tmp_path, "page.md", "`parallax.core.internal.read_delivery:NoSuchName`\n")
 
     assert references.main([str(page)]) == 1
     error = capsys.readouterr().err
-    assert "page.md:1: `parallax.core.read_delivery:NoSuchName`" in error
+    assert "page.md:1: `parallax.core.internal.read_delivery:NoSuchName`" in error
 
 
 def test_main_refuses_an_empty_page_set(

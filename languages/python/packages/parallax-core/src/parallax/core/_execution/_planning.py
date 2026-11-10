@@ -3,16 +3,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.entity import DomainModel, EntityGraphConstruction
-from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.entity._model import class_index, model_of
-from parallax.core.metamodel import (
+from parallax.core.internal import batch_write
+from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
+from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.internal.entity._model import class_index, model_of
+from parallax.core.internal.metamodel import (
     CompiledEntity,
     EntityIdentity,
     MemberShape,
@@ -20,17 +20,17 @@ from parallax.core.metamodel import (
     Multiplicity,
     ScalarDefinition,
 )
-from parallax.core.read_delivery._page import ABSENT
-from parallax.core.read_planning import narrowed_view_keys
-from parallax.core.wire._facts import (
+from parallax.core.internal.read_delivery._page import ABSENT
+from parallax.core.internal.read_planning import narrowed_view_keys
+from parallax.core.internal.wire._facts import (
     OCCURRENCE,
     WireEntityFacts,
     WireModelFacts,
     WireOccurrenceFacts,
     scalar_encoding,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 __all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "wire_model_facts"]
 

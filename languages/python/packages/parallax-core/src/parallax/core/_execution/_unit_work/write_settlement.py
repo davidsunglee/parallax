@@ -41,34 +41,43 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalCoverageWrite,
 )
-from parallax.core.base import InternalError, UsageError
-from parallax.core.concurrency import INITIAL_VERSION, ConcurrencyFacet, ConcurrencyPreference
-from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import AttributeIdentity, CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.temporal_read import (
+from parallax.core.internal.base import InternalError, UsageError
+from parallax.core.internal.concurrency import (
+    INITIAL_VERSION,
+    ConcurrencyFacet,
+    ConcurrencyPreference,
+)
+from parallax.core.internal.inheritance import InheritanceFacet
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    CompiledEntity,
+    EntityIdentity,
+    Metamodel,
+)
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     TemporalFacet,
     TemporalShape,
     TransactionTimeOnly,
 )
-from parallax.core.temporal_write.expansion import (
+from parallax.core.internal.temporal_write.expansion import (
     TemporalFacts,
     entry_ends,
     opening,
     openings,
 )
-from parallax.core.write_plan.keys import (
+from parallax.core.internal.write_plan.keys import (
     ObjectKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.observe import (
+from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.write_plan.observe import (
     StateObservation,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.payload import WritePayloadPreparer
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.payload import WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AcquisitionSpan,
     AllocatedOpening,
@@ -80,13 +89,13 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import (
+from parallax.core.internal.write_plan.planned_rows import (
     WRITE_PLANNING_FAILED,
     entity_view,
     planned_assignments,
     planned_row,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
     RETURNED_MAX_PLUS_ONE,

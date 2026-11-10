@@ -17,7 +17,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.target_write_stories import (
     reviewed_accounts_are_deleted_under_the_versions_their_review_saw,
 )
-from parallax.core.db_error import DatabaseError
+from parallax.core.internal.db_error import DatabaseError
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,

@@ -30,12 +30,12 @@ from parallax.core import (
 )
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._unit_work import preparation as preparation_module
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import DomainModel
-from parallax.core.entity import _graph_construction as graph_construction_module
-from parallax.core.entity import _layout as layout_module
-from parallax.core.metamodel import UnresolvedEntityDeclaration
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.entity import _graph_construction as graph_construction_module
+from parallax.core.internal.entity import _layout as layout_module
+from parallax.core.internal.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter, Transact, Write

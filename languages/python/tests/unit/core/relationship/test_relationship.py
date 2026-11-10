@@ -12,8 +12,8 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, INT64, STRING, UUID, NeutralType, Numeric
-from parallax.core.metamodel import (
+from parallax.core.internal.base import INT32, INT64, STRING, UUID, NeutralType, Numeric
+from parallax.core.internal.metamodel import (
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AbstractSubtype,
@@ -60,10 +60,10 @@ from parallax.core.metamodel import (
     UnresolvedReverseRelationshipDeclaration,
     ValueObjectOccurrenceDeclaration,
 )
-from parallax.core.model_formation import (
+from parallax.core.internal.model_formation import (
     MetamodelValidationError,
 )
-from parallax.core.relationship import (
+from parallax.core.internal.relationship import (
     ISSUE_CODES,
     MODEL_COMPILER,
     RULE_SET,
@@ -73,7 +73,7 @@ from parallax.core.relationship import (
     project_join_endpoints,
     relationship_facet_of,
 )
-from parallax.core.relationship._rules import (
+from parallax.core.internal.relationship._rules import (
     CARDINALITY_JOIN_MISMATCH,
     DEFINING_DUPLICATE,
     JOIN_SOURCE_INVALID,

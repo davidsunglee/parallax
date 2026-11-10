@@ -16,8 +16,8 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Numeric
-from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
+from parallax.core.internal.base import FLOAT32, FLOAT64, INT64, STRING, Numeric
+from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import (
     Document,
     EachElement,

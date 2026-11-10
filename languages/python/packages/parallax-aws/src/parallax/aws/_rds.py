@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 import botocore.session
 from botocore.config import Config
 
-from parallax.core.db_port import CredentialResolutionError, Password
+from parallax.core.internal.db_port import CredentialResolutionError, Password
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient

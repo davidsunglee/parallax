@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     TemporalDimension,
     derive_temporal_structure,
     temporality_profile,

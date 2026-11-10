@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING, Final, cast
 
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
-from parallax.core import storage_layout
-from parallax.core.base import JSON, TIMESTAMP, DocumentValue, NeutralType, retain_document_value
-from parallax.core.db_port import DatabaseRuntime, Password, StructuredDocument
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.document_codec import (
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import (
+    JSON,
+    TIMESTAMP,
+    DocumentValue,
+    NeutralType,
+    retain_document_value,
+)
+from parallax.core.internal.db_port import DatabaseRuntime, Password, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.document_codec import (
     MemberShape,
     OccurrenceDefinition,
     ScalarDefinition,
@@ -20,7 +26,7 @@ from parallax.core.document_codec import (
     encode_scalar_many,
     occurrence_shape,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -30,14 +36,14 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.storage_layout import (
+from parallax.core.internal.storage_layout import (
     ColumnSlot,
     EntityLayoutView,
     RelationalDocument,
 )
-from parallax.core.wire import WireValue, decode_wire, encode_wire
-from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
-from parallax.evolution.schema_delta import schema_delta
+from parallax.core.internal.wire import WireValue, decode_wire, encode_wire
+from parallax.evolution.internal.model_evolution import ABSENT, evolve_metamodels
+from parallax.evolution.internal.schema_delta import schema_delta
 
 if TYPE_CHECKING:
     from parallax.conformance._database_control import (
@@ -50,7 +56,7 @@ if TYPE_CHECKING:
         PostgresControl,
         PostgresInterleavedExecution,
     )
-    from parallax.core.db_port import (
+    from parallax.core.internal.db_port import (
         AccessMode,
         Bind,
         ConnectionContextSource,
@@ -68,9 +74,9 @@ if TYPE_CHECKING:
         Row,
         TransactionOutcome,
     )
-    from parallax.core.entity import DomainModel
-    from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.unit_work import Clock
+    from parallax.core.internal.entity import DomainModel
+    from parallax.core.internal.execution import ServingModel, TxnOptions
+    from parallax.core.internal.unit_work import Clock
     from parallax.postgres import (
         OnDemandOptions,
         PoolOptions,

@@ -12,12 +12,12 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance._actual_wire import ActualWireProjection
-from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY, UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal.base import INFINITY, UsageError
+from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.write_plan import ObjectKey
 from tests._support.errors import raises_code
 
 

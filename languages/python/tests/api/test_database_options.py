@@ -22,7 +22,7 @@ from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -32,8 +32,8 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import Dialect
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 
 _ACCOUNT = MODELS["account"]

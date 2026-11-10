@@ -4,12 +4,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
-from parallax.core import read_delivery
-from parallax.core.base import InternalError, UnsupportedError, UsageError
-from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import entity_by_name
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal import read_delivery
+from parallax.core.internal.base import InternalError, UnsupportedError, UsageError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = [
     "READ_ERRORS",

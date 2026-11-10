@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     MODEL_ROOT,
     AsOfAxisLocation,
     AttributeIdentity,
@@ -25,7 +25,7 @@ from parallax.core.metamodel import (
     canonical_location_key,
     sort_issues,
 )
-from parallax.core.metamodel._issues import canonical_issue_key
+from parallax.core.internal.metamodel._issues import canonical_issue_key
 
 _ALPHA = EntityIdentity("app", "Alpha")
 _BETA = EntityIdentity("app", "Beta")

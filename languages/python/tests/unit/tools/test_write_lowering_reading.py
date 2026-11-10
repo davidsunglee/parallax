@@ -13,16 +13,16 @@ import pytest
 
 import write_lowering_overhead
 import write_lowering_reading
-from parallax.core import document_codec
-from parallax.core.base import INT32
-from parallax.core.document_codec import (
+from parallax.core.internal import document_codec
+from parallax.core.internal.base import INT32
+from parallax.core.internal.document_codec import (
     MemberShape,
     OccurrenceDefinition,
     ScalarDefinition,
     _document,
 )
-from parallax.core.metamodel import Multiplicity
-from parallax.core.write_payload import _storage as payload_storage
+from parallax.core.internal.metamodel import Multiplicity
+from parallax.core.internal.write_payload import _storage as payload_storage
 from production_origins import ORIGINS_FIELD, reported_origins
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit import memory_instruments

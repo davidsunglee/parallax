@@ -13,20 +13,20 @@ from collections.abc import Mapping
 
 import pytest
 
-from parallax.core import continuation, read_planning
-from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import MISSING
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeIdentity, Metamodel
-from parallax.core.object_query import object_query, validate_object_query
-from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.read_delivery._row_decoding import row_coordinates, row_identity
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal import continuation, read_planning
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import SQL_NULL, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import MISSING
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
+from parallax.core.internal.object_query import object_query, validate_object_query
+from parallax.core.internal.object_query._resolved import ContinuationCoordinate
+from parallax.core.internal.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
+from parallax.core.internal.read_delivery._row_converter import bind
+from parallax.core.internal.read_delivery._row_decoding import row_coordinates, row_identity
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 from tests.unit._document_layout_support import document_model, entity

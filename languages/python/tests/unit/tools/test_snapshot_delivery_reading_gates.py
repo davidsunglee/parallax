@@ -35,13 +35,16 @@ import pytest
 
 from parallax.conformance.budget import BudgetContract, MemoryGates
 from parallax.conformance.workloads import PUBLICATION_PREFIX, catalog, plan_levels
-from parallax.core.base import detach_json_container
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import DecodeOutput
-from parallax.core.metamodel import MemberShape
-from parallax.core.read_delivery import _row_decoding as row_decoding
-from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT
-from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY, ReadPlanCache
+from parallax.core.internal.base import detach_json_container
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import DecodeOutput
+from parallax.core.internal.metamodel import MemberShape
+from parallax.core.internal.read_delivery import _row_decoding as row_decoding
+from parallax.core.internal.read_delivery._convert import POSITIONAL_OUTPUT
+from parallax.core.internal.read_delivery._read_plan import (
+    DEFAULT_READ_PLAN_CACHE_CAPACITY,
+    ReadPlanCache,
+)
 from snapshot_delivery_reading import (
     PLAN_EDITION,
     ColdPlan,

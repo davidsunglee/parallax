@@ -18,17 +18,22 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal
 
-from parallax.core import predicate as oa
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel, entity_by_name
-from parallax.core.object_query import AsOf, TemporalSelection
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.read_delivery._page import PageBuilder, SourceLevel
-from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    entity_by_name,
+)
+from parallax.core.internal.object_query import AsOf, TemporalSelection
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.read_delivery._page import PageBuilder, SourceLevel
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
 from tests._support.document_reads import fold_mapping_rows, folded_names
 from tests._support.sql import compile_projected_read, compile_read
 

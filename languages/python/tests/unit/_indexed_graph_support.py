@@ -1,6 +1,6 @@
 """A node-indexed graph spelled node by node, and its publication.
 
-Entity Graph Construction publishes any :class:`~parallax.core.entity.IndexedGraph`;
+Entity Graph Construction publishes any :class:`~parallax.core.internal.entity.IndexedGraph`;
 production hands it a Root View. A suite grading construction itself, or needing
 a value some lifecycle materialized without a read, spells the graph as literal
 rows instead, so the alignment between the rows and the layout is something the
@@ -13,9 +13,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from parallax.core.entity import DomainModel, EntityGraphConstruction
-from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
+from parallax.core.internal.entity._layout import EntityLayout
+from parallax.core.internal.metamodel import EntityIdentity
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = ["LiteralGraph", "Node", "literal_graph", "published", "published_nodes"]

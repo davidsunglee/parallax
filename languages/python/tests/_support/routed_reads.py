@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import Attr, Document, DomainModel, Entity, attr
-from parallax.core.entity._model import model_of
+from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext
 from tests._support.query_probes import canonical_document
 

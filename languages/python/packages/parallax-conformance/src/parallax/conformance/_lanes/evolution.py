@@ -12,8 +12,12 @@ from parallax.conformance.evolution_wire import (
     schema_cell,
     unsupported_cell,
 )
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve_metamodels
-from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
+from parallax.evolution.internal.model_evolution import (
+    ABSENT,
+    UnilateralEvolution,
+    evolve_metamodels,
+)
+from parallax.evolution.internal.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 
 __all__ = ["run_evolution_case"]
 

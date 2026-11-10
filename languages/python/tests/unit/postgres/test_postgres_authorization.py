@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from psycopg.sql import Composed
 
-from parallax.core.base import UsageError
+from parallax.core.internal.base import UsageError
 from parallax.postgres import PostgresRole
 from parallax.postgres._authorization import install_role, restore_role
 from tests._support.errors import raises_code

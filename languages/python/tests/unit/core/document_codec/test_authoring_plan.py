@@ -10,7 +10,7 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INT64,
     STRING,
     TIMESTAMP,
@@ -20,7 +20,7 @@ from parallax.core.base import (
     UsageError,
     typed_converter,
 )
-from parallax.core.document_codec._plan import (
+from parallax.core.internal.document_codec._plan import (
     BORROWED_DOCUMENTS,
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
@@ -30,15 +30,15 @@ from parallax.core.document_codec._plan import (
     PreparedAuthoringRow,
     RootPolicy,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AuthoringViolation,
     MemberShape,
     Multiplicity,
     OccurrenceDefinition,
     ScalarDefinition,
 )
-from parallax.core.wire import is_decoding_refusal
-from parallax.core.wire._codec import wire_converter
+from parallax.core.internal.wire import is_decoding_refusal
+from parallax.core.internal.wire._codec import wire_converter
 
 _ABSENT: Final = object()
 _GEO = MemberShape(

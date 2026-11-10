@@ -3,24 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
-from parallax.core.concurrency import CONCURRENCY_MODULE
-from parallax.core.concurrency import FACET_KEY as CONCURRENCY_FACET_KEY
-from parallax.core.concurrency import ISSUE_CODES as CONCURRENCY_ISSUE_CODES
-from parallax.core.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
-from parallax.core.concurrency import RULE_SET as CONCURRENCY_RULE_SET
-from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import INHERITANCE_MODULE
-from parallax.core.inheritance import ISSUE_CODES as INHERITANCE_ISSUE_CODES
-from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
-from parallax.core.inheritance import RULE_SET as INHERITANCE_RULE_SET
-from parallax.core.metamodel import (
+from parallax.core.internal.concurrency import CONCURRENCY_MODULE
+from parallax.core.internal.concurrency import FACET_KEY as CONCURRENCY_FACET_KEY
+from parallax.core.internal.concurrency import ISSUE_CODES as CONCURRENCY_ISSUE_CODES
+from parallax.core.internal.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
+from parallax.core.internal.concurrency import RULE_SET as CONCURRENCY_RULE_SET
+from parallax.core.internal.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
+from parallax.core.internal.inheritance import INHERITANCE_MODULE
+from parallax.core.internal.inheritance import ISSUE_CODES as INHERITANCE_ISSUE_CODES
+from parallax.core.internal.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
+from parallax.core.internal.inheritance import RULE_SET as INHERITANCE_RULE_SET
+from parallax.core.internal.metamodel import (
     METADATA_COMPILER,
     METAMODEL_MODULE,
     RESOLVER_ISSUE_CODES,
     Metamodel,
     UnresolvedMetamodel,
 )
-from parallax.core.model_formation import (
+from parallax.core.internal.model_formation import (
     FIXED_RESOLVER,
     METADATA_COMPILER_REQUIRED,
     MODEL_FORMATION_MODULE,
@@ -34,22 +34,22 @@ from parallax.core.model_formation import (
     ModuleIdentity,
     form,
 )
-from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
-from parallax.core.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
-from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
-from parallax.core.relationship import RELATIONSHIP_MODULE
-from parallax.core.relationship import RULE_SET as RELATIONSHIP_RULE_SET
-from parallax.core.storage_layout import FACET_KEY as STORAGE_LAYOUT_FACET_KEY
-from parallax.core.storage_layout import ISSUE_CODES as STORAGE_LAYOUT_ISSUE_CODES
-from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
-from parallax.core.storage_layout import RULE_SET as STORAGE_LAYOUT_RULE_SET
-from parallax.core.storage_layout import STORAGE_LAYOUT_MODULE
-from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
-from parallax.core.temporal_read import MODEL_COMPILER as TEMPORAL_COMPILER
-from parallax.core.temporal_read import TEMPORAL_READ_MODULE
-from parallax.core.value_object import ISSUE_CODES as VALUE_OBJECT_ISSUE_CODES
-from parallax.core.value_object import RULE_SET as VALUE_OBJECT_RULE_SET
-from parallax.core.value_object import VALUE_OBJECT_MODULE
+from parallax.core.internal.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
+from parallax.core.internal.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
+from parallax.core.internal.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
+from parallax.core.internal.relationship import RELATIONSHIP_MODULE
+from parallax.core.internal.relationship import RULE_SET as RELATIONSHIP_RULE_SET
+from parallax.core.internal.storage_layout import FACET_KEY as STORAGE_LAYOUT_FACET_KEY
+from parallax.core.internal.storage_layout import ISSUE_CODES as STORAGE_LAYOUT_ISSUE_CODES
+from parallax.core.internal.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
+from parallax.core.internal.storage_layout import RULE_SET as STORAGE_LAYOUT_RULE_SET
+from parallax.core.internal.storage_layout import STORAGE_LAYOUT_MODULE
+from parallax.core.internal.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
+from parallax.core.internal.temporal_read import MODEL_COMPILER as TEMPORAL_COMPILER
+from parallax.core.internal.temporal_read import TEMPORAL_READ_MODULE
+from parallax.core.internal.value_object import ISSUE_CODES as VALUE_OBJECT_ISSUE_CODES
+from parallax.core.internal.value_object import RULE_SET as VALUE_OBJECT_RULE_SET
+from parallax.core.internal.value_object import VALUE_OBJECT_MODULE
 
 __all__ = ["form_metamodel"]
 # `MetamodelValidationError` is the error `form_metamodel` raises; re-exported

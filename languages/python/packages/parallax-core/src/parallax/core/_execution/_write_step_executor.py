@@ -3,16 +3,21 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Final, cast, overload
 
-from parallax.core import storage_layout
 from parallax.core._execution._unit_work.effects import (
     allocated_keys,
     enforce_affected_rows,
     returns_allocated_keys,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
-from parallax.core.base import InternalError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.execution_lifecycle._activity import (
+    ActivityTarget,
+    FlushActivity,
+    OrderedCallObservation,
+)
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     WRITE_RESULT_INTEGRITY_VIOLATED,
     DatabaseConnection,
     OrderedWriteResult,
@@ -22,18 +27,13 @@ from parallax.core.db_port import (
     StatementFailed,
     StatementNotExecuted,
 )
-from parallax.core.diagnostics import qualified_type
-from parallax.core.dialect import Dialect
-from parallax.core.execution_lifecycle._activity import (
-    ActivityTarget,
-    FlushActivity,
-    OrderedCallObservation,
-)
-from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.diagnostics import qualified_type
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedInsert,
     PlannedStep,
@@ -121,7 +121,7 @@ class WriteStepExecutor:
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
         reports only the driver's count to
-        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
+        :func:`~parallax.core.internal.unit_work.enforce_affected_rows`, which owns the
         authoritative reading of the step's Affected Rows Policy (ADR 0048).
         That enforcement runs inside its own attribution bracket, because a
         shortfall is judged AFTER the call it judges has already completed: the
@@ -130,7 +130,7 @@ class WriteStepExecutor:
 
         An insert whose key the database allocates for a row the steps record
         answers that key: it runs as row-producing DML, core reads the key from
-        the rows it returned (:func:`~parallax.core.unit_work.allocated_keys`)
+        the rows it returned (:func:`~parallax.core.internal.unit_work.allocated_keys`)
         inside the same bracket, and the keys are answered in step order.
         """
         allocated: list[object] = []

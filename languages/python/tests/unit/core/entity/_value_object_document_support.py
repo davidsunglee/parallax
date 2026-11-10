@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from parallax.core import DomainModel, Entity
-from parallax.core.db_port import StructuredDocument
+from parallax.core.internal.db_port import StructuredDocument
 from parallax.snapshot import TxnContext
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for

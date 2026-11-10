@@ -8,7 +8,6 @@ import contextlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
@@ -18,13 +17,14 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.metamodel import Metamodel
-from parallax.core.temporal_read import valid_time_coverage
-from parallax.core.unit_work import TransactionInstant
-from parallax.core.write_plan import PredecessorRow
-from parallax.core.write_plan.keys import ObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.temporal_read import valid_time_coverage
+from parallax.core.internal.unit_work import TransactionInstant
+from parallax.core.internal.write_plan import PredecessorRow
+from parallax.core.internal.write_plan.keys import ObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
     SettledWrite,

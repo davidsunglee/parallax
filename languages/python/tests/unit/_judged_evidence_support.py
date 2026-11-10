@@ -11,10 +11,10 @@ from parallax.core._execution._retention import (
     RecordedFetchedRows,
     defer_read_evidence,
 )
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import EntityLayout, LayoutCatalog
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import Pin
 from tests.unit._positional_row_support import positional_row
 
 

@@ -18,8 +18,8 @@ from typing import cast
 import pytest
 
 from parallax.conformance import provision
-from parallax.core.base import UsageError
-from parallax.core.db_port import StructuredDocument
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import StructuredDocument
 from tests.unit._corpus_model_support import corpus
 from tests.unit._document_layout_support import document_model
 from tests.unit._inheritance_family_support import tph_family_with_a_value_object

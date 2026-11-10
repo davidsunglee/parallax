@@ -8,8 +8,8 @@ from parallax.core._execution._options import OMITTED, Omitted
 from parallax.core._execution._read_pipeline import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
-from parallax.core.object_query import ObjectQueryNode, deserialize
-from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.object_query import ObjectQueryNode, deserialize
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
@@ -88,7 +88,7 @@ class WireDatabaseView:
         Each root is a frozen :class:`~parallax.snapshot.WireEntity`
         keyed by declared member name, unwound finitely along the requested
         Include Paths, or the
-        :class:`~parallax.core.read_delivery.InvalidData` record a root whose
+        :class:`~parallax.core.internal.read_delivery.InvalidData` record a root whose
         stored state contradicted the model publishes in its place.
 
         The refusal order is the Typed read's without its classless rung — no

@@ -21,7 +21,7 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core.base import (
+from parallax.core.internal.base import (
     BOOLEAN,
     BYTES,
     DATE,
@@ -33,17 +33,17 @@ from parallax.core.base import (
     Numeric,
     retain_document_value,
 )
-from parallax.core.document_codec import (
+from parallax.core.internal.document_codec import (
     MemberShape,
     OccurrenceDefinition,
     ScalarDefinition,
     classify_effective_change,
     prepare_effective_change,
 )
-from parallax.core.document_codec import _managed as managed
-from parallax.core.document_codec._managed import EffectiveChangeSet
-from parallax.core.metamodel import MemberDefinition, Multiplicity
-from parallax.core.write_plan import EntityStateRow
+from parallax.core.internal.document_codec import _managed as managed
+from parallax.core.internal.document_codec._managed import EffectiveChangeSet
+from parallax.core.internal.metamodel import MemberDefinition, Multiplicity
+from parallax.core.internal.write_plan import EntityStateRow
 from tests.unit._positional_row_support import positional_row
 
 _GEO = MemberShape(members=(ScalarDefinition("lat", STRING, True),))

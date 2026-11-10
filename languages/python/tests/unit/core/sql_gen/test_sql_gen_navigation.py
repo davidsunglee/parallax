@@ -1,7 +1,7 @@
 """Navigation lowering (m-sql "Joins by navigation" / "Polymorphic navigation").
 
 These lower temporally resolved queries (resolving each hop's visibility is
-`parallax.core.navigate`'s job, tested in `test_navigate.py`) — this module
+`parallax.core.internal.navigate`'s job, tested in `test_navigate.py`) — this module
 only lowers whatever Predicate tree it receives, and decides join sharing from
 the perspective each hop carries.
 
@@ -20,19 +20,27 @@ from typing import Literal
 
 import pytest
 
-from parallax.core import inheritance, read_planning, storage_layout
-from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, STRING, InternalError
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
-from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
-from parallax.core.object_query import AsOf
-from parallax.core.predicate._resolved import ResolvedAnd
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED, StatementBuilder
-from parallax.core.sql_gen._planning import EvaluationContext, StatementPlan, plan_statement
-from parallax.core.sql_gen._predicate import EntityRowScope, render_predicate, render_shared_sources
+from parallax.core.internal import inheritance, read_planning, storage_layout
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import INFINITY, STRING, InternalError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.navigate import _closed  # pyright: ignore[reportPrivateUsage]
+from parallax.core.internal.object_query import AsOf
+from parallax.core.internal.predicate._resolved import ResolvedAnd
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED, StatementBuilder
+from parallax.core.internal.sql_gen._planning import (
+    EvaluationContext,
+    StatementPlan,
+    plan_statement,
+)
+from parallax.core.internal.sql_gen._predicate import (
+    EntityRowScope,
+    render_predicate,
+    render_shared_sources,
+)
 from tests._support.errors import raises_code
 from tests._support.sql import (
     compile_read,

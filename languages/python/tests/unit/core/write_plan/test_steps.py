@@ -30,16 +30,16 @@ from typing import cast
 
 import pytest
 
-from parallax.core.base import FrozenMap
-from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
-from parallax.core.predicate import TrueNode, validate_predicate
-from parallax.core.write_plan import (
+from parallax.core.internal.base import FrozenMap
+from parallax.core.internal.metamodel import AttributeIdentity, ValueObjectIdentity
+from parallax.core.internal.predicate import TrueNode, validate_predicate
+from parallax.core.internal.write_plan import (
     SUPERSEDED,
     PlannedClose,
     PlannedInsert,
 )
-from parallax.core.write_plan.managed_row import ManagedRow, empty_row
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row
+from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
     INFINITY,
     MAX_PLUS_ONE,

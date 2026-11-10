@@ -15,7 +15,7 @@ from parallax.conformance import conflict_replay_stories, engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.core.execution import TxnOptions
+from parallax.core.internal.execution import TxnOptions
 from parallax.snapshot import TxnContext, connect
 
 _WRITERS = 8

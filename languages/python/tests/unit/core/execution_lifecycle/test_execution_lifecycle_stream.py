@@ -31,13 +31,6 @@ from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLif
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import ExecutionLifecycleHandler, ExecutionLifecycleHandlerError, RootExecution
-from parallax.core.base import UsageError
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseAdapter, MappingRow
-from parallax.core.execution import (
-    ServingModel,
-    prepare_model,
-)
 from parallax.core.execution_lifecycle import (
     AcquisitionStarted,
     CausedFailure,
@@ -54,6 +47,13 @@ from parallax.core.execution_lifecycle import (
     StreamFailed,
     StreamFinished,
     StreamStarted,
+)
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import DatabaseAdapter, MappingRow
+from parallax.core.internal.execution import (
+    ServingModel,
+    prepare_model,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm

@@ -5,7 +5,6 @@ from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self, cast
 
-from parallax.core import read_planning
 from parallax.core._execution._family import entity_layout
 from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
@@ -52,9 +51,6 @@ from parallax.core._execution._unit_work.uow import (
     UnitOfWork,
 )
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import ManagedValue
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
@@ -69,26 +65,34 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.metamodel import CompiledEntity, Metamodel
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._acquired_rows import (
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import ManagedValue
+from parallax.core.internal.db_port import DatabaseConnection
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._acquired_rows import (
     admitted_member_rows,
     completed_member_rows,
     publishable_member_rows,
 )
-from parallax.core.read_delivery._fetch import execute_read
-from parallax.core.read_delivery._page import ABSENT, release_page_rows
-from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader, StreamPageResult
-from parallax.core.read_delivery._paging import At, PagingPlan
-from parallax.core.read_delivery._publication import Publication
-from parallax.core.read_delivery._read_plan import ReadPlanner
-from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
-from parallax.core.read_planning import PlannedEntityQuery
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.read_delivery._fetch import execute_read
+from parallax.core.internal.read_delivery._page import ABSENT, release_page_rows
+from parallax.core.internal.read_delivery._page_reader import (
+    FlatPageRequest,
+    PageReader,
+    StreamPageResult,
+)
+from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._publication import Publication
+from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
+from parallax.core.internal.read_planning import PlannedEntityQuery
+from parallax.core.internal.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
     PlannedTemporalRevision,

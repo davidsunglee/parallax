@@ -167,14 +167,14 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.acquisition:RetainedTargetState`
 - `parallax.core._execution._unit_work.evidence:InsertionIdentity`
 - `parallax.core._execution._unit_work.claims:SettledEvidence`
-- `parallax.core.write_plan.plan:SettledWrite.source_evidence`
+- `parallax.core.internal.write_plan.plan:SettledWrite.source_evidence`
 - `parallax.core._execution._unit_work.instructions:ExpectedVersion`
 - `parallax.core._execution._unit_work.instructions:ExpectedTxStart`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
-- `parallax.core.write_plan.keys:ObjectKey`
-- `parallax.core.write_plan.keys:VersionedObjectStateKey`
+- `parallax.core.internal.write_plan.keys:ObjectKey`
+- `parallax.core.internal.write_plan.keys:VersionedObjectStateKey`
 - `parallax.core._execution._unit_work._errors:write_evidence_refusal`
 
 ## From verb to buffer
@@ -495,24 +495,24 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.ranges:settle_opening`
 - `parallax.core._execution._unit_work.ranges:DeferredTemporalRange`
 - `parallax.core._execution._unit_work.ranges:RangeBindings`
-- `parallax.core.write_plan.plan:BoundRange`
-- `parallax.core.write_plan.plan:SettledWrite`
-- `parallax.core.write_plan.plan:SettledWrite.deferred`
-- `parallax.core.write_plan.plan:WriteGroup`
-- `parallax.core.write_plan.plan:WriteGroup.writes`
-- `parallax.core.write_plan.plan:WriteGroup.steps`
-- `parallax.core.write_plan.plan:AcquisitionSpan`
-- `parallax.core.write_plan.plan:WritePlan`
-- `parallax.core.write_plan.plan:WritePlan.entries`
-- `parallax.core.write_plan.plan:WritePlan.acquisition_spans`
-- `parallax.core.write_plan.steps:PlannedStep`
+- `parallax.core.internal.write_plan.plan:BoundRange`
+- `parallax.core.internal.write_plan.plan:SettledWrite`
+- `parallax.core.internal.write_plan.plan:SettledWrite.deferred`
+- `parallax.core.internal.write_plan.plan:WriteGroup`
+- `parallax.core.internal.write_plan.plan:WriteGroup.writes`
+- `parallax.core.internal.write_plan.plan:WriteGroup.steps`
+- `parallax.core.internal.write_plan.plan:AcquisitionSpan`
+- `parallax.core.internal.write_plan.plan:WritePlan`
+- `parallax.core.internal.write_plan.plan:WritePlan.entries`
+- `parallax.core.internal.write_plan.plan:WritePlan.acquisition_spans`
+- `parallax.core.internal.write_plan.steps:PlannedStep`
 - `parallax.core._execution._unit_work.clock:TransactionInstant`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor.execute`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor.execute_with_count`
-- `parallax.core.write_payload._preparer:LayoutPayloadPreparer`
+- `parallax.core.internal.write_payload._preparer:LayoutPayloadPreparer`
 - `parallax.core._execution._keyed_sql:collapse_group_key`
-- `parallax.core.sql_gen._write:compile_write_step`
+- `parallax.core.internal.sql_gen._write:compile_write_step`
 - `parallax.core._execution._unit_work.effects:enforce_affected_rows`
 
 ## The temporal view shared by lone and composed writes
@@ -582,12 +582,12 @@ owns it and so revises or removes it in place, and the successors it opens.
 - `parallax.core._execution._unit_work.write_items:TargetIntent.retained`
 - `parallax.core._execution._unit_work.write_items:ComposedBitemporalOpening.intents`
 - `parallax.core._execution._unit_work.claims:WriteIntent`
-- `parallax.core.temporal_write.coverage:CoverageTransform`
-- `parallax.core.temporal_write.coverage:CoverageSegment`
+- `parallax.core.internal.temporal_write.coverage:CoverageTransform`
+- `parallax.core.internal.temporal_write.coverage:CoverageSegment`
 - `parallax.core._execution._unit_work.ranges:settle_range`
 - `parallax.core._execution._unit_work.ranges:settle_opening`
 - `parallax.core._execution._unit_work.ranges:DeferredTemporalRange`
-- `parallax.core.temporal_write.expansion:PredecessorExpander`
+- `parallax.core.internal.temporal_write.expansion:PredecessorExpander`
 
 ## Where the contracts live
 

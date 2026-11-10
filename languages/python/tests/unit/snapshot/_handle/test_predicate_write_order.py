@@ -35,7 +35,7 @@ from typing import Final
 import pytest
 
 from parallax.core import UnsupportedError
-from parallax.core.base import InvalidValueError, UsageError
+from parallax.core.internal.base import InvalidValueError, UsageError
 from tests._support.db_port import (
     BeginCall,
     CommitCall,

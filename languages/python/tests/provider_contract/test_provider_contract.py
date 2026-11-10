@@ -30,9 +30,14 @@ from parallax.conformance import concurrency_runner, engine, models, provision
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.models import default_models_dir
-from parallax.core.base import SQL_NULL, DocumentValue, StructuredDocument, retain_document_value
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.base import (
+    SQL_NULL,
+    DocumentValue,
+    StructuredDocument,
+    retain_document_value,
+)
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     ISOLATION_LEVELS,
     AccessMode,
     BeginFailed,
@@ -44,11 +49,11 @@ from parallax.core.db_port import (
     RolledBack,
     isolation_level,
 )
-from parallax.core.dialect import POSTGRES
-from parallax.core.wire import loads
-from parallax.core.wire._json import authored_token
-from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
-from parallax.evolution.schema_delta import schema_delta
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.wire import loads
+from parallax.core.internal.wire._json import authored_token
+from parallax.evolution.internal.model_evolution import ABSENT, evolve_metamodels
+from parallax.evolution.internal.schema_delta import schema_delta
 from parallax.postgres import PoolOptions, isolation_spelling
 
 

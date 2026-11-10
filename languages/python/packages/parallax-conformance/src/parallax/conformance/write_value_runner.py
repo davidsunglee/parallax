@@ -8,10 +8,10 @@ from typing import Any, Final, cast, get_args
 from parallax.conformance import case_format
 from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.story_models import Account
-from parallax.core.base import UsageError
-from parallax.core.entity import Entity
-from parallax.core.execution import KeyedWriteValueCode
-from parallax.core.unit_work import WriteEvidenceCode
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import Entity
+from parallax.core.internal.execution import KeyedWriteValueCode
+from parallax.core.internal.unit_work import WriteEvidenceCode
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, WireEntity
 
 __all__ = [

@@ -14,15 +14,15 @@ from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import MAX, Attr, DomainModel, Entity, TxTemporal, attr
 from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
-from parallax.core.base import InternalError
-from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseCallStarted,
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
 )
-from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import TxnContext
 from tests._support.db_port import (
     Read,

@@ -15,7 +15,7 @@ from parallax.conformance._mechanism.transaction_control import (
     committed,
     write_connection,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     BeginFailed,
     CommitFailed,
     PipelineStatement,

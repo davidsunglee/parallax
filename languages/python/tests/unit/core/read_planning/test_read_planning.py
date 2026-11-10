@@ -1,6 +1,6 @@
 """Deep-fetch pure planner unit tests (m-read-planning).
 
-Exercises `parallax.core.read_planning.plan` independently of the Docker-gated
+Exercises `parallax.core.internal.read_planning.plan` independently of the Docker-gated
 compile/run sweeps: shared-prefix dedup, broad-vs-narrowed distinct hops,
 equivalent-narrowing convergence, the `1 + L` accounting, child-query
 composition (`in` membership + injected as-of terms + declared relationship
@@ -40,16 +40,14 @@ from parallax.core import (
     Rel,
     TablePerHierarchy,
     attr,
-    inheritance,
-    read_planning,
     rel,
-    relationship,
 )
-from parallax.core.base import INFINITY, INT64, InternalError, ManagedValue, UsageError
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal import inheritance, read_planning, relationship
+from parallax.core.internal.base import INFINITY, INT64, InternalError, ManagedValue, UsageError
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
@@ -57,8 +55,8 @@ from parallax.core.metamodel import (
     Metamodel,
     RelationshipIdentity,
 )
-from parallax.core.metamodel import TemporalDimension as AcceptedTemporalDimension
-from parallax.core.object_query import (
+from parallax.core.internal.metamodel import TemporalDimension as AcceptedTemporalDimension
+from parallax.core.internal.object_query import (
     AsOf,
     AsOfRange,
     History,
@@ -67,10 +65,10 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.object_query._canonical import canonical_includes
-from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
-from parallax.core.object_query._resolved import ResolvedOrderTerm
-from parallax.core.predicate import (
+from parallax.core.internal.object_query._canonical import canonical_includes
+from parallax.core.internal.object_query._nodes import IncludePathNode, TemporalDimension
+from parallax.core.internal.object_query._resolved import ResolvedOrderTerm
+from parallax.core.internal.predicate import (
     Comparison,
     FieldSubject,
     Narrow,
@@ -78,14 +76,17 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
-from parallax.core.predicate._perspective import (
+from parallax.core.internal.predicate._execution_values import (
+    ExecutionValueSource,
+    ExecutionValueSources,
+)
+from parallax.core.internal.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     DeferredKeySet,
     ResolvedAnd,
     ResolvedComparison,
@@ -94,9 +95,9 @@ from parallax.core.predicate._resolved import (
     framework_comparison,
     managed_comparison,
 )
-from parallax.core.read_planning._include_tree import EMPTY_RENDER, IncludePosition
-from parallax.core.sql_gen._compile import compile_read, compile_template
-from parallax.core.temporal_read import (
+from parallax.core.internal.read_planning._include_tree import EMPTY_RENDER, IncludePosition
+from parallax.core.internal.sql_gen._compile import compile_read, compile_template
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     TimeInterval,
     perspective_terms,

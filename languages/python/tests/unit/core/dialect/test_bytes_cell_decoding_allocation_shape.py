@@ -7,7 +7,7 @@ import tracemalloc
 from collections.abc import Callable
 from typing import Final
 
-from parallax.core.dialect import decode_bytes_cell
+from parallax.core.internal.dialect import decode_bytes_cell
 from tests.unit.memory_instruments import (
     Span,
     high_water,

@@ -18,10 +18,10 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
-from parallax.core.unit_work import MISSING_TARGET, STALE_WRITE, TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.unit_work import MISSING_TARGET, STALE_WRITE, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root

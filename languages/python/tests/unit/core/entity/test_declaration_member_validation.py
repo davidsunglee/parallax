@@ -22,8 +22,8 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity import EditError
-from parallax.core.entity._declaration import member_validation
+from parallax.core.internal.entity import EditError
+from parallax.core.internal.entity._declaration import member_validation
 from tests._support.errors import raises_code
 
 _NS = "member.validation"

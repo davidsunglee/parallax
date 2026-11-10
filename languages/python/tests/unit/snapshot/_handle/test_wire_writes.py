@@ -33,10 +33,10 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import InvalidValueError, StructuredDocument, UsageError
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import MappingRow
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.base import InvalidValueError, StructuredDocument, UsageError
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import (
     Database,
     ScopedDatabase,

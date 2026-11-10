@@ -37,16 +37,6 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor, lowered
 from parallax.core._execution._write_step_executor import OrderedInvocation
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
-    WRITE_RESULT_INTEGRITY_VIOLATED,
-    OrderedWriteResultComplete,
-    OrderedWriteResultInterrupted,
-    StatementFailed,
-    StatementNotExecuted,
-)
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFailed,
@@ -61,13 +51,23 @@ from parallax.core.execution_lifecycle import (
     FlushFinished,
 )
 from parallax.core.execution_lifecycle._activity import INERT
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.unit_work import OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
-from parallax.core.write_plan import WritePlan
-from parallax.core.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
+    WRITE_RESULT_INTEGRITY_VIOLATED,
+    OrderedWriteResultComplete,
+    OrderedWriteResultInterrupted,
+    StatementFailed,
+    StatementNotExecuted,
+)
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
+from parallax.core.internal.write_plan import WritePlan
+from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,

@@ -22,7 +22,7 @@ from types import TracebackType
 from typing import cast
 
 from parallax.conformance._database_control import CaseDatabase
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     AccessMode,
     Bind,
     CanonicalWriteStatement,
@@ -44,8 +44,8 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import Dialect
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.metamodel import Metamodel
 from tests._support.bind_positions import (
     assert_document_nulls,
     assert_zero_signs,

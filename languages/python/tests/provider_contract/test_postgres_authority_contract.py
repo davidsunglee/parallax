@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
 from parallax.postgres import PoolOptions, PostgresRole
 from tests._support.aws_run import AS_LOGIN
 from tests._support.ended_sessions import end_backend

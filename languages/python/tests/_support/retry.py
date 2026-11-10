@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy
 
 __all__ = ["TINY_BACKOFF", "fast_retry"]
 

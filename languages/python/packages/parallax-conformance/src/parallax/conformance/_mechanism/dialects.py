@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 
 __all__ = ["DIALECT_CATALOG", "dialect_for"]
 

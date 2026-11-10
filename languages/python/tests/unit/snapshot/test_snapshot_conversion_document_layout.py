@@ -33,22 +33,22 @@ from typing import Any
 import pytest
 
 from parallax.conformance import models
-from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, DocumentValue, InternalError, StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import Metamodel
-from parallax.core.read_delivery._page import (
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import SQL_NULL, DocumentValue, InternalError, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     StoredDataIssueInput,
     ViewSchema,
     page_rows,
 )
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.temporal_read import Pin
+from parallax.core.internal.read_delivery._row_converter import bind
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.temporal_read import Pin
 from tests._support.document_reads import folded_names
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read

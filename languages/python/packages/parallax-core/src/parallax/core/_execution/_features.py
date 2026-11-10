@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.base import UnsupportedError
-from parallax.core.object_query import AsOfRange, History, QueryClauses
+from parallax.core.internal.base import UnsupportedError
+from parallax.core.internal.object_query import AsOfRange, History, QueryClauses
 
 __all__ = ["EXECUTION_FEATURE_DEFERRED", "deferred_feature_refusal", "deferred_features"]
 

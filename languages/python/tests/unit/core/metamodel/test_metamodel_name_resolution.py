@@ -14,20 +14,29 @@ what makes "preflight accepted this reference" imply "lowering resolves it".
 
 from __future__ import annotations
 
-from parallax.core import predicate as oa
-from parallax.core import read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel, entity_by_name
-from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
-from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
-from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import Narrow, TrueNode, validate_predicate
-from parallax.core.predicate._perspective import TemporalPerspective
-from parallax.core.predicate._resolved import ResolvedPresence, ResolvedRelationship
+from parallax.core.internal import predicate as oa
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.metamodel import (
+    CompiledEntity,
+    EntityIdentity,
+    Metamodel,
+    entity_by_name,
+)
+from parallax.core.internal.navigate import NoRootSelections, resolve_temporal_visibility
+from parallax.core.internal.object_query import (
+    IncludeSegment,
+    ObjectQueryNode,
+    validate_object_query,
+)
+from parallax.core.internal.object_query._nodes import IncludePathNode
+from parallax.core.internal.predicate import Narrow, TrueNode, validate_predicate
+from parallax.core.internal.predicate._perspective import TemporalPerspective
+from parallax.core.internal.predicate._resolved import ResolvedPresence, ResolvedRelationship
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from tests._support.errors import raises_code

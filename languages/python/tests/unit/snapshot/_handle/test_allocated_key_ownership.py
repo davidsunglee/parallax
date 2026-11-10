@@ -15,8 +15,8 @@ import pytest
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import MAX, Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
-from parallax.core.entity._model import model_of
-from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start

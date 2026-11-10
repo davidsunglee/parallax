@@ -45,15 +45,15 @@ from parallax.core import (
     TxTemporal,
     UnsupportedError,
     attr,
-    inheritance,
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import Numeric, UsageError
-from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import _authored_resolver
-from parallax.core.entity._authored_resolver import include_path_node, object_query_node
-from parallax.core.entity._expressions import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import Numeric, UsageError
+from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.core.internal.entity import _authored_resolver
+from parallax.core.internal.entity._authored_resolver import include_path_node, object_query_node
+from parallax.core.internal.entity._expressions import (
     AuthoredConstant,
     AuthoredIncludePath,
     AuthoredMemberPath,
@@ -62,22 +62,22 @@ from parallax.core.entity._expressions import (
     UnfinishedOperation,
     authored_include_path,
 )
-from parallax.core.entity._model import ClassIndex, model_of
-from parallax.core.entity._model import DomainModel as _Fixed
-from parallax.core.execution import (
+from parallax.core.internal.entity._model import ClassIndex, model_of
+from parallax.core.internal.entity._model import DomainModel as _Fixed
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     UnresolvedEntityDeclaration,
     judge_assignment,
 )
-from parallax.core.object_query import deserialize
-from parallax.core.object_query._fluent import typed_read_query
-from parallax.core.object_query._nodes import IncludePathNode
-from parallax.core.predicate import PredicateNode, validate
-from parallax.core.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
-from parallax.core.predicate._resolved import CURRENT, ResolvedComparison
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.object_query._fluent import typed_read_query
+from parallax.core.internal.object_query._nodes import IncludePathNode
+from parallax.core.internal.predicate import PredicateNode, validate
+from parallax.core.internal.predicate._interpretation import COMPARE, MEMBER_OF, ScalarOperator
+from parallax.core.internal.predicate._resolved import CURRENT, ResolvedComparison
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm

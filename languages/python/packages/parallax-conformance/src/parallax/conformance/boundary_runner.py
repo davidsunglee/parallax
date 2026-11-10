@@ -12,8 +12,8 @@ from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.read_models import Balance
 from parallax.conformance.story_models import Account
 from parallax.core import Entity
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     AccessMode,
     BeginFailed,
     CanonicalWriteStatement,
@@ -44,8 +44,8 @@ from parallax.core.db_port import (
     StatementNotExecuted,
     TransactionOutcome,
 )
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.dialect import Dialect
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.dialect import Dialect
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext
 
 __all__ = [
@@ -678,7 +678,7 @@ class ResourceFaultingContext:
 class _Refused(Exception):
     """The condition a simulated cleanup issue is projected from.
 
-    A :class:`~parallax.core.db_port.CleanupIssue` carries a detached diagnostic
+    A :class:`~parallax.core.internal.db_port.CleanupIssue` carries a detached diagnostic
     of the exception behind it, and a simulated condition has none — so one is
     raised nowhere and projected here, exactly as the shipped adapter projects
     the conditions it OBSERVES rather than catches.

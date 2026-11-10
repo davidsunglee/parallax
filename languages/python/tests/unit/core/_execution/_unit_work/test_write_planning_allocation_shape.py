@@ -49,16 +49,16 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.write_items import ComposedWrite, KeyedInsert
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     Metamodel,
     Table,
 )
-from parallax.core.unit_work import (
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     WritePlanningRequest,
     object_key,
 )
-from parallax.core.write_plan.plan import SettledWrite
+from parallax.core.internal.write_plan.plan import SettledWrite
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, settled_writes
 from tests._support.write_preparation import write_preparation_of

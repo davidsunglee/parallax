@@ -9,13 +9,13 @@ direct document. The corpus twins carry the end-to-end SQL and results.
 from __future__ import annotations
 
 from parallax.conformance import models
-from parallax.core import predicate as oa
-from parallax.core.base import StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import UNAVAILABLE, DocumentFinding
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import CompiledEntity, entity_by_name
-from parallax.core.read_delivery._row_decoding import member_classifiers
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import UNAVAILABLE, DocumentFinding
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import CompiledEntity, entity_by_name
+from parallax.core.internal.read_delivery._row_decoding import member_classifiers
 from tests._support.sql import compile_read
 from tests.unit.core.sql_gen._delivery_support import deliver
 

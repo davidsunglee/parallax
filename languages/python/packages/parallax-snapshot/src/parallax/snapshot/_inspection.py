@@ -6,20 +6,24 @@ from enum import Enum
 from typing import Any, Final, Literal, cast
 
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
-from parallax.core.base import UsageError
-from parallax.core.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
-from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
-from parallax.core.entity import relationship_value_of as _relationship_value_of
-from parallax.core.entity._declaration import declaration_of, is_entity_class, wire_names_of
-from parallax.core.entity._entity import DetachedLifecycleState, attach_lifecycle_state
-from parallax.core.entity._expressions import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import UNLOADED, Entity, IncludePath, UnloadedRelationshipError
+from parallax.core.internal.entity import lifecycle_state_of as _lifecycle_state_of
+from parallax.core.internal.entity import relationship_value_of as _relationship_value_of
+from parallax.core.internal.entity._declaration import (
+    declaration_of,
+    is_entity_class,
+    wire_names_of,
+)
+from parallax.core.internal.entity._entity import DetachedLifecycleState, attach_lifecycle_state
+from parallax.core.internal.entity._expressions import (
     AuthoredIncludePath,
     AuthoredIncludeSegment,
     authored_include_path,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.read_planning import NarrowedViewKeys
-from parallax.core.temporal_read import (
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.read_planning import NarrowedViewKeys
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     Edge,
     NonTemporal,
@@ -271,7 +275,7 @@ def required_pin(provenance: NodeProvenance) -> Pin:
 
 
 def typed_edge_of(node: object) -> Edge:
-    """A Typed ``node``'s own milestone :class:`~parallax.core.temporal_read.Edge`
+    """A Typed ``node``'s own milestone :class:`~parallax.core.internal.temporal_read.Edge`
     — the finite from-instant on every axis its family declares.
 
     The first inspection reads the node's milestone starts and retains the
@@ -353,7 +357,7 @@ def view(node: object, path: IncludePath[Any, Any]) -> object:
     ``view(owner, Owner.pets.narrow(Dog).doghouse)`` reaches only the dogs'
     doghouses.
 
-    Raises :class:`~parallax.core.entity.UnloadedRelationshipError` for the first
+    Raises :class:`~parallax.core.internal.entity.UnloadedRelationshipError` for the first
     unloaded view in path-segment order and, within a fan-out, source-tuple order.
     """
     _required_state(node, "view")

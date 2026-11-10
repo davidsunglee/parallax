@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Sequence
 
-from parallax.core.base import normalize_instant
+from parallax.core.internal.base import normalize_instant
 
 __all__ = ["ClockExhaustedError", "FixedClock", "ScriptedClock"]
 
@@ -37,7 +37,7 @@ class ClockExhaustedError(RuntimeError):
 
 
 class ScriptedClock:
-    """A :class:`~parallax.core.unit_work.Clock` yielding a FIXED, ORDERED
+    """A :class:`~parallax.core.internal.unit_work.Clock` yielding a FIXED, ORDERED
     sequence of instants — one per call to :meth:`now`.
 
     Construct one FRESH instance per story run (:data:`~parallax.conformance.

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from parallax.core.entity._model import model_of
-from parallax.core.object_query import deserialize
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.object_query import deserialize
 from parallax.snapshot import TxnContext, connect
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root

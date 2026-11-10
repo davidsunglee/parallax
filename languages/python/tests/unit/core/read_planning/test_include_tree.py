@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_planning._include_tree import build_include_tree
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_planning._include_tree import build_include_tree
 
 _ROOT = EntityIdentity("parallax.compatibility", "Order")
 

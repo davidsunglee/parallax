@@ -25,13 +25,13 @@ from collections.abc import Sequence
 from typing import Final
 from uuid import UUID
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     CanonicalWriteStatement,
     OrderedWriteResult,
     OrderedWriteResultComplete,
 )
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = [
     "AFFECTED",

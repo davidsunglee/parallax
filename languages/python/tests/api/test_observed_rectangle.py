@@ -50,9 +50,9 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
-from parallax.core.unit_work import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect

@@ -14,21 +14,24 @@ from typing import Final
 
 import pytest
 
-from parallax.core import base, continuation, read_planning
-from parallax.core import object_query as oq
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INT32, INT64, STRING
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal import base, continuation, read_planning
+from parallax.core.internal import object_query as oq
+from parallax.core.internal.base import INT32, INT64, STRING
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query._resolved import (
+    ContinuationCoordinate,
+    ResolvedObjectQuery,
+)
+from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
     compile_read,
     compile_template,
 )
-from parallax.core.sql_gen._context import (
+from parallax.core.internal.sql_gen._context import (
     MembershipForm,
     _TypedBindSpan,
 )

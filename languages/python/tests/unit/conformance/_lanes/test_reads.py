@@ -23,22 +23,22 @@ from parallax.conformance._lanes import reads
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.core import UnsupportedError
-from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
-from parallax.core.execution import (
+from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.execution import (
     TxnOptions,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import InvalidData, StoredDataIssue
-from parallax.core.temporal_read import Pin
-from parallax.core.write_plan import ObjectKey
+from parallax.core.internal.read_delivery import InvalidData, StoredDataIssue
+from parallax.core.internal.temporal_read import Pin
+from parallax.core.internal.write_plan import ObjectKey
 from tests._support.case_corpus import case as corpus_case
 from tests._support.case_corpus import cases as corpus_cases
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort

@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.core.execution import (
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )

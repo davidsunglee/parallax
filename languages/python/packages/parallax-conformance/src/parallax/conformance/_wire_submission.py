@@ -8,25 +8,25 @@ from typing import Any, Final, cast
 from parallax.conformance import _case_ingress
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
-from parallax.core import concurrency, inheritance, read_delivery
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import UsageError
-from parallax.core.metamodel import (
+from parallax.core.internal import concurrency, inheritance, read_delivery
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     PrimaryKey,
     ScalarDefinition,
     TemporalDimension,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.unit_work import (
     INSERT_MUTATIONS,
     KeyedWriteInstruction,
     PredicateWriteInstruction,
     TargetWriteInstruction,
 )
-from parallax.core.wire import WireValue, decode_wire
-from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.internal.wire import WireValue, decode_wire
+from parallax.core.internal.write_plan import ObjectKey, VersionObservation
 from parallax.snapshot import Snapshot, TxnContext, WireEntity
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 

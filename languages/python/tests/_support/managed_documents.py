@@ -3,10 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final, cast
 
-from parallax.core.base import FrozenMap
-from parallax.core.document_codec import MemberShape, OccurrenceDefinition, ScalarDefinition
-from parallax.core.document_codec._document import encode_managed_document
-from parallax.core.metamodel import Multiplicity
+from parallax.core.internal.base import FrozenMap
+from parallax.core.internal.document_codec import (
+    MemberShape,
+    OccurrenceDefinition,
+    ScalarDefinition,
+)
+from parallax.core.internal.document_codec._document import encode_managed_document
+from parallax.core.internal.metamodel import Multiplicity
 
 __all__ = ["OMITTED", "document_cells", "encoded_document"]
 

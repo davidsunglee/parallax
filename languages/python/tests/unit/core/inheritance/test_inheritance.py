@@ -11,16 +11,17 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import UnsupportedError, inheritance
+from parallax.core import UnsupportedError
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, Numeric, UsageError, typed_converter
-from parallax.core.document_codec._plan import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import STRING, Numeric, UsageError, typed_converter
+from parallax.core.internal.document_codec._plan import (
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
     AuthoringLane,
 )
-from parallax.core.inheritance._rules import (
+from parallax.core.internal.inheritance._rules import (
     CONCRETE_SUBTYPE_WITH_CHILDREN,
     CONCRETE_WITHOUT_ABSTRACT_ROOT,
     CYCLE,
@@ -42,7 +43,7 @@ from parallax.core.inheritance._rules import (
     TPH_DESCENDANT_TABLE_FORBIDDEN,
     TPH_ROOT_TABLE_REQUIRED,
 )
-from parallax.core.metamodel import (
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeIdentity,
@@ -77,11 +78,11 @@ from parallax.core.metamodel import (
     judge_assignment,
     sort_issues,
 )
-from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
-from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.internal.metamodel import AsOfAxisLocation as AxisLocation
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
+from parallax.core.internal.model_formation import MetamodelValidationError
+from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (

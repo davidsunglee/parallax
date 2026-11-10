@@ -16,8 +16,8 @@ import pytest
 from parallax.conformance.class_models import MODELS
 from parallax.core import UsageError
 from parallax.core._execution._adoption import AdoptedExecution, ExecutionBoundary
-from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.read_delivery import InvalidDataError
+from parallax.core.internal.execution import ServingModel, prepare_model
+from parallax.core.internal.read_delivery import InvalidDataError
 
 _A = prepare_model(MODELS["account"], edition="a")
 

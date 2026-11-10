@@ -19,7 +19,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.metamodel import TablePerConcreteSubtype
 
 _NS = "parallax.compatibility"
 

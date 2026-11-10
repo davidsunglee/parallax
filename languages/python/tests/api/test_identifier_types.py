@@ -27,11 +27,10 @@ from parallax.core import (
     ValueObject,
     attr,
     rel,
-    relationship,
-    storage_layout,
 )
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal import relationship, storage_layout
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     AttributeIdentity,
@@ -43,7 +42,7 @@ from parallax.core.metamodel import (
     Sequence,
     TablePerConcreteSubtype,
 )
-from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import DescriptorError, domain_model_from_document, domain_model_from_yaml
 from parallax.snapshot import connect
 from tests._support.case_corpus import case as corpus_case

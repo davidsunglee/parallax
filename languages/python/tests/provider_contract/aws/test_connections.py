@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from parallax.core.db_port import RoutePolicy
+from parallax.core.internal.db_port import RoutePolicy
 from parallax.postgres import OnDemandOptions, PoolOptions
 from tests.provider_contract.aws._aws_support import APPLICATIONS
 

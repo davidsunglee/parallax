@@ -9,7 +9,7 @@ under pyright strict, so privacy is carried by this MODULE's underscore.
 
 from __future__ import annotations
 
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,

@@ -21,7 +21,7 @@ from parallax.core._execution._write_lowering import (
     LoweringCursor,
     stream_physical,
 )
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     INT32,
     INT64,
@@ -31,19 +31,19 @@ from parallax.core.base import (
     InternalError,
     Numeric,
 )
-from parallax.core.db_port import JSON_NULL, ArrayBind
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.sql_gen._write import GroupedEffectBuilder
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
-from parallax.core.write_plan.payload import AssignmentPayload
-from parallax.core.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.db_port import JSON_NULL, ArrayBind
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import GroupedEffectBuilder
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
+from parallax.core.internal.write_plan.payload import AssignmentPayload
+from parallax.core.internal.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,

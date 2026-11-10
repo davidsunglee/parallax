@@ -33,39 +33,39 @@ from parallax.core import (
     Entity,
     Int32,
     attr,
-    temporal_read,
 )
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.write_items import ComposedWrite
-from parallax.core.concurrency import ConcurrencyPreference, concurrency_facet_of
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
-from parallax.core.object_query import LATEST, TX_TIME
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.read_delivery import InvalidData
-from parallax.core.read_planning._include_tree import build_include_tree
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.temporal_read import Edge, Pin
-from parallax.core.unit_work import (
+from parallax.core.internal import temporal_read
+from parallax.core.internal.concurrency import ConcurrencyPreference, concurrency_facet_of
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeMetadata, EntityIdentity, Metamodel
+from parallax.core.internal.object_query import LATEST, TX_TIME
+from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.read_planning._include_tree import build_include_tree
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.temporal_read import Edge, Pin
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WritePlanningRequest,
     object_key,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     StateObservation,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.core.internal.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
     PlannedStep,
@@ -130,7 +130,7 @@ _TEMPORAL_MODEL: Final[Metamodel] = formed(
 
 
 _GRANT_BOUND: Final = frozenset(
-    {"parallax.core.object_query.validate:_validate_temporal_selections"}
+    {"parallax.core.internal.object_query.validate:_validate_temporal_selections"}
 )
 
 

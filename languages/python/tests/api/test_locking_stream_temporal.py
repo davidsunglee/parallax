@@ -10,8 +10,8 @@ import pytest
 
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Document, DomainModel, TemporalBound, TxTemporal, attr
-from parallax.core.entity import model_of
-from parallax.core.execution import RetryPolicy
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import TxnContext, connect, edge_of
 from tests._support.root_ownership import own_root
 

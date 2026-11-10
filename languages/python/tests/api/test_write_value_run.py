@@ -24,8 +24,8 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.story_models import Account
 from parallax.conformance.vo_models import Customer
-from parallax.core.execution import prepare_model
-from parallax.core.read_delivery import InvalidData
+from parallax.core.internal.execution import prepare_model
+from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import TxnContext, connect
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

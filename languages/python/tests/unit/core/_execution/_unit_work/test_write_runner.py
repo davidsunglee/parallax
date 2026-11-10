@@ -6,12 +6,12 @@ from __future__ import annotations
 from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     CurrentRowOutput,
     TemporalRowCoordinates,
 )
-from parallax.core.write_plan.steps import PlannedTemporalRevision, WriteRow
+from parallax.core.internal.write_plan.steps import PlannedTemporalRevision, WriteRow
 from tests.unit.core._execution._write_step_support import POSITION, insert, revision
 
 

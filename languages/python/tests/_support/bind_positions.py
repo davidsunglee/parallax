@@ -27,10 +27,10 @@ from typing import Final, cast
 import sqlglot
 from sqlglot import exp
 
-from parallax.core import storage_layout
-from parallax.core.base import Float32, Float64, NeutralType
-from parallax.core.db_port import ArrayBind
-from parallax.core.metamodel import (
+from parallax.core.internal import storage_layout
+from parallax.core.internal.base import Float32, Float64, NeutralType
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     MemberShape,
     Metamodel,
@@ -39,7 +39,12 @@ from parallax.core.metamodel import (
     ScalarDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.storage_layout import ColumnSlot, ColumnTier, RelationalDocument, TableLayout
+from parallax.core.internal.storage_layout import (
+    ColumnSlot,
+    ColumnTier,
+    RelationalDocument,
+    TableLayout,
+)
 
 __all__ = [
     "BindPosition",

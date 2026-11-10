@@ -14,26 +14,31 @@ from typing import Any
 
 import pytest
 
-from parallax.core import ConflictError, inheritance, temporal_read
+from parallax.core import ConflictError
 from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
-from parallax.core.base import INFINITY
-from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
-from parallax.core.temporal_write.expansion import (
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.document_codec import PreparedEffectiveChange, prepare_effective_change
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import (
+    NO_TRANSFORM,
+    CoverageGap,
+    CoverageTransform,
+)
+from parallax.core.internal.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
     RowAudit,
     TemporalFacts,
     opening,
 )
-from parallax.core.unit_work import TEMPORAL_CONFLICT
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.unit_work import TEMPORAL_CONFLICT
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import ObjectKey, PredecessorRow, observe
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow, projected_row
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
@@ -44,7 +49,7 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -65,7 +70,7 @@ from parallax.core.write_plan.steps import (
     TemporalGate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import inert_instant
 from tests._support.errors import raises_code
 from tests._support.managed_rows import row_selection_of

@@ -127,7 +127,7 @@ writing it:
 ```text
 Traceback (most recent call last):
   ...
-parallax.core.base._errors.ConflictError: optimistic-lock-conflict: Order: a concurrent write changed the gated rows first — affected 0 row(s), expected 1 (keys=[{'id': 42}])
+parallax.core.internal.base._errors.ConflictError: optimistic-lock-conflict: Order: a concurrent write changed the gated rows first — affected 0 row(s), expected 1 (keys=[{'id': 42}])
 bounded retry exhausted after 11 attempts (max_retries=10)
 raised in a transaction under model edition '2026-09-b'
 ```

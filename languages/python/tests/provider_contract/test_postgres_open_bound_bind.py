@@ -22,10 +22,10 @@ from psycopg.adapt import PyFormat
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import LATEST, Attr, Bitemporal, DomainModel, attr
-from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import PipelineStatement
-from parallax.core.entity._model import model_of
+from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import PipelineStatement
+from parallax.core.internal.entity._model import model_of
 from parallax.postgres._connection import (
     _NativeInfinityDumper,  # pyright: ignore[reportPrivateUsage] - the registered dumper is this module's subject
 )

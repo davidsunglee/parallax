@@ -10,15 +10,15 @@ document either way, with no slot or segment of their own.
 from __future__ import annotations
 
 from parallax.conformance import models
-from parallax.core import storage_layout
-from parallax.core.metamodel import (
+from parallax.core.internal import storage_layout
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.storage_layout import ColumnTier, DirectColumn, DocumentPath
+from parallax.core.internal.storage_layout import ColumnTier, DirectColumn, DocumentPath
 
 _ITEM = EntityIdentity("parallax.compatibility", "CollectionTwinItem")
 _COLUMNS = models.load_model(

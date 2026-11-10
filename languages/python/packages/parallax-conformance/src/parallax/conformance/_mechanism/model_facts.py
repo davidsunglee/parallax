@@ -6,17 +6,17 @@ from typing import cast
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
-from parallax.core import inheritance
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.entity import DomainModel
-from parallax.core.execution import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.entity import DomainModel
+from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
-from parallax.core.metamodel import CompiledEntity, entity_by_name
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.temporal_read import scans_resolved_axis
+from parallax.core.internal.metamodel import CompiledEntity, entity_by_name
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.temporal_read import scans_resolved_axis
 
 __all__ = [
     "case_edition",
@@ -118,7 +118,7 @@ def case_entity(model: AcceptedMetamodel, name: str) -> CompiledEntity:
 
     A case names an Entity by the spelling its own model authored — bare when
     that is unambiguous, canonical otherwise — which is exactly the QUERY
-    REFERENCE rule :func:`~parallax.core.metamodel.entity_by_name` adjudicates,
+    REFERENCE rule :func:`~parallax.core.internal.metamodel.entity_by_name` adjudicates,
     so a case's spelling resolves here the way every validator and lowering site
     resolves one.
 

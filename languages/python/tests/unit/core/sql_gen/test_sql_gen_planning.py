@@ -8,28 +8,28 @@ import datetime as dt
 import pytest
 
 from parallax.conformance.models import accepted_model
-from parallax.core import inheritance, storage_layout
-from parallax.core import predicate as oa
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
-from parallax.core.object_query._resolved import ResolvedOrderTerm
-from parallax.core.predicate._perspective import (
+from parallax.core.internal import inheritance, storage_layout
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.navigate import _closed  # pyright: ignore[reportPrivateUsage]
+from parallax.core.internal.object_query._resolved import ResolvedOrderTerm
+from parallax.core.internal.predicate._perspective import (
     AtPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
-from parallax.core.predicate._resolved import (
+from parallax.core.internal.predicate._resolved import (
     ResolvedAnd,
     ResolvedPresence,
     ResolvedQuantifier,
     ResolvedRelationship,
 )
-from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.sql_gen._inheritance import (
+from parallax.core.internal.read_planning import PlannedEntityQuery, ResolvedReadProjection
+from parallax.core.internal.sql_gen._inheritance import (
     SingleTableReadPlan,
     plan_read_shape,
 )
-from parallax.core.sql_gen._planning import (
+from parallax.core.internal.sql_gen._planning import (
     REACHED_ROW,
     BranchSelection,
     CandidateExistence,
@@ -47,7 +47,7 @@ from parallax.core.sql_gen._planning import (
     plan_statement,
     shared_relationship_is_eligible,
 )
-from parallax.core.temporal_read import Bitemporal, temporal_facet_of
+from parallax.core.internal.temporal_read import Bitemporal, temporal_facet_of
 from tests._support.sql import (
     read_position,
     resolved_as_stated,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
     PoolMeasurements,

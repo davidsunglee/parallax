@@ -5,31 +5,31 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from parallax.core import concurrency, inheritance, read_planning
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.dialect import Dialect
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.inheritance import InheritancePositionView
-from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
-from parallax.core.navigate import (
+from parallax.core.internal import concurrency, inheritance, read_planning
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import Dialect
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.inheritance import InheritancePositionView
+from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
+from parallax.core.internal.navigate import (
     NoRootSelections,
     TemporallyResolvedPredicate,
     resolve_temporal_visibility,
 )
-from parallax.core.object_query import (
+from parallax.core.internal.object_query import (
     OrderKey,
     TemporalSelection,
     object_query,
     validate_object_query,
 )
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.predicate import PredicateNode, validate_predicate
-from parallax.core.predicate._resolved import ResolvedPredicate
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
-from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._compile import (
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.predicate import PredicateNode, validate_predicate
+from parallax.core.internal.predicate._resolved import ResolvedPredicate
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
+from parallax.core.internal.sql_gen._compile import CompiledPredicate, CompiledRead
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 

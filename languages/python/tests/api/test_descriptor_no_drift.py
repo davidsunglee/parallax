@@ -28,7 +28,7 @@ from tests._support import mirrored_models as mm
 
 if TYPE_CHECKING:
     from parallax.core import DomainModel
-    from parallax.core.metamodel import (
+    from parallax.core.internal.metamodel import (
         CompiledEntity,
         Metamodel,
         OccurrenceMetadata,

@@ -43,24 +43,21 @@ from uuid import UUID
 
 import pytest
 
-from parallax.core import (
-    ONE_TO_MANY,
-    Attr,
-    DomainModel,
-    Entity,
-    Rel,
-    ValueObject,
-    attr,
-    read_planning,
-    rel,
+from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
+from parallax.core.internal import predicate as oa
+from parallax.core.internal import read_planning
+from parallax.core.internal.base import (
+    INFINITY,
+    SQL_NULL,
+    DocumentValue,
+    StructuredDocument,
+    UsageError,
 )
-from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, StructuredDocument, UsageError
-from parallax.core.db_port import Row
-from parallax.core.dialect import POSTGRES, scalar_result
-from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.db_port import Row
+from parallax.core.internal.dialect import POSTGRES, scalar_result
+from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
@@ -68,8 +65,8 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.read_delivery import _convert
-from parallax.core.read_delivery._page import (
+from parallax.core.internal.read_delivery import _convert
+from parallax.core.internal.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
     Page,
@@ -80,12 +77,12 @@ from parallax.core.read_delivery._page import (
     page_rows,
     release_page_rows,
 )
-from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.read_delivery._row_decoding import row_identity
-from parallax.core.read_planning import RelationshipViewKey
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.temporal_read import (
+from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
+from parallax.core.internal.read_delivery._row_decoding import row_identity
+from parallax.core.internal.read_planning import RelationshipViewKey
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.temporal_read import (
     Bitemporal,
     Pin,
     TimeInterval,

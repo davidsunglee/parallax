@@ -8,17 +8,17 @@ from typing import Final, Literal, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
-from parallax.core.inheritance import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.base import STRING
+from parallax.core.internal.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     InheritanceFamilyView,
 )
-from parallax.core.inheritance._compile import compile_facet
-from parallax.core.metamodel import (
+from parallax.core.internal.inheritance._compile import compile_facet
+from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeIdentity,

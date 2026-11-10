@@ -98,8 +98,9 @@ from parallax.core import (
     LoggingLifecycleProvider,
     RootExecution,
 )
-from parallax.core.base import DocumentReadOrdinals
-from parallax.core.db_port import (
+from parallax.core.execution_lifecycle import ExecutionEvent
+from parallax.core.internal.base import DocumentReadOrdinals
+from parallax.core.internal.db_port import (
     Bind,
     CallbackRaised,
     CleanupResult,
@@ -117,8 +118,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.execution_lifecycle import ExecutionEvent
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from production_origins import require_source_origins
 

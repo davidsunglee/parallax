@@ -7,31 +7,31 @@ import datetime as dt
 from collections.abc import Iterable, Mapping
 from decimal import Decimal
 
-from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.write_items import AdmittedWrite
-from parallax.core.base import INFINITY
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.unit_work import (
+from parallax.core.internal import temporal_read
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
     WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.write_plan import (
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
 )
-from parallax.core.write_plan.keys import TemporalObjectStateKey
-from parallax.core.write_plan.plan import (
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
+from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     TemporalWriteOwnership,
     WritePlan,
 )
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.steps import (
     PlannedStep,
 )
 from tests._support.clock_probes import instant_at

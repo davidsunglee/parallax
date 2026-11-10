@@ -8,19 +8,19 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import entity_by_name
-from parallax.core.object_query import deserialize
-from parallax.core.read_delivery import _acquired_rows, _convert
-from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, entity_state, page_rows
-from parallax.core.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
-from parallax.core.temporal_read import Pin
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.object_query import deserialize
+from parallax.core.internal.read_delivery import _acquired_rows, _convert
+from parallax.core.internal.read_delivery._page import ABSENT, ROOT_LEVEL, entity_state, page_rows
+from parallax.core.internal.read_delivery._page_reader import FlatPageRequest, PageReader
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
+from parallax.core.internal.temporal_read import Pin
 from tests._support.sql import compile_read
 from tests.unit._prepared_read_support import compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS

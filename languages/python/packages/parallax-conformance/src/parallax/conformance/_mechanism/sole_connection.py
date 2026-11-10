@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Final, Protocol, cast
 
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     CallbackRaised,
     CleanupResult,
     Committed,
@@ -33,7 +33,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import Dialect
+from parallax.core.internal.dialect import Dialect
 
 __all__ = [
     "STAND_IN_LOGIN",

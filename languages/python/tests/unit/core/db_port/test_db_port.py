@@ -17,7 +17,7 @@ import pytest
 
 from parallax.conformance._mechanism.transaction_control import write_connection
 from parallax.conformance.boundary_runner import FaultInjectingPort
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     ISOLATION_LEVELS,
     AcquisitionReason,
     ConnectionAcquisitionError,
@@ -31,7 +31,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
     isolation_level,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.temporal_write_transport import CountingConnection, PortTally
 

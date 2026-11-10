@@ -39,7 +39,7 @@ from parallax.core._execution._unit_work.source_authority import (
     SourceAuthority,
     _ReadRegistration,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
 )
-from parallax.core.unit_work import UnitOfWork
+from parallax.core.internal.unit_work import UnitOfWork
 from parallax.snapshot import connect
 from parallax.snapshot._inspection import snapshot_state_of
 from tests._support import mirrored_models as mm

@@ -25,10 +25,10 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity import AttributeAssignment
-from parallax.core.entity._expressions import AuthoredConstant
-from parallax.core.object_query import LATEST, TX_TIME
-from parallax.core.object_query._fluent import mutation_selection
+from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity._expressions import AuthoredConstant
+from parallax.core.internal.object_query import LATEST, TX_TIME
+from parallax.core.internal.object_query._fluent import mutation_selection
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vom
@@ -112,7 +112,7 @@ def test_set_on_a_many_value_object_member_borrows_the_authored_tuple() -> None:
 # Assignability and declared-type agreement are facts of the MEMBER, not of a   #
 # whole model, and an Attribute Expression built from a class carries the       #
 # member's own declared Metadata — so `.set(...)` reaches the SAME judgement    #
-# (`~parallax.core.metamodel.judge_assignment`) the engine/serialized path      #
+# (`~parallax.core.internal.metamodel.judge_assignment`) the engine/serialized path      #
 # reaches for a case-authored predicate-write assignment, and `edit(...)`       #
 # reaches for an edited copy. Only the resolution in front of it differs        #
 # (`test_write_instructions.py` and `test_model_free_authoring.py` are the      #

@@ -7,13 +7,13 @@ from dataclasses import replace
 
 import pytest
 
-from parallax.core import inheritance, read_planning
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import EntityIdentity, Metamodel, TablePerConcreteSubtype
-from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
-from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.internal import inheritance, read_planning
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel, TablePerConcreteSubtype
+from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
+from parallax.core.internal.sql_gen._compile import CompiledRead
 from tests._support.case_corpus import cases
 from tests._support.sweep_goldens import assert_wire_binds, read_golden_statements
 from tests.unit.core.read_delivery._read_plan_differential import (

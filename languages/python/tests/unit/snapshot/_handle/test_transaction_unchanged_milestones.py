@@ -10,7 +10,7 @@ from typing import Literal
 
 import pytest
 
-from parallax.core.dialect import POSTGRES
+from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall

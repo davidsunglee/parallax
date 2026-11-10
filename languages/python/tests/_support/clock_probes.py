@@ -1,6 +1,6 @@
 """Clock Strategy probes for the write-path suites.
 
-A real flush gets its :class:`~parallax.core.unit_work.TransactionInstant` from
+A real flush gets its :class:`~parallax.core.internal.unit_work.TransactionInstant` from
 the unit of work that owns the attempt. A suite that plans or lowers directly —
 bypassing the shell — builds one here instead, over the same ``FixedClock`` a
 deterministic ``Database`` is built with — so an assertion over rendered SQL sees
@@ -17,7 +17,7 @@ import datetime as dt
 from collections.abc import Sequence
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core.unit_work import TransactionInstant
+from parallax.core.internal.unit_work import TransactionInstant
 
 __all__ = ["INERT_INSTANT_LITERAL", "CountingClock", "inert_instant", "instant_at"]
 

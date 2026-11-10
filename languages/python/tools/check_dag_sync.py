@@ -94,40 +94,40 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 # Behavioural module tag -> Python enforcement scope (spec/python.md §7's
 # behavioral-scope table, less the one pytest-bounded row below).
 MODULE_SCOPE: Mapping[str, str] = {
-    "m-core": "parallax.core.base",
-    "m-wire": "parallax.core.wire",
-    "m-metamodel": "parallax.core.metamodel",
-    "m-edit": "parallax.core.entity._edit",
-    "m-model-formation": "parallax.core.model_formation",
+    "m-core": "parallax.core.internal.base",
+    "m-wire": "parallax.core.internal.wire",
+    "m-metamodel": "parallax.core.internal.metamodel",
+    "m-edit": "parallax.core.internal.entity._edit",
+    "m-model-formation": "parallax.core.internal.model_formation",
     "m-descriptor": "parallax.descriptor",
-    "m-model-evolution": "parallax.evolution.model_evolution",
-    "m-schema-delta": "parallax.evolution.schema_delta",
-    "m-pk-gen": "parallax.core.pk_gen",
-    "m-inheritance": "parallax.core.inheritance",
-    "m-storage-layout": "parallax.core.storage_layout",
-    "m-value-object": "parallax.core.value_object",
-    "m-document-codec": "parallax.core.document_codec",
-    "m-relationship": "parallax.core.relationship",
-    "m-predicate": "parallax.core.predicate",
-    "m-object-query": "parallax.core.object_query",
-    "m-sql": "parallax.core.sql_gen",
-    "m-dialect": "parallax.core.dialect",
-    "m-db-port": "parallax.core.db_port",
-    "m-db-error": "parallax.core.db_error",
+    "m-model-evolution": "parallax.evolution.internal.model_evolution",
+    "m-schema-delta": "parallax.evolution.internal.schema_delta",
+    "m-pk-gen": "parallax.core.internal.pk_gen",
+    "m-inheritance": "parallax.core.internal.inheritance",
+    "m-storage-layout": "parallax.core.internal.storage_layout",
+    "m-value-object": "parallax.core.internal.value_object",
+    "m-document-codec": "parallax.core.internal.document_codec",
+    "m-relationship": "parallax.core.internal.relationship",
+    "m-predicate": "parallax.core.internal.predicate",
+    "m-object-query": "parallax.core.internal.object_query",
+    "m-sql": "parallax.core.internal.sql_gen",
+    "m-dialect": "parallax.core.internal.dialect",
+    "m-db-port": "parallax.core.internal.db_port",
+    "m-db-error": "parallax.core.internal.db_error",
     "m-unit-work": "parallax.core._execution._unit_work",
-    "m-write-plan": "parallax.core.write_plan",
-    "m-write-payload": "parallax.core.write_payload",
-    "m-auto-retry": "parallax.core.auto_retry",
-    "m-execution-authority": "parallax.core.execution_authority",
+    "m-write-plan": "parallax.core.internal.write_plan",
+    "m-write-payload": "parallax.core.internal.write_payload",
+    "m-auto-retry": "parallax.core.internal.auto_retry",
+    "m-execution-authority": "parallax.core.internal.execution_authority",
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
-    "m-read-delivery": "parallax.core.read_delivery",
+    "m-read-delivery": "parallax.core.internal.read_delivery",
     "m-execution": "parallax.core._execution",
-    "m-concurrency": "parallax.core.concurrency",
-    "m-temporal-read": "parallax.core.temporal_read",
-    "m-temporal-write": "parallax.core.temporal_write",
-    "m-batch-write": "parallax.core.batch_write",
-    "m-navigate": "parallax.core.navigate",
-    "m-read-planning": "parallax.core.read_planning",
+    "m-concurrency": "parallax.core.internal.concurrency",
+    "m-temporal-read": "parallax.core.internal.temporal_read",
+    "m-temporal-write": "parallax.core.internal.temporal_write",
+    "m-batch-write": "parallax.core.internal.batch_write",
+    "m-navigate": "parallax.core.internal.navigate",
+    "m-read-planning": "parallax.core.internal.read_planning",
     "m-snapshot-read": "parallax.snapshot",
     "m-case-format": "parallax.conformance.case_format",
     "m-conformance-adapter": "parallax.conformance.cli",
@@ -147,20 +147,20 @@ PYTEST_BOUNDED_SCOPES: Mapping[str, str] = {"m-api-conformance": "tests.api"}
 # per-module row would turn every such internal move into a spec edit. The
 # group boundary is what carries the enforcement value: none of the three may
 # reach the read side (`m-read-delivery`, `m-snapshot-read`, `m-read-planning`,
-# `m-navigate`, `parallax.core.entity`).
+# `m-navigate`, `parallax.core.internal.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
-        "parallax.core.base",
-        "parallax.core.wire",
-        "parallax.core.metamodel",
-        "parallax.core.inheritance",
-        "parallax.core.storage_layout",
-        "parallax.core.document_codec",
-        "parallax.core.temporal_read",
-        "parallax.core.dialect",
-        "parallax.core.db_port",
-        "parallax.core.sql_gen",
-        "parallax.core.write_plan",
+        "parallax.core.internal.base",
+        "parallax.core.internal.wire",
+        "parallax.core.internal.metamodel",
+        "parallax.core.internal.inheritance",
+        "parallax.core.internal.storage_layout",
+        "parallax.core.internal.document_codec",
+        "parallax.core.internal.temporal_read",
+        "parallax.core.internal.dialect",
+        "parallax.core.internal.db_port",
+        "parallax.core.internal.sql_gen",
+        "parallax.core.internal.write_plan",
         "parallax.core._stored_data",
     }
 )
@@ -180,31 +180,31 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # nothing else. Granting no adapter is the whole of what this row enforces —
     # an application that never reaches a database over Postgres must be able to
     # install this provider without the driver arriving with it.
-    "parallax.aws": frozenset({"parallax.core.db_port"}),
+    "parallax.aws": frozenset({"parallax.core.internal.db_port"}),
     # The engine-specific leaf of that provider, and the only part of it granted
     # an adapter. Composing a `PostgresAdapter` is producing configuration for a
     # composition root, not layering a runtime above the seam, so the grant is
     # wider than its parent's — and confining it to this one child is what keeps
     # the row above enforceable rather than decorative.
-    "parallax.aws.postgres": frozenset({"parallax.core.db_port", "parallax.postgres"}),
+    "parallax.aws.postgres": frozenset({"parallax.core.internal.db_port", "parallax.postgres"}),
     # The standard-library-only projection three scopes share. It grants
     # nothing, which is the whole of what it enforces: a detached diagnostic
     # value must be reachable from the database port, the execution lifecycle,
     # and the resource contracts between them without any of those inheriting
     # the others' edges.
-    "parallax.core.diagnostics": frozenset(),
-    "parallax.core.db_port": frozenset({"parallax.core.diagnostics"}),
-    "parallax.core.execution_lifecycle": frozenset({"parallax.core.diagnostics"}),
+    "parallax.core.internal.diagnostics": frozenset(),
+    "parallax.core.internal.db_port": frozenset({"parallax.core.internal.diagnostics"}),
+    "parallax.core.execution_lifecycle": frozenset({"parallax.core.internal.diagnostics"}),
     "parallax.core._formation_profile": frozenset(
         {
-            "parallax.core.metamodel",
-            "parallax.core.model_formation",
-            "parallax.core.inheritance",
-            "parallax.core.storage_layout",
-            "parallax.core.value_object",
-            "parallax.core.relationship",
-            "parallax.core.temporal_read",
-            "parallax.core.concurrency",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.model_formation",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.storage_layout",
+            "parallax.core.internal.value_object",
+            "parallax.core.internal.relationship",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.concurrency",
         }
     ),
     # The stored-data refusal and the records it reports, scoped apart from the
@@ -215,30 +215,30 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # stored data can name the refusal without inheriting delivery.
     "parallax.core._stored_data": frozenset(
         {
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.temporal_read",
-            "parallax.core.write_plan",
+            "parallax.core.internal.base",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.write_plan",
         }
     ),
-    "parallax.descriptor._hub": frozenset({"parallax.core.entity"}),
+    "parallax.descriptor._hub": frozenset({"parallax.core.internal.entity"}),
     # The public `evolve` takes Domain Models and reads each accepted model out
     # through the Entity frontend, which model evolution itself never reaches.
     # Its package is an unowned interface rather than a scope, so the model
     # evolution it hands the accepted models to is granted by name.
     "parallax.evolution._domain_models": frozenset(
-        {"parallax.core.entity", "parallax.evolution.model_evolution"}
+        {"parallax.core.internal.entity", "parallax.evolution.internal.model_evolution"}
     ),
-    "parallax.core.entity": frozenset(
+    "parallax.core.internal.entity": frozenset(
         {
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.relationship",
-            "parallax.core.predicate",
-            "parallax.core.object_query",
-            "parallax.core.temporal_read",
-            "parallax.core.document_codec",
+            "parallax.core.internal.base",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.relationship",
+            "parallax.core.internal.predicate",
+            "parallax.core.internal.object_query",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.document_codec",
             "parallax.core._formation_profile",
         }
     ),
@@ -249,14 +249,14 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # semantic view is what makes that provable rather than asserted. The
     # document codec contributes only the member-local authored-document walk;
     # it resolves no Entity position or model fact.
-    "parallax.core.entity._expressions": frozenset(
+    "parallax.core.internal.entity._expressions": frozenset(
         {
-            "parallax.core.base",
-            "parallax.core.document_codec",
-            "parallax.core.wire",
-            "parallax.core.metamodel",
-            "parallax.core.predicate",
-            "parallax.core.object_query",
+            "parallax.core.internal.base",
+            "parallax.core.internal.document_codec",
+            "parallax.core.internal.wire",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.predicate",
+            "parallax.core.internal.object_query",
         }
     ),
     # The physical backing beneath a published value — the publication plan, the
@@ -270,10 +270,10 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # that reaches a value's real storage, which the presentation is layered
     # directly over: what a published value answers for `__dict__` is derived
     # here, and what lies underneath it is read there.
-    "parallax.core.entity._instance_state": frozenset(
+    "parallax.core.internal.entity._instance_state": frozenset(
         {
-            "parallax.core.entity._construction_input",
-            "parallax.core.entity._pydantic_storage",
+            "parallax.core.internal.entity._construction_input",
+            "parallax.core.internal.entity._pydantic_storage",
         }
     ),
     # The sentinels a positional construction input spells, and the opaque handle a
@@ -284,23 +284,23 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # is what lets every one of them reach the same value without reaching through a
     # peer, and what keeps a row's producer unable to reach the writer, `construct`,
     # or model formation.
-    "parallax.core.entity._construction_input": frozenset(),
+    "parallax.core.internal.entity._construction_input": frozenset(),
     # A value's own attribute storage, reached past every name a class body can
     # bind. What it reaches is Pydantic's own slot descriptor and nothing else, so
     # a first-party import of any kind would mean it had grown a second job — which
     # is what a grant row of nothing states and enforces.
-    "parallax.core.entity._pydantic_storage": frozenset(),
+    "parallax.core.internal.entity._pydantic_storage": frozenset(),
     # The exact-model member layouts are a pure function of the accepted
     # Metamodel, so they are scoped apart from the frontend that owns them and
     # granted only the facets a layout is derived from. Granting them narrowly is
     # what lets row-to-graph materialization take the layouts alone: the parent
     # frontend reaches model formation and Object Query, neither of which a
     # positional member row depends on.
-    "parallax.core.entity._layout": frozenset(
+    "parallax.core.internal.entity._layout": frozenset(
         {
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.relationship",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.relationship",
         }
     ),
     # The typed Object Query is generic over Entity Classes, so it reaches the
@@ -308,12 +308,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # parent package must stay reachable by every execution module that realizes a
     # clause, and none of those may reach that frontend — so the widening is
     # declared here and the parent's own interface never imports this module.
-    "parallax.core.object_query._fluent": frozenset(
+    "parallax.core.internal.object_query._fluent": frozenset(
         {
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.predicate",
-            "parallax.core.entity",
+            "parallax.core.internal.base",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.predicate",
+            "parallax.core.internal.entity",
         }
     ),
     # The Snapshot slice's own node-inspection surface is scoped apart from the
@@ -327,12 +327,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # execution lifecycle.
     "parallax.snapshot._inspection": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.relationship",
-            "parallax.core.read_planning",
-            "parallax.core.temporal_read",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.relationship",
+            "parallax.core.internal.read_planning",
+            "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work.evidence",
         }
     ),
@@ -342,14 +342,14 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # are what composing an ordinary Object Query needs and nothing else, so the
     # scope row is what proves a continuation reaches no port, no SQL generation,
     # no dialect, and no materialization.
-    "parallax.core.continuation": frozenset(
+    "parallax.core.internal.continuation": frozenset(
         {
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.predicate",
-            "parallax.core.object_query",
-            "parallax.core.temporal_read",
-            "parallax.core.wire",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.predicate",
+            "parallax.core.internal.object_query",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.wire",
         }
     ),
     # Read delivery's Python-only edges: the page node a stream advances by, the
@@ -358,12 +358,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # carries the Entity frontend's closure, so delivery takes the layouts
     # without the frontend; the frontend itself is not granted, because the value
     # projections that would need it belong to the lifecycle publishing them.
-    "parallax.core.read_delivery": frozenset(
+    "parallax.core.internal.read_delivery": frozenset(
         {
-            "parallax.core.continuation",
+            "parallax.core.internal.continuation",
             "parallax.core._stored_data",
-            "parallax.core.entity._construction_input",
-            "parallax.core.entity._layout",
+            "parallax.core.internal.entity._construction_input",
+            "parallax.core.internal.entity._layout",
         }
     ),
     # The Page, its view schema, and Page-owned judgement, scoped apart from the
@@ -374,34 +374,38 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # read planning states the view keys, and the Concurrency Facet decides how
     # a row's version is judged. Sealed, because the delivery package around it
     # reaches every one of those exclusions.
-    "parallax.core.read_delivery._page": frozenset(
+    "parallax.core.internal.read_delivery._page": frozenset(
         {
-            "parallax.core.entity._construction_input",
-            "parallax.core.entity._layout",
+            "parallax.core.internal.entity._construction_input",
+            "parallax.core.internal.entity._layout",
             "parallax.core._stored_data",
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.read_planning",
-            "parallax.core.concurrency",
-            "parallax.core.document_codec",
-            "parallax.core.temporal_read",
-            "parallax.core.write_plan",
+            "parallax.core.internal.base",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.read_planning",
+            "parallax.core.internal.concurrency",
+            "parallax.core.internal.document_codec",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.write_plan",
         }
     ),
     # Execution names the Entity frontend directly: model preparation reads the
     # accepted Metamodel and class index a Domain Model carries, and a prepared
     # selection retains the write preparation and graph construction derived over them.
-    "parallax.core._execution": frozenset({"parallax.core.entity"}),
+    "parallax.core._execution": frozenset({"parallax.core.internal.entity"}),
     # The public facades re-export what their implementation owners define and
     # are granted exactly those owners. No production scope is granted a facade,
     # so framework modules name the defining owner and an implementation can
     # never need its own facade to import.
-    "parallax.core.execution": frozenset({"parallax.core._execution"}),
+    "parallax.core.internal.execution": frozenset({"parallax.core._execution"}),
     "parallax.core.introspection": frozenset(
-        {"parallax.core.entity", "parallax.core.metamodel", "parallax.core.relationship"}
+        {
+            "parallax.core.internal.entity",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.relationship",
+        }
     ),
-    "parallax.core.unit_work": frozenset({"parallax.core._execution._unit_work"}),
-    "parallax.evolution.operations": frozenset({"parallax.evolution.model_evolution"}),
+    "parallax.core.internal.unit_work": frozenset({"parallax.core._execution._unit_work"}),
+    "parallax.evolution.operations": frozenset({"parallax.evolution.internal.model_evolution"}),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: resolving a target and
     # validating a query names no SQL generation, no dialect, no Database Port,
@@ -411,9 +415,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # outright.
     "parallax.core._execution._read_query": frozenset(
         {
-            "parallax.core.metamodel",
-            "parallax.core.predicate",
-            "parallax.core.object_query",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.predicate",
+            "parallax.core.internal.object_query",
         }
     ),
     # The read policy every eager, streamed, and row read runs through, scoped
@@ -435,13 +439,13 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # general target set excludes, so no row can name it either way.
     "parallax.core._execution._read_pipeline": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.read_delivery",
-            "parallax.core.object_query",
-            "parallax.core.temporal_read",
-            "parallax.core.db_port",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.read_delivery",
+            "parallax.core.internal.object_query",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.db_port",
             "parallax.core._execution._unit_work",
-            "parallax.core.execution_authority",
+            "parallax.core.internal.execution_authority",
             "parallax.core.execution_lifecycle",
         }
     ),
@@ -464,12 +468,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # forbidden.
     "parallax.core._execution._keyed_writes": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.metamodel",
-            "parallax.core.document_codec",
-            "parallax.core.temporal_read",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.document_codec",
+            "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work",
-            "parallax.core.write_plan",
+            "parallax.core.internal.write_plan",
             "parallax.core.execution_lifecycle",
         }
     ),
@@ -489,8 +493,8 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # a selection does rather than what this row refuses.
     "parallax.core._execution._publication": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.read_planning",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.read_planning",
             "parallax.core._execution._unit_work",
         }
     ),
@@ -503,9 +507,9 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # attempt, the buffer, or the Database Port they reach.
     "parallax.core._execution._unit_work.evidence": frozenset(
         {
-            "parallax.core.metamodel",
-            "parallax.core.temporal_read",
-            "parallax.core.write_plan",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.write_plan",
         }
     ),
     # Write-observation retention is scoped apart from its own package so the
@@ -534,14 +538,14 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # module of it.
     "parallax.core._execution._retention": frozenset(
         {
-            "parallax.core.entity._construction_input",
-            "parallax.core.entity._layout",
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.temporal_read",
+            "parallax.core.internal.entity._construction_input",
+            "parallax.core.internal.entity._layout",
+            "parallax.core.internal.base",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work",
-            "parallax.core.write_plan",
+            "parallax.core.internal.write_plan",
         }
     ),
     # The lifecycle extension's one Python-only edge: its facades and write
@@ -549,7 +553,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # with no language-neutral module tag, so `modules.md` cannot state the edge.
     # Every other `m-snapshot-read` edge stays in `modules.md`, and this table's
     # grants are unioned with those.
-    "parallax.snapshot": frozenset({"parallax.core.entity"}),
+    "parallax.snapshot": frozenset({"parallax.core.internal.entity"}),
     # Root View, classification, and Typed and Wire value publication, scoped
     # apart from the rest of the lifecycle extension. It holds every
     # `m-snapshot-read` edge EXCEPT `m-execution`, `m-read-delivery`, and
@@ -563,29 +567,29 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # reach every one of them.
     "parallax.snapshot._publication": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.entity._construction_input",
-            "parallax.core.entity._layout",
-            "parallax.core.read_delivery._page",
-            "parallax.core.read_planning",
-            "parallax.core.concurrency",
-            "parallax.core.document_codec",
-            "parallax.core.metamodel",
-            "parallax.core.inheritance",
-            "parallax.core.relationship",
-            "parallax.core.temporal_read",
-            "parallax.core.wire",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.entity._construction_input",
+            "parallax.core.internal.entity._layout",
+            "parallax.core.internal.read_delivery._page",
+            "parallax.core.internal.read_planning",
+            "parallax.core.internal.concurrency",
+            "parallax.core.internal.document_codec",
+            "parallax.core.internal.metamodel",
+            "parallax.core.internal.inheritance",
+            "parallax.core.internal.relationship",
+            "parallax.core.internal.temporal_read",
+            "parallax.core.internal.wire",
             "parallax.snapshot._inspection",
             "parallax.core._execution._unit_work.evidence",
         }
     ),
     "parallax.postgres": frozenset(
         {
-            "parallax.core.base",
-            "parallax.core.wire",
-            "parallax.core.db_port",
-            "parallax.core.db_error",
-            "parallax.core.dialect",
+            "parallax.core.internal.base",
+            "parallax.core.internal.wire",
+            "parallax.core.internal.db_port",
+            "parallax.core.internal.db_error",
+            "parallax.core.internal.dialect",
         }
     ),
 }
@@ -667,19 +671,23 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # pure function of accepted metadata, and a value's own attribute storage
     # must reach nothing either — every one of which sits in the parent package
     # beside them.
-    "parallax.core.entity._construction_input": ChildScope(
-        parent="parallax.core.entity", policy="sealed"
+    "parallax.core.internal.entity._construction_input": ChildScope(
+        parent="parallax.core.internal.entity", policy="sealed"
     ),
-    "parallax.core.entity._edit": ChildScope(parent="parallax.core.entity", policy="ordinary"),
-    "parallax.core.entity._expressions": ChildScope(
-        parent="parallax.core.entity", policy="ordinary"
+    "parallax.core.internal.entity._edit": ChildScope(
+        parent="parallax.core.internal.entity", policy="ordinary"
     ),
-    "parallax.core.entity._instance_state": ChildScope(
-        parent="parallax.core.entity", policy="sealed"
+    "parallax.core.internal.entity._expressions": ChildScope(
+        parent="parallax.core.internal.entity", policy="ordinary"
     ),
-    "parallax.core.entity._layout": ChildScope(parent="parallax.core.entity", policy="sealed"),
-    "parallax.core.entity._pydantic_storage": ChildScope(
-        parent="parallax.core.entity", policy="sealed"
+    "parallax.core.internal.entity._instance_state": ChildScope(
+        parent="parallax.core.internal.entity", policy="sealed"
+    ),
+    "parallax.core.internal.entity._layout": ChildScope(
+        parent="parallax.core.internal.entity", policy="sealed"
+    ),
+    "parallax.core.internal.entity._pydantic_storage": ChildScope(
+        parent="parallax.core.internal.entity", policy="sealed"
     ),
     "parallax.core._execution._family": ChildScope(
         parent="parallax.core._execution", policy="ordinary"
@@ -737,11 +745,11 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # is the rest of its own package: planning, the reader, and delivery all
     # reach SQL generation and the execution lifecycle, and a lifecycle's
     # publication takes this child precisely so it reaches neither.
-    "parallax.core.object_query._fluent": ChildScope(
-        parent="parallax.core.object_query", policy="ordinary"
+    "parallax.core.internal.object_query._fluent": ChildScope(
+        parent="parallax.core.internal.object_query", policy="ordinary"
     ),
-    "parallax.core.read_delivery._page": ChildScope(
-        parent="parallax.core.read_delivery", policy="sealed"
+    "parallax.core.internal.read_delivery._page": ChildScope(
+        parent="parallax.core.internal.read_delivery", policy="sealed"
     ),
     "parallax.descriptor._hub": ChildScope(parent="parallax.descriptor", policy="ordinary"),
     # Node inspection is sealed so the lifecycle's facades, which reach
@@ -819,7 +827,7 @@ def root_packages() -> tuple[str, ...]:
 # names, the only granularity import-linter forbids an external at. A grant is a
 # permission to name the package, not a first-party edge: it enters no closure,
 # a parent's grant does not carry its declared children, and first-party
-# reachability confers nothing — `parallax.core.entity._pydantic_storage` owns
+# reachability confers nothing — `parallax.core.internal.entity._pydantic_storage` owns
 # `pydantic` while its first-party row grants nothing at all.
 #
 # The Entity children are granted one by one because each imports the substrate
@@ -847,14 +855,14 @@ def root_packages() -> tuple[str, ...]:
 RESTRICTED_EXTERNAL_GRANTS: Mapping[str, frozenset[str]] = {
     "pydantic": frozenset(
         {
-            "parallax.core.entity",
-            "parallax.core.entity._edit",
-            "parallax.core.entity._instance_state",
-            "parallax.core.entity._pydantic_storage",
+            "parallax.core.internal.entity",
+            "parallax.core.internal.entity._edit",
+            "parallax.core.internal.entity._instance_state",
+            "parallax.core.internal.entity._pydantic_storage",
             CONFORMANCE_ROOT,
         }
     ),
-    "pydantic_core": frozenset({"parallax.core.entity._instance_state"}),
+    "pydantic_core": frozenset({"parallax.core.internal.entity._instance_state"}),
     "psycopg": frozenset({"parallax.postgres", "parallax.aws.postgres", CONFORMANCE_ROOT}),
     "psycopg_pool": frozenset({"parallax.postgres"}),
     "botocore": frozenset({"parallax.aws", "parallax.aws.postgres"}),
@@ -1459,10 +1467,21 @@ def external_child_grant_exceptions(
 def unowned_production_interfaces(
     production: AbstractSet[str], roots: Iterable[str]
 ) -> frozenset[str]:
-    """The import-linter roots outside the conformance tree that no production
-    scope owns: package interfaces whose one module every package-scoped contract
-    misses, and so the exact-module sources of their own external contract."""
-    return frozenset(roots) - {CONFORMANCE_ROOT} - production
+    """The packages outside the conformance tree that no production scope owns:
+    each import-linter root that is not itself a scope, and each package between
+    a root and the scopes beneath it. These are package interfaces whose one
+    module every package-scoped contract misses, and so the exact-module sources
+    of their own external contract."""
+    packages = (frozenset(roots) - {CONFORMANCE_ROOT}) | {
+        ".".join(scope.split(".")[:depth])
+        for scope in production
+        for depth in range(2, scope.count(".") + 1)
+    }
+    return frozenset(
+        package
+        for package in packages
+        if not any(is_in_scope(package, scope) for scope in production)
+    )
 
 
 def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str]]:

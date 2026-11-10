@@ -11,8 +11,8 @@ import psycopg
 from psycopg.rows import TupleRow, tuple_row
 
 from parallax.conformance._database_control import TerminationReport
-from parallax.core.base import UsageError
-from parallax.core.db_port import (
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.db_port import (
     AUTHORIZATION_INVALID,
     AccessMode,
     CleanupCode,
@@ -29,8 +29,8 @@ from parallax.core.db_port import (
     RouteCapabilities,
     RouteSelection,
 )
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres._connection import PostgresConnection, initialize_connection
 from parallax.snapshot import ScopedDatabase
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from parallax.conformance._lifecycle_observation import LifecycleObservation
-    from parallax.core.db_port import (
+    from parallax.core.internal.db_port import (
         Bind,
         ConnectionContext,
         DocumentReadOrdinals,
@@ -51,9 +51,9 @@ if TYPE_CHECKING:
         Row,
         TransactionOutcome,
     )
-    from parallax.core.entity import DomainModel
-    from parallax.core.execution import ServingModel, TxnOptions
-    from parallax.core.unit_work import Clock
+    from parallax.core.internal.entity import DomainModel
+    from parallax.core.internal.execution import ServingModel, TxnOptions
+    from parallax.core.internal.unit_work import Clock
 
 __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
 
@@ -231,7 +231,7 @@ _SERVED: Final = RouteSelection("writer")
 class ControlledScope:
     """One acquisition of the dedicated session, and the identity of that scope.
 
-    It is an ordinary single-use :class:`~parallax.core.db_port.ConnectionContext`
+    It is an ordinary single-use :class:`~parallax.core.internal.db_port.ConnectionContext`
     with one addition nothing production has: it is identifiable while it lasts,
     so a control action captured during THIS scope can tell that it is still
     THIS scope when it finally executes.
@@ -306,7 +306,7 @@ class _ControlledContextSource:
 class ControlledRuntime:
     """A runtime over exactly ONE dedicated driver session.
 
-    It is a real :class:`~parallax.core.db_port.DatabaseRuntime` — a Database
+    It is a real :class:`~parallax.core.internal.db_port.DatabaseRuntime` — a Database
     composed over it acquires, executes, and releases through the ordinary
     contract — and it manages no pool at all. That is the point: a session the
     harness may cancel, close, or tear down at the socket must be one nothing

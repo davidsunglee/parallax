@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.db_port import IsolationLevel
+from parallax.core.internal.db_port import IsolationLevel
 
 __all__ = ["isolation_spelling"]
 

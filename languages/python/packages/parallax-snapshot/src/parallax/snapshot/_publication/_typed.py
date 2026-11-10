@@ -4,12 +4,12 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Final, cast
 
-from parallax.core import concurrency, temporal_read
-from parallax.core.entity import EntityGraphConstruction
-from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.read_delivery._page import ABSENT, InvalidData
-from parallax.core.read_planning import NarrowedViewKeys
-from parallax.core.temporal_read import Bitemporal, NonTemporal, Pin, TransactionTimeOnly
+from parallax.core.internal import concurrency, temporal_read
+from parallax.core.internal.entity import EntityGraphConstruction
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.read_delivery._page import ABSENT, InvalidData
+from parallax.core.internal.read_planning import NarrowedViewKeys
+from parallax.core.internal.temporal_read import Bitemporal, NonTemporal, Pin, TransactionTimeOnly
 from parallax.snapshot._inspection import (
     NarrowedViews,
     NodeProvenance,

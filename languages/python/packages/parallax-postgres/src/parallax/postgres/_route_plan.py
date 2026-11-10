@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from parallax.core.db_port import AcquisitionReason, FallbackReason, Route, RoutePolicy
+from parallax.core.internal.db_port import AcquisitionReason, FallbackReason, Route, RoutePolicy
 
 __all__ = ["PlanStep", "RoutePlan"]
 

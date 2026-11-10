@@ -42,9 +42,6 @@ from parallax.core._execution._read_pipeline import (
 )
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._model import model_of
-from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     FlushStarted,
@@ -52,10 +49,13 @@ from parallax.core.execution_lifecycle import (
     StreamStarted,
 )
 from parallax.core.execution_lifecycle._activity import ActivityTarget, StreamActivity
-from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_delivery._page import Page
-from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
-from parallax.core.unit_work import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import ServingModel, prepare_model
+from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.read_delivery._page import Page
+from parallax.core.internal.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
+from parallax.core.internal.unit_work import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,

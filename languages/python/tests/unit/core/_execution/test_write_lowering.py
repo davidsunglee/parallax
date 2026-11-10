@@ -39,19 +39,7 @@ from typing import cast
 
 import pytest
 
-from parallax.core import (
-    Attr,
-    DomainModel,
-    TxTemporal,
-    UnsupportedError,
-    ValueObject,
-    attr,
-    concurrency,
-    inheritance,
-    storage_layout,
-    temporal_read,
-)
-from parallax.core import predicate as oa
+from parallax.core import Attr, DomainModel, TxTemporal, UnsupportedError, ValueObject, attr
 from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
     prepare_typed_write,
@@ -64,8 +52,10 @@ from parallax.core._execution._write_lowering import (
     ordered_parameter_ceiling,
 )
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import (
+from parallax.core.internal import concurrency, inheritance, storage_layout, temporal_read
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import INFINITY as OPEN_BOUND
+from parallax.core.internal.base import (
     INT64,
     JSON,
     STRING,
@@ -75,11 +65,11 @@ from parallax.core.base import (
     InternalError,
     UsageError,
 )
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.db_port import ArrayBind, StructuredDocument
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.db_port import ArrayBind, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
@@ -92,31 +82,35 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     entity_by_name,
 )
-from parallax.core.metamodel import Column as CoreColumn
-from parallax.core.metamodel import Table as CoreTable
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._context import (
+from parallax.core.internal.metamodel import Column as CoreColumn
+from parallax.core.internal.metamodel import Table as CoreTable
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import (
     SQL_GENERATION_FAILED,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
-from parallax.core.temporal_read import TransactionTimeOnly
-from parallax.core.unit_work import (
+from parallax.core.internal.sql_gen._write import (
+    InsertStatementBuilder,
+    StepPayload,
+    compile_write_step,
+)
+from parallax.core.internal.temporal_read import TransactionTimeOnly
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
     UnitOfWork,
     WriteAssignment,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import (
     ObjectKey,
     PlannedInsert,
     StateObservation,
     VersionObservation,
 )
-from parallax.core.write_plan.payload import (
+from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
     InsertPayload,
     PatchedDocument,
@@ -124,9 +118,9 @@ from parallax.core.write_plan.payload import (
     RowSlots,
     WritePayloadPreparer,
 )
-from parallax.core.write_plan.plan import SettledWrite, WriteGroup, WritePlan
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED, key_target
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup, WritePlan
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED, key_target
+from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
     MISSING_TARGET,
@@ -151,7 +145,7 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
-from parallax.core.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor import _records
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.errors import raises_code

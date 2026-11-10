@@ -4,7 +4,7 @@ where the page says it is.
 An architecture page refers to each implementation symbol it shows through a
 deliberate reference: an inline code span holding
 ``parallax.<module>:<QualifiedName>``, such as
-``parallax.core.read_delivery._read_plan:ReadPlanCache``. Only a code span that
+``parallax.core.internal.read_delivery._read_plan:ReadPlanCache``. Only a code span that
 begins ``parallax.`` and holds a ``:`` is a reference; every other code span is
 prose, and fenced blocks are never read, so a diagram uses short names and lists
 their references beneath it.

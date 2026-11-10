@@ -5,25 +5,16 @@ from collections.abc import Mapping
 
 import pytest
 
-from parallax.core import (
-    ONE_TO_MANY,
-    Attr,
-    Bitemporal,
-    DomainModel,
-    Entity,
-    Rel,
-    attr,
-    read_planning,
-    rel,
-)
-from parallax.core.entity import model_of
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import validate_object_query
-from parallax.core.object_query.serde import deserialize
-from parallax.core.read_delivery import InvalidDataError
-from parallax.core.read_delivery._fetch import attach_children
-from parallax.core.read_delivery._page import Page, PageSchedule, page_rows
-from parallax.core.temporal_read import Pin
+from parallax.core import ONE_TO_MANY, Attr, Bitemporal, DomainModel, Entity, Rel, attr, rel
+from parallax.core.internal import read_planning
+from parallax.core.internal.entity import model_of
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import validate_object_query
+from parallax.core.internal.object_query.serde import deserialize
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.read_delivery._fetch import attach_children
+from parallax.core.internal.read_delivery._page import Page, PageSchedule, page_rows
+from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication import _root_publication
 from parallax.snapshot._publication._graph_view import GraphView
 from tests._support.errors import raises_code

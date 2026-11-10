@@ -1168,7 +1168,7 @@ never both and never neither.
 | `adapter.connection` (raw psycopg connection) | removed; open your own connection for DDL, migrations, and fixtures |
 | `adapter.close()` | `db.close()`, or leaving the handle's `with` block |
 | `DbPort` | `DatabaseConnection` |
-| `from parallax.core.execution_lifecycle import FailureDiagnostic` | `from parallax.core.diagnostics import FailureDiagnostic` |
+| `from parallax.core.execution_lifecycle import FailureDiagnostic` | no import: the lifecycle events that carry a `FailureDiagnostic` hand it to your Handler |
 
 Earlier development checkouts held one connection forever and released nothing.
 The current handle owns a runtime and must be closed. Nothing else about a read, a stream, or a

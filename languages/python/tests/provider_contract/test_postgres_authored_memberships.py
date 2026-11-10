@@ -20,8 +20,8 @@ import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import Attr, Document, DomainModel, Entity, Float32, Int32, ValueObject, attr
-from parallax.core.db_port import ArrayBind
-from parallax.core.entity._model import model_of
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.root_ownership import own_root
 

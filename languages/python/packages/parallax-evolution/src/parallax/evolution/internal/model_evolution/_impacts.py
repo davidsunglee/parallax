@@ -1,0 +1,799 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+
+from parallax.core.internal.concurrency import (
+    ConcurrencyFacet,
+    ExplicitVersion,
+    TransactionTimeVersion,
+    VersionSource,
+    concurrency_facet_of,
+)
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    AttributeLocation,
+    AttributeMetadata,
+    EntityIdentity,
+    EntityLocation,
+    IndexIdentity,
+    IndexMetadata,
+    Metamodel,
+    ModelLocation,
+    ModelLocationKey,
+    OccurrenceMetadata,
+    PersistenceMode,
+    RelationshipIdentity,
+    RelationshipLocation,
+    RelationshipOrder,
+    TemporalDimension,
+    ValueObjectAttributeIdentity,
+    ValueObjectAttributeLocation,
+    ValueObjectAttributeMetadata,
+    ValueObjectIdentity,
+    ValueObjectLocation,
+    canonical_location_key,
+)
+from parallax.core.internal.temporal_read import (
+    Bitemporal,
+    TemporalFacet,
+    TransactionTimeOnly,
+    temporal_facet_of,
+)
+from parallax.evolution.internal.model_evolution._matching import (
+    EntityFacts,
+    Matching,
+    RelationshipFacts,
+)
+from parallax.evolution.internal.model_evolution._values import (
+    BEHAVIORAL_IMPACT_ORDER,
+    LOCKING_FALLBACK,
+    WRITES_DISABLED,
+    AsOfAxisAdded,
+    AsOfAxisRemoved,
+    AttributeAdded,
+    AttributeAltered,
+    AttributeRemoved,
+    BehavioralImpact,
+    ConcreteSubtypeAdded,
+    ConcreteSubtypeRemoved,
+    ConcurrencyControl,
+    ConcurrencyControlChanged,
+    DeclarationFormChanged,
+    DeletePropagation,
+    DeletePropagationChanged,
+    DependencyChanged,
+    EntityAltered,
+    EntitySelectionFacts,
+    EntityWriteCapability,
+    EntityWriteShape,
+    EvolutionOperation,
+    IndexAdded,
+    IndexAltered,
+    IndexRemoved,
+    InheritanceChanged,
+    JoinChanged,
+    OccurrenceAdmissibility,
+    OptimisticLockingChanged,
+    OrderingChanged,
+    PersistenceChanged,
+    PrimaryKeyChanged,
+    QueryResultMembershipChanged,
+    QueryResultOrderingChanged,
+    ReadOnlyChanged,
+    RelationshipAltered,
+    RelationshipSelectionFacts,
+    ReverseOfChanged,
+    ScalarAdmissibility,
+    TemporalAxisFacts,
+    TransactionTimeGated,
+    UniquenessEnforcementChanged,
+    UniqueTuple,
+    ValueAdmissibilityChanged,
+    ValueObjectAttributeAltered,
+    ValueObjectOccurrenceAltered,
+    VersionGated,
+    WriteCapabilityChanged,
+    WritesEnabled,
+    attribute_write_capability,
+)
+
+__all__ = ["impacts"]
+
+type _Located = tuple[BehavioralImpact, ModelLocation]
+
+
+@dataclass(frozen=True, slots=True)
+class _Endpoint:
+    """The facets one endpoint answers an impact's questions with.
+
+    The inheritance view of each Entity and the navigable direction of each
+    Relationship already travel on the Matching, so only the two family-level
+    facets an Entity is read through are held here.
+    """
+
+    temporal: TemporalFacet
+    versioning: ConcurrencyFacet
+
+
+@dataclass(frozen=True, slots=True)
+class _Analysis:
+    matching: Matching
+    operations: tuple[EvolutionOperation, ...]
+    earlier: _Endpoint
+    later: _Endpoint
+    altered_attributes: Mapping[AttributeIdentity, AttributeAltered]
+    altered_occurrences: Mapping[ValueObjectIdentity, ValueObjectOccurrenceAltered]
+    altered_members: Mapping[ValueObjectAttributeIdentity, ValueObjectAttributeAltered]
+
+
+def impacts(
+    earlier: Metamodel, matching: Matching, operations: Sequence[EvolutionOperation]
+) -> tuple[BehavioralImpact, ...]:
+    """Every Behavioral Impact the two endpoints differ by, in canonical order."""
+    described = tuple(operations)
+    analysis = _Analysis(
+        matching=matching,
+        operations=described,
+        earlier=_Endpoint(temporal_facet_of(earlier), concurrency_facet_of(earlier)),
+        later=_Endpoint(temporal_facet_of(matching.later), concurrency_facet_of(matching.later)),
+        altered_attributes={
+            operation.attribute: operation
+            for operation in described
+            if isinstance(operation, AttributeAltered)
+        },
+        altered_occurrences={
+            operation.value_object: operation
+            for operation in described
+            if isinstance(operation, ValueObjectOccurrenceAltered)
+        },
+        altered_members={
+            operation.value_object_attribute: operation
+            for operation in described
+            if isinstance(operation, ValueObjectAttributeAltered)
+        },
+    )
+    located = [
+        *_uniqueness_enforcement(analysis),
+        *_value_admissibility(analysis),
+        *_delete_propagation(analysis),
+        *_concurrency_control(analysis),
+        *_query_result_membership(analysis),
+        *_query_result_ordering(analysis),
+        *_write_capability(analysis),
+    ]
+    return tuple(impact for impact, _ in sorted(located, key=_order))
+
+
+def _order(located: _Located) -> tuple[int, ModelLocationKey]:
+    impact, location = located
+    return (BEHAVIORAL_IMPACT_ORDER.index(type(impact)), canonical_location_key(location))
+
+
+def _uniqueness_enforcement(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving Entity whose secondary uniqueness rules differ.
+
+    A rule is an unordered Attribute set, so authored Indices differing only in
+    component order or name collapse into one, and reordering an Index's
+    components changes no rule at all. Derived primary-key uniqueness is not
+    among them: the derived Index is not authored and never reaches the pairing.
+    """
+    for identity in analysis.matching.entities.surviving:
+        before = _unique_rules(_indices_of(analysis, identity, later=False))
+        after = _unique_rules(_indices_of(analysis, identity, later=True))
+        if before == after:
+            continue
+        yield (
+            UniquenessEnforcementChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_enforcement_causes(analysis, identity, before, after),
+            ),
+            EntityLocation(identity),
+        )
+
+
+def _indices_of(analysis: _Analysis, entity: EntityIdentity, *, later: bool) -> list[IndexMetadata]:
+    """One endpoint's authored Indices of ``entity``."""
+    paired = analysis.matching.indices
+    endpoint = paired.added if later else paired.removed
+    present = [index for identity, index in endpoint.items() if identity.entity == entity]
+    present.extend(
+        surviving[1 if later else 0]
+        for identity, surviving in paired.surviving.items()
+        if identity.entity == entity
+    )
+    return present
+
+
+def _unique_rules(indices: Iterable[IndexMetadata]) -> tuple[UniqueTuple, ...]:
+    rules = {rule for index in indices if (rule := _rule(index)) is not None}
+    return tuple(sorted(rules, key=_rule_key))
+
+
+def _rule(index: IndexMetadata) -> UniqueTuple | None:
+    """The uniqueness rule ``index`` enforces, as an unordered Attribute set."""
+    if not index.unique:
+        return None
+    return UniqueTuple(tuple(sorted(set(index.attributes), key=_attribute_key)))
+
+
+def _rule_key(rule: UniqueTuple) -> tuple[tuple[tuple[str, str], str], ...]:
+    return tuple(_attribute_key(component) for component in rule.attributes)
+
+
+def _attribute_key(attribute: AttributeIdentity) -> tuple[tuple[str, str], str]:
+    return (attribute.entity.sort_key, attribute.name)
+
+
+def _enforcement_causes(
+    analysis: _Analysis,
+    entity: EntityIdentity,
+    before: tuple[UniqueTuple, ...],
+    after: tuple[UniqueTuple, ...],
+) -> tuple[EvolutionOperation, ...]:
+    """The Index operations on ``entity`` carrying a rule the two sets differ by.
+
+    The impact compares collapsed semantic rules, so an Index whose rule another
+    Index still enforces contributed nothing to it: two equivalent Indices
+    trading places move no rule, however their own declarations changed.
+    """
+    moved = set(before) ^ set(after)
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if isinstance(operation, IndexAdded | IndexRemoved | IndexAltered)
+        and operation.index.entity == entity
+        and not _rules_of(analysis, operation.index).isdisjoint(moved)
+    )
+
+
+def _rules_of(analysis: _Analysis, index: IndexIdentity) -> frozenset[UniqueTuple]:
+    """Every uniqueness rule one Index carries, over both endpoints."""
+    paired = analysis.matching.indices
+    surviving = paired.surviving.get(index)
+    present = (
+        surviving
+        if surviving is not None
+        else tuple(
+            index_metadata
+            for index_metadata in (paired.added.get(index), paired.removed.get(index))
+            if index_metadata is not None
+        )
+    )
+    return frozenset(rule for metadata in present if (rule := _rule(metadata)) is not None)
+
+
+def _value_admissibility(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving value-bearing path whose accepted domain differs.
+
+    Member addition and removal stay their own operations rather than becoming
+    admissibility impacts, so only surviving positions are compared, and an
+    occurrence admits only the presence of a value. Multiplicity, a scalar
+    member's or an occurrence's, is structural rather than a value domain.
+    """
+    for identity, (earlier, later) in analysis.matching.attributes.surviving.items():
+        before, after = _scalar(earlier), _scalar(later)
+        if before == after:
+            continue
+        yield (
+            ValueAdmissibilityChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=(analysis.altered_attributes[identity],),
+            ),
+            AttributeLocation(identity),
+        )
+    for occurrence, (
+        before_occurrence,
+        after_occurrence,
+    ) in analysis.matching.value_objects.surviving.items():
+        before_admits = _occurrence(before_occurrence)
+        after_admits = _occurrence(after_occurrence)
+        if before_admits == after_admits:
+            continue
+        yield (
+            ValueAdmissibilityChanged(
+                scope=occurrence,
+                earlier=before_admits,
+                later=after_admits,
+                caused_by=(analysis.altered_occurrences[occurrence],),
+            ),
+            ValueObjectLocation(occurrence),
+        )
+    for member, (
+        before_member,
+        after_member,
+    ) in analysis.matching.value_object_attributes.surviving.items():
+        before_leaf, after_leaf = _leaf(before_member), _leaf(after_member)
+        if before_leaf == after_leaf:
+            continue
+        yield (
+            ValueAdmissibilityChanged(
+                scope=member,
+                earlier=before_leaf,
+                later=after_leaf,
+                caused_by=(analysis.altered_members[member],),
+            ),
+            ValueObjectAttributeLocation(member),
+        )
+
+
+def _scalar(attribute: AttributeMetadata) -> ScalarAdmissibility:
+    return ScalarAdmissibility(attribute.type, attribute.nullable, attribute.max_length)
+
+
+def _leaf(member: ValueObjectAttributeMetadata) -> ScalarAdmissibility:
+    """A Value Object scalar leaf bounds no String: it owns no length fact."""
+    return ScalarAdmissibility(member.type, member.nullable, None)
+
+
+def _occurrence(occurrence: OccurrenceMetadata) -> OccurrenceAdmissibility:
+    return OccurrenceAdmissibility(occurrence.nullable)
+
+
+def _delete_propagation(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving Relationship whose dependency policy differs."""
+    for identity, (earlier, later) in analysis.matching.relationships.surviving.items():
+        before, after = _propagation(earlier), _propagation(later)
+        if before == after:
+            continue
+        yield (
+            DeletePropagationChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_relationship_causes(
+                    analysis,
+                    identity,
+                    (earlier, later),
+                    (DependencyChanged, ReverseOfChanged, DeclarationFormChanged),
+                    through_peer=True,
+                ),
+            ),
+            RelationshipLocation(identity),
+        )
+
+
+def _propagation(facts: RelationshipFacts) -> DeletePropagation:
+    if facts.direction.dependent:
+        return DeletePropagation.PROPAGATES
+    return DeletePropagation.DOES_NOT_PROPAGATE
+
+
+def _concurrency_control(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving Entity whose behavior under the ``optimistic``
+    Concurrency Preference differs.
+
+    The grain stays per Entity even though the Concurrency Facet is
+    family-uniform, because an inheritance change can move a surviving Entity
+    between effective families.
+    """
+    for identity, (earlier, later) in analysis.matching.entities.surviving.items():
+        before = _control(analysis.earlier.versioning.version_source(identity))
+        after = _control(analysis.later.versioning.version_source(identity))
+        if before == after:
+            continue
+        yield (
+            ConcurrencyControlChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_version_causes(analysis, earlier, later),
+            ),
+            EntityLocation(identity),
+        )
+
+
+def _control(source: VersionSource | None) -> ConcurrencyControl:
+    match source:
+        case ExplicitVersion(attribute):
+            return VersionGated(attribute)
+        case TransactionTimeVersion(start_attribute):
+            return TransactionTimeGated(start_attribute)
+        case _:
+            return LOCKING_FALLBACK
+
+
+def _version_causes(
+    analysis: _Analysis, earlier: EntityFacts, later: EntityFacts
+) -> tuple[EvolutionOperation, ...]:
+    family = _family(earlier, later)
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if _moves_the_version_source(analysis, operation, family)
+    )
+
+
+def _moves_the_version_source(
+    analysis: _Analysis,
+    operation: EvolutionOperation,
+    family: frozenset[EntityIdentity],
+) -> bool:
+    match operation:
+        case AttributeAdded():
+            return (
+                operation.attribute.entity in family
+                and analysis.matching.attributes.added[operation.attribute].optimistic_locking
+            )
+        case AttributeRemoved():
+            return (
+                operation.attribute.entity in family
+                and analysis.matching.attributes.removed[operation.attribute].optimistic_locking
+            )
+        case AttributeAltered():
+            return operation.attribute.entity in family and _carries(
+                operation.deltas, OptimisticLockingChanged
+            )
+        case AsOfAxisAdded() | AsOfAxisRemoved():
+            # A Transaction-Time family derives its version from the milestone
+            # start; a Valid-Time axis alone moves no gate.
+            return (
+                operation.entity in family
+                and operation.dimension is TemporalDimension.TRANSACTION_TIME
+            )
+        case EntityAltered():
+            return (
+                operation.entity in family
+                and _carries(operation.deltas, InheritanceChanged)
+                and bool(_moved_positions(analysis, operation.entity))
+            )
+        case _:
+            return False
+
+
+def _query_result_membership(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving Entity or Relationship position whose
+    predicate-free selection differs."""
+    for identity, (earlier, later) in analysis.matching.entities.surviving.items():
+        before = _selection(analysis.earlier, earlier)
+        after = _selection(analysis.later, later)
+        if before == after:
+            continue
+        yield (
+            QueryResultMembershipChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_membership_causes(analysis, identity, earlier, later),
+            ),
+            EntityLocation(identity),
+        )
+    for relationship, (
+        before_facts,
+        after_facts,
+    ) in analysis.matching.relationships.surviving.items():
+        before_reached = _reached(before_facts)
+        after_reached = _reached(after_facts)
+        if before_reached == after_reached:
+            continue
+        yield (
+            QueryResultMembershipChanged(
+                scope=relationship,
+                earlier=before_reached,
+                later=after_reached,
+                caused_by=_relationship_causes(
+                    analysis,
+                    relationship,
+                    (before_facts, after_facts),
+                    (JoinChanged, ReverseOfChanged, DeclarationFormChanged),
+                    through_peer=True,
+                ),
+            ),
+            RelationshipLocation(relationship),
+        )
+
+
+def _selection(endpoint: _Endpoint, facts: EntityFacts) -> EntitySelectionFacts:
+    return EntitySelectionFacts(
+        concrete_entities=tuple(facts.family.concrete_subtypes),
+        axes=_axes(endpoint, facts.declaration.identity),
+    )
+
+
+def _reached(facts: RelationshipFacts) -> RelationshipSelectionFacts:
+    """The rows one navigation denotes: its target Entity and effective join."""
+    return RelationshipSelectionFacts(
+        target=facts.direction.join.target.entity, join=facts.direction.join
+    )
+
+
+def _axes(endpoint: _Endpoint, entity: EntityIdentity) -> tuple[TemporalAxisFacts, ...]:
+    """The effective Temporal Shape, as its axes in canonical dimension order."""
+    return tuple(
+        TemporalAxisFacts(axis.dimension, axis.start_attribute, axis.end_attribute)
+        for dimension in TemporalDimension
+        if (axis := endpoint.temporal.axis(entity, dimension)) is not None
+    )
+
+
+def _membership_causes(
+    analysis: _Analysis, scope: EntityIdentity, earlier: EntityFacts, later: EntityFacts
+) -> tuple[EvolutionOperation, ...]:
+    denoted = frozenset(earlier.family.concrete_subtypes) | frozenset(
+        later.family.concrete_subtypes
+    )
+    family = _family(earlier, later)
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if _moves_the_denoted_rows(analysis, operation, scope, denoted, family)
+    )
+
+
+def _moves_the_denoted_rows(
+    analysis: _Analysis,
+    operation: EvolutionOperation,
+    scope: EntityIdentity,
+    denoted: frozenset[EntityIdentity],
+    family: frozenset[EntityIdentity],
+) -> bool:
+    match operation:
+        case ConcreteSubtypeAdded() | ConcreteSubtypeRemoved():
+            return operation.entity in denoted
+        case AsOfAxisAdded() | AsOfAxisRemoved():
+            # An axis is the family root's, and it decides the temporal shape
+            # every position of that family selects through.
+            return operation.entity in family
+        case EntityAltered():
+            # A moved position changes what every position on either of its
+            # ancestry chains denotes, and what the positions below it select
+            # through — an abstract one included, though it denotes no rows of
+            # its own and so never appears in a concrete set.
+            if not _carries(operation.deltas, InheritanceChanged):
+                return False
+            moved = _moved_positions(analysis, operation.entity)
+            return bool(moved) and (scope in moved or operation.entity in family)
+        case _:
+            return False
+
+
+def _query_result_ordering(analysis: _Analysis) -> Iterator[_Located]:
+    """One impact per surviving Relationship whose ordering rule differs.
+
+    A direction's ordering is its own declaration's, never its peer's, so a
+    reverse declaration orders the Entities it reaches rather than the ones the
+    defining declaration reaches.
+    """
+    for identity, (earlier, later) in analysis.matching.relationships.surviving.items():
+        before, after = _ordering(earlier), _ordering(later)
+        if before == after:
+            continue
+        yield (
+            QueryResultOrderingChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_relationship_causes(
+                    analysis,
+                    identity,
+                    (earlier, later),
+                    (OrderingChanged, DeclarationFormChanged),
+                    through_peer=False,
+                ),
+            ),
+            RelationshipLocation(identity),
+        )
+
+
+def _ordering(facts: RelationshipFacts) -> tuple[RelationshipOrder, ...]:
+    return tuple(facts.direction.order_by)
+
+
+def _write_capability(analysis: _Analysis) -> Iterator[_Located]:
+    """The Entity write surfaces that changed, and the Attribute input
+    capabilities no Entity-level change already dominates."""
+    dominated: set[EntityIdentity] = set()
+    for identity, (earlier, later) in analysis.matching.entities.surviving.items():
+        before = _entity_writes(analysis.earlier, earlier)
+        after = _entity_writes(analysis.later, later)
+        if before == after:
+            continue
+        dominated.add(identity)
+        yield (
+            WriteCapabilityChanged(
+                scope=identity,
+                earlier=before,
+                later=after,
+                caused_by=_write_surface_causes(analysis, identity, earlier, later),
+            ),
+            EntityLocation(identity),
+        )
+    for identity, (earlier_member, later_member) in analysis.matching.attributes.surviving.items():
+        before_input = attribute_write_capability(earlier_member)
+        after_input = attribute_write_capability(later_member)
+        if before_input == after_input or identity.entity in dominated:
+            continue
+        yield (
+            WriteCapabilityChanged(
+                scope=identity,
+                earlier=before_input,
+                later=after_input,
+                caused_by=_attribute_input_causes(analysis, identity),
+            ),
+            AttributeLocation(identity),
+        )
+
+
+def _attribute_input_causes(
+    analysis: _Analysis, attribute: AttributeIdentity
+) -> tuple[EvolutionOperation, ...]:
+    """The operations that moved what one Attribute admits from a caller.
+
+    Its own alteration, and any As-Of Axis operation naming it as an endpoint:
+    framework ownership is derived from axis membership rather than declared, so
+    an axis arriving at or leaving an Attribute moves what a caller may supply
+    without that Attribute's own declaration changing at all.
+    """
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if _moves_attribute_input(analysis, operation, attribute)
+    )
+
+
+def _moves_attribute_input(
+    analysis: _Analysis, operation: EvolutionOperation, attribute: AttributeIdentity
+) -> bool:
+    match operation:
+        case AttributeAltered():
+            # Caller ownership is derived from key membership, the read-only
+            # fact, and optimistic locking alone: a type, storage, nullability,
+            # or bound delta on the same Attribute moves no input capability.
+            return operation.attribute == attribute and _carries(
+                operation.deltas, (PrimaryKeyChanged, ReadOnlyChanged, OptimisticLockingChanged)
+            )
+        case AsOfAxisAdded() | AsOfAxisRemoved():
+            return attribute in _axis_endpoints(analysis, operation)
+        case _:
+            return False
+
+
+def _axis_endpoints(
+    analysis: _Analysis, operation: AsOfAxisAdded | AsOfAxisRemoved
+) -> frozenset[AttributeIdentity]:
+    """The endpoint Attributes of the axis arriving or leaving."""
+    key = (operation.entity, operation.dimension)
+    paired = analysis.matching.as_of_axes
+    axis = paired.added[key] if isinstance(operation, AsOfAxisAdded) else paired.removed[key]
+    return frozenset((axis.start_attribute, axis.end_attribute))
+
+
+def _entity_writes(endpoint: _Endpoint, facts: EntityFacts) -> EntityWriteCapability:
+    """What persistence operations one Entity admits at one endpoint.
+
+    Two conditions must both hold. The family must admit writes at all, and the
+    Entity must be a write handle: every create, update, delete, and terminate
+    names a concrete subtype, so an abstract root and an abstract subtype are
+    polymorphic read positions admitting no persistence operation
+    (`m-inheritance`). A standalone Entity is its own concrete set and so passes
+    the second condition trivially.
+    """
+    entity = facts.declaration.identity
+    if facts.family.persistence is PersistenceMode.READ_ONLY:
+        return WRITES_DISABLED
+    if entity not in set(facts.family.concrete_subtypes):
+        return WRITES_DISABLED
+    return WritesEnabled(_write_shape(endpoint, entity))
+
+
+def _write_shape(endpoint: _Endpoint, entity: EntityIdentity) -> EntityWriteShape:
+    match endpoint.temporal.shape(entity):
+        case Bitemporal():
+            return EntityWriteShape.BITEMPORAL
+        case TransactionTimeOnly():
+            return EntityWriteShape.TRANSACTION_TIME_ONLY
+        case _:
+            return EntityWriteShape.NON_TEMPORAL
+
+
+def _write_surface_causes(
+    analysis: _Analysis, entity: EntityIdentity, earlier: EntityFacts, later: EntityFacts
+) -> tuple[EvolutionOperation, ...]:
+    family = _family(earlier, later)
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if _moves_the_write_surface(analysis, operation, entity, family)
+    )
+
+
+def _moves_the_write_surface(
+    analysis: _Analysis,
+    operation: EvolutionOperation,
+    entity: EntityIdentity,
+    family: frozenset[EntityIdentity],
+) -> bool:
+    match operation:
+        case AsOfAxisAdded() | AsOfAxisRemoved():
+            # An axis moves the temporal write shape, which a later surface
+            # admitting no write at all no longer carries.
+            return operation.entity in family and _shape_moved(analysis, entity)
+        case EntityAltered():
+            if operation.entity not in family:
+                return False
+            if _carries(operation.deltas, PersistenceChanged):
+                return True
+            # A move to another family carries the root-owned mode and temporal
+            # shape with it, for the moved position and everything below it.
+            return _carries(operation.deltas, InheritanceChanged) and bool(
+                _moved_positions(analysis, operation.entity)
+            )
+        case _:
+            return False
+
+
+def _shape_moved(analysis: _Analysis, entity: EntityIdentity) -> bool:
+    """Whether the temporal write shape the two facts report differs.
+
+    A surface that admits no write carries no shape, so an axis behind a later
+    disabled surface moved nothing the impact reports — whether the family
+    withdrew its writes or the position stopped being a write handle.
+    """
+    _, later = analysis.matching.entities.surviving[entity]
+    if _entity_writes(analysis.later, later) == WRITES_DISABLED:
+        return False
+    return _write_shape(analysis.earlier, entity) != _write_shape(analysis.later, entity)
+
+
+def _family(earlier: EntityFacts, later: EntityFacts) -> frozenset[EntityIdentity]:
+    """Every position whose declarations reach this Entity on either endpoint."""
+    return frozenset(earlier.family.ancestry) | frozenset(later.family.ancestry)
+
+
+def _moved_positions(analysis: _Analysis, entity: EntityIdentity) -> frozenset[EntityIdentity]:
+    """The positions a moved Entity carries with it, empty when it did not move.
+
+    An Entity moves when its ancestry chain changes or when it starts or stops
+    denoting rows of its own; a tag value, tag Column, or strategy change is an
+    inheritance change that leaves every position exactly where it was. Only an
+    alteration reaches here, so the Entity it names survives both endpoints.
+    """
+    earlier, later = analysis.matching.entities.surviving[entity]
+    if _position(entity, earlier) == _position(entity, later):
+        return frozenset()
+    return _family(earlier, later) | {entity}
+
+
+def _position(entity: EntityIdentity, facts: EntityFacts) -> tuple[object, ...]:
+    """Where one Entity sits: its ancestry chain, and whether it denotes itself."""
+    return (tuple(facts.family.ancestry), entity in set(facts.family.concrete_subtypes))
+
+
+def _relationship_causes(
+    analysis: _Analysis,
+    identity: RelationshipIdentity,
+    surviving: tuple[RelationshipFacts, RelationshipFacts],
+    deltas: tuple[type, ...],
+    *,
+    through_peer: bool,
+) -> tuple[EvolutionOperation, ...]:
+    """The Relationship alterations that moved the fact under analysis.
+
+    ``through_peer`` extends the search to the peer declaration, for the facts a
+    reverse direction derives from its defining declaration rather than owning.
+    """
+    named = {identity}
+    if through_peer:
+        named |= {peer for facts in surviving if (peer := _peer(facts)) is not None}
+    return tuple(
+        operation
+        for operation in analysis.operations
+        if isinstance(operation, RelationshipAltered)
+        and operation.relationship in named
+        and _carries(operation.deltas, deltas)
+    )
+
+
+def _peer(facts: RelationshipFacts) -> RelationshipIdentity | None:
+    """The declaration on the far Entity naming this association's other side."""
+    if facts.direction.reverse is None:
+        return None
+    return RelationshipIdentity(facts.direction.join.target.entity, facts.direction.reverse)
+
+
+def _carries(deltas: Sequence[object], delta: type | tuple[type, ...]) -> bool:
+    return any(isinstance(member, delta) for member in deltas)

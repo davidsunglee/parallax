@@ -13,18 +13,18 @@ from dataclasses import replace
 
 import pytest
 
-from parallax.core import predicate as oa
-from parallax.core.base import DocumentValue, InternalError, StructuredDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import locate_raw_entity_member
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeMetadata, Metamodel, ValueObjectIdentity
-from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
-from parallax.core.read_delivery._row_converter import bind
-from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
-from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import DocumentValue, InternalError, StructuredDocument
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.document_codec import locate_raw_entity_member
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.metamodel import AttributeMetadata, Metamodel, ValueObjectIdentity
+from parallax.core.internal.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
+from parallax.core.internal.read_delivery._row_converter import bind
+from parallax.core.internal.read_delivery._row_decoding import member_classifiers, row_identity
+from parallax.core.internal.read_planning import ResolvedReadProjection
+from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target

@@ -12,7 +12,7 @@ import re
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format
-from parallax.core.metamodel import Metamodel
+from parallax.core.internal.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import case_document, wire_value_deep
 

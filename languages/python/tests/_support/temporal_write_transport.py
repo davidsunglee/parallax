@@ -33,11 +33,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast
 
-from parallax.core.base import INFINITY
-from parallax.core.db_port import ArrayBind
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.db_port import ArrayBind
 
 if TYPE_CHECKING:
-    from parallax.core.db_port import (
+    from parallax.core.internal.db_port import (
         AccessMode,
         DatabaseConnection,
         DocumentReadOrdinals,
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
         Row,
         TransactionOutcome,
     )
-    from parallax.core.dialect import Dialect
+    from parallax.core.internal.dialect import Dialect
 
 __all__ = [
     "AMENDED_AT",

@@ -38,10 +38,10 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.base import UsageError
-from parallax.core.entity import UnloadedRelationshipError, model_of
-from parallax.core.object_query import TX_TIME
-from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import UnloadedRelationshipError, model_of
+from parallax.core.internal.object_query import TX_TIME
+from parallax.core.internal.read_delivery import InvalidData, InvalidDataError
 from parallax.snapshot import (
     ScopedDatabase,
     SharingScope,

@@ -45,11 +45,18 @@ from parallax.core import (
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._unit_work.effects import shortfall
-from parallax.core.auto_retry import (
+from parallax.core.execution_lifecycle import (
+    AttemptRolledBack,
+    ExecutionEvent,
+    OuterInvocation,
+    TransactionAttemptFinished,
+    TransactionInvocationStarted,
+)
+from parallax.core.internal.auto_retry import (
     _RetryCandidate,  # pyright: ignore[reportPrivateUsage] - asserting the carrier never escapes
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     ISOLATION_LEVELS,
     AccessMode,
     ConnectionContext,
@@ -61,9 +68,9 @@ from parallax.core.db_port import (
     RoutePolicy,
     TransactionOutcome,
 )
-from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._model import model_of
-from parallax.core.execution import (
+from parallax.core.internal.entity._authored_resolver import object_query_node
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import (
     AdaptiveBackoff,
     ReadOnlyTxnOptions,
     RetryPolicy,
@@ -72,16 +79,9 @@ from parallax.core.execution import (
     TxnOptions,
     prepare_model,
 )
-from parallax.core.execution_lifecycle import (
-    AttemptRolledBack,
-    ExecutionEvent,
-    OuterInvocation,
-    TransactionAttemptFinished,
-    TransactionInvocationStarted,
-)
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ESCAPED,
     TRANSACTION_ROLLBACK_ONLY,
@@ -89,7 +89,7 @@ from parallax.core.unit_work import (
     SubjectActor,
     WritePlanner,
 )
-from parallax.core.write_plan.steps import KeyTarget
+from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import WireDatabaseView
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

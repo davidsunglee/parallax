@@ -22,8 +22,8 @@ from parallax.conformance.vo_models import (
     Phone,
     Supplier,
 )
-from parallax.core.entity import Entity
-from parallax.core.unit_work import Clock
+from parallax.core.internal.entity import Entity
+from parallax.core.internal.unit_work import Clock
 from parallax.snapshot import ScopedDatabase, TxnContext
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
@@ -42,7 +42,7 @@ class WriteStory:
     the grading seam, the SAME convention the read/graph stories already use.
 
     ``clock`` is an optional zero-argument
-    :class:`~parallax.core.unit_work.Clock` factory: a
+    :class:`~parallax.core.internal.unit_work.Clock` factory: a
     temporal writeSequence story needing successive distinct Transaction-Time
     instants across its own choreography (one corpus writeSequence entry, one
     flushing ``db.transact`` call, one Clock read each) sets it to something

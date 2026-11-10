@@ -1,0 +1,504 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
+
+from parallax.core.internal.base import DocumentReadOrdinals, StructuredDocument
+from parallax.core.internal.db_port._credentials import (
+    DRIVER_MANAGED,
+    Credential,
+    CredentialResolutionError,
+    CredentialSource,
+    DriverManaged,
+    Password,
+)
+from parallax.core.internal.db_port._pool_metrics import (
+    PoolAvailable,
+    PoolDetached,
+    PoolMeasurements,
+    PoolMetricsSource,
+    PoolSample,
+    PoolUnavailable,
+)
+from parallax.core.internal.db_port._resource_logging import (
+    RESOURCE_LOGGER_NAME,
+    ResourceCondition,
+    report_resource_issues,
+    report_route_readiness,
+    report_unregistration_failure,
+)
+from parallax.core.internal.db_port._resources import (
+    AUTHORIZATION_INVALID,
+    AcquisitionReason,
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
+    CleanupResult,
+    ConnectionAcquisitionError,
+    ConnectionContext,
+    ConnectionContextSource,
+    DatabaseAdapter,
+    DatabaseRuntime,
+    DatabaseStartupError,
+    Invalidated,
+    ReleaseUnconfirmed,
+    Returned,
+    StartupPhase,
+)
+from parallax.core.internal.dialect import JSON_NULL, ArrayBind, Dialect, JsonNull
+
+__all__ = [
+    "AUTHORIZATION_INVALID",
+    "DRIVER_MANAGED",
+    "ISOLATION_LEVELS",
+    "JSON_NULL",
+    "RESOURCE_LOGGER_NAME",
+    "WRITE_RESULT_INTEGRITY_VIOLATED",
+    "AccessMode",
+    "AcquisitionReason",
+    "ArrayBind",
+    "BeginFailed",
+    "Bind",
+    "CallbackRaised",
+    "CanonicalWriteStatement",
+    "CleanupCode",
+    "CleanupIssue",
+    "CleanupPhase",
+    "CleanupResult",
+    "CommitFailed",
+    "Committed",
+    "ConfirmedWriteOutcome",
+    "ConnectionAcquisitionError",
+    "ConnectionContext",
+    "ConnectionContextSource",
+    "Credential",
+    "CredentialResolutionError",
+    "CredentialSource",
+    "DatabaseAdapter",
+    "DatabaseConnection",
+    "DatabaseRuntime",
+    "DatabaseStartupError",
+    "DeclaresDialect",
+    "DocumentReadOrdinals",
+    "DriverManaged",
+    "FallbackReason",
+    "Invalidated",
+    "IsolationLevel",
+    "JsonNull",
+    "MappingRow",
+    "OrderedWriteResult",
+    "OrderedWriteResultComplete",
+    "OrderedWriteResultInterrupted",
+    "OrderedWriteTransport",
+    "Password",
+    "PipelineStatement",
+    "PoolAvailable",
+    "PoolDetached",
+    "PoolMeasurements",
+    "PoolMetricsSource",
+    "PoolSample",
+    "PoolUnavailable",
+    "ReleaseUnconfirmed",
+    "ResourceCondition",
+    "Returned",
+    "RollbackFailed",
+    "RollbackTrigger",
+    "RolledBack",
+    "Route",
+    "RouteCapabilities",
+    "RoutePolicy",
+    "RouteReadiness",
+    "RouteSelection",
+    "Row",
+    "StartupPhase",
+    "StatementFailed",
+    "StatementNotExecuted",
+    "StructuredDocument",
+    "TransactionOutcome",
+    "isolation_level",
+    "report_resource_issues",
+    "report_route_readiness",
+    "report_unregistration_failure",
+]
+
+# A neutral bind value (m-core scalars) or the language's managed carriers.
+Bind = object
+# A managed result row in statement select-list order.
+Row = tuple[object, ...]
+MappingRow = Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineStatement:
+    """One independent row-returning statement in a pipeline batch."""
+
+    sql: str
+    binds: tuple[Bind, ...] = ()
+    document_reads: tuple[DocumentReadOrdinals, ...] = ()
+
+
+class CanonicalWriteStatement(Protocol):
+    """One count-only DML statement presented to ordered write transport.
+
+    ``sql`` is the dialect's CANONICAL text, with `?` placeholders: the adapter
+    converts it to its driver's form once, immediately before submission,
+    unlike ``execute_write``, which receives driver-ready SQL.
+    """
+
+    @property
+    def sql(self) -> str: ...
+
+    @property
+    def binds(self) -> Sequence[Bind]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StatementFailed:
+    """The statement reached the database and failed there; ``error`` is that
+    statement's own translated failure, shared with no other statement."""
+
+    error: Exception
+
+
+@dataclass(frozen=True, slots=True)
+class StatementNotExecuted:
+    """The statement was confirmed not to execute, because an earlier statement
+    of the same invocation failed."""
+
+
+type ConfirmedWriteOutcome = int | StatementFailed | StatementNotExecuted
+"""What the adapter established for one presented statement: its native
+affected-row count, its own failure, or confirmed non-execution."""
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedWriteResultComplete:
+    """Result collection completed: one confirmed outcome per presented
+    statement, in presentation order.
+
+    Completion says nothing about success or commit: it may carry statement
+    failures and the statements they kept from executing.
+    """
+
+    outcomes: tuple[ConfirmedWriteOutcome, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedWriteResultInterrupted:
+    """Transport failed before every outcome was established.
+
+    The presented statements partition, in order, into ``confirmed`` outcomes,
+    ``unconfirmed_count`` statements whose execution cannot be established, and
+    ``unsent_count`` statements the adapter established it never sent. ``error``
+    is the one transport failure, reported once for the whole invocation.
+    """
+
+    confirmed: tuple[ConfirmedWriteOutcome, ...]
+    unconfirmed_count: int
+    unsent_count: int
+    error: Exception
+
+
+type OrderedWriteResult = OrderedWriteResultComplete | OrderedWriteResultInterrupted
+"""How one ordered write transport invocation ended, a closed union."""
+
+type OrderedWriteTransport = Callable[[Sequence[CanonicalWriteStatement]], OrderedWriteResult]
+"""A connection's qualified ordered write transport: every presented statement
+in one invocation, answered with exact original-order outcomes."""
+
+
+WRITE_RESULT_INTEGRITY_VIOLATED: Final = "write-result-integrity-violated"
+"""The code of the :class:`~parallax.core.internal.base.InternalError` a write is refused
+by where it answered a result its own presented statements contradict — an
+ordered write transport result, or the source ordinals a grouped effect
+returned: a broken adapter contract, never a database failure, and never
+retriable. An adapter raises it for a result its driver answered that no
+presented statement produces.
+
+Its message is bounded structure — positions, counts, and type names — and
+copies no statement, bind, or outcome value.
+"""
+
+
+# The closed portable isolation vocabulary (m-db-port). Each level names the
+# anomalies it forbids rather than any database's own spelling: `read_committed`
+# forbids dirty reads, `repeatable_read` also forbids nonrepeatable reads, and
+# `serializable` additionally makes the committed participating transactions
+# equivalent to some serial order. Read Uncommitted and vendor-specific levels are
+# outside it, so there is no spelling here to request one by.
+IsolationLevel = Literal["read_committed", "repeatable_read", "serializable"]
+
+ISOLATION_LEVELS: Final[frozenset[str]] = frozenset(get_args(IsolationLevel))
+
+
+def isolation_level(value: object) -> IsolationLevel:
+    """Return the vocabulary's own spelling of ``value``, or raise ``ValueError``.
+
+    The vocabulary is closed, so a name outside it names no guarantee any adapter
+    could map — which makes it the caller's mistake rather than a database's
+    refusal, reportable before anything opens. Every value outside it is refused
+    the one way, whatever its type: the candidate is compared to each level rather
+    than looked up in the set, since a value no set can be asked about (an
+    unhashable ``str`` subclass) would make membership alone raise ``TypeError``.
+
+    What comes back is the matched level itself, never the caller's own object, so
+    an accepted value is a plain hashable ``str`` an adapter can key its per-level
+    spelling table by.
+    """
+    known = sorted(ISOLATION_LEVELS)
+    if isinstance(value, str):
+        for level in known:
+            if value == level:
+                return cast("IsolationLevel", level)
+    raise ValueError(f"isolation must be one of {known}, got {value!r}")
+
+
+# The closed access-mode vocabulary (m-db-port): what a boundary admits beyond
+# reading. It is a request of its own, independent of the isolation level.
+AccessMode = Literal["read_only", "read_write"]
+
+# Where one lease lands (m-db-port), named by what a caller observes there:
+# `writer` serves writes and sees every committed change, while `reader` offloads
+# reads and may lag behind it. A reader promises no physical replica.
+Route = Literal["writer", "reader"]
+
+# How one acquisition asks for a route (m-execution): `<route>_<mode>`, so a
+# policy never shares a spelling with the route it lands on.
+RoutePolicy = Literal["writer_only", "reader_only", "reader_preferred"]
+
+# Whether a declared route has proved it can serve: `verified` once its identity
+# and decoding were proved, `pending` while that proof is deferred, and
+# `refused` once it positively failed. Only `verified` routes are known to
+# serve; a `refused` one serves nothing for the runtime's remaining life.
+RouteReadiness = Literal["verified", "pending", "refused"]
+
+# Why a preferred acquisition moved from the reader to the writer before any
+# modeled work began.
+FallbackReason = Literal["unavailable", "connection_lost"]
+
+
+@dataclass(frozen=True, slots=True)
+class RouteSelection:
+    """The route one acquisition was served on, and the fallback that put it there."""
+
+    route: Route
+    fallback: FallbackReason | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RouteCapabilities:
+    """What one declared route serves beyond being reachable.
+
+    ``read_only_isolation`` holds the levels a read-only transaction may begin
+    at on the route; a route that serves no transactions declares it empty.
+    """
+
+    read_only_isolation: frozenset[IsolationLevel]
+
+    @classmethod
+    def every_level(cls) -> RouteCapabilities:
+        """A route that begins a read-only transaction at every portable level."""
+        return cls(frozenset(cast("tuple[IsolationLevel, ...]", get_args(IsolationLevel))))
+
+
+@dataclass(frozen=True, slots=True)
+class Committed[T]:
+    """The body returned and the transaction committed; ``value`` is what it returned."""
+
+    value: T
+
+
+@dataclass(frozen=True, slots=True)
+class BeginFailed:
+    """The boundary never opened as asked, so the body never ran.
+
+    No work of the caller's was attempted and nothing of it needs undoing, which
+    is what separates this from every other unhappy outcome. An adapter may have
+    driven its driver as far as a physical transaction and then failed to bring
+    it to the boundary that was asked for — a refused ``isolation``, say; undoing
+    that empty transaction is the adapter's own business and is finished before
+    this outcome is reported, so what a caller holds is a boundary that never
+    opened either way.
+    """
+
+    error: Exception
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackRaised:
+    """The body raised, and this carries the SAME object it raised.
+
+    The port neither translates nor replaces a caller's own failure, so a driver
+    exception the body itself raised arrives here unchanged rather than as a port
+    error (which would make a body-authored transient read as one the database
+    reported).
+    """
+
+    error: BaseException
+
+
+@dataclass(frozen=True, slots=True)
+class CommitFailed:
+    """The body returned, and the durability call failed."""
+
+    error: Exception
+
+
+type RollbackTrigger = CallbackRaised | CommitFailed
+"""What made a begun transaction end in a rollback rather than a commit."""
+
+
+@dataclass(frozen=True, slots=True)
+class RolledBack:
+    """The trigger ended the transaction and the rollback completed.
+
+    Whatever the body wrote is gone, and the connection is usable again.
+    """
+
+    trigger: RollbackTrigger
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackFailed:
+    """The rollback the trigger required did not complete.
+
+    Both live errors survive — the one that ended the transaction and the one the
+    rollback raised — because either alone misreports what happened. What the
+    transaction left behind is unknown, so the connection is no longer trustworthy.
+    """
+
+    trigger: RollbackTrigger
+    rollback_error: Exception
+
+
+type TransactionOutcome[T] = Committed[T] | BeginFailed | RolledBack | RollbackFailed
+"""How one ``transaction`` call ended: a closed, ephemeral union its caller
+consumes immediately. It is neither a public return value nor retained provenance."""
+
+
+@runtime_checkable
+class DatabaseConnection(Protocol):
+    """The abstract database execution port (m-db-port).
+
+    Every error an implementation MAKES ITSELF to report a failure — a statement
+    failure raised by ``execute`` or ``execute_write``, a statement failure or
+    interruption an ordered write transport result carries, or a
+    transaction-boundary failure carried by a ``transaction`` outcome, meaning its
+    begin, its commit, or its rollback — is an instance SHARED WITH NO OTHER
+    INVOCATION OR STATEMENT, built where
+    the failure occurs, never cached or pooled, however identical two failures'
+    category, native code, and message are. Above the seam a failure is recognized
+    by the object caught, and a caller may catch one failed call and keep going, so
+    that object is the only thing that says which invocation failed;
+    one instance reported twice makes an enclosing activity attribute its failure to
+    a sibling call. Nothing above the port can detect a violation, so this holds at
+    the failure site or nowhere.
+
+    An exception raised by ``body`` is not the port's error: ``transaction``
+    carries the same object back and governs nothing about its identity.
+    """
+
+    @property
+    def dialect(self) -> Dialect:
+        """The SQL spelling every statement crossing this port is written in.
+
+        A decorating or transaction-scoped port reports the dialect of the port
+        it stands in for rather than one of its own, so the answer is the same
+        whichever port in a chain a caller happens to hold.
+        """
+        ...
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        """Run a row-returning statement and return managed rows.
+
+        Each document-read pair is folded into one :class:`DocumentRead` under
+        the document cell's result key before the row crosses this boundary.
+
+        ``read_only`` is the caller's read intent (m-db-port): an assertion that
+        the submission has no write effect, never a request for a database
+        access mode. Row-producing DML is submitted without it.
+        """
+        ...
+
+    def execute_pipeline(
+        self,
+        statements: Sequence[PipelineStatement],
+        *,
+        read_only: bool = False,
+    ) -> list[list[Row]]:
+        """Run independent row reads in one transport round trip, preserving order.
+
+        ``read_only`` is the read intent of the whole batch, never of one member.
+        """
+        ...
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        """Run a DML statement and return the driver's affected-row count."""
+        ...
+
+    @property
+    def ordered_write_transport(self) -> OrderedWriteTransport | None:
+        """This connection's qualified ordered write transport, or ``None`` for
+        one that runs each write separately.
+
+        The same stored value on every access for the connection's lifetime.
+        A decorating port answers ``None`` exactly where the port it stands in
+        for does, and otherwise a callable of its own that keeps its
+        interception, forwarding canonical statements unchanged.
+        """
+        ...
+
+    def transaction[T](
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        access_mode: AccessMode | None = None,
+    ) -> TransactionOutcome[T]:
+        """Run ``body`` inside one database transaction and report how it ended.
+
+        Commit on the body's normal return, roll back on any exception it raises,
+        and answer which of begin, callback, commit, or rollback decided that —
+        distinctions a caller cannot recover from a raised error alone, and which
+        decide whether the work may be retried and whether the connection is still
+        trustworthy. No boundary failure is raised; the caller consumes the outcome
+        and decides what its own caller sees.
+
+        ``isolation`` is the portable :data:`IsolationLevel` this boundary is
+        asked to open at, carried across unchanged; ``None`` asks for nothing and
+        leaves whatever the adapter or its driver already defaults to. An
+        implementation MAPS it to whatever its own database needs to forbid that
+        level's anomalies for this attempt, and one that cannot forbid them
+        reports a boundary failure rather than opening at a level it can — a
+        request silently weakened is indistinguishable from one honored. The
+        setting is the BOUNDARY's rather than the connection's: it governs this
+        transaction alone and no later one on the same connection.
+
+        ``access_mode`` is the boundary's :data:`AccessMode`, requested and
+        applied on the same terms and independently of ``isolation``: ``None``
+        asks for nothing and leaves the native default, and an implementation
+        unable to open the boundary in the requested mode reports a boundary
+        failure. Applying either request takes no snapshot.
+        """
+        ...
+
+
+class DeclaresDialect(Protocol):
+    """Dialect metadata readable off a port's CLASS, before any connection opens.
+
+    A composition root selects a concrete adapter and needs the dialect it will
+    execute in without building one — nothing here reaches a driver, a socket, or
+    a container. It is a separate protocol because :class:`DatabaseConnection` states
+    ``dialect`` as a read-only property, and a property is unreachable through
+    ``type[...]``.
+    """
+
+    dialect: Dialect

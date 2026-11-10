@@ -16,23 +16,24 @@ from typing import Any, Literal
 
 import pytest
 
-from parallax.core import UnsupportedError, continuation, inheritance, read_planning, storage_layout
-from parallax.core import object_query as oq
-from parallax.core import predicate as oa
-from parallax.core.base import StructuredDocument, UsageError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
-from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.read_delivery._page import MISSING_STORED_VALUE
-from parallax.core.read_planning import ResolvedReadProjection
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen._inheritance import (
+from parallax.core import UnsupportedError
+from parallax.core.internal import continuation, inheritance, read_planning, storage_layout
+from parallax.core.internal import object_query as oq
+from parallax.core.internal import predicate as oa
+from parallax.core.internal.base import StructuredDocument, UsageError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import AttributeMetadata, EntityIdentity, Metamodel
+from parallax.core.internal.object_query._nodes import TemporalDimension
+from parallax.core.internal.read_delivery._page import MISSING_STORED_VALUE
+from parallax.core.internal.read_planning import ResolvedReadProjection
+from parallax.core.internal.sql_gen import _compile as sql_compile
+from parallax.core.internal.sql_gen._inheritance import (
     INHERITANCE_LOCKING_READ_UNSUPPORTED,
     ReadResultContract,
     plan_document_reads,
 )
-from parallax.core.sql_gen._predicate import render_predicate
+from parallax.core.internal.sql_gen._predicate import render_predicate
 from tests._support.errors import raises_code
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _family_predecessor_support as family

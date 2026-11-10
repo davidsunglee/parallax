@@ -30,7 +30,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import InternalError
-from parallax.core.entity import (
+from parallax.core.internal.entity import (
     MANY_TO_ONE,
     UNLOADED,
     AbstractRoot,
@@ -44,14 +44,14 @@ from parallax.core.entity import (
     attr,
     rel,
 )
-from parallax.core.entity import _instance_state as instance_state
-from parallax.core.entity import _row_fill as row_fill
-from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._graph_construction import EntityGraphConstruction
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import DomainModel, class_index, model_of
-from parallax.core.metamodel import (
+from parallax.core.internal.entity import _instance_state as instance_state
+from parallax.core.internal.entity import _row_fill as row_fill
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._graph_construction import EntityGraphConstruction
+from parallax.core.internal.entity._instance_state import COMPACT_STATE_SLOT, plan_of
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import DomainModel, class_index, model_of
+from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
 from tests._support.errors import raises_code

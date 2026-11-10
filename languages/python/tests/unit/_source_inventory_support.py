@@ -49,7 +49,7 @@ _PACKAGES = PY_ROOT / "packages"
 SNAPSHOT_SRC = _PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
 CONFORMANCE_SRC = _PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
 
-ENTITY_PACKAGE = "parallax.core.entity"
+ENTITY_PACKAGE = "parallax.core.internal.entity"
 
 
 def sources(*roots: Path) -> Iterator[tuple[Path, str]]:

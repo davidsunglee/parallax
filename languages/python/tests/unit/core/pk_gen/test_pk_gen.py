@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core import pk_gen
-from parallax.core.metamodel import (
+from parallax.core.internal import pk_gen
+from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     EntityIdentity,

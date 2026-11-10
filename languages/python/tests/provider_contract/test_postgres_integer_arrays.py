@@ -20,11 +20,11 @@ from psycopg.pq import Format
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
-from parallax.core.base import INT32, INT64, STRING, NeutralType
-from parallax.core.db_port import ArrayBind
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.internal.base import INT32, INT64, STRING, NeutralType
+from parallax.core.internal.db_port import ArrayBind
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import connect

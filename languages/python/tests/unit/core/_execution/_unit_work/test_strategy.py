@@ -13,11 +13,11 @@ from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
 )
-from parallax.core.base import InternalError
-from parallax.core.metamodel import AttributeIdentity
-from parallax.core.unit_work import NO_AUDIT, TransactionInstant
-from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import InternalError
+from parallax.core.internal.metamodel import AttributeIdentity
+from parallax.core.internal.unit_work import NO_AUDIT, TransactionInstant
+from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,

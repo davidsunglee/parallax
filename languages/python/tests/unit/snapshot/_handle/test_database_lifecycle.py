@@ -31,8 +31,8 @@ from parallax.conformance.dormant_position_models import (
 )
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Account, Order
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import (
     RESOURCE_LOGGER_NAME,
     CleanupIssue,
     ConnectionAcquisitionError,
@@ -41,8 +41,8 @@ from parallax.core.db_port import (
     Returned,
     report_resource_issues,
 )
-from parallax.core.diagnostics import diagnostic_for
-from parallax.core.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
+from parallax.core.internal.diagnostics import diagnostic_for
+from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, TxnContext, connect
 from tests._support.db_port import (
     BeginCall,
@@ -474,7 +474,7 @@ def test_nothing_is_reported_for_an_absent_result_or_one_without_issues(
 def test_reporting_never_raises_whatever_logging_does(monkeypatch: pytest.MonkeyPatch) -> None:
     # An ordinary reporting failure must not prevent the cleanup it describes,
     # nor replace the primary error that cleanup ran beside.
-    from parallax.core.db_port import _resource_logging as resource_logging
+    from parallax.core.internal.db_port import _resource_logging as resource_logging
 
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("the logging configuration is broken")

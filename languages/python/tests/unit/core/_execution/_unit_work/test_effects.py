@@ -24,10 +24,10 @@ import pytest
 
 from parallax.core import ConflictError, InternalError, ParallaxError
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION, WRITE_RESULT_INVALID
-from parallax.core.metamodel import AttributeIdentity
-from parallax.core.predicate import TrueNode, validate_predicate
-from parallax.core.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import AttributeIdentity
+from parallax.core.internal.predicate import TrueNode, validate_predicate
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     WRITE_PRECONDITION_FAILED,
     WritePreconditionError,
@@ -35,9 +35,9 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     returns_allocated_keys,
 )
-from parallax.core.unit_work import STALE_WRITE as STALE_WRITE_CODE
-from parallax.core.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
+from parallax.core.internal.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
+from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
     FAILED_PRECONDITION,
     INFINITY,

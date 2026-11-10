@@ -12,7 +12,6 @@ import pytest
 
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
@@ -30,19 +29,20 @@ from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.metamodel._accepted import FacetKey
-from parallax.core.model_formation import ModelCompilerRequirement
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.temporal_write.expansion import PredecessorExpander
-from parallax.core.unit_work import (
+from parallax.core.internal import inheritance
+from parallax.core.internal.metamodel._accepted import FacetKey
+from parallax.core.internal.model_formation import ModelCompilerRequirement
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.expansion import PredecessorExpander
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     SystemClock,
     TransactionInstant,
     WritePlanner,
     WritePlanningRequest,
 )
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import (
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import (
     WritePlan,
 )
 from tests._support.clock_probes import CountingClock, inert_instant

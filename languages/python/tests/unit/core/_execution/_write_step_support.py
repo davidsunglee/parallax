@@ -20,24 +20,33 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import INFINITY as OPEN
-from parallax.core.db_error import DatabaseError
-from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
 from parallax.core.execution_lifecycle._activity import (
     FlushActivity,
     installed_lifecycle,
     open_transaction_root,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel, entity_by_name
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import TransactionSettings, UnitOfWork
-from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import SUPERSEDED, WritePlan
-from parallax.core.write_plan.payload import AssignmentPayload, RowSlots, WritePayloadPreparer
-from parallax.core.write_plan.plan import CurrentRowOutput, WriteEffects
-from parallax.core.write_plan.steps import (
+from parallax.core.internal.base import INFINITY as OPEN
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    entity_by_name,
+)
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import TransactionSettings, UnitOfWork
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import SUPERSEDED, WritePlan
+from parallax.core.internal.write_plan.payload import (
+    AssignmentPayload,
+    RowSlots,
+    WritePayloadPreparer,
+)
+from parallax.core.internal.write_plan.plan import CurrentRowOutput, WriteEffects
+from parallax.core.internal.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,

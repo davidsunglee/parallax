@@ -18,8 +18,8 @@ from functools import cached_property
 from typing import Any, ClassVar, Optional, SupportsIndex
 
 from parallax.core import MANY_TO_ONE, Attr, Entity, Rel, ValueObject, attr, index, rel
-from parallax.core.base import Int32
-from parallax.core.metamodel import MAX, AbstractRoot, TablePerConcreteSubtype
+from parallax.core.internal.base import Int32
+from parallax.core.internal.metamodel import MAX, AbstractRoot, TablePerConcreteSubtype
 
 
 class Peer(Entity, table="peer"):

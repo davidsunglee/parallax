@@ -7,13 +7,13 @@ from types import MappingProxyType
 from typing import Final, cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
-from parallax.core import inheritance, predicate, relationship, temporal_read
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import (
+from parallax.core.internal import inheritance, predicate, relationship, temporal_read
+from parallax.core.internal.base import (
     INFINITY,
     INFINITY_LITERAL,
     NeutralType,
@@ -25,8 +25,8 @@ from parallax.core.base import (
     matches_neutral_type,
     retain_document_value,
 )
-from parallax.core.document_codec._plan import AuthoringPlan, AuthoringRefusal
-from parallax.core.metamodel import (
+from parallax.core.internal.document_codec._plan import AuthoringPlan, AuthoringRefusal
+from parallax.core.internal.metamodel import (
     AttributeMetadata,
     CompiledEntity,
     MemberDefinition,
@@ -41,17 +41,17 @@ from parallax.core.metamodel import (
     entity_by_name,
     split_reference,
 )
-from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
-from parallax.core.unit_work import (
+from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
+from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
     TargetWriteInstruction,
     WriteAssignment,
 )
-from parallax.core.wire import WireValue, decode_wire, is_decoding_refusal, located_refusal
-from parallax.core.write_plan.columns import freeze_retained_value
+from parallax.core.internal.wire import WireValue, decode_wire, is_decoding_refusal, located_refusal
+from parallax.core.internal.write_plan.columns import freeze_retained_value
 
 __all__ = [
     "WirePreparer",
@@ -106,7 +106,7 @@ def decode_case_row(
     For state a case states rather than a write it authors — seeded fixtures,
     and the members an edit assigns its copy. A stored row holds the open bound
     in its axis ends, so a declared Transaction-Time or Valid-Time end spelled
-    ``infinity`` is the managed :data:`~parallax.core.base.INFINITY`; every other
+    ``infinity`` is the managed :data:`~parallax.core.internal.base.INFINITY`; every other
     Timestamp leaf stays finite-only. A literal that does not decode is refused
     with its decoding code, located as Wire preparation locates it.
 

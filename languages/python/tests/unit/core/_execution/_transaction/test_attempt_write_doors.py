@@ -26,7 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, scope
 

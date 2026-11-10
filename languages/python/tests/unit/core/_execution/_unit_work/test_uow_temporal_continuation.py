@@ -43,11 +43,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
-from parallax.core.base import INFINITY
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.entity._model import model_of
-from parallax.core.metamodel import entity_by_name
-from parallax.core.unit_work import (
+from parallax.core.internal.base import INFINITY
+from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
     RetainedObservation,
@@ -57,8 +57,8 @@ from parallax.core.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
-from parallax.core.write_plan.plan import BoundRange
+from parallax.core.internal.write_plan import ObjectKey, PredecessorRow, TemporalObservation
+from parallax.core.internal.write_plan.plan import BoundRange
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,

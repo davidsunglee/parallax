@@ -30,16 +30,16 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import (
+from parallax.core.internal.base import (
     INFINITY,
     UsageError,
 )
-from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import AsOf, object_query, validate_object_query
-from parallax.core.predicate import (
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.db_port import DatabaseConnection, Row, TransactionOutcome
+from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import AsOf, object_query, validate_object_query
+from parallax.core.internal.predicate import (
     And,
     Comparison,
     FieldSubject,
@@ -47,9 +47,9 @@ from parallax.core.predicate import (
     Quantifier,
     ScalarLiteral,
 )
-from parallax.core.predicate import serialize as serialize_predicate
-from parallax.core.temporal_read import TimeInterval
-from parallax.core.write_plan.managed_row import named_members
+from parallax.core.internal.predicate import serialize as serialize_predicate
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.errors import raises_code
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope

@@ -6,12 +6,12 @@ from typing import NoReturn
 
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.base import ConflictError
-from parallax.core.entity import DomainModel, EntityGraphConstruction
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import ClassIndex
-from parallax.core.read_planning import NarrowedViewKeys
-from parallax.core.wire._facts import WireModelFacts
+from parallax.core.internal.base import ConflictError
+from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
+from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import ClassIndex
+from parallax.core.internal.read_planning import NarrowedViewKeys
+from parallax.core.internal.wire._facts import WireModelFacts
 
 __all__ = [
     "ModelSelection",

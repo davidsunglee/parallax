@@ -10,9 +10,9 @@ from typing import cast
 
 import pytest
 
-from parallax.core.base import FrozenMap
-from parallax.core.write_plan import ChunkedColumnBuilder, whole
-from parallax.core.write_plan.columns import (
+from parallax.core.internal.base import FrozenMap
+from parallax.core.internal.write_plan import ChunkedColumnBuilder, whole
+from parallax.core.internal.write_plan.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
     ChunkedColumn,
     ColumnSlice,

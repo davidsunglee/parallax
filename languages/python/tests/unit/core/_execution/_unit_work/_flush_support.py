@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
-from parallax.core.sql_gen import LoweredStatement
-from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import EffectSpan
-from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.plan import EffectSpan
+from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 
 __all__ = ["ObservedSteps", "statement_kinds"]
 

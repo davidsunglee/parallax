@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Final, Literal
+
+from parallax.core.internal.base import InternalError, UsageError
+from parallax.core.internal.metamodel import MetamodelIssue
+from parallax.core.internal.model_formation._manifest import ModuleIdentity
+
+__all__ = [
+    "FORMATION_COMPILER_FAILED",
+    "FORMATION_CONTRACT_CODES",
+    "FORMATION_FACET_DUPLICATE",
+    "FORMATION_FACET_MISSING",
+    "FORMATION_ISSUE_CODE_INVALID",
+    "FORMATION_ISSUE_DUPLICATE",
+    "FORMATION_ISSUE_UNDECLARED",
+    "FORMATION_PROFILE_DRIFT",
+    "FORMATION_RESOLVER_FAILED",
+    "FORMATION_RESOLVER_RESULT_INVALID",
+    "FORMATION_RULE_SET_FAILED",
+    "FORMATION_RULE_SET_RESULT_INVALID",
+    "FormationContractCode",
+    "MetamodelValidationError",
+    "formation_contract_failure",
+]
+
+type FormationContractCode = Literal[
+    "formation-profile-drift",
+    "formation-issue-code-invalid",
+    "formation-issue-undeclared",
+    "formation-issue-duplicate",
+    "formation-facet-missing",
+    "formation-facet-duplicate",
+    "formation-resolver-failed",
+    "formation-resolver-result-invalid",
+    "formation-rule-set-failed",
+    "formation-rule-set-result-invalid",
+    "formation-compiler-failed",
+]
+"""The ways a contributor, Formation Profile, or Formation Manifest breaks its
+contract, each an :class:`~parallax.core.internal.base.InternalError`. None is ever a
+statement about the model under formation."""
+
+FORMATION_PROFILE_DRIFT: Final[FormationContractCode] = "formation-profile-drift"
+"""The profile does not match the manifest, or reading a contributor's own
+contract raised. The residual code: a mismatch a more specific code below names
+is reported under that code instead."""
+
+FORMATION_ISSUE_CODE_INVALID: Final[FormationContractCode] = "formation-issue-code-invalid"
+"""A declared or emitted Issue Code is malformed or carries a foreign owner's
+stem. Concerns the code's spelling only; a well-formed owner-local code that the
+owner never declared is ``formation-issue-undeclared``."""
+
+FORMATION_ISSUE_UNDECLARED: Final[FormationContractCode] = "formation-issue-undeclared"
+"""An emitter produced a well-formed code of its own that is outside the complete
+set its manifest row declares."""
+
+FORMATION_ISSUE_DUPLICATE: Final[FormationContractCode] = "formation-issue-duplicate"
+"""Two emitted issues share one ``(code, location, related)`` identity, whether
+from one emitter or two. Aggregation never silently collapses them."""
+
+FORMATION_FACET_MISSING: Final[FormationContractCode] = "formation-facet-missing"
+"""A required facet key has no compiler: the profile supplies none for a manifest
+row, or a row requires a key no row compiles."""
+
+FORMATION_FACET_DUPLICATE: Final[FormationContractCode] = "formation-facet-duplicate"
+"""One facet key is installed by more than one supplied compiler. A compiler
+installing a key another module owns is drift, not this."""
+
+FORMATION_RESOLVER_FAILED: Final[FormationContractCode] = "formation-resolver-failed"
+"""The fixed resolver raised instead of returning a resolution result."""
+
+FORMATION_RESOLVER_RESULT_INVALID: Final[FormationContractCode] = (
+    "formation-resolver-result-invalid"
+)
+"""The fixed resolver returned something outside its closed result type: not a
+resolution result, a rejection whose issues are empty or mutable, or a resolution
+whose candidate is not a Candidate Metamodel."""
+
+FORMATION_RULE_SET_FAILED: Final[FormationContractCode] = "formation-rule-set-failed"
+"""A Rule Set raised instead of returning its issue sequence."""
+
+FORMATION_RULE_SET_RESULT_INVALID: Final[FormationContractCode] = (
+    "formation-rule-set-result-invalid"
+)
+"""A Rule Set returned a mutable collection or an element that is not a Metamodel
+Issue. An issue it had no right to emit is an issue-code failure instead."""
+
+FORMATION_COMPILER_FAILED: Final[FormationContractCode] = "formation-compiler-failed"
+"""The Metadata Compiler or a Model Compiler raised, reached an impossible state,
+or returned a value that is not the facet or metadata it promised. Compilation
+runs only on an accepted candidate, so nothing here is ever a model issue."""
+
+FORMATION_CONTRACT_CODES: Final[frozenset[FormationContractCode]] = frozenset(
+    {
+        FORMATION_PROFILE_DRIFT,
+        FORMATION_ISSUE_CODE_INVALID,
+        FORMATION_ISSUE_UNDECLARED,
+        FORMATION_ISSUE_DUPLICATE,
+        FORMATION_FACET_MISSING,
+        FORMATION_FACET_DUPLICATE,
+        FORMATION_RESOLVER_FAILED,
+        FORMATION_RESOLVER_RESULT_INVALID,
+        FORMATION_RULE_SET_FAILED,
+        FORMATION_RULE_SET_RESULT_INVALID,
+        FORMATION_COMPILER_FAILED,
+    }
+)
+"""The codes a contract failure raised inside a contributor-reading block keeps
+as its own rather than being restated as that block's."""
+
+
+class MetamodelValidationError(UsageError):
+    """The supplied model is invalid, reported as every issue that makes it so.
+
+    ``issues`` is nonempty and canonically ordered, so two runs over the same
+    model produce the same report regardless of frontend, rule, profile, or
+    scheduling order. Constructing one with no issue raises :class:`ValueError`:
+    a validation failure that names no defect is not a report.
+    """
+
+    issues: tuple[MetamodelIssue, ...]
+
+    def __init__(self, issues: Sequence[MetamodelIssue]) -> None:
+        reported = tuple(issues)
+        if not reported:
+            raise ValueError("a Metamodel validation failure reports at least one issue")
+        self.issues = reported
+        summary = ", ".join(sorted({issue.code for issue in reported}))
+        super().__init__("model-formation-rejected", f"{len(reported)} model issue(s): {summary}")
+
+
+def formation_contract_failure(
+    code: FormationContractCode, message: str, *, owner: ModuleIdentity | None = None
+) -> InternalError:
+    """The contract failure ``code``, naming the responsible module where one is
+    identifiable. A failure that is a contributor raising rather than returning
+    is raised from that exception."""
+    return InternalError(code, message if owner is None else f"{owner}: {message}")

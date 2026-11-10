@@ -18,14 +18,14 @@ from __future__ import annotations
 import gc
 import weakref
 
-from parallax.core.db_error import Category, DatabaseError
-from parallax.core.diagnostics import (
+from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
+from parallax.core.internal.db_error import Category, DatabaseError
+from parallax.core.internal.diagnostics import (
     MESSAGE_LIMIT_BYTES,
     STACK_LIMIT_BYTES,
     FailureDiagnostic,
     diagnostic_for,
 )
-from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 
 
 class _Coded(RuntimeError):

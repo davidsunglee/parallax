@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 
 __all__ = ["BACKTICKED"]
 

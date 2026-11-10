@@ -19,7 +19,7 @@ import pytest
 from botocore.config import Config
 
 from parallax.aws import RdsIamCredentials
-from parallax.core.db_port import CredentialResolutionError, CredentialSource, Password
+from parallax.core.internal.db_port import CredentialResolutionError, CredentialSource, Password
 
 if TYPE_CHECKING:
     from botocore.session import Session

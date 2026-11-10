@@ -27,10 +27,7 @@ import pytest
 from parallax.conformance import concurrency_runner
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, attr, storage_layout
-from parallax.core.db_error import DatabaseError
-from parallax.core.entity._model import model_of
-from parallax.core.execution import RetryPolicy
+from parallax.core import Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptRolledBack,
@@ -38,7 +35,11 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     TransactionAttemptFinished,
 )
-from parallax.core.metamodel import Table
+from parallax.core.internal import storage_layout
+from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.execution import RetryPolicy
+from parallax.core.internal.metamodel import Table
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import retry_notes
 from tests._support.retry import fast_retry

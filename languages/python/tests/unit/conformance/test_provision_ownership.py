@@ -17,12 +17,12 @@ from parallax.conformance.provision import (
     RuntimeLedger,
     database_authorization,
 )
-from parallax.core.db_port import (
+from parallax.core.internal.db_port import (
     DatabaseRuntime,
     Route,
     RouteCapabilities,
 )
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresRole
 
 

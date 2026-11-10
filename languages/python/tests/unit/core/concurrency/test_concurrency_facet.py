@@ -8,21 +8,24 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import concurrency, inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT64
-from parallax.core.concurrency import (
+from parallax.core.internal import concurrency, inheritance
+from parallax.core.internal.base import INT64
+from parallax.core.internal.concurrency import (
     RULE_SET,
     ConcurrencyFacet,
     ExplicitVersion,
     TransactionTimeVersion,
 )
-from parallax.core.concurrency import _compile as concurrency_compile
-from parallax.core.concurrency._compile import compile_facet
-from parallax.core.concurrency._facet import UNVERSIONED
-from parallax.core.concurrency._rules import MULTIPLE_VERSION_ATTRIBUTES, TEMPORAL_EXPLICIT_VERSION
-from parallax.core.inheritance import _compile as inheritance_compile
-from parallax.core.metamodel import (
+from parallax.core.internal.concurrency import _compile as concurrency_compile
+from parallax.core.internal.concurrency._compile import compile_facet
+from parallax.core.internal.concurrency._facet import UNVERSIONED
+from parallax.core.internal.concurrency._rules import (
+    MULTIPLE_VERSION_ATTRIBUTES,
+    TEMPORAL_EXPLICIT_VERSION,
+)
+from parallax.core.internal.inheritance import _compile as inheritance_compile
+from parallax.core.internal.metamodel import (
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AsOfAxisLocation,
@@ -43,10 +46,10 @@ from parallax.core.metamodel import (
     TemporalDimension,
     UnresolvedEntityDeclaration,
 )
-from parallax.core.model_formation import (
+from parallax.core.internal.model_formation import (
     MetamodelValidationError,
 )
-from parallax.core.temporal_read import _compile as temporal_read_compile
+from parallax.core.internal.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metadata as fake
