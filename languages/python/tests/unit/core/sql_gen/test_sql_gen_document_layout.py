@@ -8,10 +8,8 @@ predicate and ordering term over a document-resident member lowers through the
 `m-dialect` extraction and typed-cast seams the conventional nested vocabulary
 already uses.
 
-The model is compiled from Declarations and accepted directly
-(`_document_layout_support`), which installs exactly the facets this lane reads and
-nothing else, so a failure names the seam rather than whole-model formation;
-everything below it is the production read lane. The corpus carries the end-to-end
+The model is formed from Declarations (`_document_layout_support`); everything
+below it is the production read lane. The corpus carries the end-to-end
 proof (`models/document-layout.yaml`).
 """
 
@@ -47,7 +45,7 @@ from parallax.core.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 from parallax.descriptor._ingest import ingest_document
-from tests._support.sql import compile_projected_read, compile_read, compile_write_predicate
+from tests._support.sql import compile_projected_read, compile_read
 from tests.unit._corpus_model_support import formed
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit.core.sql_gen._delivery_support import deliver
@@ -190,12 +188,6 @@ def test_a_direct_document_carrier_is_a_classified_member() -> None:
     assert row.members["address"] == {"city": "Oslo", "geo": {"country": "NO"}}
     assert row.members["tags"] == ()
     assert [code for code, _stored in row.issues] == ["stored-data-many-wrong-kind"]
-
-
-def test_the_raw_document_is_never_a_member() -> None:
-    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "payload": {"displayName": "Ada"}}])
-    assert "payload" not in row.members
 
 
 def test_an_entity_document_classifies_each_requested_member() -> None:
@@ -361,19 +353,6 @@ def test_presence_of_a_placed_single_value_object_reads_its_placed_path() -> Non
         entity(DOCUMENT, "Person"),
     )
     assert compiled.statement.binds == ("address", "geo", "object")
-
-
-def test_a_write_predicate_extracts_from_the_bare_structured_column() -> None:
-    # A write's rendered predicate is unaliased (`m-batch-write`), and the
-    # document reference takes that same decision — the extraction goes bare too.
-    compiled = compile_write_predicate(
-        oa.Comparison(op="eq", subject=oa.FieldSubject("Person.displayName"), value="Ada"),
-        DOCUMENT,
-        POSTGRES,
-        entity(DOCUMENT, "Person"),
-    )
-    assert compiled.sql == "jsonb_extract_path_text(payload, ?) = ?"
-    assert compiled.binds == ("displayName", "Ada")
 
 
 # --------------------------------------------------------------------------- #

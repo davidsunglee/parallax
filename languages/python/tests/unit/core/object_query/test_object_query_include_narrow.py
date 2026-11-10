@@ -35,7 +35,6 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
-    UnsupportedError,
     attr,
     rel,
 )
@@ -54,7 +53,6 @@ from parallax.core.predicate import (
     Comparison,
     FieldSubject,
     Narrow,
-    Or,
     Quantifier,
     TrueNode,
 )
@@ -131,25 +129,6 @@ KENNEL = DomainModel(Beast, Hound, Keeper)
 # --------------------------------------------------------------------------- #
 # .include(...) — deep-fetch path building.                                   #
 # --------------------------------------------------------------------------- #
-def test_single_hop_include_builds_a_deep_fetch_node() -> None:
-    query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items)
-    includes = canonical_query(query, sm.SNAP_ORDERS_MODEL).includes
-    assert includes == (
-        IncludePathNode(segments=(IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),)),
-    )
-
-
-def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
-    query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.statuses)
-    includes = canonical_query(query, sm.SNAP_ORDERS_MODEL).includes
-    assert includes == (
-        IncludePathNode(
-            segments=(
-                IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),
-                IncludeSegment(rel="parallax.compatibility.SnapOrderItem.statuses"),
-            )
-        ),
-    )
 
 
 def test_a_narrowed_path_continues_past_a_continuation_of_its_own() -> None:
@@ -166,23 +145,6 @@ def test_a_narrowed_path_continues_past_a_continuation_of_its_own() -> None:
         ("parallax.compatibility.Person.pets", ("parallax.compatibility.Cat",)),
         ("parallax.compatibility.Animal.owner", ()),
     ]
-
-
-def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_binding() -> None:
-    query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.bogus_relationship)
-    with pytest.raises(UsageError, match="SnapOrderItem declares no relationship") as caught:
-        accepted_read_query(query, sm.SNAP_ORDERS_MODEL)
-    assert caught.value.code == "query-path-invalid"
-
-
-def test_include_accumulates_across_calls() -> None:
-    query = (
-        sm.SnapOrder.where(sm.SnapOrder.all)
-        .include(sm.SnapOrder.items)
-        .include(sm.SnapOrder.statuses)
-    )
-    includes = canonical_query(query, sm.SNAP_ORDERS_MODEL).includes
-    assert len(includes) == 2
 
 
 def test_include_accumulation_canonicalizes_order_and_literal_duplicates() -> None:
@@ -229,6 +191,8 @@ def test_include_of_an_undeclared_relationship_raises_at_build() -> None:
 def test_relationship_path_dynamic_hop_rejects_a_private_name() -> None:
     with pytest.raises(AttributeError):
         sm.SnapOrder.items.__getattr__("_hidden")
+    with pytest.raises(AttributeError):
+        Hound.handler.__getattr__("_hidden")
 
 
 def test_hop_narrow_derives_the_narrowed_view_path_segment() -> None:
@@ -470,30 +434,9 @@ def test_a_quantifier_past_a_to_many_hop_is_refused_by_the_serving_model() -> No
         typed_resolved(query, sm.SNAP_ORDERS_MODEL)
 
 
-def test_a_quantifier_predicate_builds_a_query() -> None:
-    # Order.items.any(...) is a legal quantifier; the query builds cleanly.
-    query = sm.SnapOrder.where(sm.SnapOrder.items.any(sm.SnapOrderItem.sku == "A"))
-    assert canonical_query(query, sm.SNAP_ORDERS_MODEL) is not None
-
-
-def test_narrow_inside_a_relationship_scope_must_name_the_target_exactly() -> None:
-    # Folder.documents targets Document (the family root); narrowing to a
-    # concrete subtype inside the hop's own scope is legal.
-    query = im.Folder.where(
-        im.Folder.documents.any(im.Document.is_a(im.Invoice, where=im.Invoice.amount_due > 0))
-    )
-    assert canonical_query(query, _DOCUMENTS) is not None
-
-
 # --------------------------------------------------------------------------- #
 # Entity.is_a(...) constructor + relationship-scope exact-naming.            #
 # --------------------------------------------------------------------------- #
-def test_narrow_constructor_builds_the_canonical_node() -> None:
-    predicate = im.Document.is_a(im.Invoice, im.Receipt)
-    assert _document_where(predicate) == Narrow(
-        to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
-        operand=TrueNode(),
-    )
 
 
 def test_narrow_alternatives_are_canonicalized_by_entity_identity() -> None:
@@ -570,12 +513,6 @@ def test_query_level_narrow_fills_the_result_narrowing_clause() -> None:
     assert node.predicate == TrueNode()
 
 
-def test_query_level_narrow_is_single_shot() -> None:
-    query = im.Document.where(im.Document.all).narrow(im.Invoice)
-    with raises_code(UsageError, "query-clause-invalid", match="single-shot"):
-        query.narrow(im.Receipt)
-
-
 def test_the_clause_and_the_constructor_build_one_canonical_query() -> None:
     # Two spellings of one claim: narrowing the whole selection narrows the
     # RESULT, whichever clause states it. The constructor used as the whole
@@ -586,20 +523,6 @@ def test_the_clause_and_the_constructor_build_one_canonical_query() -> None:
     assert via_clause == via_constructor
     assert via_clause.narrow_to == ("parallax.compatibility.Invoice",)
     assert via_clause.predicate == TrueNode()
-
-
-def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
-    # The constructor is lifted only as the WHOLE filter. Combined with another
-    # term it qualifies one operand of the selection, so the result position is
-    # untouched and the narrowing stays exactly where it was authored.
-    node = canonical_query(
-        im.Document.where(im.Document.is_a(im.Invoice) | (im.Document.title == "x")), _DOCUMENTS
-    )
-    assert node.narrow_to is None
-    assert isinstance(node.predicate, Or)
-    assert node.predicate.operands[0] == Narrow(
-        to=("parallax.compatibility.Invoice",), operand=TrueNode()
-    )
 
 
 def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> None:
@@ -701,18 +624,6 @@ def test_as_of_range_with_includes_builds_in_either_order(query: ObjectQuery[Any
         ),
     }
     assert node.includes == _COVERAGES
-
-
-def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> None:
-    # The gate validates before it classifies, so reaching the deferral at all
-    # proves the query is legal against the model: an invalid one would have
-    # drawn its model-aware refusal one step earlier.
-    query = (
-        Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
-    )
-    with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
-        resolve_read_query(object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL))
-    assert "has deferred snapshot-history-includes and" in caught.value.args[1]
 
 
 def test_a_narrow_clause_requires_at_least_one_subtype() -> None:

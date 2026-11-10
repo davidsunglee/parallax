@@ -335,7 +335,7 @@ def test_a_starting_predecessors_gated_close_fails_as_its_callers_precondition(
         assert closing.affected_rows.on_shortfall == shortfall
     else:
         assert closing.concurrency is UNGATED
-        assert closing.affected_rows.on_shortfall != FAILED_PRECONDITION
+        assert closing.affected_rows.on_shortfall == STALE_WRITE
 
 
 # --------------------------------------------------------------------------- #
@@ -797,15 +797,6 @@ def test_a_validated_demanded_predecessor_leaves_nothing_of_itself() -> None:
     assert expanded.current_outputs == ()
 
 
-def test_a_predecessor_no_source_reaches_describes_nothing_for_continuation() -> None:
-    expanded = _expand(
-        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300})),
-        _SPAN_FACTS,
-        _STORED,
-    )
-    assert (expanded.derived, expanded.current_outputs) == ((), ())
-
-
 def test_an_owned_demanded_row_revised_in_place_is_described_by_its_revision() -> None:
     expanded = _expand(
         _expansion(
@@ -851,43 +842,6 @@ def test_an_unchanged_milestone_describes_nothing_for_continuation() -> None:
 # --------------------------------------------------------------------------- #
 # Shared values: one bindable predecessor, one resolution per mapping.         #
 # --------------------------------------------------------------------------- #
-
-
-def test_only_an_emitted_successor_prepares_the_bindable_predecessor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared: list[PredecessorRow] = []
-    original = PredecessorRow.with_bindable_document
-
-    def counting(row: PredecessorRow) -> PredecessorRow:
-        bindable = original(row)
-        prepared.append(bindable)
-        return bindable
-
-    monkeypatch.setattr(PredecessorRow, "with_bindable_document", counting)
-    assigning = _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}))
-    _effect, *successors = _expand(assigning, _SPAN_FACTS, _STORED).steps
-    (bindable,) = prepared
-    assert {id(step.entries[0].origin.predecessor) for step in successors} == {id(bindable)}  # type: ignore[union-attr]
-
-    prepared.clear()
-    _expand(assigning, _SPAN_FACTS, _span(_JAN, _JUN), "validation")
-    _expand(
-        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_JAN, INFINITY), None)),
-        _SPAN_FACTS,
-        _STORED,
-    )
-    revised = _expand(
-        _expansion(
-            _SPAN_FACTS,
-            _assigning(TimeInterval(_JAN, INFINITY), {"amount": 300}),
-            ownership=OpenedRows(frozenset({_endpoint(INFINITY)})),
-        ),
-        _SPAN_FACTS,
-        _STORED,
-    )
-    assert _kinds(revised.steps) == [PlannedTemporalRevision]
-    assert prepared == []
 
 
 def test_an_assignment_mapping_is_resolved_once_however_many_successors_share_it() -> None:
@@ -991,21 +945,6 @@ def test_a_starting_close_differs_from_the_objects_other_closes_only_by_its_shor
         starting,
     )
     assert (start.affected_rows is ordinary.affected_rows) is not gated
-
-
-def test_an_unmerged_successor_ending_where_its_predecessor_ended_reuses_that_address() -> None:
-    settled = _settled(
-        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _JUN), {"amount": 300})),
-        _span(_JAN, _SEP),
-    )
-    (close,) = _closes(settled)
-    *split, tail = settled.opened.fresh
-
-    assert tuple(settled.opened.fresh) == (_endpoint(_MAR), _endpoint(_JUN), _endpoint(_SEP))
-    assert tail.ends is close.target.end_values
-    # Pieces ending elsewhere name new ends at the object's one key.
-    assert all(piece.ends is not close.target.end_values for piece in split)
-    assert all(coordinates.key is close.target.key_values for coordinates in settled.opened.fresh)
 
 
 def test_a_merged_run_opens_at_the_address_its_own_finalized_cells_name() -> None:

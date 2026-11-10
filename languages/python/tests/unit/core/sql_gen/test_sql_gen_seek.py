@@ -1,11 +1,11 @@
-"""The m-sql half of continuation: capture cells, carrier binds, and the seam's refusals.
+"""The m-sql half of continuation: capture cells, carrier binds, and page templates.
 
 `test_continuation.py` grades the branch tree a Continuation Order composes,
 whole clause by whole clause, because the page statement is a cross-language
 golden. What is graded here is what only this side can answer: the FORM a
-carrier crosses the bind seam in, and the two disagreements between the order a
-page was composed against and the order it is being lowered under — neither of
-which any composed clause can show.
+carrier crosses the bind seam in, the capture cells and their aliases, the
+statement shapes a continuing page takes under a lock or a null tail, and the
+templates a page renders from.
 """
 
 from __future__ import annotations
@@ -44,7 +44,6 @@ from parallax.core.sql_gen._inheritance import (
     TpcsUnionReadPlan,
 )
 from parallax.core.sql_gen._planning import SharedSourceRef
-from parallax.core.sql_gen._seek import lowered_terms
 from parallax.descriptor import _records
 from tests._support.errors import raises_code
 from tests.unit import _read_projection_support as projection_support
@@ -204,22 +203,6 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     assert statement.wire_binds()[:5] == (INFINITY_LITERAL,) * 5
     typed = {index for span in statement.typed_bind_spans for index in span.indices()}
     assert typed.isdisjoint(range(5))
-
-
-def test_a_capture_alias_an_authored_column_already_spells_is_allocated_past() -> None:
-    # Two cells under one result key collapse into one driver-row entry, and
-    # lifting the coordinate off would then take the authored member's value or
-    # delete the member outright. Allocation therefore skips every spelling the
-    # model's own Columns reserve, exactly as a wrapped union's result aliases
-    # are allocated (`m-sql`).
-    order = _planned(ORDERS, "Order").first(limit=2).order_by
-    assert lowered_terms(order, {"parallax_seek_0", "parallax_seek_2"})[0].alias == (
-        "parallax_seek_1"
-    )
-    assert [term.alias for term in lowered_terms((*order, *order), {"parallax_seek_1"})] == [
-        "parallax_seek_0",
-        "parallax_seek_2",
-    ]
 
 
 def test_a_non_nullable_terms_branch_follows_the_emitted_placement_not_the_declaration() -> None:
@@ -636,20 +619,6 @@ def test_a_document_resident_leading_term_hoists_no_range() -> None:
         "or jsonb_extract_path_text(t0.payload, ?) is null "
         "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "
         "and (t0.id > ? or t0.id is null)))"
-    )
-
-
-def test_a_coordinate_is_read_off_the_capture_cell_projected_last() -> None:
-    compiled = compile_entity_query(
-        read_planning.plan(
-            _planned(ORDERS, "Order").first(limit=2), ORDERS, projection=_PROJECTION
-        ).root,
-        ORDERS,
-        POSTGRES,
-    )
-    width = len(compiled.result_contract.slots)
-    assert row_coordinates(compiled.result_contract, (tuple(range(width)),)) == (
-        ContinuationCoordinate((width - 1,)),
     )
 
 

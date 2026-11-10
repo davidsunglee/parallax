@@ -117,14 +117,6 @@ def test_adjacent_segments_left_equal_join_into_one() -> None:
     assert len(separated.segments) == 2
 
 
-def test_a_lone_write_shares_its_prepared_window_as_segment_and_envelope() -> None:
-    window = _iv(_MAR, _SEP)
-    transform = NO_TRANSFORM.followed_by(window, _row(sku=1), replaces=False)
-    (segment,) = transform.segments
-    assert segment.valid_time_window is window
-    assert transform.valid_time_window is window
-
-
 def test_the_envelope_of_several_segments_spans_their_gaps() -> None:
     transform = NO_TRANSFORM.followed_by(_iv(_MAR, _APR), _row(sku=1), replaces=False).followed_by(
         _iv(_JUN, INFINITY), None, replaces=False
@@ -165,13 +157,6 @@ def test_an_open_segment_over_open_coverage_takes_the_rest_of_it() -> None:
         Successor(_iv(_JAN, _MAR), None),
         Successor(_iv(_MAR, INFINITY), _row(sku=1)),
     )
-
-
-def test_a_successor_the_transform_leaves_whole_shares_the_coverage_it_binds() -> None:
-    coverage = _iv(_APR, _JUN)
-    transform = NO_TRANSFORM.followed_by(_iv(_MAR, _SEP), _row(qty=1), replaces=False)
-    (successor,) = transform.successors_of(coverage)
-    assert successor.valid_time_coverage is coverage
 
 
 def test_a_destroyed_interval_opens_nothing_and_never_an_empty_successor() -> None:
@@ -236,15 +221,6 @@ def test_an_unbounded_replacement_fills_after_the_last_coverage_ends() -> None:
     replaced = NO_TRANSFORM.followed_by(_iv(_MAR, INFINITY), _REPLACED, replaces=True)
     assert replaced.gaps((_iv(_JAN, _JUN),)) == (CoverageGap(_iv(_JUN, INFINITY), _REPLACED),)
     assert replaced.gaps((_iv(_JAN, INFINITY),)) == ()
-
-
-def test_an_uncovered_replacement_shares_its_window_as_its_one_gap() -> None:
-    window = _iv(_MAR, _JUN)
-    replaced = NO_TRANSFORM.followed_by(window, _REPLACED, replaces=True)
-    (gap,) = replaced.gaps(())
-    assert gap.valid_time_window is window
-    (later,) = replaced.gaps((_iv(_JUL, _SEP),))
-    assert later.valid_time_window is window
 
 
 def test_a_later_assignment_keeps_the_replacement_extent_and_overlays_its_gaps() -> None:

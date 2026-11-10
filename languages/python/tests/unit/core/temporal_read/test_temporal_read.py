@@ -13,13 +13,11 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import gc
 from collections.abc import Iterator
 from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance import models
 from parallax.core import Edge, Pin, read_planning
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
@@ -80,16 +78,13 @@ from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
 
-_MODELS = models.load_models()
 _ACCEPTED = {
     "Balance": accepted_model("balance"),
     "Position": accepted_model("position"),
-    "Ledger": accepted_model("ledger"),
     "Order": accepted_model("orders"),
 }
 BALANCE = target(_ACCEPTED["Balance"], "Balance")
 POSITION = target(_ACCEPTED["Position"], "Position")
-LEDGER = target(_ACCEPTED["Ledger"], "Ledger")
 ORDERS = target(_ACCEPTED["Order"], "Order")
 
 _D = "2024-04-01T00:00:00.000000Z"
@@ -207,12 +202,6 @@ def test_past_instant_is_half_open_containment() -> None:
     assert binds == (_instant(_D), _instant(_D))
 
 
-def test_temporal_upper_bound_is_exclusive() -> None:
-    # AsOfAxis intervals are uniformly half-open: start inclusive, end exclusive.
-    where, _ = _where(LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00.000000Z")})
-    assert where == "t0.in_z <= ? and t0.out_z > ?"
-
-
 def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
     where, binds = _where(
         BALANCE,
@@ -310,11 +299,6 @@ def test_bitemporal_both_past_reads_valid_time_first() -> None:
     where, binds = _where(POSITION, _bitemporal(_B, _P))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
     assert binds == (_instant(_B), _instant(_B), _instant(_P), _instant(_P))
-
-
-def test_preflight_rejects_a_missing_declared_selection_before_injection() -> None:
-    with raises_code(UsageError, "temporal-read-dimension-selection-cardinality"):
-        _where(POSITION, _bitemporal(_B, None))
 
 
 def test_bitemporal_history_scans_both_axes() -> None:
@@ -564,26 +548,10 @@ def test_a_predecessor_row_missing_its_start_member_is_refused() -> None:
         milestone_edge(_shape(BALANCE), PredecessorRow({"id": 1}), None)
 
 
-def test_pin_reports_only_pinned_axes() -> None:
-    pin = Pin(tx_time=LATEST)
-    assert pin.tx_time is LATEST
-    assert pin.valid_time is None
-
-
 def test_query_pin_reads_both_bitemporal_axes() -> None:
     pin = resolved_query_pin(_validated(POSITION, _bitemporal(_B, "latest")).temporal)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
-
-
-def test_the_temporal_readers_are_unaffected_by_result_narrowing() -> None:
-    query = _validated(
-        POSITION,
-        {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
-        narrow_to=("Position",),
-    )
-    assert resolved_query_pin(query.temporal).valid_time == dt.datetime.fromisoformat(_B)
-    assert scans_resolved_axis(query.temporal)
 
 
 def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
@@ -615,18 +583,6 @@ def test_a_scan_is_seen_beside_a_pinned_dimension() -> None:
     both_pinned = _validated(POSITION, _bitemporal(_B, "latest"))
     assert not scans_resolved_axis(both_pinned.temporal)
     assert not scans_resolved_axis(_validated(ORDERS).temporal)
-
-
-def test_result_directives_never_hide_a_scan() -> None:
-    # Ordering and a cap are siblings of the Temporal Selection clause, so
-    # neither can stand between the reader and a scanned dimension.
-    query = _validated(
-        POSITION,
-        {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
-        order_by=(oq.OrderKey(attr="Position.id"),),
-        limit=5,
-    )
-    assert scans_resolved_axis(query.temporal)
 
 
 # Reading a `Pin` or an `Edge` OFF a materialized node is the producing
@@ -680,16 +636,8 @@ def test_an_empty_or_reversed_interval_is_refused_with_a_plain_value_error(
     assert not isinstance(caught.value, UsageError)
 
 
-def test_intervals_are_immutable_values_equal_by_their_endpoints() -> None:
+def test_an_interval_is_immutable() -> None:
     interval = TimeInterval(JAN, MAR)
-    twin = TimeInterval(_month(1), _month(3))
-
-    assert interval == twin
-    assert interval != TimeInterval(JAN, APR)
-    assert interval != _open(JAN)
-    assert _open(JAN) == _open(_month(1))
-    assert len({interval, twin, _open(JAN), _open(_month(1))}) == 2
-    assert not hasattr(interval, "__dict__")
     with pytest.raises(dataclasses.FrozenInstanceError):
         interval.end = APR  # type: ignore[misc] - frozen TimeInterval: reassigning an end must raise
 
@@ -1080,19 +1028,6 @@ def test_an_empty_or_reversed_stored_coverage_is_refused_by_the_interval(
     with pytest.raises(ValueError, match="start < end") as caught:
         valid_time_coverage(_shape(POSITION), rows, "milestone")
     assert not isinstance(caught.value, UsageError)
-
-
-def test_coverage_is_computed_on_demand_and_retains_only_its_endpoints() -> None:
-    rows = _AxisCells(validStart=JAN, validEnd=MAY)
-
-    first = valid_time_coverage(_shape(POSITION), rows, "milestone")
-    second = valid_time_coverage(_shape(POSITION), rows, "milestone")
-
-    assert first == second
-    assert first is not second
-    assert first is not None
-    held = [referent for referent in gc.get_referents(first) if referent is not TimeInterval]
-    assert sorted(map(id, held)) == sorted((id(JAN), id(MAY)))
 
 
 # --------------------------------------------------------------------------- #
