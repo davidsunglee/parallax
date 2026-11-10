@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 import pytest
 
@@ -16,6 +15,7 @@ from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan
 from tests.unit import _feature_boundary_support as support
+from tests.unit._workload_digest_support import feature_digest
 
 
 def test_manifest_is_bounded_unique_and_measures_operations() -> None:
@@ -25,10 +25,43 @@ def test_manifest_is_bounded_unique_and_measures_operations() -> None:
     assert {case.window for case in support.CASES} == set(support.WINDOW_DESCRIPTIONS)
 
 
+_SOURCE: Final = Path(support.__file__).read_text(encoding="utf-8")
+
+
+def _edited(old: str, new: str) -> str:
+    assert old in _SOURCE
+    return _SOURCE.replace(old, new, 1)
+
+
 def test_digest_fingerprints_the_workload_source() -> None:
-    assert (
-        support.workload_digest() == hashlib.sha256(Path(support.__file__).read_bytes()).hexdigest()
-    )
+    assert support.workload_digest() == feature_digest(_SOURCE)
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        _SOURCE + "\nimport os.path\n",
+        _edited("from decimal import Decimal\n", "from decimal import Decimal  # moved\n\n"),
+        _edited('    """Fingerprint', '    """Revised prose.\n\n    Fingerprint'),
+        _edited("Path(__file__).read_text(", "(Path(__file__)).read_text("),
+    ],
+    ids=["import", "layout", "prose", "digest-declaration"],
+)
+def test_digest_ignores_imports_prose_layout_and_its_own_declaration(edited: str) -> None:
+    assert feature_digest(edited) == support.workload_digest()
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        _edited("_SIZES: Final = (0, 8, 128)", "_SIZES: Final = (0, 8, 64)"),
+        _edited('"workload_digest"]', '"feature_boundary_digest"]'),
+        _SOURCE + "\nEXTRA: Final = 1\n",
+    ],
+    ids=["workload-input", "export-string", "statement"],
+)
+def test_digest_moves_with_every_retained_statement(edited: str) -> None:
+    assert feature_digest(edited) != support.workload_digest()
 
 
 @pytest.mark.parametrize("size", (0, 8, 128))

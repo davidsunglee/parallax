@@ -20,8 +20,13 @@ bases with their original provenance.
 
 The current capture has five members: Snapshot delivery, write lowering, instance
 state, lifecycle overhead, and feature boundaries, with no errors, incomplete
-cells, collector failures, or adjustments. Every member names the same clean
-producing commit. Snapshot delivery is authoritative under its embedded Budget
+cells, or collector failures. Every member names the same clean producing
+commit. Its one adjustment, recorded in [conditions](current/conditions.json),
+re-stated all three workload digest families when workload source stopped
+covering import statements; no reading, sample, comparison, or measurement
+condition changed. The producing commit is not an ancestor of `main`; its
+byte-identical tree is the ancestor
+`35db6a73251be0be2149fe93763ccb5ad81e9615` that the adjustment names. Snapshot delivery is authoritative under its embedded Budget
 Contract; the other members have their own protocols and are non-authoritative.
 All 24 representative live-read cells are present, covering conventional graphs
 and finite historical transaction-time and bitemporal reads through Typed/Wire
@@ -37,9 +42,10 @@ This is an integrity check of reviewed evidence, not an attestation that the
 observations cannot be forged.
 
 Rebase and squash merges rewrite branch commits. Snapshot redigest requires an
-ancestor of the inspected checkout; write-lowering redigest accepts the exact
-resolvable producing commit after proving its captured sources and workload
-identity. Prefer capturing at a commit already on `main`, so source history
+ancestor of the inspected checkout, or a resolvable producing commit whose tree
+is byte-identical to one of its nearest ancestors'; write-lowering and
+feature-boundary redigest accept the exact resolvable producing commit after
+proving its captured sources and workload identity. Prefer capturing at a commit already on `main`, so source history
 remains available. This capture records its original reviewed branch commit.
 
 The collector ran once from 2026-11-07 23:05:30 to 2026-11-08 00:15:21 UTC, in
@@ -56,9 +62,9 @@ origins, and instrument source hashes; [durations](current/durations.json)
 record collection telemetry. The dependency lock SHA-256 is
 `452b94ef99cced1ababe01d43a2a4df79e2e7c311c48d9a37b21d6ca9ec9472e`.
 The portfolio SHA-256 is
-`c39c7f77bff5d415104ca866071b05b6c5134379bfd91189e2c27263e3f738e3`,
+`4e6911df8e207b483b6af736cf0927a0447ee9139ca2e5e8438a37fa152fcbc7`,
 conditions SHA-256 is
-`c4f998d2ffe36ec961ea1f9128f125d62e88a7b12c3bf972460605bf6c1372fc`,
+`3dc57ea18fa420061dd507cb5ec8331e69371be3347b3a6ced32ecb571bcfbd8`,
 and durations SHA-256 is
 `aa9dcc983d76b2da1fd5c6cf6c55eb13ffcd0198e0e28f4b74cdfd127e072e89`.
 
@@ -329,27 +335,34 @@ uv run --project languages/python python languages/python/tools/cost_report.py \
   --redigest languages/python/evidence/cost/current/portfolio.json
 ```
 
-The command selects stale Snapshot and write-lowering identities independently.
-For Snapshot, it proves that the measured inputs at the producing ancestor
-digest to HEAD's identity, and that the commit's own code reports HEAD's
-generated-key offset, frozen manifests, and generated dataset rows.
+The command selects each stale digest family independently: the shared one the
+Snapshot, lifecycle, and instance-state members record, write lowering's, and
+feature boundaries'. One rule proves every family. The producing commit's own
+digest code, run in a checkout of that commit through its frozen environment,
+must reproduce the recorded digest, and HEAD's digest code must give the
+producing commit's measured inputs exactly HEAD's digest. No older digest
+definition is remembered at HEAD. Snapshot also requires its producing commit
+to be an ancestor of HEAD, or to have exactly the tree of one of HEAD's nearest
+ancestors within the tool's bounded search, which the adjustment names. The
+commit's own code must report HEAD's generated-key offset, frozen manifests, and
+generated dataset rows. Write lowering and feature boundaries check each
+captured workload source hash against the exact producing commit of a clean
+tree, and write lowering uses that commit's frozen structural and scalar-type
+manifests.
 
-For write lowering, it checks each captured workload source hash against the
-exact producing commit and reconstructs that commit's recorded digest under
-either the legacy raw-source definition or the current definition. It then
-proves that executable workload syntax and the commit's frozen structural and
-scalar-type manifests equal HEAD's. The current identity includes the shared workload
-spelling helper and ignores comments, formatting, standalone documentation
-strings, and only the workload's own digest declaration. Assigned literals and
-operational expressions remain part of the identity. Prose edits therefore
-need no amendment after migration to the current definition.
+Workload source enters each digest as executable syntax. Comments, formatting,
+standalone documentation strings, import statements, and only the workload's
+own digest declaration are ignored; assigned literals, names, export strings,
+and operational expressions remain part of the identity. Prose edits and moved
+imports therefore need no amendment.
 
 All required proofs finish before writing. The command amends only stale
 workload digest fields and records their old and new values in conditions;
 readings, samples, comparisons, durations, producing provenance, and captured
 instrument hashes remain unchanged. It refuses a changed Budget Contract, a
-prior adjustment, missing producing history or source proof, or a meaningful
-workload or frozen-input change and writes nothing. Use a new capture for a
+prior adjustment, missing producing history or source proof, proof output of
+the wrong shape, or a meaningful workload or frozen-input change and writes
+nothing. Use a new capture for a
 changed measured workload. Do not amend the fixed historical bases.
 
 When a complete canonical capture failed to produce one member, re-measure that

@@ -93,7 +93,6 @@ carried by this MODULE's underscore. Never imported by production code.
 """
 
 import datetime as dt
-import hashlib
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1821,13 +1820,10 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
 
 
 def write_lowering_digest() -> str:
-    from tests.unit._workload_digest_support import WRITE_SOURCES, canonical_source
+    from tests.unit._workload_digest_support import WRITE_SOURCES, write_digest
 
-    digest = hashlib.sha256()
-    for index, relative in enumerate(WRITE_SOURCES):
-        source = (Path(__file__).parents[2] / relative).read_text(encoding="utf-8")
-        digest.update(canonical_source(source, omit_digest=index == 0))
-        digest.update(b"\0")
-    digest.update(structural_digest().encode("utf-8"))
-    digest.update(scalar_type_digest().encode("utf-8"))
-    return digest.hexdigest()
+    workspace = Path(__file__).parents[2]
+    return write_digest(
+        [(workspace / relative).read_text(encoding="utf-8") for relative in WRITE_SOURCES],
+        [structural_digest(), scalar_type_digest()],
+    )

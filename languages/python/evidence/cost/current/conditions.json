@@ -1,4 +1,45 @@
 {
+  "adjustment": {
+    "date": "2026-11-10",
+    "redigested": {
+      "members": [
+        "feature-boundary",
+        "instance-state",
+        "lifecycle-overhead",
+        "snapshot-delivery",
+        "write-lowering"
+      ],
+      "producingCommit": "5fcedc88cc601688469779e973a1b791d424ef18",
+      "treeIdenticalAncestor": "35db6a73251be0be2149fe93763ccb5ad81e9615",
+      "unchanged": "every reading, sample, comparison, and measurement condition; the producing commit's own digest code reproduces each recorded digest, and HEAD's digest code finds the producing commit's measured inputs equal to HEAD's",
+      "workloadDigests": [
+        {
+          "atCapture": "26f7387163d5743685b3887b19bb1fa79b084e601338b37761950bedd174de8b",
+          "members": [
+            "feature-boundary"
+          ],
+          "redigestedUnder": "f11a041ce587ca5424f74f0b3cf7720835afb03de49ab61154a4cf6ca46fc811"
+        },
+        {
+          "atCapture": "a6e6cc3437f5aee7ceb070ba383bee2a8ffadfa19f79e8846599ca0f81896cfe",
+          "members": [
+            "instance-state",
+            "lifecycle-overhead",
+            "snapshot-delivery"
+          ],
+          "redigestedUnder": "816363e7a904bc8c7eb061a6c65ddd8dc791735b8c0231e3bbc4057bee46335d"
+        },
+        {
+          "atCapture": "da4dbdaa85549dddcf045b56836fabaaa4bf4c76d13e251d927375d9773d994a",
+          "members": [
+            "write-lowering"
+          ],
+          "redigestedUnder": "be1c44c91276dc500502027fbb36d4206b1e42169cd7500f38b16c6e9b560208"
+        }
+      ]
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "feature-boundary": {
       "runtimes": {
