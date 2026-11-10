@@ -1323,7 +1323,7 @@
             "properties": {
               "action": {
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
-                "enum": ["read", "create", "amend", "terminate", "delete", "join"]
+                "enum": ["read", "amend", "join"]
               },
               "accessMode": {
                 "description": "The Access Mode THIS joining call's entrypoint selects, spelled as `when.uow.accessMode` is; omitted, the join is made through the outer invocation's own entrypoint. A join in the other mode than the boundary it joins is the refusal `then.outcome: access-mode-mismatch` states, and a `read-only` one names no Concurrency Preference. Legal on a `join` step alone.",

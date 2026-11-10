@@ -236,10 +236,6 @@ def run_boundary_actions[E: Entity](
     - ``amend`` advances the last-read row's amount by :data:`_BUMP` (a real,
       non-no-op change, `m-unit-work` "Empty updates issue no DML") and
       buffers it.
-    - ``create`` inserts a synthetic new account (id 90, outside the fixture
-      range 1-3) — no reachable corpus witness authors this action, but the
-      mapping is total, not partial.
-    - ``delete`` removes the last-read account.
     - ``join`` opens a joined invocation through the enclosing scope — through
       ``read_only`` or ``transact`` as the step's access mode, else the
       enclosing call's, selects — naming exactly the options the step authors,
@@ -251,16 +247,11 @@ def run_boundary_actions[E: Entity](
       scope; a qualified join derives an independent scope from the same root.
       A mode or an option the transaction was not opened with is refused there
       rather than here: the refusal under test is production's own.
-    - ``terminate`` is a loud refusal: no target declares one, and no reachable
-      corpus witness authors it either.
 
-    ``create`` and ``delete`` exist only on the account target, and are refused
-    on any other. Every writing action needs a writable context, and is refused
-    on a read-only one.
+    ``amend`` needs a writable context, and is refused on a read-only one.
 
     Returns the LAST tracked row (the closure's own return value —
-    `then.outcome: committed`'s "callback value returned" half), ``None``
-    after a ``delete``.
+    `then.outcome: committed`'s "callback value returned" half).
     """
     return cast("E | None", _run_actions(tx, list(steps), target, None, database, scope_for))
 
@@ -283,23 +274,8 @@ def _run_actions(
             edited: Entity = target.edit(current)
             _writable(tx, action).amend(edited)
             current = edited
-        elif action == "create":
-            _refuse_beyond_the_account(action, target)
-            current = Account(id=90, owner="Boundary", balance=Decimal("0.00"))
-            _writable(tx, action).insert(current)
-        elif action == "delete":
-            _refuse_beyond_the_account(action, target)
-            if current is None:
-                raise AssertionError("a `delete` action needs a prior `read` observation")
-            _writable(tx, action).delete(current)
-            current = None
         elif action == "join":
             return _join(tx, step, steps[index + 1 :], target, current, database, scope_for)
-        elif action == "terminate":
-            raise AssertionError(
-                "`terminate` has no legal target: no boundary target declares one "
-                "(no reachable boundary case authors it)"
-            )
         else:  # pragma: no cover - m-case-format's `when.boundary.action` enum is closed
             raise AssertionError(f"unrecognized boundary action {action!r}")
     return current
@@ -333,14 +309,6 @@ def _writable(tx: TxnContext | ReadOnlyTxnContext, action: str) -> TxnContext:
     if not isinstance(tx, TxnContext):
         raise AssertionError(f"a `{action}` action needs a writable transaction")
     return tx
-
-
-def _refuse_beyond_the_account(action: str, target: BoundaryTarget[Any]) -> None:
-    if target is not _ACCOUNT_TARGET:
-        raise AssertionError(
-            f"a `{action}` action is declared only on the account.yaml target "
-            "(no reachable boundary case authors it on another model)"
-        )
 
 
 def _joining_database(
