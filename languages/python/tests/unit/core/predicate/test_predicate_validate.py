@@ -4,23 +4,17 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_predicate`
 raises, alongside the representative VALID predicates that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The in-slice rejected corpus cases
-are additionally round-tripped through case normalization and the real
-validator here (not just via the engine's rejected sweep), so a regression in
-node construction, case ingress, or model resolution fails at the unit layer
-first.
+that is NOT outside the active position).
 """
 
 from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
 from parallax.core.base import INFINITY, UsageError
 from parallax.core.metamodel import AttributeMetadata
@@ -33,7 +27,6 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query import validate as query_validation
 from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
 from parallax.core.predicate import (
@@ -96,7 +89,6 @@ from parallax.descriptor._records import (
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import formed, records
 
-_MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = records("animal")
 _BALANCE = records("balance")
 _COLLECTIONS = records("predicate-collections")
@@ -108,15 +100,6 @@ _POSITION = records("position")
 _SHARED_LOCAL_NAME = records("shared-local-name")
 _TRAVERSAL = records("predicate-traversal")
 _TWIN = records("scalar-collection-layout-twin-columns")
-_MODEL_BY_FILE: Mapping[str, Metamodel] = {
-    "animal.yaml": _ANIMAL,
-    "contact.yaml": _CONTACT,
-    "customer.yaml": _CUSTOMER,
-    "orders.yaml": _ORDERS,
-    "predicate-collections.yaml": _COLLECTIONS,
-    "scalar-collection-layout-twin-columns.yaml": _TWIN,
-    "shared-local-name.yaml": _SHARED_LOCAL_NAME,
-}
 # The animal family plus one abstract subtype with no concrete descendants — the
 # only way a `to` list resolves to the empty set.
 _ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
@@ -343,62 +326,6 @@ def test_temporal_read_rejects_an_undeclared_dimension() -> None:
     }
     exc = _query_rejects("Balance", _BALANCE, temporal=undeclared)
     assert exc.code == "temporal-read-dimension-selection-cardinality"
-
-
-# --------------------------------------------------------------------------- #
-# The in-slice rejected corpus cases, round-tripped end to end.               #
-# --------------------------------------------------------------------------- #
-_REJECTED_CASE_IDS = (
-    "m-inheritance-040",
-    "m-inheritance-041",
-    "m-inheritance-042",
-    "m-inheritance-064",
-    "m-inheritance-132",
-    "m-inheritance-133",
-    "m-predicate-039",
-    "m-predicate-040",
-    "m-predicate-041",
-    "m-predicate-042",
-    "m-predicate-043",
-    "m-predicate-044",
-    "m-predicate-045",
-    "m-object-query-008",
-    "m-predicate-047",
-    "m-predicate-048",
-    "m-predicate-049",
-    "m-predicate-054",
-    "m-predicate-055",
-    "m-predicate-056",
-    "m-predicate-057",
-    "m-predicate-058",
-    "m-predicate-107",
-    "m-predicate-108",
-    "m-value-object-034",
-    "m-value-object-035",
-    "m-value-object-036",
-    "m-value-object-038",
-)
-
-
-def _load_rejected_case(case_id: str) -> case_format.Case:
-    (path,) = Path(case_format.default_cases_dir()).glob(f"{case_id}-*.yaml")
-    return case_format.load_case(path)
-
-
-@pytest.mark.parametrize("case_id", _REJECTED_CASE_IDS)
-def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) -> None:
-    case = _load_rejected_case(case_id)
-    when = cast("Mapping[str, Any]", case.document["when"])
-    then = cast("Mapping[str, Any]", case.document["then"])
-    meta = _MODEL_BY_FILE[Path(case.model).name]
-    model = formed(meta)
-    query = _case_ingress.normalize_case_query(
-        deserialize_query(cast("Mapping[str, object]", when["objectQuery"])), model
-    )
-    root = _root(model, query.target.canonical)
-    with pytest.raises(UsageError) as excinfo:
-        validate_object_query(root, query, model)
-    assert excinfo.value.code == then["rejectedRule"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1604,17 +1531,6 @@ def test_a_value_object_quantifier_judges_its_where_against_the_element() -> Non
         assert _rejects(unknown, _CUSTOMER, "Customer").code == "path-unknown-member"
     mistyped = Quantifier("any", "Customer.address.phones", _eq("type", 42))
     assert _rejects(mistyped, _CUSTOMER, "Customer").code == "neutral-literal-type-mismatch"
-
-
-@pytest.mark.parametrize(
-    "case_id", ["m-value-object-019", "m-value-object-020", "m-value-object-022"]
-)
-def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> None:
-    case = _load_rejected_case(case_id)
-    when = cast("Mapping[str, Any]", case.document["when"])
-    query = deserialize_query(cast("Mapping[str, object]", when["objectQuery"]))
-    model = formed(_CUSTOMER)
-    validate_object_query(_root(model, "Customer"), query, model)  # no raise
 
 
 def test_include_value_object_segment_rejects() -> None:

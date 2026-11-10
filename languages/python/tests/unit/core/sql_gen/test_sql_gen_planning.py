@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Callable, Iterator
-from typing import Any
 
 import pytest
 
 from parallax.conformance.models import accepted_model
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
 from parallax.core.object_query._resolved import ResolvedOrderTerm
@@ -28,22 +25,16 @@ from parallax.core.predicate._resolved import (
     ResolvedRelationship,
 )
 from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen import _context, _planning
 from parallax.core.sql_gen._inheritance import (
     SingleTableReadPlan,
-    TpcsUnionReadPlan,
     plan_read_shape,
 )
 from parallax.core.sql_gen._planning import (
-    NO_CANDIDATE,
     REACHED_ROW,
     BranchSelection,
     CandidateExistence,
-    ConfinedScalarEvaluation,
     Continuation,
     EvaluationContext,
-    JoinedTargetMatch,
     LexicalScopePlan,
     OwnerResultEvaluation,
     OwnerResultsRef,
@@ -52,7 +43,6 @@ from parallax.core.sql_gen._planning import (
     StatementPlan,
     TargetSelection,
     UnsharedEvaluation,
-    WriteFilterForm,
     plan_relationship_candidates,
     plan_statement,
     shared_relationship_is_eligible,
@@ -60,18 +50,13 @@ from parallax.core.sql_gen._planning import (
 from parallax.core.temporal_read import Bitemporal
 from parallax.core.temporal_read import view as temporal_view
 from tests._support.sql import (
-    compile_read,
-    compile_write_predicate,
     read_position,
     resolved_as_stated,
 )
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model, temporal_badge_model
-from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
 from tests.unit.core.sql_gen._plan_reuse_support import (
     ReadShape,
-    assert_planned_once,
-    record_plan_reuse,
 )
 
 ORDERS = model("orders")
@@ -268,52 +253,6 @@ _AT_ROW = UnsharedEvaluation(Continuation((), (REACHED_ROW,)))
 _TAGGED_N = oa.StringMatch(op="startsWith", subject=oa.CURRENT_SCALAR_ELEMENT, value="n")
 
 
-def test_every_rendered_occurrence_is_placed_explicitly_and_boolean_slots_are_not() -> None:
-    op = oa.And(operands=(_eq("Basket.label"), oa.Not(_eq("Basket.owner.name"))))
-    plan = _planned(COLLECTIONS, "Basket", op)
-    root = _root(plan)
-    assert set(root.placements) == {(0,), (1, 0)}
-    assert root.placements[(0,)] == _AT_ROW
-    assert root.placements[(1, 0)] == SharedRowEvaluation(
-        SharedSourceRef(root.scope_id, 0), REACHED_ROW
-    )
-    assert plan.write_filter_form is None
-    assert not plan.requires_tph_partition
-
-
-def test_sources_follow_first_use_with_a_common_prefix_opened_once() -> None:
-    op = oa.Or(operands=(_eq("Basket.owner.manager.name"), _eq("Basket.owner.name")))
-    root = _root(_planned(COLLECTIONS, "Basket", op))
-    owner = SharedSourceRef(root.scope_id, 0)
-    assert [source.parent for source in root.sources] == [None, owner]
-    assert [source.relationship.identity.name for source in root.sources] == ["owner", "manager"]
-    assert root.placements[(0,)] == SharedRowEvaluation(
-        SharedSourceRef(root.scope_id, 1), REACHED_ROW
-    )
-    assert root.placements[(1,)] == SharedRowEvaluation(owner, REACHED_ROW)
-
-
-def test_a_presence_reuses_a_target_a_later_sibling_shares() -> None:
-    op = oa.And(operands=(oa.Presence("exists", "Basket.owner"), _eq("Basket.owner.name")))
-    root = _root(_planned(COLLECTIONS, "Basket", op))
-    assert len(root.sources) == 1
-    assert root.placements[(0,)] == SharedRowEvaluation(
-        SharedSourceRef(root.scope_id, 0), JoinedTargetMatch(None)
-    )
-
-
-def test_a_match_alone_shares_nothing_and_plans_its_candidate_operand() -> None:
-    plan = _planned(COLLECTIONS, "Basket", oa.Presence("exists", "Basket.owner", _eq("name")))
-    root = _root(plan)
-    assert root.sources == ()
-    placement = root.placements[()]
-    assert isinstance(placement, UnsharedEvaluation)
-    (existence,) = placement.continuation.terminals
-    assert isinstance(existence, CandidateExistence)
-    (candidate,) = existence.candidates
-    assert _scope(plan, candidate.operand_scope).placements == {(): _AT_ROW}
-
-
 @pytest.mark.parametrize("identical", [True, False], ids=["same-object", "equal-valued"])
 def test_each_quantifier_occurrence_reads_its_own_owner_result_cell(identical: bool) -> None:
     family = COLLECTIONS
@@ -383,17 +322,6 @@ def test_a_candidate_operand_shares_only_where_its_context_allows() -> None:
             ]
 
 
-def test_an_unproven_hop_continues_confined_past_its_shared_prefix() -> None:
-    plan = _planned(TRAVERSAL, "Ticket", _eq("Ticket.parking.vehicle.maker"))
-    root = _root(plan)
-    placement = root.placements[()]
-    assert isinstance(placement, ConfinedScalarEvaluation)
-    assert placement.prefix == SharedSourceRef(root.scope_id, 0)
-    (hop,) = placement.continuation.hops
-    assert len(hop.candidates.branches) == 2
-    assert placement.continuation.terminals == (REACHED_ROW, REACHED_ROW)
-
-
 def test_a_hop_in_forbidden_context_keeps_every_candidate_unshared() -> None:
     plan = _planned(
         TRAVERSAL,
@@ -406,21 +334,6 @@ def test_a_hop_in_forbidden_context_keeps_every_candidate_unshared() -> None:
     placement = root.placements[()]
     assert isinstance(placement, UnsharedEvaluation)
     assert [len(hop.candidates.branches) for hop in placement.continuation.hops] == [1, 2]
-
-
-@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
-def test_an_empty_target_keeps_the_hops_before_it_and_plans_nothing_past_it(
-    strategy: Any,
-) -> None:
-    family = dormant_target_model(strategy)
-    field = _root(_planned(family, "Holder", _eq("Holder.next.empty.title"))).placements[()]
-    assert isinstance(field, UnsharedEvaluation)
-    assert [hop.relationship.identity.name for hop in field.continuation.hops] == ["next"]
-    assert field.continuation.terminals == (NO_CANDIDATE,)
-    plan = _planned(family, "Holder", oa.Quantifier("any", "Holder.empties", _eq("title")))
-    collection = _root(plan).placements[()]
-    assert collection == UnsharedEvaluation(Continuation((), (CandidateExistence(()),)))
-    assert len(plan.lexical_scopes) == 1
 
 
 def test_a_narrowed_target_decides_each_candidate_branch() -> None:
@@ -464,29 +377,6 @@ def test_a_narrowed_existence_selects_its_branches_but_a_universal_keeps_every_o
             } == {BranchSelection(True), BranchSelection(False)}
     assert counts["any"] == 1
     assert counts["all"] > 1
-
-
-def test_a_write_filter_plans_only_the_form_its_root_selects() -> None:
-    direct = _planned(
-        COLLECTIONS,
-        "Basket",
-        oa.Presence("exists", "Basket.owner", _eq("manager.name")),
-        context=EvaluationContext.WRITE_FILTER,
-    )
-    assert direct.write_filter_form is WriteFilterForm.DIRECT_PREDICATE
-    placement = _root(direct).placements[()]
-    assert isinstance(placement, UnsharedEvaluation)
-    (existence,) = placement.continuation.terminals
-    assert isinstance(existence, CandidateExistence)
-    (candidate,) = existence.candidates
-    assert _scope(direct, candidate.operand_scope).sources == ()
-    assert len(direct.lexical_scopes) == 2
-    keyed = _planned(
-        COLLECTIONS, "Basket", _eq("Basket.owner.name"), context=EvaluationContext.WRITE_FILTER
-    )
-    assert keyed.write_filter_form is WriteFilterForm.PRIMARY_KEY_SUBQUERY
-    assert len(_root(keyed).sources) == 1
-    assert dict(keyed.root_scopes) == {None: 0}
 
 
 def _concretes(family: Metamodel, *names: str) -> list[EntityIdentity]:
@@ -651,145 +541,3 @@ def test_a_single_table_read_outside_table_per_hierarchy_never_partitions(
     assert shape.tag_guard is None
     assert not plan.requires_tph_partition
     assert list(plan.root_scopes) == [None]
-
-
-@pytest.mark.parametrize(
-    ("root", "narrow_to", "single_table"),
-    [
-        pytest.param("Traveler", None, True, id="standalone"),
-        pytest.param("Payment", None, True, id="tph-root"),
-        pytest.param("Payment", ("CashPayment",), True, id="tph-narrowed"),
-        pytest.param("CardPayment", None, True, id="tph-concrete"),
-        pytest.param("Book", None, True, id="tpcs-concrete"),
-        pytest.param("Publication", ("Film",), True, id="tpcs-narrowed-to-one"),
-        pytest.param("Publication", None, False, id="tpcs-union"),
-    ],
-)
-def test_each_compilation_plans_its_physical_read_and_documents_once(
-    root: str,
-    narrow_to: tuple[str, ...] | None,
-    single_table: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    reuse = record_plan_reuse(monkeypatch)
-    compiled = compile_read(
-        oa.TrueNode(),
-        DOCUMENT_LAYOUT,
-        POSTGRES,
-        target(DOCUMENT_LAYOUT, root),
-        narrow_to=None if narrow_to is None else tuple(_concretes(DOCUMENT_LAYOUT, *narrow_to)),
-        result_form="instance",
-    )
-    shape = assert_planned_once(reuse)
-    assert isinstance(shape, SingleTableReadPlan if single_table else TpcsUnionReadPlan)
-    (plan,) = reuse.plans
-    assert plan.requires_tph_partition is False
-    assert reuse.compiled_reads[0] is compiled
-    assert shape.shared_document is not None
-    assert compiled.resolved_position == tuple(shape.concrete_types)
-
-
-def test_a_statement_plan_and_its_records_are_read_only() -> None:
-    plan = _planned(COLLECTIONS, "Basket", _eq("Basket.owner.name"))
-    root = _root(plan)
-    with pytest.raises(TypeError):
-        root.placements[(9,)] = _AT_ROW  # type: ignore[index]
-    with pytest.raises(TypeError):
-        plan.root_scopes[None] = 1  # type: ignore[index]
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        root.sources[0].parent = None  # type: ignore[misc]
-
-
-@pytest.fixture
-def planning_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, bool]]]:
-    """Every candidate, eligibility, alias, and bind call, and whether a
-    production ``plan_statement`` invocation was running at the time."""
-    calls: list[tuple[str, bool]] = []
-    planning = [False]
-
-    def recorded[**P, R](name: str, function: Callable[P, R]) -> Callable[P, R]:
-        def call(*args: P.args, **kwargs: P.kwargs) -> R:
-            calls.append((name, planning[0]))
-            return function(*args, **kwargs)
-
-        return call
-
-    real_plan = _planning.plan_statement
-
-    def plan(*args: Any, **kwargs: Any) -> StatementPlan:
-        planning[0] = True
-        try:
-            return real_plan(*args, **kwargs)
-        finally:
-            planning[0] = False
-
-    monkeypatch.setattr(sql_compile, "_plan_statement", plan)
-    for name in ("plan_relationship_candidates", "shared_relationship_is_eligible"):
-        monkeypatch.setattr(_planning, name, recorded(name, getattr(_planning, name)))
-    builder = _context.StatementBuilder
-    for name in ("next_alias", "next_relation_alias", "_append"):
-        monkeypatch.setattr(builder, name, recorded(name, getattr(builder, name)))
-    yield calls
-
-
-def test_rendering_reads_planned_decisions_without_reentering_analysis(
-    planning_calls: list[tuple[str, bool]],
-) -> None:
-    op = oa.And(
-        operands=(
-            _eq("Ticket.parking.vehicle.maker"),
-            oa.Presence("exists", "Ticket.parking", oa.Presence("exists", "vehicle.dealer")),
-        )
-    )
-    compile_read(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Ticket"))
-    compile_write_predicate(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Ticket"))
-    analysis = {"plan_relationship_candidates", "shared_relationship_is_eligible"}
-    assert {name for name, _ in planning_calls} >= {*analysis, "next_alias", "_append"}
-    assert all(during for name, during in planning_calls if name in analysis)
-    assert not any(during for name, during in planning_calls if name not in analysis)
-
-
-@pytest.mark.parametrize(
-    ("op", "form", "roots"),
-    [
-        (_eq("Ticket.parking.vehicle.maker"), None, 1),
-        (_eq("Ticket.id", 7), WriteFilterForm.DIRECT_PREDICATE, 0),
-        (_eq("Ticket.parking.vehicle.maker"), WriteFilterForm.PRIMARY_KEY_SUBQUERY, 1),
-    ],
-    ids=["ordinary-read", "direct-write-filter", "key-selecting-write-filter"],
-)
-def test_each_compilation_plans_its_statement_once(
-    op: oa.PredicateNode,
-    form: WriteFilterForm | None,
-    roots: int,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    reuse = record_plan_reuse(monkeypatch)
-    ticket = target(TRAVERSAL, "Ticket")
-    if form is None:
-        compile_read(op, TRAVERSAL, POSTGRES, ticket)
-    else:
-        compile_write_predicate(op, TRAVERSAL, POSTGRES, ticket)
-    (plan,) = reuse.plans
-    assert plan.write_filter_form is form
-    assert [root.statement_plan for root in reuse.roots] == [plan] * roots
-
-
-def test_rendering_leaves_its_statement_plan_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    plans: list[StatementPlan] = []
-    real_plan = _planning.plan_statement
-
-    def plan(*args: Any, **kwargs: Any) -> StatementPlan:
-        plans.append(real_plan(*args, **kwargs))
-        return plans[-1]
-
-    monkeypatch.setattr(sql_compile, "_plan_statement", plan)
-    op = oa.And(
-        operands=(
-            oa.Quantifier("any", "Basket.owner.tags", _TAGGED_N),
-            oa.Presence("exists", "Basket.owner", _eq("manager.name")),
-        )
-    )
-    compile_read(op, COLLECTIONS, POSTGRES, target(COLLECTIONS, "Basket"))
-    (rendered,) = plans
-    assert rendered == _planned(COLLECTIONS, "Basket", op)

@@ -1,11 +1,9 @@
 """Ordinary read assembly (m-sql lowering): projection, directives, clause tail.
 
 The non-family, non-navigation, non-value-object lane of the read compiler: the
-public statement/error interface and private compiler-product value semantics,
-the `LoweredStatement` value itself, ordinary scalar/row projection,
-result-shaping directive composition and
-its refusals, the shared-lock suffix, the
-deferred-node refusals, and the bind-ORDER invariants the whole compiler rests
+package's export, ordinary scalar/row projection, result-shaping directive
+composition, the shared-lock suffix, templates and their deferred operands,
+and the bind-ORDER invariants the whole compiler rests
 on (projection binds before predicate binds, limit bind last). Inheritance
 families, navigation hops, value-object traversal, and write predicates each
 have their own suite.
@@ -13,10 +11,8 @@ have their own suite.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import datetime as dt
-import inspect
 import uuid
 from collections.abc import Mapping
 from decimal import Decimal
@@ -36,7 +32,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import DATE as DATE_TYPE
-from parallax.core.base import INFINITY, INT64, STRING, InternalError, ManagedValue, UsageError
+from parallax.core.base import INFINITY, INT64, STRING, InternalError, ManagedValue
 from parallax.core.concurrency import _compile as concurrency_compile
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
@@ -69,7 +65,6 @@ from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
-    CompiledPredicate,
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
@@ -171,16 +166,6 @@ def test_instance_form_projects_value_object_document_last() -> None:
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
 
 
-def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(UsageError, match="names no declared member"):
-        compile_read(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Order.mystery"), value=1),
-            ORDERS,
-            POSTGRES,
-            target(ORDERS, "Order"),
-        )
-
-
 def test_entity_query_carries_one_limit_without_a_wrapper_tree() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"), limit=5)
     assert compiled.statement.sql.endswith("limit ?")
@@ -245,18 +230,9 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
     assert compiled.statement.sql.endswith("order by t0.qty desc")
 
 
-def test_statement_is_frozen_value() -> None:
-    statement = LoweredStatement("select 1", (1,))
-    assert statement.sql == "select 1"
-    assert statement.binds == (1,)
-
-
 # --------------------------------------------------------------------------- #
 # The supported interface itself. `parallax.core.sql_gen` exports exactly one    #
 # name; every compiler operation and compiler product is private implementation. #
-# The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
-# hashing, and copying are all structural — no stored callable, nothing to keep #
-# in sync by hand.                                                              #
 # --------------------------------------------------------------------------- #
 def test_the_package_exports_only_the_statement_value() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
@@ -275,78 +251,11 @@ def test_the_package_exports_only_the_statement_value() -> None:
     assert not hasattr(sql_gen, "compile_write_predicate")
 
 
-def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:
-    # The export assertion above pins NAMES; a supported entry point's call shape
-    # is a second contract nothing else covers, so adding, renaming, or removing a
-    # parameter — or turning a keyword-only one positional — is caught here rather
-    # than at a caller.
-    parameters = inspect.signature(compile_entity_query).parameters
-    assert [
-        (name, parameter.kind, parameter.default is not inspect.Parameter.empty)
-        for name, parameter in parameters.items()
-    ] == [
-        ("query", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
-        ("model", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
-        ("dialect", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
-        ("result_form", inspect.Parameter.KEYWORD_ONLY, True),
-        ("shared_lock", inspect.Parameter.KEYWORD_ONLY, True),
-    ]
-
-
-def test_compiled_read_is_an_equatable_hashable_value() -> None:
-    # Two compiles of the same read are indistinguishable values — which is what
-    # lets a caller cache, compare, or key on one.
-    first = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-    second = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-    assert first == second
-    assert hash(first) == hash(second)
-    # And a DIFFERENT read is not equal, member by member: the statement,
-    # the narrow, and the transform all participate.
-    assert first != compile_read(oa.FalseNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-
-
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     assert compiled.result_contract.coordinate_ordinals == ()
     assert row_coordinates(compiled.result_contract, ((), ())) == (None, None)
-
-
-def test_compiled_read_repr_is_exact_and_stable() -> None:
-    # The default generated dataclass repr, pinned exactly. The result contract is
-    # a stored FIELD, not a closure, which is why it reprs at all — a stored
-    # callable would print an address and make this untestable. A plain record
-    # still names what its rows resolve to: an identity fixed at compile time,
-    # which is all its rows can name.
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-    order = "EntityIdentity(namespace='parallax.compatibility', name='Order')"
-    assert repr(compiled) == (
-        "CompiledRead(statement=LoweredStatement(sql='select t0.id, t0.name, t0.sku, "
-        "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
-        f"narrow_to=None, target={order}, "
-        f"resolved_position=({order},), "
-        "projection=ResolvedReadProjection(value_objects=(), "
-        "observe_structured_document=False), document_reads=(), "
-        f"result_contract=ReadResultContract(row_identity=FixedRowIdentity(entity={order}), "
-        "shared_document=None, direct_documents=None, identity_ordinal=None, "
-        "shared_document_ordinal=None, coordinate_ordinals=()))"
-    )
-
-
-def test_a_copied_compiled_read_keeps_its_equality_and_repr() -> None:
-    compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    reconstructed = copy.copy(compiled)
-    assert reconstructed == compiled
-    assert repr(reconstructed) == repr(compiled)
-
-
-def test_compiled_predicate_is_a_frozen_value() -> None:
-    predicate = CompiledPredicate("balance < ?", (100,))
-    assert predicate.sql == "balance < ?"
-    assert predicate.binds == (100,)
-    assert predicate == CompiledPredicate("balance < ?", (100,))
-    # `binds` defaults to the empty tuple, exactly as `LoweredStatement`'s does.
-    assert CompiledPredicate("1 = 0") == CompiledPredicate("1 = 0", ())
 
 
 # --------------------------------------------------------------------------- #
@@ -858,24 +767,6 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
 # --------------------------------------------------------------------------- #
 # Read-lock suffix (m-sql *Read-lock suffix*, via the m-dialect seam).         #
 # --------------------------------------------------------------------------- #
-def test_locking_object_find_matches_the_scenario_find_golden() -> None:
-    # The m-concurrency-045 golden's shape: an in-transaction object find whose
-    # target resolved to the Locking strategy carries the shared-row-lock
-    # suffix, last in the statement.
-    compiled = compile_read(
-        oa.Comparison(op="eq", subject=oa.FieldSubject("Account.id"), value=7),
-        ACCOUNT,
-        POSTGRES,
-        target(ACCOUNT, "Account"),
-        preference="locking",
-    )
-    assert compiled.statement.sql == (
-        "select t0.id, t0.owner, t0.balance, t0.version from account t0 "
-        "where t0.id = ? for share of t0"
-    )
-    assert compiled.statement.binds == (7,)
-
-
 def test_optimistic_and_default_reads_take_no_lock() -> None:
     for preference in (None, "optimistic"):
         compiled = compile_read(

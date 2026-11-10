@@ -1,16 +1,17 @@
 """Value-object predicate lowering (m-sql / m-value-object).
 
 Dotted value-object field extraction, the to-many array traversal a
-quantifier opens, single value-object presence, and every malformed-path
-refusal either side of the implemented lowering.
+quantifier opens, single value-object presence, and the element scope's
+refusal. Path refusals are the validator's, pinned in
+`test_predicate_validate.py`.
 
-The 8 in-slice corpus cases (`m-value-object-015..-022`, customer.yaml's
-`address.phones`) are the byte-exact acceptance surface (`test_compile_sweep` /
-`test_run_sweep`); these unit tests isolate seams the corpus alone would not pin
-as clearly: the guard fragment's exact shape, alias continuation, the deliberate
-absence of a Postgres negation `coalesce`, and paths the in-slice model does not
-happen to exercise (an intermediate nested VO before the `many` hop, and a
-top-level `many` value object).
+The corpus cases over customer.yaml's `address.phones` are the byte-exact
+acceptance surface (`test_compile_sweep` / `test_run_sweep`); these unit tests
+isolate seams the corpus alone would not pin as clearly: the guard fragment's
+exact shape, alias continuation, the deliberate absence of a Postgres negation
+`coalesce`, and paths the corpus model does not happen to exercise (an
+intermediate nested VO before the `many` hop, and a top-level `many` value
+object).
 """
 
 from __future__ import annotations
@@ -278,52 +279,6 @@ def test_string_predicates_lower_inside_a_quantifier() -> None:
     )
 
 
-def test_malformed_value_object_paths() -> None:
-    with pytest.raises(UsageError):
-        compile_read(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address"), value="x"),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-    with pytest.raises(UsageError):
-        compile_read(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.mystery.city"), value="x"),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-    with pytest.raises(UsageError):
-        compile_read(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.mystery"), value="x"),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-
-
-def test_a_path_continuing_past_a_scalar_is_refused() -> None:
-    with pytest.raises(UsageError):
-        compile_read(
-            oa.Comparison(
-                op="eq", subject=oa.FieldSubject("Customer.address.city.extra"), value="x"
-            ),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-
-
-def test_a_path_ending_on_a_value_object_is_refused() -> None:
-    with pytest.raises(UsageError):
-        compile_read(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.geo"), value="x"),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-
-
 def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
     # A top-level Value Object occupies ONE `Document` slot however early its
     # owner declares it: the layout's `Document` tier follows every scalar tier,
@@ -512,7 +467,7 @@ def test_none_where_negates_the_same_element_check() -> None:
 
 
 def test_a_quantifier_where_composes_or_not_and_group() -> None:
-    # Not corpus-covered (the 8 in-slice cases only exercise a bare `and`/single
+    # Not corpus-covered (the corpus cases exercise only a bare `and` or a single
     # leaf inside `where`) — the scoped `elementPredicate` grammar also admits
     # `or`/`not`/`group`, element-relative and same-element exactly like `and`.
     op = oa.Quantifier(
@@ -685,45 +640,6 @@ def test_presence_of_a_single_value_object_tests_for_an_object() -> None:
     assert absent.statement.sql.endswith(
         "where not coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)"
     )
-
-
-@pytest.mark.parametrize(
-    "op",
-    [
-        pytest.param(oa.Quantifier("any", path="Customer.address.geo"), id="quantified-single"),
-        pytest.param(oa.Presence("exists", "Customer.address.phones"), id="present-many"),
-        pytest.param(
-            oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.phones"), value="x"),
-            id="compared-array",
-        ),
-        pytest.param(oa.Quantifier("any", path="Customer.address.city"), id="quantified-scalar"),
-    ],
-)
-def test_an_operation_over_the_wrong_terminal_kind_is_refused(op: oa.PredicateNode) -> None:
-    with raises_code(UsageError, "path-target-kind-mismatch"):
-        compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
-
-
-def test_a_dotted_path_through_a_many_value_object_is_refused() -> None:
-    with raises_code(UsageError, "path-crosses-many"):
-        compile_read(
-            oa.Comparison(
-                op="eq", subject=oa.FieldSubject("Customer.address.phones.number"), value="x"
-            ),
-            CUSTOMER,
-            POSTGRES,
-            target(CUSTOMER, "Customer"),
-        )
-
-
-def test_an_unknown_element_member_is_refused() -> None:
-    op = oa.Quantifier(
-        "any",
-        path="Customer.address.phones",
-        where=oa.Comparison(op="eq", subject=oa.FieldSubject("mystery"), value="x"),
-    )
-    with pytest.raises(UsageError):
-        compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
 
 
 def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> None:

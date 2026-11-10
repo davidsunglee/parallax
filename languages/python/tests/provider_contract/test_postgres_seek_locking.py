@@ -1,26 +1,36 @@
+"""Compiled locking continuation pages, executed against the provider."""
+
 from __future__ import annotations
 
 from contextlib import closing
 
 import pytest
 
-from parallax.conformance import concurrency_runner, provision
+from parallax.conformance import concurrency_runner, models, provision
 from parallax.conformance.concurrency_runner import ConcurrencyStep
 from parallax.conformance.profile import ProvisionedRun
 from parallax.core import continuation, read_planning
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.predicate import TrueNode
 from parallax.core.sql_gen._compile import compile_read, compile_template
-from tests.unit._corpus_model_support import model, target
+
+
+def _model(stem: str) -> Metamodel:
+    return models.load_model(models.default_models_dir() / f"{stem}.yaml")
+
+
+def _target(metamodel: Metamodel, name: str) -> EntityMetadata:
+    return next(entity for entity in metamodel.entities if entity.identity.name == name)
 
 
 def test_locking_continuation_binds_document_coordinates_in_projection_order(
     profile_run: ProvisionedRun,
 ) -> None:
-    metamodel = model("document-layout")
-    entity = target(metamodel, "Trip")
+    metamodel = _model("document-layout")
+    entity = _target(metamodel, "Trip")
     query = object_query(
         entity.identity,
         TrueNode(),
@@ -58,8 +68,8 @@ def test_locking_continuation_binds_document_coordinates_in_projection_order(
 def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
     profile_run: ProvisionedRun, locked_id: int
 ) -> None:
-    metamodel = model("predicate-traversal")
-    entity = target(metamodel, "Vehicle")
+    metamodel = _model("predicate-traversal")
+    entity = _target(metamodel, "Vehicle")
     query = object_query(
         entity.identity,
         TrueNode(),
