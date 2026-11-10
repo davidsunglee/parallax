@@ -196,7 +196,9 @@ class _CountingDatabase(ScopedDatabase):
 
     def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
         observation = LifecycleObservation()
-        root = Database(adapter.open(), model, clock=clock, lifecycle_provider=observation.provider)
+        root = own_root(
+            Database(adapter.open(), model, clock=clock, lifecycle_provider=observation.provider)
+        )
         scoped = cast("Any", root.using_database_login())
         object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)
