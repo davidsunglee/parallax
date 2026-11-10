@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from operator import itemgetter
 from typing import Final, cast
@@ -11,7 +11,6 @@ from parallax.core.base import (
     JSON,
     STRING,
     InternalError,
-    Json,
     ManagedValue,
     NeutralType,
 )
@@ -236,11 +235,11 @@ class EntityStorage:
                 )
         self.slots: tuple[_Slot, ...] = tuple(slots)
         self.interval_members: frozenset[AttributeIdentity] = frozenset(intervals)
-        self.scalars: Mapping[AttributeIdentity, bool] = {
-            binding.identity: isinstance(binding.type, Json)
+        self.scalars: frozenset[AttributeIdentity] = frozenset(
+            binding.identity
             for binding in bindings
             if isinstance(binding, AttributeMetadata) and binding.identity not in intervals
-        }
+        )
         self._rows: dict[int, RowSlots] = {}
         self._assignments: dict[int, AssignmentPlacement] = {}
         self._effects: dict[EffectShape, EffectSlots] = {}

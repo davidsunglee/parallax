@@ -6,7 +6,6 @@ from typing import cast
 from parallax.core.base import (
     Bytes,
     Date,
-    Json,
     ManagedValue,
     NeutralType,
     String,
@@ -14,7 +13,6 @@ from parallax.core.base import (
     Timestamp,
     UsageError,
     Uuid,
-    retain_document_value,
 )
 from parallax.core.wire import (
     WireValue,
@@ -106,13 +104,12 @@ def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> t
 
 def encode_managed_leaf(neutral_type: NeutralType, value: object) -> object:
     """:func:`encode_leaf`'s spelling of a value already admitted under exactly
-    ``neutral_type``, retained recursively immutable.
+    ``neutral_type``.
 
     Nothing here checks membership, so a value outside that space has no
     defined result rather than a refusal.
     """
-    encoded = encode_managed_wire(neutral_type, cast("ManagedValue", value))
-    return retain_document_value(encoded) if isinstance(neutral_type, Json) else encoded
+    return encode_managed_wire(neutral_type, cast("ManagedValue", value))
 
 
 def encode_managed_scalar_many(

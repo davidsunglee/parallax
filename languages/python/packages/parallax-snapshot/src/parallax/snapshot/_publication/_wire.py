@@ -8,7 +8,6 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity, Read
 from parallax.core.base import (
     INFINITY_LITERAL,
     TIMESTAMP,
-    Json,
     ManagedValue,
     NeutralType,
     TemporalBound,
@@ -660,9 +659,7 @@ class _WireScalarCache:
 
     Advancing a Page drops everything older than its predecessor. Equal values
     repeated across a boundary still reuse their encoded object, while values
-    visited only once cannot accumulate with the delivery position. A Json
-    value is always encoded afresh: Python equality joins JSON kinds that Wire
-    keeps apart, such as ``true`` and ``1``.
+    visited only once cannot accumulate with the delivery position.
     """
 
     __slots__ = ("_current", "_previous")
@@ -676,8 +673,6 @@ class _WireScalarCache:
         self._current = {}
 
     def __call__(self, neutral_type: NeutralType, value: ManagedValue) -> object:
-        if type(neutral_type) is Json:
-            return encode_managed_wire(neutral_type, value)
         try:
             key = (neutral_type, value)
             held = self._current.get(key, ABSENT)
