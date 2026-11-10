@@ -130,7 +130,6 @@ from parallax.core.write_plan import (
     ObjectKey,
     ObjectStateKey,
     StateObservation,
-    TemporalObservation,
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
@@ -246,16 +245,6 @@ class LoweredStep:
     rollback: bool
 
 
-# What ONE grouped find step retained, in the order production filed it. A later
-# write step of the same group names that step with `on` and settles against the
-# record of its OWN key (`m-case-format` "Settling against a grouped find").
-RetainedObservations = tuple[RetainedObservation, ...]
-
-# Compile receives no query-result observations; explicit named observations are
-# retained only for compile composition tests.
-GroupRetainedObservations = list[RetainedObservation]
-
-
 @dataclass(frozen=True, slots=True)
 class _ResolvedWrite:
     """A compile instruction and the observation its simulated unit retains."""
@@ -284,53 +273,12 @@ def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
     return bool(family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
 
 
-def _build_temporal_instruction(
-    submission: Submission,
-    model: AcceptedMetamodel,
-    prepare: WirePreparer,
-    source: RetainedObservations | None,
-) -> _ResolvedWrite:
+def _build_temporal_instruction(submission: Submission, prepare: WirePreparer) -> _ResolvedWrite:
     instruction = submission.instruction
     assert isinstance(instruction, KeyedWriteInstruction)
     prepared = prepare(instruction)
     assert isinstance(prepared, PreparedKeyedInstruction)
-    if source is None or instruction.mutation in INSERT_MUTATIONS:
-        return _ResolvedWrite(prepared, None)
-    entity = case_entity(model, instruction.entity)
-    observation = _observation_from_source(
-        entity.identity.canonical, object_key(prepared, model), source
-    )
-    assert isinstance(observation, TemporalObservation)
-    return _ResolvedWrite(prepared, observation)
-
-
-def _observation_from_source(
-    entity_name: str, pk_key: ObjectKey | None, source: RetainedObservations
-) -> StateObservation:
-    """The observation a write is supplied with when its step named the find it
-    came from (`m-case-format` *Settling against a grouped find*).
-
-    The named find's own record for this key is what production retained onto the
-    value the write is handed, so the simulated unit of work plans with the state
-    the read actually saw rather than a coordinate this engine re-derived and
-    hoped agreed. That is what makes a store keyed by identity alone observably wrong
-    here: a key holding several current rectangles — or, on a versioned target,
-    several observed generations of one row — has no single answer, while the
-    retained record names exactly one.
-
-    A named find that observed no row of this key — or several, which no single
-    value could have come from — is an authoring defect, refused here where the
-    diagnosis can name the step.
-    """
-    matched = [record for record in source if record.key.object == pk_key]
-    if len(matched) != 1:
-        raise UnclassifiedEngineError(
-            f"{entity_name!r}: the find step this write settles against observed "
-            f"{len(matched)} rows of {pk_key!r} — a keyed write settles against the ONE "
-            "observed state the value it was handed came from (m-case-format 'Settling "
-            "against a grouped find')"
-        )
-    return matched[0].evidence
+    return _ResolvedWrite(prepared, None)
 
 
 def is_predicate_write_step(raw_write: object) -> bool:
@@ -463,8 +411,6 @@ def _build_instructions(
     entry: Mapping[str, object],
     model: AcceptedMetamodel,
     prepare: WirePreparer,
-    group_observations: GroupRetainedObservations,
-    source: RetainedObservations | None,
     submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
     entity_name = _keyed_entry_entity(entry)
@@ -472,7 +418,7 @@ def _build_instructions(
     if "row" in entry:
         return [_ResolvedWrite(prepare(parsed[0].instruction), None)]
     if _is_temporal_entity(model, entity_name):
-        return [_build_temporal_instruction(parsed[0], model, prepare, source)]
+        return [_build_temporal_instruction(parsed[0], prepare)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     binds_observations = _binds_row_observations(model, entity_name, mutation, raw_rows)
@@ -483,18 +429,11 @@ def _build_instructions(
         row = _seed_insert_version(model, entity_name, mutation, instruction.rows[0])
         prepared = prepare(replace(instruction, rows=(row,)))
         assert isinstance(prepared, PreparedKeyedInstruction)
-        observation: StateObservation | None = submission.declared_observation
-        if binds_observations and mutation not in INSERT_MUTATIONS:
-            key = object_key(prepared, model)
-            if observation is None and key is not None:
-                if source is not None:
-                    observation = _observation_from_source(entity_name, key, source)
-                else:
-                    observed = _observed_for(group_observations, key)
-                    if observed is not None:
-                        observation = observed.evidence
-        else:
-            observation = None
+        observation = (
+            submission.declared_observation
+            if binds_observations and mutation not in INSERT_MUTATIONS
+            else None
+        )
         result.append(_ResolvedWrite(prepared, observation))
     return result
 
@@ -516,29 +455,10 @@ def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
     return cast("str", entry["entity"])
 
 
-def _observed_for(
-    observations: GroupRetainedObservations, key: ObjectKey
-) -> RetainedObservation | None:
-    """The LATEST claim this group's finds retained for ``key``, or ``None``.
-
-    Latest rather than first: a versioned Non-Temporal target holds one row per
-    primary key, so a second find of it reads whatever state the row now stands
-    in, and a write this group authors next settles against that reading rather
-    than against a stale one. Production keeps every observed state distinct and
-    lets each source value name its own; an ordered store scanned from the end
-    is how a lane holding instructions instead of values reaches the same one.
-    """
-    for record in reversed(observations):
-        if record.key.object == key:
-            return record
-    return None
-
-
 def _resolve_entries(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
     prepare: WirePreparer,
-    group_observations: GroupRetainedObservations,
     submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
     """Resolve compile submissions into the writes a simulated unit buffers."""
@@ -549,7 +469,7 @@ def _resolve_entries(
         count = len(cast("Sequence[object]", entry["rows"])) if "rows" in entry else 1
         own = parsed[position : position + count]
         position += count
-        resolved.extend(_build_instructions(entry, model, prepare, group_observations, None, own))
+        resolved.extend(_build_instructions(entry, model, prepare, own))
     return resolved
 
 
@@ -803,7 +723,6 @@ def lower_writes(
     dialect: Dialect,
     concurrency: ConcurrencyPreference,
     tx_instant: str,
-    group_observations: GroupRetainedObservations,
     *,
     rollback: bool,
 ) -> tuple[LoweredStatement, ...]:
@@ -819,7 +738,7 @@ def lower_writes(
         )
         _check_statement_count_consistency(entries, len(statements))
         return statements
-    resolved = _resolve_entries(entries, model, prepare, group_observations, translated)
+    resolved = _resolve_entries(entries, model, prepare, translated)
     with _simulated_unit(model, dialect, concurrency, tx_instant, rollback=rollback) as unit:
         for write in resolved:
             unit.buffer(write)
@@ -969,7 +888,6 @@ def _lower_scenario_step(
         dialect,
         context.concurrency,
         entry_instant(entries[0]),
-        [],
         rollback=rollback,
     )
     return LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
@@ -1026,7 +944,7 @@ def _lower_group(
                 entries = write_entries(raw_write)
                 submissions = read_submissions(model, entries)
                 _refuse_group_markers(submissions)
-                for write in _resolve_entries(entries, model, context.prepare, [], submissions):
+                for write in _resolve_entries(entries, model, context.prepare, submissions):
                     unit.buffer(write)
                 state.buffered.append((index, len(unit.statements)))
             lowered.append(
@@ -1109,14 +1027,12 @@ def _write_sequence_lowered(
 ) -> list[tuple[str, tuple[LoweredStatement, ...]]]:
     """Lower each writeSequence entry independently to ``(pointer, statements)``,
     each as its own simulated transaction. A writeSequence carries no find steps at all
-    (`m-case-format`), so its own group observation store stays permanently
-    empty — a keyed write's Version Observation still comes from its row's own
+    (`m-case-format`), so a keyed write's Version Observation comes from its row's own
     ``observedVersion`` control key."""
     model = load_case_metamodel(case)
     prepare = case_wire_preparer(model)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
-    group_observations: GroupRetainedObservations = []
     try:
         return [
             (
@@ -1128,7 +1044,6 @@ def _write_sequence_lowered(
                     dialect,
                     concurrency,
                     entry_instant(entry),
-                    group_observations,
                     rollback=False,
                 ),
             )

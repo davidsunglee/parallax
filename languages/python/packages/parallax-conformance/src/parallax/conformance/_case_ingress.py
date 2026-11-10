@@ -116,8 +116,7 @@ def decode_case_row(
     document's own and are not judged here.
     """
     position = inheritance.view(model).entity(entity.identity)
-    if position is None:  # pragma: no cover - every accepted Entity has a view
-        raise ValueError(f"{entity.identity.canonical}: no inheritance position")
+    assert position is not None  # the facet covers every accepted Entity
     shape = position.member_selection.shape
     undeclared = sorted(name for name in row if shape.position(name) is None)
     if undeclared:
@@ -422,8 +421,7 @@ def _entity_members(
     model: AcceptedMetamodel, entity: EntityMetadata
 ) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
     position = inheritance.view(model).entity(entity.identity)
-    if position is None:
-        return {}
+    assert position is not None  # the facet covers every accepted Entity
     return {
         **{member.identity.name: member for member in position.applicable_attributes},
         **{member.identity.path[-1]: member for member in position.applicable_value_objects},

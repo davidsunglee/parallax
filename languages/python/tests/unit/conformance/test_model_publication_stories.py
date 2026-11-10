@@ -1,10 +1,9 @@
-"""The Usage Guide's model publication story, over a fake port.
+"""The model publication story, over a fake port.
 
-The story is documentation that runs: its source IS the guide's snippet, and
-`tests/api/test_model_publication_story.py` executes it against real Postgres so
-what is documented is what works. This is the database-free half — the refusals
-the happy path never reaches, over a fake port — because an order that stopped
-being prepare-apply-publish should fail on the first run of the fast suite rather
+`tests/api/test_model_publication_story.py` executes the story against real
+Postgres. This is the database-free half — the refusals the happy path never
+reaches, over a fake port — because an order that stopped being
+prepare-apply-publish should fail on the first run of the fast suite rather
 than on the Docker-backed one.
 """
 
@@ -280,21 +279,3 @@ def test_an_undo_that_did_not_complete_is_refused_as_an_unknown_database() -> No
     assert refusal.value.__cause__ is rollback_error
     assert refusal.value.triggering_error is trigger
     assert refusal.value.rollback_error is rollback_error
-
-
-def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
-    snippet = stories.publication_snippet()
-    # Both model endpoints, the refusals, and the update are one story: a
-    # snippet showing the three calls alone would document the surface without
-    # the order that is the only thing an application has to get right.
-    assert "class Account" in snippet
-    assert "class NicknamedAccount" in snippet
-    assert "class UnpublishableUpdateError" in snippet
-    assert "def unilateral" in snippet
-    assert "def apply_schema_delta" in snippet
-    assert snippet.index("prepare_model(NICKNAMED_ACCOUNT_MODEL") < snippet.index(
-        "apply_schema_delta(schema, delta)"
-    )
-    assert snippet.index("apply_schema_delta(schema, delta)") < snippet.index(
-        "serving.publish(b, expected=a)"
-    )

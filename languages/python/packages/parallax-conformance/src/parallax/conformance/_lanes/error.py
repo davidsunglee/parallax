@@ -28,10 +28,9 @@ def _error_trigger(
         )
     trigger: list[tuple[str, tuple[object, ...]]] = []
     for entry in cast("list[Mapping[str, object]]", raw):
-        sql = entry["sql"]
-        text = cast("Mapping[str, str]", sql)[dialect_name] if isinstance(sql, Mapping) else sql
+        text = cast("Mapping[str, str]", entry["sql"])[dialect_name]
         binds = entry.get("binds", [])
-        trigger.append((cast("str", text), tuple(cast("list[object]", binds))))
+        trigger.append((text, tuple(cast("list[object]", binds))))
     return trigger
 
 

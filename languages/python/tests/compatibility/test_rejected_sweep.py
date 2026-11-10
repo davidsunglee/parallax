@@ -90,7 +90,7 @@ def test_rejected_sweep(case: case_format.Case) -> None:
 
 
 def test_reachable_rejected_population_is_non_empty() -> None:
-    assert _REACHABLE_REJECTED, "the reachable intersection lost its rejected-shape cases"
+    assert _REACHABLE_REJECTED, "the reachable selection lost its rejected-shape cases"
 
 
 def test_reachable_rejected_population_spans_every_when_kind() -> None:

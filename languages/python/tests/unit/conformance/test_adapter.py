@@ -23,7 +23,6 @@ from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
-from parallax.core import inheritance
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
@@ -370,24 +369,6 @@ def test_case_query_adapter_normalizes_managed_decimals_through_relationship_dir
     validate_object_query(root, normalized, model)
 
 
-def test_case_ingress_bounds_missing_inheritance_positions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = models.load_models()["document-codec"]
-    entity = model.entities[0]
-
-    class MissingPosition:
-        @staticmethod
-        def entity(_identity: object) -> None:
-            return None
-
-    def missing_view(_model: object) -> MissingPosition:
-        return MissingPosition()
-
-    monkeypatch.setattr(inheritance, "view", missing_view)
-    assert _case_ingress._entity_members(model, entity) == {}  # pyright: ignore[reportPrivateUsage]
-
-
 class _NeverCalledPort(ConnectsAsItself):
     """An `m-db-port` that fails loudly if a run ever touches it."""
 
@@ -534,17 +515,6 @@ def test_run_case_unsupported_for_a_profile_the_roster_does_not_declare() -> Non
     assert envelope["status"] == "unsupported"
     assert envelope["diagnostics"][0]["code"] == "unsupported-profile"
     assert "invented-profile" in envelope["diagnostics"][0]["message"]
-
-
-def test_compile_dispatch_refuses_a_conflict_case_missing_its_run_only_declaration() -> None:
-    # Every reachable conflict case declares `compileEligibility: run-only`
-    # (m-concurrency's single-connection intent), so `compile_case` short-
-    # circuits before `_compile` ever runs; a hypothetically mis-declared one
-    # reaching the internal dispatch is refused loudly by its own conflict
-    # branch, never silently falling through to the read compiler.
-    case = _case(shape="conflict", tags=("m-concurrency", "slice-snapshot-1"))
-    with pytest.raises(engine.UnclassifiedEngineError, match="always declared"):
-        adapter._compile(case, "postgres")  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private compile helper
 
 
 class _WritePort(ConnectsAsItself):

@@ -61,12 +61,8 @@ from parallax.core.execution import (
     TxnOptions,
 )
 from parallax.core.execution_lifecycle import DatabaseCallStarted
-from parallax.core.metamodel import (
-    EntityIdentity,
-)
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     MISSING_TARGET,
     OPTIMISTIC_LOCK_CONFLICT,
@@ -74,17 +70,9 @@ from parallax.core.unit_work import (
     AdmittedWrite,
     InsertionIdentity,
     ReadAuthorizedWrite,
-    RetainedObservation,
     UnitOfWork,
     WriteEffectCode,
 )
-from parallax.core.write_plan import (
-    ObjectKey,
-    PredecessorRow,
-    TemporalObservation,
-    VersionObservation,
-)
-from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.managed_row import named_members
 from parallax.core.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from tests._support.case_corpus import case as corpus_case
@@ -99,8 +87,8 @@ def _case(case_id: str) -> case_format.Case:
 
 
 def _load_case(case_id: str) -> case_format.Case:
-    # Loads by id directly from the corpus, independent of `sweep.
-    # IMPLEMENTED_MODULES` reachability: these engine-function-level tests
+    # Loads by id directly from the corpus, independent of sweep
+    # reachability: these engine-function-level tests
     # exercise `run_conflict_case` on its own terms, never gated on whether
     # the case has ALSO been flipped visible in the sweep.
     return corpus_case(case_id)
@@ -494,160 +482,6 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         scenario._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             "m-unit-work-999-synthetic.yaml", steps
         )
-
-
-_JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-_APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-
-_POLICY = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),))
-
-
-def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
-    """One node a grouped find of a bitemporal `Policy` published: production's
-    own identity and Object State Key for it, beside the milestone it is."""
-    members: dict[str, object] = {
-        "id": 1,
-        "name": name,
-        "validStart": valid_start,
-        "validEnd": valid_end,
-        "txStart": _APR,
-        "txEnd": INFINITY,
-    }
-    return RetainedObservation(
-        TemporalObjectStateKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
-        TemporalObservation(predecessor=PredecessorRow(members=members)),
-        None,
-    )
-
-
-def _settled(source: Any) -> Any:
-    return scenario._observation_from_source(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-        "Policy", _POLICY, source
-    )
-
-
-def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> None:
-    # A milestone chain holds more than one row per primary key, so one find may
-    # return several and each is evidence about the milestone it actually is. The
-    # write is supplied the ONE the write step's own `on` reference named —
-    # production's own retained record rather than a coordinate this engine
-    # re-derived.
-    head = _policy_node(_JAN, _JUN, "head")
-    tail = _policy_node(_JUN, INFINITY, "tail")
-    for node, expected in ((head, "head"), (tail, "tail")):
-        observation = _settled((node,))
-        assert isinstance(observation, TemporalObservation)
-        assert observation.predecessor.members["name"] == expected
-
-
-def test_a_settled_write_refuses_a_find_that_observed_no_row_of_its_key() -> None:
-    # The reference names evidence that does not exist — an authoring defect,
-    # refused where the diagnosis can name it rather than silently unobserved.
-    with pytest.raises(UnclassifiedEngineError, match="settles against observed 0 rows"):
-        _settled(())
-
-
-def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() -> None:
-    # No single value could have come from two milestones, so a reference that
-    # resolves to both names nothing a write could have been handed.
-    with pytest.raises(UnclassifiedEngineError, match="settles against observed 2 rows"):
-        _settled((_policy_node(_JAN, _JUN, "head"), _policy_node(_JUN, INFINITY, "tail")))
-
-
-def _account_node(version: int) -> Any:
-    """One node a grouped find of the versioned `Account` published."""
-    key = ObjectKey(EntityIdentity("parallax.compatibility", "Account"), (("id", 1),))
-    return RetainedObservation(
-        VersionedObjectStateKey(key, version), VersionObservation(observed_version=version), None
-    )
-
-
-def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None:
-    # A versioned Non-Temporal target holds one ROW per primary key, but a unit of
-    # work holds one observed GENERATION of it per read: a group that observes the
-    # row, writes it, and reads it again holds two, and the reference is what says
-    # which of them a write settles against. A store keyed by identity alone
-    # answers only the latest, so the earlier generation would be unreachable.
-    meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
-
-    def settle(node: Any) -> object:
-        write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
-            meta,
-            scenario.case_wire_preparer(meta),
-            [],
-            (node,),
-        )[0]
-        return write.supplied_observation
-
-    assert settle(_account_node(1)) == _account_node(1).evidence
-    assert settle(_account_node(4)) == _account_node(4).evidence
-
-
-def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -> None:
-    # The reference names evidence that does not exist, and a write with no
-    # evidence at all is refused where every unobserved keyed write is.
-    meta = model_facts.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(UnclassifiedEngineError, match="observed 0 rows"):
-        scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
-            meta,
-            scenario.case_wire_preparer(meta),
-            [],
-            (),
-        )
-
-
-def _balance_node(tx_start: str, value: str) -> Any:
-    """One node a grouped find of a Transaction-Time-Only `Balance` published."""
-    key = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
-    start = dt.datetime.fromisoformat(tx_start)
-    members: dict[str, object] = {
-        "id": 1,
-        "acctNum": "A",
-        "value": decimal.Decimal(value),
-        "txStart": start,
-        "txEnd": INFINITY,
-    }
-    return RetainedObservation(
-        TemporalObjectStateKey(key, Edge(tx_time=start)),
-        TemporalObservation(predecessor=PredecessorRow(members=members)),
-        None,
-    )
-
-
-def test_a_settled_write_resolves_a_transaction_time_only_targets_named_milestone() -> None:
-    # The arm an "is it temporal?" test cannot reach, and the one a Bitemporal-only
-    # restriction would deny: a Transaction-Time-Only key holds one CURRENT
-    # milestone but is read at as-of Transaction-Time coordinates resolving to
-    # milestones of any age, so a group that reads the current milestone and then
-    # reads the same key as of an earlier instant holds two pieces of evidence
-    # about one key. The write settles against whichever find it names — which a
-    # store keyed by identity alone could not answer, because the second read would
-    # have erased the first.
-    meta = model_facts.load_case_metamodel(_case("m-temporal-write-001"))
-    current = _balance_node("2024-04-01T00:00:00+00:00", "100.00")
-    historical = _balance_node("2024-01-01T00:00:00+00:00", "90.00")
-
-    def settle(node: Any) -> object:
-        write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {
-                "mutation": "amend",
-                "entity": "Balance",
-                "rows": [{"id": 1, "value": "5.00"}],
-            },
-            meta,
-            scenario.case_wire_preparer(meta),
-            [],
-            (node,),
-        )[0]
-        observation = write.supplied_observation
-        assert isinstance(observation, TemporalObservation)
-        return observation.predecessor.members["txStart"]
-
-    assert settle(current) == current.evidence.predecessor.members["txStart"]
-    assert settle(historical) == historical.evidence.predecessor.members["txStart"]
 
 
 def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_leaves() -> None:

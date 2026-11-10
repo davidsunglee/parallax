@@ -658,29 +658,13 @@ def test_is_selected_rejects_excluded_tag() -> None:
     assert not case_format.is_selected(case, flt)
 
 
-def test_is_selected_milestone_tags_intersection() -> None:
-    case = _case(tags=("m-predicate", "slice-snapshot-1"))
-    assert case_format.is_selected(case, _FILTER, milestone_tags=["m-predicate"])
-    assert not case_format.is_selected(case, _FILTER, milestone_tags=["m-sql"])
-
-
-def test_is_selected_implemented_modules_gate() -> None:
-    case = _case(tags=("m-predicate", "m-conformance-adapter", "slice-snapshot-1"))
-    assert case_format.is_selected(
-        case, _FILTER, implemented_modules=frozenset({"m-predicate", "m-conformance-adapter"})
-    )
-    assert not case_format.is_selected(
-        case, _FILTER, implemented_modules=frozenset({"m-predicate"})
-    )
-
-
 def test_select_preserves_order_and_filters() -> None:
     cases = [
         _case(case_id="m-predicate-001"),
         _case(case_id="m-predicate-002", shape="conflict"),
         _case(case_id="m-predicate-003"),
     ]
-    selected = case_format.select(cases, _FILTER, milestone_tags=["m-predicate"])
+    selected = case_format.select(cases, _FILTER)
     assert [case.case_id for case in selected] == ["m-predicate-001", "m-predicate-003"]
 
 

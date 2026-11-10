@@ -1,68 +1,16 @@
 from __future__ import annotations
 
-from typing import Final
-
 from parallax.conformance import case_format
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 
-__all__ = ["IMPLEMENTED_MODULES", "reachable_cases"]
-
-# A case is reachable only when all of its module tags occur in this set. The
-# always-on intersection prevents partially implemented compositions from
-# entering a compile or run sweep.
-IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
-    {
-        "m-core",
-        "m-case-format",
-        "m-conformance-adapter",
-        "m-descriptor",
-        "m-pk-gen",
-        "m-inheritance",
-        "m-metamodel",
-        "m-model-evolution",
-        "m-model-formation",
-        "m-schema-delta",
-        "m-storage-layout",
-        "m-value-object",
-        "m-wire",
-        "m-document-codec",
-        "m-edit",
-        "m-relationship",
-        "m-object-query",
-        "m-predicate",
-        "m-dialect",
-        "m-db-port",
-        "m-db-error",
-        "m-sql",
-        "m-temporal-read",
-        "m-api-conformance",
-        "m-unit-work",
-        "m-write-plan",
-        "m-write-payload",
-        "m-temporal-write",
-        "m-navigate",
-        "m-read-planning",
-        "m-read-delivery",
-        "m-snapshot-read",
-        "m-concurrency",
-        "m-auto-retry",
-        "m-execution",
-        "m-execution-authority",
-        "m-execution-lifecycle",
-        # `m-batch-write-004` tags both `m-batch-write` and `m-concurrency`, so the
-        # reachability intersection requires both. Buffered-batch cases use
-        # the planner's multi-row collapse, while predicate-selected cases
-        # use the readless predicate-write path.
-        "m-batch-write",
-    }
-)
+__all__ = ["reachable_cases"]
 
 
 def reachable_cases(
     claim: Claim = SNAPSHOT_CLAIM,
     cases: list[case_format.Case] | None = None,
 ) -> list[case_format.Case]:
-    """Return active-slice cases whose module tags are all implemented."""
+    """Return the cases ``claim``'s active slice selects."""
     corpus = cases if cases is not None else case_format.load_cases()
     flt = case_format.SelectionFilter(
         modules=frozenset(claim.modules),
@@ -70,4 +18,4 @@ def reachable_cases(
         include=frozenset(claim.include),
         exclude=frozenset(claim.excluded_tags),
     )
-    return case_format.select(corpus, flt, implemented_modules=IMPLEMENTED_MODULES)
+    return case_format.select(corpus, flt)

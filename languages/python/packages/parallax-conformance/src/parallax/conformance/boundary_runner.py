@@ -143,12 +143,9 @@ def reachable_boundary_cases(cases: list[case_format.Case] | None = None) -> lis
     at runtime, never a hand list — `m-case-format`: every boundary case is
     `lane: api-conformance`).
 
-    Reachability is the same intersection every other lane uses
+    Reachability is the same selection every other lane uses
     (:func:`~parallax.conformance.sweep.reachable_cases`): the active slice's
-    own selection, narrowed to cases whose every module tag is implemented. A
-    boundary case tagged for an unbuilt module has no verb sequence to drive
-    and no outcome to grade, so admitting it here would fail the runner rather
-    than report the gap — which the API-suite coverage partition already does.
+    own selection.
     """
     return [case for case in sweep.reachable_cases(cases=cases) if case.shape == "boundary"]
 

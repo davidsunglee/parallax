@@ -1,6 +1,6 @@
 """The error lane's trigger parsing, driven against a fake in-memory
 ``m-db-port`` (no Docker): what an authored ``then.statements`` trigger reaches
-the port as, including the single ``sql`` spelling no corpus case authors. The
+the port as, including the omitted ``binds`` no corpus error case authors. The
 classification the lane reports, and its refusals of a trigger that misbehaves,
 are graded through the adapter (`test_adapter.py`).
 """
@@ -31,14 +31,14 @@ def _unique_violation() -> DatabaseError:
 
 
 def test_run_error_case_reaches_the_port_with_the_dialects_own_spelling_and_binds() -> None:
-    # A statement's `sql` is either one spelling or one per dialect, and `binds`
-    # is optional: the lane issues the spelling of the port's own dialect,
-    # translated to driver text, with the authored binds or none.
+    # A statement's `sql` has one spelling per dialect, and `binds` is optional:
+    # the lane issues the spelling of the port's own dialect, translated to
+    # driver text, with the authored binds or none.
     case = _error_case(
         {
             "then": {
                 "statements": [
-                    {"sql": "delete from widget"},
+                    {"sql": {"postgres": "delete from widget", "mariadb": "delete from widget"}},
                     {
                         "sql": {
                             "postgres": "insert into widget(id, label) values (?, ?)",

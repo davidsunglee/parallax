@@ -62,8 +62,8 @@ def _case(case_id: str) -> case_format.Case:
 
 
 def _load_case(case_id: str) -> case_format.Case:
-    # Loads by id directly from the corpus, independent of `sweep.
-    # IMPLEMENTED_MODULES` reachability: these lane-level tests exercise the
+    # Loads by id directly from the corpus, independent of sweep
+    # reachability: these lane-level tests exercise the
     # entry point on its own terms, never gated on whether the case has ALSO
     # been flipped visible in the sweep.
     return corpus_case(case_id)
