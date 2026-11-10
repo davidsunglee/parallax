@@ -281,9 +281,10 @@ class ReplicationPair:
                 self.close()
                 raise
 
-    def release_runtimes(self) -> None:
-        """Close every runtime this pair's adapters opened and a caller left open."""
-        self._ledger.release()
+    def release_runtimes(self) -> int:
+        """Close every runtime this pair's adapters opened and a caller left open,
+        and answer how many there were."""
+        return self._ledger.release()
 
     @property
     def closed(self) -> bool:
@@ -336,9 +337,8 @@ class LazyReplication[Pair: _Owned]:
             self._pair = self._open()
         return self._pair
 
-    def release_runtimes(self) -> None:
-        if self._pair is not None:
-            self._pair.release_runtimes()
+    def release_runtimes(self) -> int:
+        return 0 if self._pair is None else self._pair.release_runtimes()
 
     def close(self) -> None:
         self._closed = True
@@ -351,7 +351,7 @@ class _Owned(Protocol):
     @property
     def closed(self) -> bool: ...
 
-    def release_runtimes(self) -> None: ...
+    def release_runtimes(self) -> int: ...
 
     def close(self) -> None: ...
 

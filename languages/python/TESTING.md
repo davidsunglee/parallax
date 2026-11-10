@@ -49,7 +49,7 @@ of helper modules.
 | `aws_run` | One CI run attempt's database on the deployed Aurora environment |
 | `committed_cost_evidence` | Reading retained captures and the memory gates |
 | `wheelhouse` | Built distribution wheels |
-| `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
+| `release_case_runtimes` | Autouse cleanup: closes the roots a test registered, and closes any runtime it left open and fails it |
 
 Database-backed tests acquire their database only through `profile_run`.
 They provision through the shipped generator:
@@ -61,8 +61,9 @@ Standby proofs reach a primary and its streaming standby through
 live under `tests/provider_contract/replication/` and carry
 `xdist_group("replication")` so the database lane opens one pair, not one per
 worker.
-Tests owning a Database Root should close it explicitly or register it through
-`tests._support.root_ownership.own_root`. The cleanup fixture is a backstop.
+Tests owning a Database Root close it explicitly or register it through
+`tests._support.root_ownership.own_root`. A test that leaves a runtime open
+fails, after the cleanup fixture has closed it.
 
 Provider-hosted tests reach the Aurora environment only through `aws_run`,
 which [aws_run.py](tests/_support/aws_run.py) implements; they live under

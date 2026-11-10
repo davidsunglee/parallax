@@ -259,13 +259,15 @@ class ProvisionedRun(ProfileRun):
     def authorization(self, selector: str) -> Any:  # pragma: no cover - Docker
         return self._provisioner.authorization(selector)
 
-    def release_case_runtimes(self) -> None:  # pragma: no cover - Docker
-        """Close every runtime a case composed a Database over and left open,
-        over this run's database and over its replication pair alike."""
+    def release_case_runtimes(self) -> int:  # pragma: no cover - Docker
+        """Close every runtime a case opened and left open, over this run's
+        database and over its replication pair alike, and answer how many there
+        were."""
         try:
-            self._replication.release_runtimes()
+            replicated = self._replication.release_runtimes()
         finally:
-            self._provisioner.release_case_runtimes()
+            provisioned = self._provisioner.release_case_runtimes()
+        return replicated + provisioned
 
     def close(self) -> None:  # pragma: no cover - Docker
         """Close the replication pair, if one was opened, and the provisioning."""

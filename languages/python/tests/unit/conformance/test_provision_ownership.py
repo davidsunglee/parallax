@@ -1,8 +1,8 @@
 """What provisioning owns beside its container, without one.
 
-A case selector names its database authorization, and the runtime ledger is the
-backstop that closes what a case left open, so scripted runtimes prove it
-attempts every close and lets no interrupt cut the others short.
+A case selector names its database authorization, and the runtime ledger closes
+and counts what a case left open, so scripted runtimes prove it counts only
+those, attempts every close, and lets no interrupt cut the others short.
 """
 
 from __future__ import annotations
@@ -86,8 +86,8 @@ def test_the_ledger_releases_only_what_was_left_open() -> None:
     closed.close()
     closed.close()
 
-    ledger.release()
-    ledger.release()
+    assert ledger.release() == 1
+    assert ledger.release() == 0
 
     assert log == ["close closed", "close closed", "close left open"]
 
@@ -105,8 +105,8 @@ def test_the_ledger_contains_an_ordinary_failure_and_closes_the_rest() -> None:
     _tracked(ledger, _Runtime(log, "failing", _raising(RuntimeError("refused"))))
     _tracked(ledger, _Runtime(log, "next"))
 
-    ledger.release()
-    ledger.release()
+    assert ledger.release() == 2
+    assert ledger.release() == 0
 
     assert log == ["close failing", "close next"]
 
@@ -125,5 +125,5 @@ def test_the_ledger_raises_the_first_interrupt_only_after_every_close() -> None:
 
     assert raised.value is first
     assert log == ["close interrupted", "close failing", "close exiting", "close last"]
-    ledger.release()
+    assert ledger.release() == 0
     assert len(log) == 4
