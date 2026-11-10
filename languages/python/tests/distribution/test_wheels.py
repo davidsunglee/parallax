@@ -118,12 +118,17 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     assert "parallax/core/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")
 
 
-def test_evolution_wheel_ships_both_of_its_scopes(wheelhouse: Wheelhouse) -> None:
+def test_evolution_wheel_ships_each_of_its_scopes(wheelhouse: Wheelhouse) -> None:
     # Same idiom, same reasoning as the packages below: each shipped set is
     # asserted whole, so a private module nobody named fails as loudly as a
-    # missing one, and the absent `model_evolution.py` beside the package is what
-    # a stale build or a half-applied split looks like. One wheel carries both
-    # behavioral modules, because they declare the same manifest.
+    # missing one, and the top-level set excludes a `model_evolution.py` beside the
+    # package, which is what a stale build or a half-applied split looks like. One
+    # wheel carries both behavioral modules, because they declare the same
+    # manifest, and the Domain Model door beside them.
+    assert _modules_directly_in(wheelhouse, "parallax-evolution", "parallax/evolution/") == {
+        "parallax/evolution/__init__.py",
+        "parallax/evolution/_domain_models.py",
+    }
     assert _modules_directly_in(
         wheelhouse, "parallax-evolution", "parallax/evolution/model_evolution/"
     ) == {
@@ -145,10 +150,6 @@ def test_evolution_wheel_ships_both_of_its_scopes(wheelhouse: Wheelhouse) -> Non
         "parallax/evolution/schema_delta/_render.py",
         "parallax/evolution/schema_delta/_values.py",
     }
-    names = _names(wheelhouse, "parallax-evolution")
-    assert "parallax/evolution/__init__.py" in names
-    assert "parallax/evolution/model_evolution.py" not in names
-    assert "parallax/evolution/schema_delta.py" not in names
 
 
 def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) -> None:

@@ -944,7 +944,7 @@ def _document_family() -> tuple[CompiledMetadata, EntityIdentity, EntityIdentity
             Declaration(
                 identity=root,
                 container=Table("record"),
-                layout=Document(Column("doc")),
+                layout=Document("doc"),
                 attributes=(key(root), attribute(root, "rootDomain", type=STRING)),
                 inheritance=AbstractRoot(TablePerHierarchy("kind")),
             ),
@@ -1092,7 +1092,7 @@ def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> No
     metadata = _unvalidated(
         Declaration(
             identity=root,
-            layout=Document(Column("doc")),
+            layout=Document("doc"),
             attributes=(key(root), attribute(root, "title", type=STRING)),
             inheritance=AbstractRoot(TablePerConcreteSubtype()),
         ),
@@ -1145,7 +1145,7 @@ def test_an_inherited_join_endpoint_keeps_the_direct_column_its_role_earns_it() 
     metadata = _unvalidated(
         Declaration(
             identity=root,
-            layout=Document(Column("doc")),
+            layout=Document("doc"),
             attributes=(key(root), owner_id, attribute(root, "title", type=STRING)),
             inheritance=AbstractRoot(TablePerConcreteSubtype()),
         ),
@@ -1274,7 +1274,7 @@ def test_a_nested_dormant_tph_branch_contributes_to_the_complete_shared_layout()
 
 def test_a_nested_dormant_branch_is_placed_inside_a_shared_document() -> None:
     facet = storage_layout.storage_layout_facet_of(
-        form_metamodel(dormant_family("tph", layout=Document(Column("payload"))))
+        form_metamodel(dormant_family("tph", layout=Document("payload")))
     )
     layout = _require_layout(facet, "record")
     assert _column_names(layout) == ["id", "kind", "payload"]

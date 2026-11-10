@@ -67,7 +67,7 @@ from parallax.evolution.model_evolution import (
     VersionGated,
     WriteCapabilityChanged,
     WritesEnabled,
-    evolve,
+    evolve_metamodels,
 )
 from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
@@ -152,7 +152,7 @@ def test_a_selection_states_the_axes_of_the_temporal_shape_it_denotes() -> None:
     # Temporal Shape, named by its axes' own Attributes in canonical dimension
     # order — the whole predicate-free selection rule rather than the part that
     # changed.
-    evolution = evolve(_temporal(), _temporal(_NOTE, _STOCK))
+    evolution = evolve_metamodels(_temporal(), _temporal(_NOTE, _STOCK))
     (membership,) = _of(evolution, QueryResultMembershipChanged)
     assert membership.scope == _ROOT
     assert membership.earlier == EntitySelectionFacts((_BOND,), _FAMILY_AXES)
@@ -163,7 +163,7 @@ def test_one_impact_names_every_operation_that_contributed_to_it_once() -> None:
     # Two additions move one root's concrete set, so the single impact they cause
     # names both, deduplicated and in canonical operation order rather than in
     # the order the analyzer happened to reach them.
-    evolution = evolve(_temporal(), _temporal(_NOTE, _STOCK))
+    evolution = evolve_metamodels(_temporal(), _temporal(_NOTE, _STOCK))
     (membership,) = _of(evolution, QueryResultMembershipChanged)
     assert membership.caused_by == (ConcreteSubtypeAdded(_NOTE), ConcreteSubtypeAdded(_STOCK))
 
@@ -175,7 +175,7 @@ def test_a_temporal_write_surface_states_the_shape_its_axes_fix() -> None:
     # and Transaction-Time-only for the standalone Entity beside it. The abstract
     # root is a polymorphic read position that admitted no write to withdraw, so
     # its capability is Disabled at both endpoints and reports nothing.
-    evolution = evolve(_temporal(), _temporal(writable=False))
+    evolution = evolve_metamodels(_temporal(), _temporal(writable=False))
     writes = _of(evolution, WriteCapabilityChanged)
     assert [impact.scope for impact in writes] == [_ARRIVAL, _BOND]
     assert [impact.earlier for impact in writes] == [
@@ -203,14 +203,16 @@ def test_only_a_surviving_position_reports_an_admissible_value_domain() -> None:
     # domain fact, and a member that only moved Column admits exactly what it
     # admitted before.
     note = attribute(_ARCHIVE, "note", type=STRING)
-    assert evolve(_holding(), _holding(note)).behavioral_impacts == ()
-    assert evolve(_holding(note), _holding()).behavioral_impacts == ()
+    assert evolve_metamodels(_holding(), _holding(note)).behavioral_impacts == ()
+    assert evolve_metamodels(_holding(note), _holding()).behavioral_impacts == ()
 
     moved = dataclasses.replace(note, storage=Column("memo"))
-    assert evolve(_holding(note), _holding(moved)).behavioral_impacts == ()
+    assert evolve_metamodels(_holding(note), _holding(moved)).behavioral_impacts == ()
 
     widened = dataclasses.replace(note, nullable=True, max_length=64)
-    (admissibility,) = _of(evolve(_holding(note), _holding(widened)), ValueAdmissibilityChanged)
+    (admissibility,) = _of(
+        evolve_metamodels(_holding(note), _holding(widened)), ValueAdmissibilityChanged
+    )
     assert admissibility.scope == note.identity
     assert admissibility.earlier == ScalarAdmissibility(STRING, nullable=False, max_length=None)
     assert admissibility.later == ScalarAdmissibility(STRING, nullable=True, max_length=64)
@@ -222,11 +224,13 @@ def test_scalar_multiplicity_is_structural_rather_than_an_admissible_domain() ->
     # is made of, here the nullability a collection cannot keep, is an impact.
     note = attribute(_ARCHIVE, "note", type=STRING)
     tags = dataclasses.replace(note, multiplicity=Multiplicity.MANY)
-    assert evolve(_holding(note), _holding(tags)).behavioral_impacts == ()
-    assert evolve(_holding(tags), _holding(note)).behavioral_impacts == ()
+    assert evolve_metamodels(_holding(note), _holding(tags)).behavioral_impacts == ()
+    assert evolve_metamodels(_holding(tags), _holding(note)).behavioral_impacts == ()
 
     optional = dataclasses.replace(note, nullable=True)
-    (admissibility,) = _of(evolve(_holding(optional), _holding(tags)), ValueAdmissibilityChanged)
+    (admissibility,) = _of(
+        evolve_metamodels(_holding(optional), _holding(tags)), ValueAdmissibilityChanged
+    )
     assert admissibility.earlier == ScalarAdmissibility(STRING, nullable=True, max_length=None)
     assert admissibility.later == ScalarAdmissibility(STRING, nullable=False, max_length=None)
 
@@ -249,7 +253,9 @@ def test_a_version_member_arriving_or_leaving_causes_the_concurrency_impact() ->
     # member's declaration does — so the impact's cause is that member's own
     # addition or removal.
     revision = AttributeIdentity(_LEDGER, "revision")
-    arriving = evolve(_versioned(declares_version=False), _versioned(declares_version=True))
+    arriving = evolve_metamodels(
+        _versioned(declares_version=False), _versioned(declares_version=True)
+    )
     (gained,) = _of(arriving, ConcurrencyControlChanged)
     assert (gained.scope, gained.earlier, gained.later) == (
         _LEDGER,
@@ -258,7 +264,9 @@ def test_a_version_member_arriving_or_leaving_causes_the_concurrency_impact() ->
     )
     assert gained.caused_by == (AttributeAdded(revision),)
 
-    leaving = evolve(_versioned(declares_version=True), _versioned(declares_version=False))
+    leaving = evolve_metamodels(
+        _versioned(declares_version=True), _versioned(declares_version=False)
+    )
     (lost,) = _of(leaving, ConcurrencyControlChanged)
     assert (lost.earlier, lost.later) == (VersionGated(revision), LOCKING_FALLBACK)
     assert lost.caused_by == (AttributeRemoved(revision),)
@@ -311,7 +319,7 @@ def test_moving_a_position_between_families_moves_every_fact_that_family_fixes()
     # version source, and BOTH roots denote a different concrete set. Every one
     # names that operation as its cause, and the Entity added beside it — which
     # moves nothing about any of these scopes — is named by none of them.
-    evolution = evolve(_two_families(moved=False), _two_families(moved=True, extra=True))
+    evolution = evolve_metamodels(_two_families(moved=False), _two_families(moved=True, extra=True))
     (moved,) = [
         operation for operation in evolution.operations if isinstance(operation, EntityAltered)
     ]
@@ -346,7 +354,7 @@ def test_an_entity_write_change_dominates_the_member_impacts_it_implies() -> Non
     # Both the Entity's Persistence Mode and its member's read-only declaration
     # move, and only the Entity-level fact is reported: repeating it per member
     # would state the same withdrawal of writes several times.
-    evolution = evolve(_archive(writable=True), _archive(writable=False))
+    evolution = evolve_metamodels(_archive(writable=True), _archive(writable=False))
     (write,) = _of(evolution, WriteCapabilityChanged)
     assert write.scope == _ARCHIVE
     assert write.earlier == WritesEnabled(EntityWriteShape.NON_TEMPORAL)
@@ -403,7 +411,7 @@ def test_derived_index_columns_are_neither_an_operation_nor_a_uniqueness_rule(
     # and that change is described by the causal As-Of Axis operation rather
     # than by an Index operation or a uniqueness impact. The authored Indices
     # are unchanged in either direction, so no rule moved either.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _keyed_index(temporal=not gains_the_axis), _keyed_index(temporal=gains_the_axis)
     )
     assert isinstance(evolution, CoordinatedEvolution)
@@ -450,7 +458,7 @@ def test_two_equivalent_indices_trading_places_cause_nothing_they_did_not_move()
     # equivalent one added enforce the same rule throughout: the impact beside
     # them is caused by the Index that carries the rule the two sets differ by,
     # and by that one alone.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _paired_indices(("by_pair", ("left", "right"))),
         _paired_indices(("by_swap", ("right", "left")), ("by_note", ("note",))),
     )
@@ -514,7 +522,7 @@ def test_an_abstract_position_moving_is_the_cause_above_and_below_it() -> None:
     # Transaction-Time shape of the family it joins, but only the concrete Entity
     # beneath it reports a write capability: an abstract subtype is a read
     # position under either root.
-    evolution = evolve(_subtree(under=_ROOT), _subtree(under=_LEDGER))
+    evolution = evolve_metamodels(_subtree(under=_ROOT), _subtree(under=_LEDGER))
     (moved,) = [
         operation for operation in evolution.operations if isinstance(operation, EntityAltered)
     ]
@@ -562,7 +570,7 @@ def test_a_re_tagged_position_moves_nothing_the_family_denotes() -> None:
     # where it was: the root denotes a different concrete set here, but the
     # arriving subtype is the whole of why, and the re-tagged one is named by
     # nothing.
-    evolution = evolve(_tagged("BOND", extended=False), _tagged("SENIOR", extended=True))
+    evolution = evolve_metamodels(_tagged("BOND", extended=False), _tagged("SENIOR", extended=True))
     (membership,) = _of(evolution, QueryResultMembershipChanged)
     assert membership.scope == _ROOT
     assert membership.caused_by == (ConcreteSubtypeAdded(_STOCK),)
@@ -595,7 +603,7 @@ def test_an_axis_behind_a_withdrawn_write_surface_is_no_cause_of_it() -> None:
     # A surface admitting no write carries no temporal shape, so the axis
     # arriving beside the withdrawal moved nothing the impact reports: the
     # Persistence Mode is its whole cause.
-    evolution = evolve(_closing(sealed=False), _closing(sealed=True))
+    evolution = evolve_metamodels(_closing(sealed=False), _closing(sealed=True))
     (added,) = [
         operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
     ]
@@ -648,7 +656,7 @@ def test_an_axis_behind_a_surrendered_write_handle_is_no_cause_of_it() -> None:
     # the role change is the whole cause, and the axis arriving beside it moved
     # nothing this impact reports. The concrete sibling, whose handle survives,
     # names that same axis as the whole cause of its own shape moving.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _write_handle_and_axis(concrete=True, dated=False),
         _write_handle_and_axis(concrete=False, dated=True),
     )
@@ -700,7 +708,7 @@ def test_an_axis_on_another_entity_is_no_cause_of_a_member_input_change(
     # An axis moves what a caller may supply only for its own endpoints, so an
     # axis arriving at or leaving another Entity in the same evolution is no
     # cause of a member's input capability moving: its own alteration is.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _note_beside_an_arrival(sealed=False, dated=not gains_the_axis),
         _note_beside_an_arrival(sealed=True, dated=gains_the_axis),
     )

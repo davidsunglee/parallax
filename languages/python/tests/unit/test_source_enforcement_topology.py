@@ -231,6 +231,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core.read_delivery._read_plan", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.read_delivery._row_converter", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.descriptor._hub", "_model"): frozenset({"DomainModel", "model_of"}),
+    ("parallax.evolution._domain_models", "_model"): frozenset({"DomainModel", "model_of"}),
     ("parallax.snapshot._inspection", "_expressions"): frozenset(
         {"AuthoredIncludePath", "AuthoredIncludeSegment", "authored_include_path"}
     ),

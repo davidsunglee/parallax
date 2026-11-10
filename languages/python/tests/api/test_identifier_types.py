@@ -108,8 +108,8 @@ def test_both_frontends_accept_every_application_assigned_identifier(
         _descriptor(spelling, **({"pkGeneration": "application-assigned"} if explicit else {}))
     )
     left, right = (
-        typed.meta("Identifier").attribute("id"),
-        descriptor.meta("Identifier").attribute("id"),
+        typed.entity("Identifier").declared.attribute("id"),
+        descriptor.entity("Identifier").declared.attribute("id"),
     )
     assert left is not None and right is not None
     assert left.type == right.type
@@ -143,8 +143,8 @@ def test_generated_identifiers_remain_integral(
         typed = DomainModel(_declared(carrier, options, generation))
         descriptor = domain_model_from_document(document)
         left, right = (
-            typed.meta("Identifier").attribute("id"),
-            descriptor.meta("Identifier").attribute("id"),
+            typed.entity("Identifier").declared.attribute("id"),
+            descriptor.entity("Identifier").declared.attribute("id"),
         )
         assert left is not None and right is not None
         assert left.primary_key == right.primary_key == PrimaryKey(generation)
@@ -182,8 +182,8 @@ def test_excluded_identifier_types_remain_ordinary_scalars(
     document["entity"]["attributes"].append(
         {"name": "value", "type": spelling, **({"primaryKey": flag} if flag is not None else {})}
     )
-    left = DomainModel(cast("type[Entity]", ordinary)).meta("Payload").attribute("value")
-    right = domain_model_from_document(document).meta("Identifier").attribute("value")
+    left = DomainModel(cast("type[Entity]", ordinary)).entity("Payload").declared.attribute("value")
+    right = domain_model_from_document(document).entity("Identifier").declared.attribute("value")
     assert left is not None and right is not None
     assert left.type == right.type
 
@@ -192,8 +192,8 @@ def test_key_nullability_is_not_a_new_declaration_restriction() -> None:
     typed = DomainModel(_declared(int | None, {}, True))
     descriptor = domain_model_from_document(_descriptor("int64", nullable=True))
     left, right = (
-        typed.meta("Identifier").attribute("id"),
-        descriptor.meta("Identifier").attribute("id"),
+        typed.entity("Identifier").declared.attribute("id"),
+        descriptor.entity("Identifier").declared.attribute("id"),
     )
     assert left is not None and right is not None
     assert left.nullable is True
@@ -396,7 +396,7 @@ def test_every_identifier_forms_inherited_joins_through_both_frontends(
         assert parent is not None and links is not None
         assert parent.join.source == links.join.target
         assert parent.join.target == links.join.source
-        referring = domain.meta("identifiers.Link").attribute("parentId")
+        referring = domain.entity("identifiers.Link").declared.attribute("parentId")
         assert referring is not None and referring.nullable is True
         for entity_name, members in (
             ("Leaf", (("Root", "id"),)),

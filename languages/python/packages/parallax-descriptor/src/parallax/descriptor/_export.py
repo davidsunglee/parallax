@@ -127,7 +127,7 @@ def _family_policies(entity: CompiledEntity) -> dict[str, object]:
         out["persistence"] = "read-only"
     layout = entity.declared_layout
     if isinstance(layout, Document):
-        out["layout"] = {"document": {"column": layout.column.name}}
+        out["layout"] = {"document": {"column": layout.column}}
     temporality = _temporality(entity)
     if temporality is not None:
         out["temporality"] = temporality

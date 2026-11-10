@@ -51,6 +51,7 @@ from parallax.core.predicate import (
     root_position,
     validate_narrow,
 )
+from parallax.core.relationship import is_back_reference
 from parallax.core.wire import WireValue, decode_wire, located_refusal
 
 __all__ = [
@@ -178,7 +179,7 @@ def validate_include_path(
             )
         direction = RelationshipIdentity(declaring.identity, member_name)
         metadata = relationship_direction(model, direction)
-        at_back_reference = metadata is not None and metadata.is_back_reference_from(arrival)
+        at_back_reference = metadata is not None and is_back_reference(metadata, arrival)
         arrival = metadata
         target_scope = PositionScope(effective=effective_set(model, target))
         if segment.narrow_to:

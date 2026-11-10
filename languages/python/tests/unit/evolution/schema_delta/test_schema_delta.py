@@ -37,7 +37,7 @@ from parallax.evolution.model_evolution import (
     ABSENT,
     CoordinatedEvolution,
     UnilateralEvolution,
-    evolve,
+    evolve_metamodels,
 )
 from parallax.evolution.schema_delta import (
     PhysicalLocation,
@@ -75,7 +75,7 @@ _DOCUMENT = document_model()
 
 def _delta(model: AcceptedMetamodel, dialect: Dialect = POSTGRES) -> SchemaDelta:
     """The whole provisioning delta for ``model``."""
-    return schema_delta(evolve(ABSENT, model), dialect)
+    return schema_delta(evolve_metamodels(ABSENT, model), dialect)
 
 
 def _statements(model: AcceptedMetamodel, dialect: Dialect = POSTGRES) -> list[str]:
@@ -177,7 +177,7 @@ def test_a_delta_creating_no_temporal_table_needs_no_prerequisite() -> None:
 
 
 def test_the_prerequisite_is_caused_by_every_temporal_table_creation() -> None:
-    evolution = evolve(ABSENT, _MODELS["rate"])
+    evolution = evolve_metamodels(ABSENT, _MODELS["rate"])
     assert isinstance(evolution, UnilateralEvolution)
     operations = order(plan(evolution, POSTGRES).operations)
     extension = operations[0]
@@ -239,7 +239,7 @@ def test_a_surviving_temporal_table_gains_no_check() -> None:
     position = _RECORDS["position"]
     earlier = formed(balance)
     later = formed(dataclasses.replace(balance, entities=(*balance.entities, *position.entities)))
-    evolution = evolve(earlier, later)
+    evolution = evolve_metamodels(earlier, later)
     assert isinstance(evolution, UnilateralEvolution)
     statements = schema_delta(evolution, POSTGRES).statements
     assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == ["position"]
@@ -248,7 +248,7 @@ def test_a_surviving_temporal_table_gains_no_check() -> None:
     ]
     assert statements[0] == "create extension if not exists btree_gist"
     assert not [ddl for ddl in statements if "balance" in ddl and "create table" in ddl]
-    unchanged = evolve(later, later)
+    unchanged = evolve_metamodels(later, later)
     assert isinstance(unchanged, UnilateralEvolution)
     assert schema_delta(unchanged, POSTGRES) == SchemaDelta(statements=(), created_indices=())
 
@@ -550,7 +550,7 @@ def test_provisioning_creates_every_unique_index_over_one_column() -> None:
 def test_equal_endpoints_produce_an_empty_delta() -> None:
     # An empty Unilateral Evolution asks for nothing, so the answer is a delta
     # with no statement rather than an absent one.
-    evolution = evolve(_MODELS["grade"], _MODELS["grade"])
+    evolution = evolve_metamodels(_MODELS["grade"], _MODELS["grade"])
     assert isinstance(evolution, UnilateralEvolution)
     assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
 
@@ -560,7 +560,7 @@ def test_equal_temporal_editions_produce_an_empty_delta(stem: str) -> None:
     # Both editions are compiled under the current derivation, so equal models ask
     # for nothing even though a table an earlier release provisioned may hold its
     # authored indices without the axis ends: that adoption is a manual migration.
-    evolution = evolve(_MODELS[stem], _MODELS[stem])
+    evolution = evolve_metamodels(_MODELS[stem], _MODELS[stem])
     assert isinstance(evolution, UnilateralEvolution)
     assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
 
@@ -576,7 +576,7 @@ def test_gaining_a_temporal_profile_is_compared_through_fresh_provisioning() -> 
     # Transaction-Time edition's columns and names both carry the axis end.
     earlier = _MODELS["evolution-temporality-index-v1"]
     later = _MODELS["evolution-temporality-index-v2"]
-    assert isinstance(evolve(earlier, later), CoordinatedEvolution)
+    assert isinstance(evolve_metamodels(earlier, later), CoordinatedEvolution)
     assert _index_statements(earlier) == [
         "create index pxi_evolution_permit_parallax_1ab67ebbc572f820f39b577291e6d6ff "
         "on evolution_permit (holder)",
@@ -617,7 +617,7 @@ def test_a_temporal_index_alteration_creates_its_end_keyed_target_before_droppin
     # unilateral: the target, ending with both axis ends, is created under a new
     # name before the earlier definition fresh provisioning created is dropped.
     earlier, later = _bitemporal_permit(unique=False), _bitemporal_permit(unique=True)
-    evolution = evolve(earlier, later)
+    evolution = evolve_metamodels(earlier, later)
     assert isinstance(evolution, UnilateralEvolution)
     (held,) = _delta(earlier).created_indices
     delta = schema_delta(evolution, POSTGRES)
@@ -636,12 +636,16 @@ def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -
     # unilateral AND holds no value; the same contraction over a Column a shape
     # stores is not a Unilateral Evolution at all, so it never reaches the
     # generator and the case never has to refuse it.
-    rowless = evolve(_MODELS["evolution-rowless-domain-v1"], _MODELS["evolution-rowless-domain-v2"])
+    rowless = evolve_metamodels(
+        _MODELS["evolution-rowless-domain-v1"], _MODELS["evolution-rowless-domain-v2"]
+    )
     assert isinstance(rowless, UnilateralEvolution)
     assert schema_delta(rowless, POSTGRES).statements == (
         "alter table evolution_registry alter column caption type varchar(32)",
     )
-    stored = evolve(_MODELS["evolution-widened-domain-v2"], _MODELS["evolution-widened-domain-v1"])
+    stored = evolve_metamodels(
+        _MODELS["evolution-widened-domain-v2"], _MODELS["evolution-widened-domain-v1"]
+    )
     assert not isinstance(stored, UnilateralEvolution)
 
 
@@ -683,7 +687,7 @@ def test_a_scalar_multiplicity_change_never_reaches_the_generator() -> None:
         _MODELS["evolution-rowless-collection-v2"],
     )
     for earlier, later in (stored, stored[::-1], rowless, rowless[::-1]):
-        assert isinstance(evolve(earlier, later), CoordinatedEvolution)
+        assert isinstance(evolve_metamodels(earlier, later), CoordinatedEvolution)
 
 
 def test_no_model_statement_is_idempotent() -> None:
@@ -723,7 +727,7 @@ def test_a_delta_retains_neither_the_model_nor_the_layouts_it_resolved() -> None
     # long as a caller holds the statements, which is the shape this repository
     # has had to restore by hand before.
     model = _MODELS["error-cases"]
-    delta = schema_delta(evolve(ABSENT, model), POSTGRES)
+    delta = schema_delta(evolve_metamodels(ABSENT, model), POSTGRES)
     held = list(_reachable(delta))
     assert delta.statements and delta.created_indices
     assert not any(item is model for item in held)

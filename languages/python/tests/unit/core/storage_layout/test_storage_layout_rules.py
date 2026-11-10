@@ -504,7 +504,7 @@ def _standalone_document(*, column: str = "payload", **members: Any) -> Declarat
     return Declaration(
         identity=_SIBLING,
         container=Table("note"),
-        layout=Document(Column(column)),
+        layout=Document(column),
         **members,
     )
 
@@ -530,7 +530,7 @@ def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
         identity=_ROOT,
-        layout=Document(Column("doc")),
+        layout=Document("doc"),
         attributes=(key(_ROOT), tx_start, tx_end),
         as_of_axes=(
             AsOfAxisMetadata(
@@ -558,7 +558,7 @@ def test_a_temporal_layout_owner_is_accepted(
 def test_a_tpcs_layout_owner_is_accepted() -> None:
     root = Declaration(
         identity=_SIBLING,
-        layout=Document(Column("body")),
+        layout=Document("body"),
         attributes=(key(_SIBLING),),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
@@ -574,7 +574,7 @@ def test_a_tpcs_root_is_accepted_for_its_whole_family() -> None:
     # Table receives its own Structured Column; this shape is now accepted whole.
     root = Declaration(
         identity=_ROOT,
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         attributes=(key(_ROOT),),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
@@ -598,7 +598,7 @@ def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:
     )
     descendant = Declaration(
         identity=_LEAF,
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "entry"),
     )
     assert _rule_issues(root, descendant) == ()
@@ -658,7 +658,7 @@ def test_a_direct_role_attribute_keeps_its_column_override_under_a_document_layo
     owner = Declaration(
         identity=_SIBLING,
         container=Table("note"),
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         attributes=(
             attribute(
                 _SIBLING,
@@ -686,7 +686,7 @@ def test_an_index_over_a_document_resident_attribute_is_located_at_the_index() -
     owner = Declaration(
         identity=_SIBLING,
         container=Table("note"),
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         attributes=(key(_SIBLING), display_name),
         indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
     )
@@ -703,7 +703,7 @@ def test_an_index_over_a_direct_role_attribute_still_resolves_to_a_column() -> N
     owner = Declaration(
         identity=_SIBLING,
         container=Table("note"),
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         attributes=(key_attribute,),
         indices=(IndexMetadata(IndexIdentity(_SIBLING, "byKey"), (key_attribute.identity,)),),
     )
@@ -727,7 +727,7 @@ def _note_owning_a_holder(
         Declaration(
             identity=_SIBLING,
             container=Table("note"),
-            layout=Document(Column("payload")),
+            layout=Document("payload"),
             attributes=(key(_SIBLING), note_owner),
             relationships=(
                 UnresolvedDefiningRelationshipDeclaration(
@@ -761,7 +761,7 @@ def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it()
     note_owner = attribute(_ROOT, "ownerId", column="owner_key")
     root = Declaration(
         identity=_ROOT,
-        layout=Document(Column("payload")),
+        layout=Document("payload"),
         attributes=(key(_ROOT), note_owner),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
@@ -804,7 +804,7 @@ def test_one_ancestors_override_is_one_defect_however_many_branches_reach_it() -
     issues = _rule_issues(
         Declaration(
             identity=_ROOT,
-            layout=Document(Column("payload")),
+            layout=Document("payload"),
             attributes=(key(_ROOT), display_name),
             inheritance=AbstractRoot(TablePerConcreteSubtype()),
         ),

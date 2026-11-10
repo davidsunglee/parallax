@@ -654,7 +654,7 @@ def _rejected_write_target(domain_model: DomainModel) -> CompiledEntity:
     """The Entity a rejected `when.write` resolves against (`rejected._rejected_target`'s
     own convention): these models declare no family, so it is the model's one Entity —
     unpacking fails loudly if that ever stops holding."""
-    (entity,) = domain_model.entities
+    (entity,) = model_of(domain_model).entities
     return entity
 
 

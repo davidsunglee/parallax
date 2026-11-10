@@ -29,7 +29,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
-from parallax.core.entity import model_of
 from parallax.core.execution import (
     ModelSelection,
     ServingModel,
@@ -135,7 +134,7 @@ def test_the_same_update_run_backwards_is_not_a_live_publication_path() -> None:
     # Evolution: there is no delta to apply and no moment at which one
     # publication would make the two editions agree, so the host refuses before
     # any statement is generated.
-    backwards = evolve(model_of(NICKNAMED_ACCOUNT_MODEL), model_of(ACCOUNT_MODEL))
+    backwards = evolve(NICKNAMED_ACCOUNT_MODEL, ACCOUNT_MODEL)
     with pytest.raises(stories.UnpublishableUpdateError, match="Coordinated Evolution"):
         stories.unilateral(backwards)
 
@@ -161,7 +160,7 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     monkeypatch.setattr(stories, "connect", connect_and_hold)
     unpreparable = cast("DomainModel", object())
 
-    with pytest.raises(TypeError, match="prepare_model takes a Domain Model"):
+    with pytest.raises(TypeError, match="takes a Domain Model"):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(
             port, port, unpreparable
         )

@@ -276,7 +276,7 @@ def test_an_inherited_join_source_decides_optionality_family_effectively() -> No
         region: Rel[Region | None] = rel(cardinality=MANY_TO_ONE, join=("region_id", "id"))
 
     models = DomainModel(Region, Site, Depot)
-    assert models.meta(Depot).declared_relationships[0].identity.name == "region"
+    assert models.entity(Depot).declared.relationships[0].identity.name == "region"
 
 
 def test_a_failed_realization_leaves_its_classes_composable() -> None:
@@ -292,7 +292,7 @@ def test_a_failed_realization_leaves_its_classes_composable() -> None:
         DomainModel(Node, Edge)
 
     models = DomainModel(Node)
-    assert models.meta(Node).identity.name == "Node"
+    assert models.entity(Node).identity.name == "Node"
 
 
 def test_one_class_composes_into_any_number_of_models() -> None:
@@ -307,7 +307,7 @@ def test_one_class_composes_into_any_number_of_models() -> None:
     narrow = DomainModel(Region)
     wide = DomainModel(Region, Site)
 
-    assert narrow.meta(Region).identity == wide.meta(Region).identity
+    assert narrow.entity(Region).identity == wide.entity(Region).identity
     assert [entity.identity.name for entity in narrow.entities] == ["Region"]
     assert [entity.identity.name for entity in wide.entities] == ["Region", "Site"]
 
@@ -317,8 +317,8 @@ def test_reusable_value_object_definitions_survive_successful_and_failed_formati
     with pytest.raises(MetamodelValidationError):
         DomainModel(_ReusableBrokenFirst, _ReusableBrokenSecond)
     second = DomainModel(_ReusableSecond)
-    first_occurrence = first.meta(_ReusableFirst).value_object("point")
-    second_occurrence = second.meta(_ReusableSecond).value_object("location")
+    first_occurrence = first.entity(_ReusableFirst).declared.value_object("point")
+    second_occurrence = second.entity(_ReusableSecond).declared.value_object("location")
     assert first_occurrence is not None
     assert second_occurrence is not None
     assert first_occurrence.document_shape is second_occurrence.document_shape
@@ -334,7 +334,7 @@ def test_an_entity_class_the_model_did_not_compose_names_no_entity_of_it() -> No
 
     models = DomainModel(Composed)
     with raises_code(UsageError, "metamodel-entity-not-found"):
-        models.meta(Absent)
+        models.entity(Absent)
 
 
 def test_a_partial_family_publishes_a_narrower_effective_concrete_set() -> None:
@@ -360,6 +360,6 @@ def test_a_partial_family_publishes_a_narrower_effective_concrete_set() -> None:
 
 
 def _concretes(models: DomainModel, root: type) -> tuple[str, ...]:
-    position = inheritance_facet_of(model_of(models)).entity(models.meta(root).identity)
+    position = inheritance_facet_of(model_of(models)).entity(models.entity(root).identity)
     assert position is not None
     return tuple(identity.name for identity in position.concrete_subtypes)

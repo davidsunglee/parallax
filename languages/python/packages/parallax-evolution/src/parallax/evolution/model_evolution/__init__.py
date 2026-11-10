@@ -211,19 +211,19 @@ __all__ = [
     "WritesDisabled",
     "WritesEnabled",
     "canonical_operation_key",
-    "evolve",
+    "evolve_metamodels",
 ]
 
 
 @overload
-def evolve(earlier: Absent, later: Metamodel) -> UnilateralEvolution: ...
+def evolve_metamodels(earlier: Absent, later: Metamodel) -> UnilateralEvolution: ...
 
 
 @overload
-def evolve(earlier: Metamodel, later: Metamodel) -> Evolution: ...
+def evolve_metamodels(earlier: Metamodel, later: Metamodel) -> Evolution: ...
 
 
-def evolve(earlier: Metamodel | Absent, later: Metamodel) -> Evolution:
+def evolve_metamodels(earlier: Metamodel | Absent, later: Metamodel) -> Evolution:
     """Describe every difference between two accepted Metamodels.
 
     Provisioning is unilateral by TYPE: passing :data:`ABSENT` narrows the

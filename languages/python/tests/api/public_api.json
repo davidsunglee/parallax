@@ -327,6 +327,8 @@
     "EditViolation",
     "Entity",
     "EntityGraphConstruction",
+    "EntityMetadata",
+    "EntityProfile",
     "Float32",
     "IncludePath",
     "IndexedGraph",
@@ -489,6 +491,33 @@
     "reject_predicate_write",
     "root_metadata",
     "validate_subtype_write"
+  ],
+  "parallax.core.introspection": [
+    "AsOfAxisMetadata",
+    "AttributeIdentity",
+    "AttributeMetadata",
+    "Column",
+    "EntityIdentity",
+    "EntityMetadata",
+    "EntityProfile",
+    "IndexIdentity",
+    "IndexMetadata",
+    "Multiplicity",
+    "NestedValueObjectMetadata",
+    "NotPrimaryKey",
+    "NullPlacement",
+    "PrimaryKey",
+    "RelationshipIdentity",
+    "RelationshipJoin",
+    "RelationshipMetadata",
+    "RelationshipOrder",
+    "SortDirection",
+    "Table",
+    "TemporalDimension",
+    "ValueObjectAttributeIdentity",
+    "ValueObjectAttributeMetadata",
+    "ValueObjectIdentity",
+    "ValueObjectMetadata"
   ],
   "parallax.core.metamodel": [
     "APPLICATION_ASSIGNED",
@@ -824,6 +853,7 @@
     "RULE_SET",
     "RelationshipFacet",
     "RelationshipMetadata",
+    "is_back_reference",
     "project_join_endpoints",
     "relationship_facet_of"
   ],
@@ -1366,7 +1396,7 @@
     "WritesDisabled",
     "WritesEnabled",
     "canonical_operation_key",
-    "evolve"
+    "evolve_metamodels"
   ],
   "parallax.evolution.schema_delta": [
     "CreatedIndex",

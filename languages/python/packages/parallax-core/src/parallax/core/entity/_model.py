@@ -15,10 +15,10 @@ from parallax.core.entity._errors import (
     METAMODEL_INVALID_ENTITY_CLASS,
     METAMODEL_INVALID_ENTITY_REFERENCE,
 )
+from parallax.core.entity._introspection import EntityMetadata, describe_entities
 from parallax.core.inheritance import InheritanceFacet, inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
-    CompiledEntity,
     EntityIdentity,
     Metamodel,
     Multiplicity,
@@ -69,14 +69,17 @@ class DomainModel:
     """One sealed model, composed from a fixed source.
 
     A class-backed model additionally holds the index of the Entity Classes it
-    composed; a descriptor-backed model composes none and holds none. Both expose
-    the identical compiler-owned accepted metadata.
+    composed; a descriptor-backed model composes none and holds none. Both
+    publish the same resolved read-only metadata through :meth:`entity` and
+    :attr:`entities`, built once when the model is sealed.
     """
 
-    __slots__ = ("_classes", "_model")
+    __slots__ = ("_by_identity", "_classes", "_entities", "_model")
 
     _model: Metamodel
     _classes: ClassIndex | None
+    _entities: tuple[EntityMetadata, ...]
+    _by_identity: Mapping[EntityIdentity, EntityMetadata]
 
     def __init__(self, *classes: UnresolvedEntityDeclaration) -> None:
         """Compose ``classes`` into one sealed model, or raise.
@@ -105,9 +108,8 @@ class DomainModel:
         """Seal ``source`` into a fixed-source model composing no Entity Class.
 
         The private, versioned first-party seam the Descriptor Frontend reaches
-        model construction through. It is not a supported third-party extension
-        point, and no registration, discovery, or lazy-import mechanism supplies
-        it.
+        model construction through. No registration, discovery, or lazy-import
+        mechanism supplies it.
         """
         model = form_metamodel(source)
         domain = cls.__new__(cls)
@@ -116,15 +118,20 @@ class DomainModel:
 
     def _publish(self, model: Metamodel, classes: ClassIndex | None) -> None:
         """Complete the model's own state in one step."""
+        described = describe_entities(model)
         self._model = model
         self._classes = classes
+        self._entities = described
+        self._by_identity = MappingProxyType({entity.identity: entity for entity in described})
 
     @property
-    def entities(self) -> Sequence[CompiledEntity]:
-        return self._model.entities
+    def entities(self) -> Sequence[EntityMetadata]:
+        """Every Entity's resolved metadata, in canonical Entity order: the same
+        objects :meth:`entity` answers."""
+        return self._entities
 
-    def meta(self, key: type | str | EntityIdentity) -> CompiledEntity:
-        """The accepted local metadata ``key`` names within this model.
+    def entity(self, key: type | str | EntityIdentity) -> EntityMetadata:
+        """The resolved metadata of the Entity ``key`` names within this model.
 
         ``key`` is an Entity Class this model composed, a canonical spelling
         (``"sales.Order"``, or a bare ``"Order"`` for an unnamespaced Entity), or
@@ -138,7 +145,7 @@ class DomainModel:
         and of no other.
         """
         identity = self._identity(key)
-        metadata = self._model.entity(identity)
+        metadata = self._by_identity.get(identity)
         if metadata is None:
             raise UsageError(
                 METAMODEL_ENTITY_NOT_FOUND, f"this model declares no Entity {identity.canonical!r}"
@@ -161,13 +168,17 @@ class DomainModel:
 
 
 def model_of(model: DomainModel) -> Metamodel:
-    """The accepted Metamodel ``model`` sealed.
+    """The accepted Metamodel ``model`` sealed, for first-party code only.
 
-    A free function rather than a property: reading the accepted model out of a
-    Domain Model is the advanced ``parallax.core.entity`` collaboration seam a
-    schema-owning or separately distributed frontend reaches for, not the
-    ordinary developer surface, which is ``meta(...)`` and ``entities`` alone.
+    Every door that takes a Domain Model reads its accepted model here, so each
+    refuses any other argument, an accepted Metamodel included, with the same
+    :class:`TypeError`.
     """
+    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the plain argument check every model door shares
+        raise TypeError(
+            f"this call takes a Domain Model — one composed from Entity Classes, or one a "
+            f"descriptor produced — not {model!r}"
+        )
     return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
 
 

@@ -1073,8 +1073,7 @@ creates, with its `physical_index_name`, `physical_table`,
 
 ```python
 from parallax.core.dialect import POSTGRES
-from parallax.evolution import schema_delta
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution import ABSENT, evolve, schema_delta
 ```
 
 ```text

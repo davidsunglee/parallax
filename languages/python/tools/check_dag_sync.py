@@ -222,6 +222,13 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         }
     ),
     "parallax.descriptor._hub": frozenset({"parallax.core.entity"}),
+    # The public `evolve` takes Domain Models and reads each accepted model out
+    # through the Entity frontend, which model evolution itself never reaches.
+    # Its package is an unowned interface rather than a scope, so the model
+    # evolution it hands the accepted models to is granted by name.
+    "parallax.evolution._domain_models": frozenset(
+        {"parallax.core.entity", "parallax.evolution.model_evolution"}
+    ),
     "parallax.core.entity": frozenset(
         {
             "parallax.core.base",
@@ -385,11 +392,14 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # accepted Metamodel and class index a Domain Model carries, and a prepared
     # selection retains the write preparation and graph construction derived over them.
     "parallax.core._execution": frozenset({"parallax.core.entity"}),
-    # The two public facades re-export what their implementation owners define
-    # and are granted exactly those owners. No production scope is granted a
-    # facade, so framework modules name the defining owner and an implementation
-    # can never need its own facade to import.
+    # The public facades re-export what their implementation owners define and
+    # are granted exactly those owners. No production scope is granted a facade,
+    # so framework modules name the defining owner and an implementation can
+    # never need its own facade to import.
     "parallax.core.execution": frozenset({"parallax.core._execution"}),
+    "parallax.core.introspection": frozenset(
+        {"parallax.core.entity", "parallax.core.metamodel", "parallax.core.relationship"}
+    ),
     "parallax.core.unit_work": frozenset({"parallax.core._execution._unit_work"}),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: resolving a target and

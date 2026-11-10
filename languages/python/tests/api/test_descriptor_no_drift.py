@@ -88,8 +88,9 @@ def test_mirrored_and_reasoned_models_partition_the_corpus() -> None:
 @pytest.mark.parametrize("stem, model", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
 def test_idiomatic_classes_form_the_corpus_model(stem: str, model: DomainModel) -> None:
     corpus = _corpus(stem)
-    assert [entity.identity for entity in model.entities] == [
+    accepted = models.accepted_model_of(model)
+    assert [entity.identity for entity in accepted.entities] == [
         entity.identity for entity in corpus.entities
     ]
-    for left, right in zip(model.entities, corpus.entities, strict=True):
+    for left, right in zip(accepted.entities, corpus.entities, strict=True):
         _entity(left, right)

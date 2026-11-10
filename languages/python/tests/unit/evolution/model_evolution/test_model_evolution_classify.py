@@ -63,7 +63,7 @@ from parallax.evolution.model_evolution import (
     StorageChanged,
     UnilateralEvolution,
     ValueObjectAttributeAltered,
-    evolve,
+    evolve_metamodels,
 )
 from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
@@ -106,7 +106,7 @@ def _holding(*members: AttributeMetadata) -> Metamodel:
 
 def _verdict(earlier: Metamodel, later: Metamodel) -> _Verdict:
     """The verdict on the one operation the two endpoints differ by."""
-    evolution = evolve(earlier, later)
+    evolution = evolve_metamodels(earlier, later)
     (operation,) = evolution.operations
     return _verdict_on(evolution, operation)
 
@@ -155,7 +155,7 @@ def test_a_required_addition_reaches_the_caller_only_where_an_insert_did() -> No
     # database is the whole of the reason. An Entity that BECOMES read-only had
     # one, and the addition is classified on its own terms.
     assert _verdict(_sealed(), _sealed(_member())) == _Verdict((_MIGRATION,), False)
-    becoming = evolve(_holding(), _sealed(_member()))
+    becoming = evolve_metamodels(_holding(), _sealed(_member()))
     (added,) = [
         operation for operation in becoming.operations if not isinstance(operation, EntityAltered)
     ]
@@ -232,7 +232,7 @@ def test_key_membership_reaches_the_database_and_generation_alone_does_not() -> 
     # Membership moves the physical key as well as the lookup and insert shape,
     # in both the joining and the leaving direction; generation moves only what
     # the caller supplies, so it stops at the authoring surface.
-    moved = evolve(_keyed("id"), _keyed("code"))
+    moved = evolve_metamodels(_keyed("id"), _keyed("code"))
     assert [_verdict_on(moved, operation) for operation in moved.operations] == [
         _Verdict(_BOTH, False),
         _Verdict(_BOTH, False),
@@ -320,7 +320,7 @@ def test_a_scalar_multiplicity_change_is_a_field_delta_of_its_own() -> None:
     # required-ness brings to a member that was nullable.
     earlier = _holding(_member(nullable=True, storage=Column("label")))
     later = _holding(_member(multiplicity=Multiplicity.MANY, storage=Column("labels")))
-    (altered,) = evolve(earlier, later).operations
+    (altered,) = evolve_metamodels(earlier, later).operations
     assert isinstance(altered, AttributeAltered)
     assert altered.deltas == (
         StorageChanged(Column("label"), Column("labels")),
@@ -352,7 +352,7 @@ def test_a_leaf_multiplicity_change_classifies_as_the_attribute_one_does() -> No
     collection = ValueObjectAttributeDeclaration(
         "tenor", type=STRING, multiplicity=Multiplicity.MANY
     )
-    evolution = evolve(_leaf_holding(single), _leaf_holding(collection))
+    evolution = evolve_metamodels(_leaf_holding(single), _leaf_holding(collection))
     (altered,) = evolution.operations
     assert isinstance(altered, ValueObjectAttributeAltered)
     assert altered.deltas == (MultiplicityChanged(Multiplicity.ONE, Multiplicity.MANY),)
@@ -429,9 +429,7 @@ def test_a_container_change_needs_the_database_alone() -> None:
 
 
 def test_a_layout_change_needs_the_database_alone() -> None:
-    assert _verdict(_entity(), _entity(layout=Document(Column("doc")))) == _Verdict(
-        (_MIGRATION,), False
-    )
+    assert _verdict(_entity(), _entity(layout=Document("doc"))) == _Verdict((_MIGRATION,), False)
 
 
 def test_persistence_is_directional_in_its_effective_mode_not_its_declaration() -> None:
@@ -512,7 +510,7 @@ def _interposing(
         attributes=(attribute(_LEAF, "coupon"),),
         inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
     )
-    return evolve(
+    return evolve_metamodels(
         form_metamodel(source(root, leaf)),
         form_metamodel(
             source(
@@ -574,9 +572,9 @@ def test_an_inheritance_change_is_classified_by_its_effective_consequences() -> 
     # Table, tag Column, and tag value are exactly where they were — so the
     # authoring surface reaches coordination on its own.
     direct, interposed = _hierarchy(interposed=False), _hierarchy(interposed=True)
-    interposing = evolve(direct, interposed)
+    interposing = evolve_metamodels(direct, interposed)
     assert _verdict_on(interposing, _altered(interposing)) == _Verdict(_UNILATERAL, False)
-    flattening = evolve(interposed, direct)
+    flattening = evolve_metamodels(interposed, direct)
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict((_AUTHORING,), False)
 
 
@@ -586,7 +584,7 @@ def test_a_departing_position_takes_its_required_members_off_rows_that_stay() ->
     # rejects every later write that omits the value nothing now describes. The
     # nullable case above stops at the authoring surface.
     interposed = _hierarchy(interposed=True, declares=attribute(_BRANCH, "issuer", type=STRING))
-    flattening = evolve(interposed, _hierarchy(interposed=False))
+    flattening = evolve_metamodels(interposed, _hierarchy(interposed=False))
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_BOTH, False)
 
 
@@ -706,7 +704,7 @@ def test_a_rowless_position_leaves_a_branch_no_narrowing_ever_came_through() -> 
     # under a member-less `Bill` therefore invalidates no authored shape, where
     # the same flattening of a position owning rows invalidates the narrowing.
     beneath, flattened = _rowless_branch(under=_SIBLING), _rowless_branch()
-    flattening = evolve(beneath, flattened)
+    flattening = evolve_metamodels(beneath, flattened)
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_UNILATERAL, False)
 
 
@@ -762,7 +760,7 @@ def test_a_rowless_position_moving_between_families_carries_no_data_across() -> 
     # members at once. It owns no row for the Table change to transform, so the
     # database is not asked for anything — but a read of the position addressed
     # the family key it leaves behind, which is an authoring surface change.
-    moving = evolve(_across_roots(moved=False), _across_roots(moved=True))
+    moving = evolve_metamodels(_across_roots(moved=False), _across_roots(moved=True))
     assert _verdict_on(moving, _altered(moving)) == _Verdict((_AUTHORING,), False)
 
 
@@ -776,7 +774,9 @@ def test_a_position_arriving_in_a_family_as_a_shape_leaves_its_own_behind() -> N
     # why its overlap visibility is never published however its own verdict
     # reads. This assertion is the guard on that — a unilateral verdict here
     # would mean the rule had become publicly reachable and needs a case.
-    joining = evolve(_across_roots(moved=False), _across_roots(moved=True, concrete=True))
+    joining = evolve_metamodels(
+        _across_roots(moved=False), _across_roots(moved=True, concrete=True)
+    )
     assert _verdict_on(joining, _altered(joining)) == _Verdict((_AUTHORING,), False)
 
 
@@ -796,7 +796,7 @@ def test_a_member_leaving_a_position_its_shape_also_leaves_demands_no_backfill()
     # authoring surface a read of the position occupies. `Bond` is where the loss
     # of a required member off rows that stay IS reported, and it carries both.
     issuer = attribute(_BRANCH, "issuer", type=STRING)
-    departing = evolve(_rowful_branch(issuer), _rowless_branch())
+    departing = evolve_metamodels(_rowful_branch(issuer), _rowless_branch())
     (removed,) = [
         operation for operation in departing.operations if not isinstance(operation, EntityAltered)
     ]
@@ -809,7 +809,7 @@ def test_a_member_arriving_where_the_shape_departs_has_no_row_to_backfill() -> N
     # the required `issuer` arrives, so there is neither a row to backfill nor an
     # insert the later model still demands the value of.
     issuer = attribute(_BRANCH, "issuer", type=STRING)
-    arriving = evolve(_rowful_branch(), _rowless_branch(issuer))
+    arriving = evolve_metamodels(_rowful_branch(), _rowless_branch(issuer))
     (added,) = [
         operation for operation in arriving.operations if not isinstance(operation, EntityAltered)
     ]
@@ -824,7 +824,7 @@ def test_a_domain_change_reaches_only_the_shape_the_position_keeps() -> None:
     optional = dataclasses.replace(attribute(_BRANCH, "issuer", type=STRING), nullable=True)
     required = dataclasses.replace(optional, nullable=False)
     for earlier, later in ((optional, required), (required, optional)):
-        changing = evolve(_rowful_branch(earlier), _rowless_branch(later))
+        changing = evolve_metamodels(_rowful_branch(earlier), _rowless_branch(later))
         (altered,) = [
             operation
             for operation in changing.operations
@@ -847,7 +847,9 @@ def test_a_position_the_rows_leave_carries_no_data_to_the_family_it_joins() -> N
     # and nothing after it, because `Bond` stays behind under the old root. No
     # `Note`-denoted row crosses to the other Table, so the changed Table,
     # strategy tag Column, and family key are an authoring surface change alone.
-    moving = evolve(_across_roots(moved=False, leaf_under=_BRANCH), _across_roots(moved=True))
+    moving = evolve_metamodels(
+        _across_roots(moved=False, leaf_under=_BRANCH), _across_roots(moved=True)
+    )
     assert _verdict_on(moving, _altered_on(moving, _BRANCH)) == _Verdict((_AUTHORING,), False)
 
 
@@ -891,16 +893,16 @@ def test_an_axis_on_an_existing_entity_needs_the_surface_and_the_database() -> N
     # the later identity and the direction is symmetric after all.
     without = _beside_widget(_reading(temporal=False))
     with_axis = _beside_widget(_reading(temporal=True))
-    added = evolve(without, with_axis)
+    added = evolve_metamodels(without, with_axis)
     assert _verdict_on(added, _axis_operation(added)) == _Verdict(_BOTH, False)
-    removed = evolve(with_axis, without)
+    removed = evolve_metamodels(with_axis, without)
     assert _verdict_on(removed, _axis_operation(removed)) == _Verdict(_BOTH, False)
 
 
 def test_an_axis_on_a_wholly_new_entity_is_carried_by_its_parent_addition() -> None:
     # A new Entity creates a complete empty Table, so its axis needs neither a
     # surface change nor a migration and is not described on its own at all.
-    arriving = evolve(_beside_widget(), _beside_widget(_reading(temporal=True)))
+    arriving = evolve_metamodels(_beside_widget(), _beside_widget(_reading(temporal=True)))
     assert [type(operation) for operation in arriving.operations] == [EntityAdded]
     assert isinstance(arriving, UnilateralEvolution)
 
@@ -928,7 +930,7 @@ def test_a_family_arriving_whole_is_visible_to_no_earlier_reader() -> None:
     # admit. A family the earlier model holds no position of has neither that
     # Table nor a selection through it, so its concrete subtype's addition is
     # visible to nobody however the family stores its positions.
-    evolution = evolve(_beside_widget(), _arriving_family())
+    evolution = evolve_metamodels(_beside_widget(), _arriving_family())
     (added,) = [
         operation
         for operation in evolution.operations
@@ -969,7 +971,7 @@ def test_a_subtype_joining_a_read_only_family_has_no_writer_to_be_seen_by(
     # Table that an earlier reader cannot admit. A family the later edition holds
     # read-only admits no such writer, so the same addition under the same
     # strategy is visible only where writes are.
-    evolution = evolve(
+    evolution = evolve_metamodels(
         _tagged_family(persistence=persistence, leaves=("Bond",)),
         _tagged_family(persistence=persistence, leaves=("Bond", "Swap")),
     )

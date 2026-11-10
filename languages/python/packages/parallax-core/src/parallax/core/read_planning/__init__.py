@@ -58,7 +58,7 @@ from parallax.core.predicate._resolved import (
 from parallax.core.predicate._resolved import deferred_membership as _deferred_membership
 from parallax.core.predicate._resolved import disjunction as _disjunction
 from parallax.core.predicate._resolved import managed_comparison as _managed_comparison
-from parallax.core.relationship import RelationshipMetadata
+from parallax.core.relationship import RelationshipMetadata, is_back_reference
 from parallax.core.temporal_read import TimeInterval
 
 from ._include_tree import (
@@ -573,7 +573,7 @@ class _PlanBuilder:
             return existing
 
         to_many = direction.cardinality is Cardinality.ONE_TO_MANY
-        is_back_reference = direction.is_back_reference_from(self._arrivals.get(parent_id))
+        back_reference = is_back_reference(direction, self._arrivals.get(parent_id))
 
         rel_local = direction.identity.name
         attach_key = _attach_key(rel_local, narrowed, position, self.families)
@@ -595,7 +595,7 @@ class _PlanBuilder:
         position_id = len(self.steps) + 1
         parent_position = 0 if parent_id == _ROOT_ID else parent_id + 1
 
-        if is_back_reference:
+        if back_reference:
             target_view = _entity_view(self.families, related_entity.identity)
             step: FetchStep = BackReferenceFetchStep(
                 position=position_id,

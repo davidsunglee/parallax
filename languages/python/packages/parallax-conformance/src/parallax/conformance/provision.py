@@ -36,7 +36,7 @@ from parallax.core.storage_layout import (
     RelationalDocument,
 )
 from parallax.core.wire import WireValue, decode_wire, encode_wire
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
 from parallax.evolution.schema_delta import schema_delta
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str
     database-backed suite a proof of the generator rather than of a second
     composition that happens to agree with it.
     """
-    return list(schema_delta(evolve(ABSENT, model), dialect).statements)
+    return list(schema_delta(evolve_metamodels(ABSENT, model), dialect).statements)
 
 
 def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> AttributeMetadata:

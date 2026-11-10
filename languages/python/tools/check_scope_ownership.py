@@ -167,8 +167,8 @@ EXEMPTIONS: Mapping[str, str] = {
     "parallax-evolution/src/parallax/evolution/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.evolution` surface "
         "(`evolve`, `ABSENT`, and the closed evolution vocabulary) across the "
-        "`parallax.evolution.model_evolution` and `parallax.evolution.schema_delta` "
-        "scopes, so no single scope owns it"
+        "`parallax.evolution._domain_models`, `parallax.evolution.model_evolution`, and "
+        "`parallax.evolution.schema_delta` scopes, so no single scope owns it"
     ),
 }
 

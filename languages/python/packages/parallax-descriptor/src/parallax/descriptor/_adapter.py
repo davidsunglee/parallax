@@ -223,7 +223,7 @@ def _layout(entity: _records.Entity) -> StorageLayout | None:
     """
     if entity.layout is None:
         return None
-    return Document(Column(entity.layout.column))
+    return Document(entity.layout.column)
 
 
 def _attribute(

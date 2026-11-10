@@ -487,7 +487,7 @@ def _metamodel_fact(
         case Columns():
             return "columns"
         case Document():
-            return {"document": {"column": value.column.name}}
+            return {"document": {"column": value.column}}
         case NotPrimaryKey():
             return False
         case PrimaryKey():

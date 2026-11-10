@@ -54,7 +54,7 @@ from parallax.core.entity._expressions import (
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
-    Column,
+    Columns,
     EntityIdentity,
     ExactEntityReference,
     Max,
@@ -69,7 +69,6 @@ from parallax.core.metamodel import (
     UnresolvedReverseRelationshipDeclaration,
     derive_temporal_structure,
 )
-from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import Comparison, serialize
 from tests._support.errors import raises_code
@@ -165,10 +164,18 @@ def test_the_storage_layout_is_declared_only_where_it_is_exceptional() -> None:
     class Named(Entity, table="named", layout=Document(column="body")):
         id: Attr[int] = attr(primary_key=True)
 
+    class StatedDefault(Entity, table="stated_default", layout=Columns()):
+        id: Attr[int] = attr(primary_key=True)
+
+    class StatedDefaultClass(Entity, table="stated_default_class", layout=Columns):
+        id: Attr[int] = attr(primary_key=True)
+
     assert Order.layout is None
-    assert Bare.layout == AcceptedDocument(Column("payload"))
+    assert StatedDefault.layout is None
+    assert StatedDefaultClass.layout is None
+    assert Bare.layout == Document(column="payload")
     assert Empty.layout == Bare.layout
-    assert Named.layout == AcceptedDocument(Column("body"))
+    assert Named.layout == Document(column="body")
 
 
 def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
@@ -368,7 +375,7 @@ def _relationship_target_that_is_not_an_entity() -> type:
         (
             _unspellable_layout,
             "entity-header-invalid-value",
-            "LooseLayout: layout= takes Document or Document(column=...), got 'document'",
+            "LooseLayout: layout= takes Document, Document(column=...), or Columns, got 'document'",
         ),
         (
             _blank_structured_column,

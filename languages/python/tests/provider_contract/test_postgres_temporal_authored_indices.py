@@ -24,7 +24,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.evolution import SchemaDelta, schema_delta
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.model_evolution import ABSENT, evolve_metamodels
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 
@@ -71,7 +71,7 @@ def _provision(profile_run: Any) -> SchemaDelta:
     """Provision through the shipped Schema Delta and answer that rollout."""
     model = model_of(_MODEL)
     profile_run.reset(model, {})
-    return schema_delta(evolve(ABSENT, model), POSTGRES)
+    return schema_delta(evolve_metamodels(ABSENT, model), POSTGRES)
 
 
 def _db(profile_run: Any, instants: Sequence[dt.datetime]) -> ScopedDatabase:

@@ -5,7 +5,6 @@ from collections.abc import Callable
 from parallax.conformance.guide_models import Payment
 from parallax.core import Attr, ConcreteSubtype, DomainModel, attr
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import model_of
 from parallax.core.execution import ServingModel, prepare_model
 from parallax.core.read_delivery import InvalidData
 from parallax.descriptor import domain_model_from_yaml, export_yaml
@@ -45,7 +44,7 @@ class GiftCardPayment(Payment, inheritance=ConcreteSubtype(tag_value="gift-card"
 
 def changes_since(deployed: str, release: DomainModel) -> Evolution:
     """What changes between the model deployed last, kept as a descriptor, and ``release``."""
-    return evolve(model_of(domain_model_from_yaml(deployed)), model_of(release))
+    return evolve(domain_model_from_yaml(deployed), release)
 
 
 class CoordinationRequiredError(Exception):

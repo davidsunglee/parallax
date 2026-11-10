@@ -396,7 +396,7 @@ def _typed_violation(entity: type[Entity], member: str, value: object) -> EditVi
 def _model_judgement(model: DomainModel, entity: type[Entity], member: str, value: object) -> None:
     """The shared judgement over the model's family-effective member, qualified
     with the addressed Entity as the write boundary qualifies it."""
-    metadata = model.meta(entity)
+    metadata = model.entity(entity)
     position = inheritance.inheritance_facet_of(model_of(model)).entity(metadata.identity)
     assert position is not None
     resolved = position.member_selection.binding(member)
@@ -661,7 +661,7 @@ def test_a_prepared_operand_binds_the_carrier_its_canonical_export_decodes_to(
 def test_a_prepared_operand_is_adopted_under_the_identical_declared_type() -> None:
     resolved = typed_resolved(Priced.where(Priced.display == "x"), REPRICED).predicate
     assert isinstance(resolved, ResolvedComparison)
-    assert resolved.member is REPRICED.meta(Repriced).attribute("label")
+    assert resolved.member is REPRICED.entity(Repriced).declared.attribute("label")
     assert resolved.value == "x"
 
 

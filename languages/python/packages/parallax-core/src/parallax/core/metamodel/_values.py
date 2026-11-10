@@ -189,24 +189,30 @@ class Columns:
     top-level Value Object occurrence its own Structured Column."""
 
 
+DEFAULT_STRUCTURED_COLUMN: Final = "payload"
+"""The Structured Column name a ``Document`` layout carries when its author
+names none."""
+
+
 @dataclass(frozen=True, slots=True)
 class Document:
-    """Relational Document Layout: one shared Structured Column carries every
-    document-resident member of the governed rows.
+    """Relational Document Layout: one shared Structured Column, named
+    ``column``, carries every document-resident member of the governed rows.
 
-    ``column`` is always resolved — a frontend may supply a conventional name the
-    author omitted, but no accepted layout value carries an unresolved one.
+    One class serves authoring and reading back, so ``layout=Document`` and
+    ``layout=Document()`` declare the conventional column, and a declared name
+    reads back unchanged.
     """
 
-    column: Column
+    column: str = DEFAULT_STRUCTURED_COLUMN
 
 
 type StorageLayout = Columns | Document
 """The root-owned physical mapping policy of one independent mapping owner.
 
 Only a standalone Entity or a family root declares it, and a descendant's
-declaration is a family-invariant rejection rather than an override. ``Columns``
-has no authoring spelling: declaring nothing selects it."""
+declaration is a family-invariant rejection rather than an override. Declaring
+``Columns()`` states the default that declaring nothing selects."""
 
 
 @dataclass(frozen=True, slots=True)

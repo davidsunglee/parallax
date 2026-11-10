@@ -633,9 +633,7 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
 def _managed_subscriber_shape() -> MemberShape:
     meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
     entity = next(
-        entity
-        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
-        if entity.identity.name == "WhereManagedSubscriber"
+        entity for entity in meta.entities if entity.identity.name == "WhereManagedSubscriber"
     )
     return comparison_shape(meta, entity)
 

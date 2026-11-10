@@ -31,7 +31,7 @@ from parallax.evolution.model_evolution import (
     EntityAdded,
     EntityAltered,
     UnilateralEvolution,
-    evolve,
+    evolve_metamodels,
 )
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
@@ -476,7 +476,7 @@ def _parcel(*, origin_nullable: bool) -> AcceptedMetamodel:
 def _operations(
     earlier: AcceptedMetamodel, later: AcceptedMetamodel
 ) -> tuple[PhysicalOperation, ...]:
-    evolution = evolve(earlier, later)
+    evolution = evolve_metamodels(earlier, later)
     assert isinstance(evolution, UnilateralEvolution)
     return plan(evolution, POSTGRES).operations
 

@@ -34,6 +34,7 @@ from parallax.core import (
     index,
     rel,
 )
+from parallax.core.entity import model_of
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import (
     DescriptorError,
@@ -131,7 +132,7 @@ def test_every_door_yields_the_same_sealed_model() -> None:
     exported = [export_document(model) for model in built_models]
     assert exported[0] == exported[1] == exported[2]
     for built in built_models:
-        assert built.meta("bookshop.Author").identity.name == "Author"
+        assert built.entity("bookshop.Author").identity.name == "Author"
         assert [entity.identity.canonical for entity in built.entities] == [
             "bookshop.Author",
             "bookshop.Book",
@@ -144,7 +145,36 @@ def test_a_descriptor_backed_model_composes_no_class() -> None:
     _, author_class = _class_backed()
     built = domain_model_from_yaml(_YAML)
     with raises_code(UsageError, "metamodel-entity-not-found"):
-        built.meta(author_class)
+        built.entity(author_class)
+
+
+def test_class_and_descriptor_backed_models_publish_the_same_resolved_metadata() -> None:
+    class_backed, _ = _class_backed()
+    built = domain_model_from_yaml(_YAML)
+    assert len(built.entities) == len(class_backed.entities)
+    for described, declared in zip(built.entities, class_backed.entities, strict=True):
+        assert (described.identity, described.inheritance, described.parent) == (
+            declared.identity,
+            declared.inheritance,
+            declared.parent,
+        )
+        for scope in ("declared", "effective"):
+            left, right = getattr(described, scope), getattr(declared, scope)
+            assert (left.container, left.persistence, left.layout) == (
+                right.container,
+                right.persistence,
+                right.layout,
+            )
+            assert left.relationships == right.relationships
+            assert [a.identity for a in left.attributes] == [a.identity for a in right.attributes]
+
+
+@pytest.mark.parametrize(
+    "door", [export_document, export_json, export_yaml], ids=lambda door: door.__name__
+)
+def test_an_export_door_refuses_an_accepted_metamodel(door: Callable[..., object]) -> None:
+    with pytest.raises(TypeError, match="takes a Domain Model"):
+        door(model_of(domain_model_from_yaml(_YAML)))
 
 
 def test_the_text_doors_accept_utf8_bytes() -> None:
