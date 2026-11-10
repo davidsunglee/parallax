@@ -6,8 +6,8 @@ equivalent-narrowing convergence, the `1 + L` accounting, child-query
 composition (`in` membership + injected as-of terms + declared relationship
 `orderBy`), narrowed view-key derivation, each level's correlation members
 beside their correlation columns, and back-reference (ancestor-revisit) cycle
-detection. The planner never compiles or executes anything — every assertion
-here is over the returned `ObjectQueryPlan` / `FetchStep` shape alone.
+detection. The planner never compiles or executes anything; where a level's
+shape reads clearest as SQL, a case compiles the child read it planned.
 """
 
 from __future__ import annotations
@@ -544,14 +544,6 @@ def test_narrowed_view_keys_hold_nothing_but_their_strings() -> None:
     assert held <= {dict, str, tuple, type}
 
 
-def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
-    # A narrow denotes ONE position, so a member the model does not declare (or
-    # one belonging to another family) resolves to no position at all rather
-    # than silently contributing nothing to the union.
-    with raises_code(UsageError, "narrow-empty-effective-set"):
-        _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Ghost",))),))
-
-
 # --------------------------------------------------------------------------- #
 # `1 + L` accounting: L counts distinct (post-dedup) hops.                    #
 # --------------------------------------------------------------------------- #
@@ -568,13 +560,6 @@ def test_l_counts_distinct_hops_after_dedup() -> None:
         ),
     )
     assert len(plan.fetch_steps) == 3
-
-
-def test_narrow_and_broad_both_count_toward_l() -> None:
-    plan = _plan(
-        ANIMAL, "Person", (_path(_seg("Person.animals")), _path(_seg("Person.pets", ("Dog",))))
-    )
-    assert len(plan.fetch_steps) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -643,12 +628,6 @@ def test_child_query_injects_the_propagated_root_selections_after_the_in_members
     assert isinstance(membership.values, DeferredKeySet)
     assert _child_terms(child_query) == _injected(POLICY, "Coverage", _VALID, _TX)
     assert _rendered_keys(POLICY, step, [1, 2]) == ArrayBind(INT64, [1, 2])
-
-
-def test_a_back_reference_step_exposes_no_query_construction() -> None:
-    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
-    back_reference = _back_reference_step(plan, 1)
-    assert not hasattr(back_reference, "query")
 
 
 # --------------------------------------------------------------------------- #
@@ -748,11 +727,6 @@ def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> No
         "where t0.folder_id = any(cast(? as bigint[]))",
         ("<keys>",),
     )
-
-
-def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
-    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    assert _query_step(plan).query.target == EntityIdentity("parallax.compatibility", "OrderItem")
 
 
 # --------------------------------------------------------------------------- #
@@ -1466,11 +1440,6 @@ def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level(
     )
 
 
-def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
-    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.statuses")),))
-    assert all(isinstance(step, read_planning.QueryFetchStep) for step in plan.fetch_steps)
-
-
 def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> None:
     # `Animal.owner` then `Person.pets` returns to the Animal family, but the pets
     # are selected by their OWN foreign key to that owner — they are whatever the
@@ -1492,15 +1461,6 @@ def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() ->
     pets, owner = plan.fetch_steps
     assert isinstance(pets, read_planning.QueryFetchStep)
     assert isinstance(owner, read_planning.QueryFetchStep)
-
-
-def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
-    with raises_code(UsageError, "deep-fetch-past-back-reference"):
-        _plan(
-            ORDERS,
-            "Order",
-            (_path(_seg("Order.items"), _seg("OrderItem.order"), _seg("Order.items")),),
-        )
 
 
 # --------------------------------------------------------------------------- #

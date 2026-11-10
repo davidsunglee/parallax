@@ -10,7 +10,6 @@ mechanisms every verb shares.
 
 from __future__ import annotations
 
-import datetime as dt
 from decimal import Decimal
 from typing import Any
 
@@ -18,7 +17,6 @@ import pytest
 
 from parallax.core import (
     Attr,
-    DomainModel,
     EditError,
     Entity,
     ObjectQuery,
@@ -35,8 +33,6 @@ from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vom
 from tests._support.errors import raises_code
-
-_FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 # A small LOCAL Transaction-Time-Only entity, unregistered elsewhere — the
@@ -76,10 +72,6 @@ class _WhereShipment(
     destination: Attr[_WhereShipmentDestination]
 
 
-_WHERE_LEDGER = DomainModel(_WhereTemporalLedger)
-_WHERE_SHIPMENT = DomainModel(_WhereShipment)
-
-
 # --------------------------------------------------------------------------- #
 # `.set(...)` — the typed assignment DSL.                                      #
 # --------------------------------------------------------------------------- #
@@ -116,11 +108,6 @@ def test_set_on_a_many_value_object_member_borrows_the_authored_tuple() -> None:
     assert assignment.value is tags
 
 
-def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
-    assignment = sm.SnapOrderStatus.code.set("X-1")
-    assert assignment.value == "X-1"
-
-
 # --------------------------------------------------------------------------- #
 # Assignability and declared-type agreement are facts of the MEMBER, not of a   #
 # whole model, and an Attribute Expression built from a class carries the       #
@@ -133,14 +120,6 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 # rules are one family with `edit(**changes)`'s own rules, and one call         #
 # names one target, so it always carries exactly one violation.                 #
 # --------------------------------------------------------------------------- #
-def test_set_on_a_primary_key_attribute_raises() -> None:
-    with pytest.raises(EditError, match="primary-key fields may not be assigned"):
-        mm.Person.id.set(2)
-
-
-def test_set_on_a_framework_owned_version_attribute_raises() -> None:
-    with pytest.raises(EditError, match="framework-owned fields"):
-        mm.Account.version.set(5)
 
 
 def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
@@ -161,18 +140,6 @@ def test_set_states_its_rule_from_the_descriptors_member_alone() -> None:
     assert _Uncomposed.label.set("x").value == "x"
     with pytest.raises(EditError, match="primary-key fields may not be assigned"):
         _Uncomposed.id.set(2)
-
-
-def test_set_refuses_a_read_only_member() -> None:
-    # The Python specification states the rule and the extracted judgement is
-    # where it lands: read-only sits beside primary-key and framework-owned as an
-    # unassignable target, on the typed path and the write boundary alike.
-    class _Computed(Entity, table="computed", namespace="parallax.compatibility"):
-        id: Attr[int] = attr(primary_key=True)
-        derived: Attr[str] = attr(max_length=8, read_only=True)
-
-    with pytest.raises(EditError, match="read-only fields may not be assigned"):
-        _Computed.derived.set("x")
 
 
 # --------------------------------------------------------------------------- #

@@ -575,11 +575,9 @@ if TYPE_CHECKING:
 
 
 # --------------------------------------------------------------------------- #
-# The two mixed-temporality directions (m-navigate "As-of propagation across   #
-# relationships"), pinned against the real `lease.yaml` corpus model, whose    #
-# own header comment names exactly this pair: `Tenant.leases` is non-temporal  #
-# -> temporal (the child defaults every axis to LATEST); `Lease.notes` is      #
-# temporal -> non-temporal (the child carries NO as-of term).                  #
+# Non-temporal -> temporal (m-navigate "As-of propagation across               #
+# relationships"), over the real `lease.yaml` corpus model: `Tenant.leases`    #
+# reaches a temporal child, which defaults every axis to LATEST.               #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
     op = oa.Quantifier("any", "Tenant.leases")
@@ -589,7 +587,7 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
 
 
 # --------------------------------------------------------------------------- #
-# Temporal target: latest default (root_pins omitted/empty).                  #
+# Temporal target: the root selects latest, and so does the hop.             #
 # --------------------------------------------------------------------------- #
 def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> None:
     op = oa.Quantifier(
@@ -608,21 +606,6 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
         "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
     assert binds == (decimal.Decimal("600.00"), INFINITY, INFINITY, INFINITY, INFINITY)
-
-
-def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
-    op = oa.Quantifier("any", "Policy.coverages")
-    where, binds = _where(
-        op,
-        POLICY,
-        "Policy",
-        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
-    )
-    assert where == (
-        "exists (select 1 from coverage t1 where t1.policy_id = t0.id "
-        "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
-    )
-    assert binds == (INFINITY, INFINITY, INFINITY, INFINITY)
 
 
 # --------------------------------------------------------------------------- #

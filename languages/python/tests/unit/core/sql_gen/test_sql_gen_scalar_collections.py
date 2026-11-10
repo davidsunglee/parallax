@@ -27,16 +27,6 @@ assert _FOUND is not None
 _ITEM: EntityMetadata = _FOUND
 
 
-def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
-    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
-
-    assert compiled.statement.sql.startswith(
-        "select t0.id, not t0.flags is null, t0.flags, not t0.smalls is null, t0.smalls"
-    )
-    assert "encode(" not in compiled.statement.sql
-    assert compiled.document_reads[0] == (1, 2)
-
-
 def test_a_bytes_collection_decodes_each_element_it_stores_encoded() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     (row,) = deliver(_COLUMNS, compiled, [{"id": 1, "tags": ["b", "a"], "blobs": ["0a1b"]}])

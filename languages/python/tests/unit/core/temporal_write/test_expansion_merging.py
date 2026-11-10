@@ -26,7 +26,6 @@ from parallax.core.metamodel import (
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
 from parallax.core.temporal_write.expansion import (
-    ExpansionRole,
     PredecessorExpander,
     RowAudit,
     TemporalFacts,
@@ -198,14 +197,13 @@ def _settle(
     expansion: PredecessorExpander,
     meta: Metamodel,
     *predecessors: PredecessorRow,
-    role: ExpansionRole = "coverage",
 ) -> BoundRange:
     facts = _facts(meta)
     return expansion.settle(
         tuple(
             (
                 predecessor,
-                role,
+                "coverage",
                 _state(facts, predecessor),
                 temporal_read.valid_time_coverage(facts.shape, predecessor, None),
             )
@@ -437,10 +435,6 @@ class _StampingAudit:
     stamp: Callable[[dt.datetime], str]
     rows: int = 0
 
-    @property
-    def neutral(self) -> bool:
-        return False
-
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
         self.rows += 1
         row = write_row.row
@@ -506,10 +500,6 @@ class _TransactionTimeAudit:
     start: AttributeIdentity
     valid_start: AttributeIdentity
     moved: dt.datetime
-
-    @property
-    def neutral(self) -> bool:
-        return False
 
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
         row = write_row.row

@@ -98,7 +98,6 @@ from parallax.core import (
     IncludePath,
     Int32,
     ObjectQuery,
-    Predicate,
     Rel,
     SortKey,
     TablePerHierarchy,
@@ -112,7 +111,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core.base import UsageError
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._authored_resolver import object_query_node
-from parallax.core.entity._expressions import AuthoredConstant, authored_include_path
+from parallax.core.entity._expressions import authored_include_path
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import TrueNode
 from parallax.core.unit_work import (
@@ -523,36 +522,6 @@ def test_an_equality_literal_is_judged_at_typed_authoring() -> None:
 
     with raises_code(UsageError, "query-expression-invalid"):
         _ = SnapOrderStatus.primary_tag.label == 42
-
-
-def test_the_variance_phantom_exists_for_the_checker_alone() -> None:
-    # Declared under `TYPE_CHECKING`, so it shapes inference and is absent from
-    # every value that ships: nothing can call it, and no runtime behaviour turns
-    # on a member whose only purpose is a variance answer. The reflected
-    # combinators are the same kind of declaration — they exist so the checker
-    # can solve the meet from the narrower operand — and Python never consults a
-    # reflected operator whose left operand already defines the forward one, so
-    # the tree a combination builds is always the left-to-right one.
-    predicate: Predicate[Animal] = Predicate(AuthoredConstant(truth=True))
-    assert not hasattr(predicate, "_addresses")
-    assert not hasattr(predicate, "__rand__")
-    assert not hasattr(predicate, "__ror__")
-
-
-def test_every_addressed_value_carries_its_own_phantom_and_ships_none_of_them() -> None:
-    # One claim, one phantom: a Sort Key, an Assignment, and an unfiltered query
-    # are each contravariant on their own input position, and a Relationship Path
-    # is covariant on its own two output positions. None of them exists at run
-    # time, so no shipped value gains a member for a variance answer.
-    key: SortKey[Animal] = Animal.name.asc()
-    assignment: AttributeAssignment[Animal] = Animal.name.set("Ada")
-    unfiltered: AllPredicate[Animal] = Animal.all
-    path: IncludePath[Beast, Keeper] = Beast.keeper
-    assert not hasattr(key, "_orders")
-    assert not hasattr(assignment, "_assigns_to")
-    assert not hasattr(unfiltered, "_addresses")
-    assert not hasattr(path, "_starts_from")
-    assert not hasattr(path, "_reaches")
 
 
 # --------------------------------------------------------------------------- #

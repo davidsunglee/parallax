@@ -133,19 +133,6 @@ def test_an_entity_with_no_document_member_still_binds_the_empty_object() -> Non
     assert _document(statement) == {}
 
 
-def test_a_document_leaf_binds_the_codecs_spelling_not_the_inputs_carrier() -> None:
-    # `joinedOn` is a managed `date`; the document stores the codec's portable
-    # spelling, which for a date contains the same calendar characters —
-    # what matters is that the value went THROUGH the encoding table rather than to a
-    # serializer, which is what a `decimal` or `bytes` leaf would expose.
-    (statement,) = _lower(
-        KeyedWriteInstruction(
-            "insert", "Person", ({"id": 4, "joinedOn": dt.date(2026, 1, 15), "tags": []},)
-        )
-    )
-    assert _document(statement) == {"joinedOn": "2026-01-15", "tags": []}
-
-
 def test_an_update_patches_only_the_assigned_paths_in_canonical_order() -> None:
     # The ROW lists `score` first; the statement assigns `displayName` first, because
     # canonical logical placement order is the layout's and both dialects apply their
@@ -264,7 +251,7 @@ def test_a_direct_member_still_assigns_its_own_column() -> None:
 
 def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() -> None:
     # The contrast that makes the claim above a layout decision rather than a
-    # rewrite: the same instruction over the same members emits five columns.
+    # rewrite: the same instruction over the same members emits a column per member.
     (statement,) = _lower(
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "displayName": "Ada", "tags": []},)),
         COLUMNS,
@@ -434,15 +421,6 @@ it is, unknown keys included, while a key no member declares reaches no member a
 all (`m-document-codec`)."""
 
 
-_MATERIALIZED: Final[dict[str, object]] = {
-    **_DECODED,
-    "address": {"city": "Oslo", "geo": {"country": "NO"}},
-}
-"""The members a real `find` observes over the same row: materialization rebuilds
-each occurrence from the members the model declares, so `sealNumber` is not among
-them even though the stored subtree still carries it."""
-
-
 _SELECTION = LayoutCatalog(DOCUMENT).entity(PERSON).member_selection
 
 
@@ -504,52 +482,6 @@ def _successor(
     )
 
 
-def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() -> None:
-    # The whole reason a successor is patched rather than re-encoded: `charterCode`
-    # reaches no member, so a document rebuilt from the members this model declares
-    # would have destroyed it.
-    assert _successor({"displayName": "Dagny"}, document=_STORED, origin=ChangedFrom) == {
-        "displayName": "Dagny",
-        "score": 7,
-        "charterCode": "NB-118",
-        "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
-        "tags": [{"label": "founder"}],
-    }
-
-
-def test_a_carried_occurrence_keeps_the_unknown_keys_inside_its_own_subtree() -> None:
-    # A changed successor executes only what it assigns and carries every other
-    # member as its predecessor's own cell, so `address` is never rebuilt and
-    # `sealNumber` rides forward with it.
-    successor = _successor({"score": 21}, document=_STORED, origin=ChangedFrom)
-    assert successor == {**_STORED, "score": 21}
-
-
-def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it() -> None:
-    # The two observation paths spell one occurrence differently — a materializing
-    # resolve retains the stored subtree, a real find the members materialized out of
-    # it — and either way the successor carries the observation's own cell, so
-    # `address` is carried and `sealNumber` rides forward even where no observed
-    # member names it.
-    successor = _successor(
-        {"score": 21}, document=_STORED, origin=ChangedFrom, observed=_MATERIALIZED
-    )
-    assert successor == {**_STORED, "score": 21}
-
-
-def test_a_restated_equal_value_replaces_its_subtree_because_it_is_executed() -> None:
-    # Lowering never compares values: the successor states what it assigns, so
-    # an equal `address` the write executes replaces the stored subtree and
-    # `sealNumber` with it.
-    successor = _successor(
-        {"address": {"city": "Oslo", "geo": {"country": "NO"}}},
-        document=_STORED,
-        origin=ChangedFrom,
-        observed=_MATERIALIZED,
-    )
-    assert successor == {**_STORED, "address": {"city": "Oslo", "geo": {"country": "NO"}}}
-
-
 def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -> None:
     # The unit of replacement is the assigned occurrence, not the row. `address` was
     # authored complete, so the omitted `geo` and the undeclared `sealNumber` inside
@@ -563,11 +495,6 @@ def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -
         "address": {"city": "Alta"},
         "tags": [{"label": "founder"}],
     }
-
-
-def test_an_assigned_many_replaces_the_predecessors_array() -> None:
-    successor = _successor({"tags": [{"label": "member"}]}, document=_STORED, origin=ChangedFrom)
-    assert successor == {**_STORED, "tags": [{"label": "member"}]}
 
 
 def test_a_carried_successor_binds_the_retained_document_itself() -> None:

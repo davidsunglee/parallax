@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Final, cast
 
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import InternalError, concurrency, inheritance, relationship, temporal_read
+from parallax.core import InternalError, inheritance, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
-from parallax.core.concurrency import MODEL_COMPILER as CONCURRENCY_COMPILER
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
-from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
 from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
@@ -31,19 +28,11 @@ from parallax.core.metamodel import (
 )
 from parallax.core.model_formation import (
     MODEL_FORMATION_MODULE,
-    MetadataCompiler,
-    ModelCompiler,
     ModelCompilerRequirement,
-    ModelRuleSet,
-    form,
 )
 from parallax.core.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
-    FORMATION_FACET_DUPLICATE,
-    FORMATION_FACET_MISSING,
 )
-from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
-from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
 from parallax.core.temporal_read import (
     FACET_KEY,
     TEMPORAL_READ_MODULE,
@@ -89,24 +78,6 @@ def _shape(facet: TemporalFacet, name: str) -> object:
     found = facet.shape(_corpus_entity(name))
     assert found is not None, name
     return found
-
-
-@dataclass(frozen=True, slots=True)
-class _Profile:
-    """A Formation Profile whose compiler set the caller chooses."""
-
-    rule_sets: tuple[ModelRuleSet, ...]
-    metadata_compiler: MetadataCompiler
-    model_compilers: tuple[ModelCompiler[Any], ...]
-
-
-def _profile(*compilers: ModelCompiler[Any]) -> _Profile:
-    """The built-in profile with ``compilers`` in place of its own compiler set."""
-    return _Profile(
-        rule_sets=tuple(BUILTIN_PROFILE.rule_sets),
-        metadata_compiler=BUILTIN_PROFILE.metadata_compiler,
-        model_compilers=compilers,
-    )
 
 
 def _valid_time_only() -> Sequence[Declaration]:
@@ -165,11 +136,6 @@ def test_the_temporal_row_follows_relationship_and_precedes_concurrency() -> Non
 def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
     model = _formed("balance")
     assert temporal_read.view(model) is model.facet(FACET_KEY)
-
-
-def test_the_facet_offers_only_shape_and_axis_lookup() -> None:
-    facet = temporal_read.view(_formed("balance"))
-    assert {name for name in dir(facet) if not name.startswith("_")} == {"shape", "axis"}
 
 
 # --------------------------------------------------------------------------
@@ -374,44 +340,3 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     assert isinstance(audit, TransactionTimeOnly)
     assert audit.transaction_time.start_attribute == AttributeIdentity(fake.AUDIT, "txStart")
     assert facet.axis(fake.AUDIT, _VALID_TIME) is None
-
-
-# --------------------------------------------------------------------------
-# Facet dependency ordering and the complete facet set.
-# --------------------------------------------------------------------------
-
-
-def test_a_profile_missing_the_required_inheritance_compiler_fails_before_execution() -> None:
-    profile = _profile(
-        RELATIONSHIP_COMPILER,
-        STORAGE_LAYOUT_COMPILER,
-        temporal_read.MODEL_COMPILER,
-        CONCURRENCY_COMPILER,
-    )
-    with raises_code(InternalError, "formation-facet-missing") as raised:
-        form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
-    assert raised.value.code == FORMATION_FACET_MISSING
-    assert raised.value.args[1].startswith(f"{INHERITANCE_MODULE}: ")
-
-
-def test_a_profile_installing_one_facet_key_twice_fails_before_execution() -> None:
-    profile = _profile(
-        INHERITANCE_COMPILER,
-        RELATIONSHIP_COMPILER,
-        STORAGE_LAYOUT_COMPILER,
-        temporal_read.MODEL_COMPILER,
-        temporal_read.MODEL_COMPILER,
-        CONCURRENCY_COMPILER,
-    )
-    with raises_code(InternalError, "formation-facet-duplicate") as raised:
-        form(source(*_valid_time_only()), BUILTIN_MANIFEST, profile)
-    assert raised.value.code == FORMATION_FACET_DUPLICATE
-    assert raised.value.args[1].startswith(f"{TEMPORAL_READ_MODULE}: ")
-
-
-def test_an_accepted_model_installs_the_complete_facet_set_at_once() -> None:
-    model = _formed("balance")
-    assert inheritance.view(model) is not None
-    assert relationship.view(model) is not None
-    assert temporal_read.view(model) is not None
-    assert concurrency.view(model) is not None

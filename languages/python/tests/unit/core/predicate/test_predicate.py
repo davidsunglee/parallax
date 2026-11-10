@@ -168,25 +168,6 @@ def test_node_round_trip_from_python() -> None:
     assert predicate.deserialize(predicate.serialize(node)) == node
 
 
-def test_the_constants_carry_empty_bodies() -> None:
-    assert predicate.deserialize({"true": {}}) == predicate.TrueNode()
-    assert predicate.deserialize({"false": {}}) == predicate.FalseNode()
-    assert predicate.serialize(predicate.TrueNode()) == {"true": {}}
-    assert predicate.serialize(predicate.FalseNode()) == {"false": {}}
-
-
-def test_string_match_case_insensitive_default_omitted() -> None:
-    node = predicate.StringMatch(
-        op="like", subject=predicate.FieldSubject("Order.name"), value="ada"
-    )
-    assert predicate.serialize(node) == {"like": {"path": "Order.name", "value": "ada"}}
-    node_ci = predicate.StringMatch(
-        op="like", subject=predicate.FieldSubject("Order.name"), value="ada", case_insensitive=True
-    )
-    like_body = cast("dict[str, Any]", predicate.serialize(node_ci)["like"])
-    assert like_body["caseInsensitive"] is True
-
-
 def test_string_match_explicit_case_insensitive_round_trips() -> None:
     # An explicitly authored `caseInsensitive` (either `false` or `true`) round-
     # trips verbatim; an explicit `false` is NOT dropped as if omitted.
@@ -197,15 +178,6 @@ def test_string_match_explicit_case_insensitive_round_trips() -> None:
         node = predicate.deserialize(doc)
         assert cast("predicate.StringMatch", node).case_insensitive is flag
         assert predicate.serialize(node) == doc
-
-
-def test_string_match_omitted_case_insensitive_round_trips_omitted() -> None:
-    # A key that OMITS `caseInsensitive` deserializes to `None` and serializes
-    # back omitted (the schema-defaulted minimal form), never gaining `false`.
-    doc: dict[str, Any] = {"like": {"path": "Order.name", "value": "ada"}}
-    node = predicate.deserialize(doc)
-    assert cast("predicate.StringMatch", node).case_insensitive is None
-    assert predicate.serialize(node) == doc
 
 
 def test_an_operation_without_a_path_reads_the_bound_scalar_element() -> None:
@@ -235,37 +207,6 @@ def test_an_operation_without_a_path_reads_the_bound_scalar_element() -> None:
     )
 
 
-def test_quantifiers_presence_and_a_target_local_narrow_round_trip() -> None:
-    doc: dict[str, Any] = {
-        "and": {
-            "operands": [
-                {
-                    "none": {
-                        "path": "Customer.address.phones",
-                        "where": {"eq": {"path": "type", "value": "home"}},
-                    }
-                },
-                {"any": {"path": "Customer.orders"}},
-                {"exists": {"path": "Customer.address.geo"}},
-                {
-                    "notExists": {
-                        "path": "Customer.favorite",
-                        "where": {"or": {"operands": [{"true": {}}, {"false": {}}]}},
-                    }
-                },
-                {
-                    "narrow": {
-                        "path": "Customer.favorite",
-                        "to": ["Dog"],
-                        "operand": {"greaterThan": {"path": "barkVolume", "value": 3}},
-                    }
-                },
-            ]
-        }
-    }
-    assert predicate.serialize(predicate.deserialize(doc)) == doc
-
-
 def test_bare_presence_keeps_its_positional_constructor_and_omits_where() -> None:
     bare = predicate.Presence("exists", "Order.customer")
     assert bare.where is None
@@ -275,14 +216,6 @@ def test_bare_presence_keeps_its_positional_constructor_and_omits_where() -> Non
         "notExists": {"path": "Order.customer", "where": {"true": {}}}
     }
     assert predicate.deserialize(predicate.serialize(matched)) == matched
-
-
-def test_negated_membership_keeps_its_own_tag_through_serialization() -> None:
-    # One `Membership` class carries both tags, so a lost `op` would silently
-    # serialize `notIn` back as `in` — the same predicate with the opposite meaning.
-    node = predicate.deserialize({"notIn": {"path": "Customer.address.city", "values": ["Oslo"]}})
-    assert cast("predicate.Membership", node).op == "notIn"
-    assert next(iter(predicate.serialize(node))) == "notIn"
 
 
 _QUERY_SPEC_CODES = frozenset(

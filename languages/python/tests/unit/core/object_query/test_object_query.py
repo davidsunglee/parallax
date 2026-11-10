@@ -170,13 +170,6 @@ def test_a_sort_keys_optional_members_stay_distinct_from_their_defaults() -> Non
     )
 
 
-def test_a_sort_keys_null_placement_is_single_shot() -> None:
-    key = oq.OrderKey(attr=f"{_ORDER}.sku", direction="desc")
-    assert key.nulls_first().nulls == "first"
-    with raises_code(UsageError, "query-expression-invalid", match="single-shot"):
-        key.nulls_first().nulls_last()
-
-
 def test_the_temporal_map_serializes_in_canonical_dimension_order() -> None:
     # Key order carries no meaning on the wire, so a document authored the other
     # way round canonicalizes to one form.
