@@ -21,7 +21,7 @@ def test_every_entity_is_prepared_once_over_its_member_selection() -> None:
     preparation = WritePreparation(_BRANCH, absent=_ABSENT)
     branch = entity_of(_BRANCH, "Branch")
     prepared = preparation.entity(branch.identity)
-    view = inheritance.view(_BRANCH).entity(branch.identity)
+    view = inheritance.inheritance_facet_of(_BRANCH).entity(branch.identity)
     assert view is not None
 
     assert prepared.selection.members is view.member_selection

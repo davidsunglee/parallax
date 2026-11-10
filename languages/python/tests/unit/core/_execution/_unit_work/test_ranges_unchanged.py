@@ -131,7 +131,7 @@ def test_a_window_a_target_keeps_a_milestone_it_leaves_unchanged() -> None:
             ),
             write_preparation_of(SPANS),
         ),
-        inheritance.view(SPANS),
+        inheritance.inheritance_facet_of(SPANS),
     )
     plan = planned(
         SPANS,
@@ -214,7 +214,7 @@ def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precond
             ),
             write_preparation_of(BALANCES),
         ),
-        inheritance.view(BALANCES),
+        inheritance.inheritance_facet_of(BALANCES),
     )
     plan = planned(
         BALANCES,
@@ -243,7 +243,7 @@ def test_owning_another_row_lends_no_proof_to_an_unchanged_milestone_the_attempt
 
 
 def test_a_member_its_selection_does_not_declare_is_never_held() -> None:
-    selection = inheritance.view(BALANCES).entity(BALANCE)
+    selection = inheritance.inheritance_facet_of(BALANCES).entity(BALANCE)
     assert selection is not None
     members = selection.member_selection
     row = balance_row("100.00")

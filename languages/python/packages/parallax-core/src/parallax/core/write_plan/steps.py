@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Final, cast
 
 from parallax.core.metamodel import (
     AttributeIdentity,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     ValueObjectIdentity,
 )
 from parallax.core.predicate._resolved import ResolvedPredicate
@@ -381,7 +381,7 @@ class ResolvedMutationSelection:
     Non-Temporal step and an unbounded expected effect.
     """
 
-    target: EntityMetadata
+    target: CompiledEntity
     predicate: ResolvedPredicate
 
 

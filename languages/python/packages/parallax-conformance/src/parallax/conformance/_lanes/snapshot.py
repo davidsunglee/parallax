@@ -487,7 +487,7 @@ def _relationship_declaration(
     the navigating caller (:func:`_related_direction`) and the refusing one
     (:func:`_edited_copy`) reach the same answer.
     """
-    position = inheritance.view(model).entity(identity)
+    position = inheritance.inheritance_facet_of(model).entity(identity)
     declared = next(
         (
             member
@@ -496,7 +496,11 @@ def _relationship_declaration(
         ),
         None,
     )
-    return None if declared is None else relationship.view(model).relationship(declared.identity)
+    return (
+        None
+        if declared is None
+        else relationship.relationship_facet_of(model).relationship(declared.identity)
+    )
 
 
 def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity) -> frozenset[str]:
@@ -513,7 +517,7 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
     ancestor, so it is no more assignable than a name the model never heard of,
     however plainly the materialized node carries it.
     """
-    position = inheritance.view(model).entity(identity)
+    position = inheritance.inheritance_facet_of(model).entity(identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return frozenset()
     return frozenset(
@@ -525,7 +529,7 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
 def _prepared_row_member_names(
     model: AcceptedMetamodel, identity: EntityIdentity
 ) -> frozenset[str]:
-    position = inheritance.view(model).entity(identity)
+    position = inheritance.inheritance_facet_of(model).entity(identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return frozenset()
     return frozenset(
@@ -568,7 +572,7 @@ def _edited_node_identity(
     node_type = node.get(inheritance.WIRE_TYPE_KEY)
     if not isinstance(node_type, str):
         return target
-    position = inheritance.view(model).entity(target)
+    position = inheritance.inheritance_facet_of(model).entity(target)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return target
     for concrete in position.concrete_subtypes:

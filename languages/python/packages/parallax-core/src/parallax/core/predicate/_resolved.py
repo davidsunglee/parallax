@@ -6,8 +6,8 @@ from typing import Final
 from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
 from parallax.core.metamodel import (
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     OccurrenceMetadata,
     RelationshipIdentity,
     ValueObjectAttributeMetadata,
@@ -60,7 +60,7 @@ class ResolvedRelationship:
     """
 
     identity: RelationshipIdentity
-    target: EntityMetadata
+    target: CompiledEntity
     source_attribute: AttributeMetadata
     target_attribute: AttributeMetadata
     temporal_visibility: TemporalPerspective | None = None

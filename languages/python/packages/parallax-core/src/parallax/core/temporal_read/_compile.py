@@ -6,12 +6,12 @@ from typing import Any, Final, cast
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
+    CompiledEntity,
     CompiledMetadata,
     EntityIdentity,
-    EntityMetadata,
-    FacetKey,
     TemporalDimension,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.temporal_read._facet import (
     FACET_KEY,
@@ -47,7 +47,7 @@ def compile_facet(metadata: CompiledMetadata, inheritance: InheritanceFacet) -> 
     return temporal_facet(shapes)
 
 
-def _shape(root: EntityMetadata) -> TemporalShape:
+def _shape(root: CompiledEntity) -> TemporalShape:
     """The temporal shape ``root``'s declared axes describe.
 
     A family declaring Valid Time without Transaction Time is the unsupported

@@ -30,7 +30,7 @@ from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.entity._declaration import declaration_of
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 
 # Sibling implementation modules. None of these names carries a leading
@@ -53,7 +53,7 @@ __all__ = [
 ]
 
 
-def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
+def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> CompiledEntity:
     """``instance``'s accepted Entity Metadata within ``meta``, or a loud
     ``TypeError`` when the connected model declares no such Entity.
 
@@ -73,7 +73,7 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
 
 
 def declared_values(
-    prepared: EntityPreparation, entity: EntityMetadata, instance: EntityBase
+    prepared: EntityPreparation, entity: CompiledEntity, instance: EntityBase
 ) -> Iterable[object]:
     """Each member of ``entity`` ``instance`` holds, in member order, and the
     preparation's ``absent`` where it holds none.
@@ -88,7 +88,7 @@ def declared_values(
 
 
 def writable_row(
-    prepared: EntityPreparation, entity: EntityMetadata, instance: EntityBase
+    prepared: EntityPreparation, entity: CompiledEntity, instance: EntityBase
 ) -> dict[str, object]:
     """Every member ``instance`` populated that a replacement writes, by name:
     neither a framework-owned member nor a read-only one outside the key, both
@@ -232,7 +232,7 @@ class TypedKeyedWriteSource:
         )
 
     def _explicit(
-        self, meta: Metamodel, entity: EntityMetadata
+        self, meta: Metamodel, entity: CompiledEntity
     ) -> Callable[[], Mapping[str, object]]:
         """The explicit assignments preparation judges into the row once the
         target and window admit the write."""
@@ -417,7 +417,7 @@ class TypedKeyTargetWriteAdapter:
         )
 
 
-def metadata_of_class(meta: Metamodel, entity_class: object) -> EntityMetadata:
+def metadata_of_class(meta: Metamodel, entity_class: object) -> CompiledEntity:
     """The accepted Entity Metadata ``entity_class`` declares within ``meta``,
     or a loud ``TypeError`` for anything else."""
     if not isinstance(entity_class, type) or not issubclass(entity_class, EntityBase):

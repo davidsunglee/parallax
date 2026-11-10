@@ -27,7 +27,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _read_projection_support as support
@@ -96,7 +96,7 @@ class _Shape:
     def meta(self) -> Metamodel:
         return support.MATRIX_META if self.strategy is not None else _WIDE_METAS[self.layout]
 
-    def entity(self, name: str) -> EntityMetadata:
+    def entity(self, name: str) -> CompiledEntity:
         if self.strategy is None:
             return next(item for item in self.meta().entities if item.identity.name == name)
         return support.matrix_entity(self.strategy, self.layout, name)

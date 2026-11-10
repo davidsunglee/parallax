@@ -17,14 +17,14 @@ _INTERVAL = (("lt", (Column("in_z"), Column("out_z"))),)
 
 
 def _layout(model: Metamodel, table: str) -> TableLayout:
-    layout = storage_layout.view(model).table(Table(table))
+    layout = storage_layout.storage_layout_facet_of(model).table(Table(table))
     assert layout is not None
     return layout
 
 
 def _names(model: Metamodel) -> dict[str, tuple[str, str | None]]:
     named: dict[str, tuple[str, str | None]] = {}
-    for layout in storage_layout.view(model).tables:
+    for layout in storage_layout.storage_layout_facet_of(model).tables:
         constraints = layout.temporal_constraints
         if constraints is not None:
             valid = constraints.valid_axis
@@ -199,7 +199,7 @@ def test_only_the_readable_prefix_bends_to_the_63_byte_budget(
 
 def _keys(model: Metamodel) -> dict[str, tuple[str, str, tuple[str, ...]]]:
     named: dict[str, tuple[str, str, tuple[str, ...]]] = {}
-    for layout in storage_layout.view(model).tables:
+    for layout in storage_layout.storage_layout_facet_of(model).tables:
         constraints = layout.temporal_constraints
         if constraints is not None:
             named[layout.table.name] = (

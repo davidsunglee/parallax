@@ -46,7 +46,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import CompiledEntity
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
 )
@@ -650,7 +650,7 @@ INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
 }
 
 
-def _rejected_write_target(domain_model: DomainModel) -> EntityMetadata:
+def _rejected_write_target(domain_model: DomainModel) -> CompiledEntity:
     """The Entity a rejected `when.write` resolves against (`rejected._rejected_target`'s
     own convention): these models declare no family, so it is the model's one Entity —
     unpacking fails loudly if that ever stops holding."""

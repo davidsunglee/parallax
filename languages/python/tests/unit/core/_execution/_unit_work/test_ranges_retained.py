@@ -58,7 +58,9 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
 )
 
 _INSTANT = instant_at("2024-10-01T00:00:00+00:00")
-_VIEW = inheritance.view(POSITION).entity(addressed_write().instruction.target.identity)
+_VIEW = inheritance.inheritance_facet_of(POSITION).entity(
+    addressed_write().instruction.target.identity
+)
 assert _VIEW is not None
 _SHAPE = _VIEW.member_selection.shape
 

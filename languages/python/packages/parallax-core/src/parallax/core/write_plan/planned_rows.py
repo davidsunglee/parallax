@@ -7,7 +7,7 @@ from parallax.core.base import InternalError
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
-    EntityMetadata,
+    CompiledEntity,
     OccurrenceDefinition,
     ValueObjectIdentity,
 )
@@ -79,7 +79,7 @@ def planned_assignments(row: ManagedRow, *, without: int = 0) -> PlannedAssignme
     return adopt_planned_assignments(attributes, value_objects)
 
 
-def entity_view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
+def entity_view(families: InheritanceFacet, entity: CompiledEntity) -> InheritanceEntityView:
     """``entity``'s compiled family-effective view — its applicable member
     chain, the indices a write row's names resolve through, and the family key.
 
@@ -94,7 +94,7 @@ def entity_view(families: InheritanceFacet, entity: EntityMetadata) -> Inheritan
 
 
 def key_target(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     key_attributes: tuple[AttributeIdentity, ...],
     rows: Sequence[ManagedRow],
 ) -> KeyTarget:
@@ -106,7 +106,7 @@ def key_target(
 
 
 def key_tuple(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     key_attributes: tuple[AttributeIdentity, ...],
     row: ManagedRow,
 ) -> tuple[object, ...]:

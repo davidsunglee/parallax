@@ -25,7 +25,7 @@ from functools import cache
 
 from parallax.conformance import models
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._ingest import ingest_document
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
@@ -76,7 +76,7 @@ def formed(records: DescriptorMetamodel) -> Metamodel:
     return form_metamodel(unresolved_metamodel(records))
 
 
-def target(model: Metamodel, name: str) -> EntityMetadata:
+def target(model: Metamodel, name: str) -> CompiledEntity:
     """The Entity ``name`` denotes in ``model``, named as a corpus case names it.
 
     A case authors a bare declared name and every corpus Entity is namespaced,

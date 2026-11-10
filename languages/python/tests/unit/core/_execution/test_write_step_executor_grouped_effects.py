@@ -484,7 +484,7 @@ def test_a_matched_milestone_counts_once_whatever_it_changed() -> None:
 
 def test_an_exclusion_refusal_is_recognized_against_the_statements_entity() -> None:
     steps = [close(POSITION, "Position", milestone(POSITION, "Position", key)) for key in (1, 2)]
-    exclusion = storage_layout.view(POSITION).entity(steps[0].entity)
+    exclusion = storage_layout.storage_layout_facet_of(POSITION).entity(steps[0].entity)
     assert exclusion is not None and exclusion.layout.temporal_constraints is not None
     failure = DatabaseError(
         category="constraintViolation",

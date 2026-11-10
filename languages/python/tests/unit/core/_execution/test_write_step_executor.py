@@ -222,7 +222,7 @@ def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
 
 
 def test_an_allocating_insert_refused_by_its_tables_exclusion_is_recognized() -> None:
-    layout = storage_layout.view(model_of(_SPANS)).entity(Span.identity)
+    layout = storage_layout.storage_layout_facet_of(model_of(_SPANS)).entity(Span.identity)
     assert layout is not None and layout.layout.temporal_constraints is not None
     refused = DatabaseError(
         category="constraintViolation",

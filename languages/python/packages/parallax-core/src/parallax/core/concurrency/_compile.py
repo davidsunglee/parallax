@@ -15,12 +15,8 @@ from parallax.core.concurrency._facet import (
 )
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceFacet, root_metadata
-from parallax.core.metamodel import (
-    CompiledMetadata,
-    EntityIdentity,
-    EntityMetadata,
-    FacetKey,
-)
+from parallax.core.metamodel import CompiledEntity, CompiledMetadata, EntityIdentity
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import (
@@ -61,7 +57,7 @@ def _shape(temporal: TemporalFacet, entity: EntityIdentity) -> TemporalShape:
     return cast(TemporalShape, temporal.shape(entity))
 
 
-def _version_source(root: EntityMetadata, shape: TemporalShape) -> VersionSource:
+def _version_source(root: CompiledEntity, shape: TemporalShape) -> VersionSource:
     """The version source a family with this root and this shape carries."""
     match shape:
         case TransactionTimeOnly(transaction_time) | Bitemporal(_, transaction_time):
@@ -70,7 +66,7 @@ def _version_source(root: EntityMetadata, shape: TemporalShape) -> VersionSource
             return _explicit_version(root)
 
 
-def _explicit_version(root: EntityMetadata) -> VersionSource:
+def _explicit_version(root: CompiledEntity) -> VersionSource:
     """The version Attribute ``root`` declares, or the unversioned source; a
     root declaring more than one was already rejected."""
     versions = [member for member in root.declared_attributes if member.optimistic_locking]

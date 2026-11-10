@@ -37,7 +37,7 @@ from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.base import UsageError
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
 from parallax.core.write_plan import ObjectKey
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -196,7 +196,7 @@ class ResolvedKeyedWriteSource:
     carries no read evidence beside it, and a read's source carries no authority.
     """
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     pin: Pin | None
     read_evidence: ReadEvidence | None
     provenance: Provenance
@@ -232,7 +232,7 @@ class ResolvedKeyedInsert:
     so a later repeat names the way out this insert's carrier offers.
     """
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     pin: Pin | None
     provenance: Provenance
     advice: KeyedWriteRefusalAdvice

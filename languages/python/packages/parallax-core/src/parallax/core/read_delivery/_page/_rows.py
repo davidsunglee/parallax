@@ -629,7 +629,7 @@ def page_schedule(page: Page, model: Metamodel, *, atomic: bool) -> PageSchedule
         return _NO_LAST_USES
     rows = page_rows(page)
     layouts = rows.layouts
-    versioning = concurrency.view(model)
+    versioning = concurrency.concurrency_facet_of(model)
     defers_states = all(
         versioning.settles_against(layouts[root].concrete) == "observation" for root in rows.roots
     )

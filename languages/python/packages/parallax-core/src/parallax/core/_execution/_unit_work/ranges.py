@@ -36,7 +36,7 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity
 from parallax.core.temporal_read import (
     Bitemporal,
     TimeInterval,
@@ -812,7 +812,7 @@ def _missing_coverage(
 
 
 def _coverage_requests(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     key_attribute: AttributeIdentity,
     terms: Iterable[CoverageTerm],
     *,

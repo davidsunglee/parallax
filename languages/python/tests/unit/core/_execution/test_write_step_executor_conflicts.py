@@ -34,7 +34,7 @@ from tests.unit.core._execution._write_step_support import (
     step_executor,
 )
 
-_VIEW = storage_layout.view(POSITION_META).entity(POSITION)
+_VIEW = storage_layout.storage_layout_facet_of(POSITION_META).entity(POSITION)
 assert _VIEW is not None
 _CONSTRAINTS = _VIEW.layout.temporal_constraints
 assert _CONSTRAINTS is not None

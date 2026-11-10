@@ -3,7 +3,7 @@ from __future__ import annotations
 from parallax.core import inheritance, storage_layout, temporal_read
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import TemporalShape
 
@@ -15,24 +15,24 @@ __all__ = [
 ]
 
 
-def family_view(model: Metamodel, entity: EntityMetadata) -> InheritanceEntityView:
+def family_view(model: Metamodel, entity: CompiledEntity) -> InheritanceEntityView:
     """``entity``'s compiled Inheritance view: its family root's identity, the
     family key, and its applicable members."""
-    view = inheritance.view(model).entity(entity.identity)
+    view = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
     return view
 
 
-def temporal_shape(model: Metamodel, entity: EntityMetadata) -> TemporalShape:
+def temporal_shape(model: Metamodel, entity: CompiledEntity) -> TemporalShape:
     """``entity``'s family Temporal Shape, compiled once for the whole family."""
-    shape = temporal_read.view(model).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     if shape is None:  # pragma: no cover - the facet covers every accepted Entity
         raise RuntimeError(f"{entity.identity.canonical}: no Temporal Facet shape")
     return shape
 
 
-def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
+def entity_layout(model: Metamodel, entity: CompiledEntity) -> EntityLayoutView | None:
     """``entity``'s canonical selection over its physical Table Layout, or
     ``None`` when it owns no rows (an abstract family position, or an Entity the
     model maps to no Table).
@@ -41,10 +41,10 @@ def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView 
     already carry Table order, the applicable member set, and the derived
     table-per-hierarchy discriminator assignment, so nothing downstream
     reassembles a column sequence from declarations."""
-    return storage_layout.view(model).entity(entity.identity)
+    return storage_layout.storage_layout_facet_of(model).entity(entity.identity)
 
 
-def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:
+def comparison_shape(model: Metamodel, entity: CompiledEntity) -> MemberShape:
     """``entity``'s applicable members as one document shape, for the codec's
     effective-change comparison.
 

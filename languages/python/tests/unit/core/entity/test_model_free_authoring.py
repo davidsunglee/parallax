@@ -397,7 +397,7 @@ def _model_judgement(model: DomainModel, entity: type[Entity], member: str, valu
     """The shared judgement over the model's family-effective member, qualified
     with the addressed Entity as the write boundary qualifies it."""
     metadata = model.meta(entity)
-    position = inheritance.view(model_of(model)).entity(metadata.identity)
+    position = inheritance.inheritance_facet_of(model_of(model)).entity(metadata.identity)
     assert position is not None
     resolved = position.member_selection.binding(member)
     assert resolved is not None

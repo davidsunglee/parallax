@@ -191,7 +191,7 @@ def test_a_root_declaring_the_version_attribute_is_accepted() -> None:
     ):
         capacity: Attr[int | None] = attr(type=Int32)
 
-    view = inheritance.view(model_of(DomainModel(ApplianceRoot, ApplianceLeaf)))
+    view = inheritance.inheritance_facet_of(model_of(DomainModel(ApplianceRoot, ApplianceLeaf)))
     position = view.entity(_identity("ApplianceLeaf"))
     assert position is not None
     assert position.applicable_attribute("version") is not None
@@ -245,7 +245,7 @@ def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -
 
 
 def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> None:
-    view = inheritance.view(model_of(DomainModel(_Ledger, _SilentLedger)))
+    view = inheritance.inheritance_facet_of(model_of(DomainModel(_Ledger, _SilentLedger)))
     silent = view.entity(_identity("SilentLedger"))
     assert silent is not None
     assert silent.persistence is PersistenceMode.READ_ONLY

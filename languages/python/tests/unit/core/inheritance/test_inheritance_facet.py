@@ -1,4 +1,4 @@
-"""m-inheritance: the compiled Inheritance Facet and its typed view."""
+"""m-inheritance: the compiled Inheritance Facet and its typed accessor."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
-from tests._support import fake_metamodel as fake
+from tests._support import fake_metadata as fake
 from tests.unit._metamodel_support import Declaration, identity, key, source
 from tests.unit.core._dormant_family_support import (
     DORMANT,
@@ -71,7 +71,7 @@ def _formed(stem: str) -> Metamodel:
 
 
 def _corpus(stem: str) -> InheritanceFacet:
-    return inheritance.view(_formed(stem))
+    return inheritance.inheritance_facet_of(_formed(stem))
 
 
 def _corpus_entity(name: str) -> EntityIdentity:
@@ -120,7 +120,7 @@ def test_a_standalone_entity_has_the_trivial_view() -> None:
 
 def test_every_accepted_entity_has_a_view_and_a_miss_returns_absence() -> None:
     model = _formed("animal")
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     assert all(facet.entity(entity.identity) is not None for entity in model.entities)
     assert facet.entity(EntityIdentity("elsewhere", "Dog")) is None
 
@@ -183,7 +183,7 @@ def test_applicable_members_are_the_ancestry_chain_in_chain_order() -> None:
 
 def test_an_entity_view_holds_its_applicable_document_shape() -> None:
     model = _formed("customer")
-    view = inheritance.view(model).entity(_corpus_entity("Customer"))
+    view = inheritance.inheritance_facet_of(model).entity(_corpus_entity("Customer"))
     assert view is not None
     assert view.applicable_document_shape == MemberShape.of(
         view.applicable_attributes,
@@ -271,7 +271,7 @@ def test_every_member_window_iterates_its_own_bindings_in_order_by_identity() ->
 
 def test_an_applicable_member_is_the_ancestors_own_accepted_value() -> None:
     model = _formed("animal")
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     root = model.entity(_corpus_entity("Animal"))
     assert root is not None
     found = _view(facet, "Dog").applicable_attribute("id")
@@ -292,7 +292,7 @@ def test_applicable_lookups_resolve_across_the_chain_and_return_absence_on_a_mis
 
 
 def test_value_object_lookup_resolves_a_top_level_occurrence_by_its_local_name() -> None:
-    facet = inheritance.view(_formed("customer"))
+    facet = inheritance.inheritance_facet_of(_formed("customer"))
     customer = facet.entity(_corpus_entity("Customer"))
     assert customer is not None
     assert _value_object_names(customer.applicable_value_objects) == ["address"]
@@ -304,7 +304,7 @@ def test_value_object_lookup_resolves_a_top_level_occurrence_by_its_local_name()
 def test_persistence_is_the_effective_root_owned_mode() -> None:
     facet = _corpus("animal")
     assert _view(facet, "Dog").persistence is PersistenceMode.READ_WRITE
-    scalars = inheritance.view(_formed("scalars"))
+    scalars = inheritance.inheritance_facet_of(_formed("scalars"))
     read_only = scalars.entity(_corpus_entity("ScalarThing"))
     assert read_only is not None
     assert read_only.persistence is PersistenceMode.READ_ONLY
@@ -328,7 +328,7 @@ def test_a_family_inherits_the_root_declared_persistence() -> None:
             ),
         )
     )
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     for position in (root, entry):
         view = facet.entity(position)
         assert view is not None
@@ -353,7 +353,7 @@ def test_every_position_in_a_family_shares_its_roots_metadata_and_key_attribute(
     stem: str, root_name: str
 ) -> None:
     model = _formed(stem)
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     root = model.entity(_corpus_entity(root_name))
     assert root is not None
     key = root.attribute("id")
@@ -373,8 +373,13 @@ def test_a_standalone_entitys_key_is_the_attribute_it_declares() -> None:
     model = _formed("animal")
     person = model.entity(_corpus_entity("Person"))
     assert person is not None
-    assert inheritance.root_metadata(inheritance.view(model), model, person.identity) is person
-    assert _view(inheritance.view(model), "Person").primary_key is person.attribute("id")
+    assert (
+        inheritance.root_metadata(inheritance.inheritance_facet_of(model), model, person.identity)
+        is person
+    )
+    assert _view(inheritance.inheritance_facet_of(model), "Person").primary_key is person.attribute(
+        "id"
+    )
 
 
 def test_a_family_listed_descendants_first_carries_its_roots_key_at_every_position() -> None:
@@ -396,7 +401,7 @@ def test_a_family_listed_descendants_first_carries_its_roots_key_at_every_positi
 
 def test_an_entitys_supersets_equal_its_own_one_member_position() -> None:
     model = _formed("animal")
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     for entity in model.entities:
         view = facet.entity(entity.identity)
         assert view is not None
@@ -472,7 +477,7 @@ def test_a_position_is_absent_for_an_unknown_member_or_two_families() -> None:
 
 def test_a_standalone_entity_forms_a_position_only_alone() -> None:
     model = _formed("orders")
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     first, second = (entity.identity for entity in model.entities[:2])
     alone = facet.position([first])
     assert alone is not None
@@ -505,7 +510,7 @@ def test_a_position_with_no_concrete_subtype_projects_empty_sequences() -> None:
             ),
         )
     )
-    projected = inheritance.view(model).position([orphan])
+    projected = inheritance.inheritance_facet_of(model).position([orphan])
     assert projected is not None
     assert projected.concrete_subtypes == ()
     assert projected.superset_attributes == ()
@@ -564,7 +569,7 @@ def test_a_superset_collects_value_objects_down_the_same_contribution_order() ->
             ),
         )
     )
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     view = facet.entity(root)
     assert view is not None
     assert _value_object_names(view.superset_value_objects) == ["hull", "deck", "cargo"]
@@ -620,13 +625,15 @@ def _value_object_owners(
 def test_a_family_declaration_sequence_appends_dormant_participants_child_before_parent(
     strategy: Literal["tph", "tpcs"],
 ) -> None:
-    family = _family(inheritance.view(form_metamodel(dormant_family(strategy))), ROOT)
+    family = _family(
+        inheritance.inheritance_facet_of(form_metamodel(dormant_family(strategy))), ROOT
+    )
     assert _attribute_owners(family.attributes) == _DORMANT_ATTRIBUTES
     assert _value_object_owners(family.value_objects) == _DORMANT_VALUE_OBJECTS
 
 
 def test_a_root_projection_is_the_prefix_of_its_family_declaration_sequence() -> None:
-    facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    facet = inheritance.inheritance_facet_of(form_metamodel(dormant_family("tph")))
     family = _family(facet, ROOT)
     root = _entity(facet, ROOT)
     for sequence, prefix in (
@@ -638,7 +645,7 @@ def test_a_root_projection_is_the_prefix_of_its_family_declaration_sequence() ->
 
 
 def test_dormant_participants_keep_empty_projections() -> None:
-    facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    facet = inheritance.inheritance_facet_of(form_metamodel(dormant_family("tph")))
     for dormant in (DORMANT, DORMANT_CHILD):
         view = _entity(facet, dormant)
         projected = facet.position([dormant])
@@ -651,7 +658,7 @@ def test_dormant_participants_keep_empty_projections() -> None:
 
 def test_every_family_participant_contributes_its_accepted_members_once() -> None:
     model = form_metamodel(dormant_family("tph"))
-    family = _family(inheritance.view(model), ROOT)
+    family = _family(inheritance.inheritance_facet_of(model), ROOT)
     identities = [member.identity for member in (*family.attributes, *family.value_objects)]
     assert len(identities) == len(set(identities))
     for attribute in family.attributes:
@@ -669,7 +676,7 @@ def test_a_family_listed_descendants_first_compiles_the_same_declaration_sequenc
     metadata = DescendantsFirst(model)
     listed = [entity.identity for entity in metadata.entities]
     assert listed.index(DORMANT_CHILD) < listed.index(DORMANT) < listed.index(ROOT)
-    expected = _family(inheritance.view(model), ROOT)
+    expected = _family(inheritance.inheritance_facet_of(model), ROOT)
     compiled = _family(compile_facet(metadata), ROOT)
     for sequence, reference in (
         (compiled.attributes, expected.attributes),
@@ -680,7 +687,7 @@ def test_a_family_listed_descendants_first_compiles_the_same_declaration_sequenc
 
 
 def test_a_family_declaration_sequence_with_a_dormant_suffix_behaves_as_a_sequence() -> None:
-    facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    facet = inheritance.inheritance_facet_of(form_metamodel(dormant_family("tph")))
     attributes = _family(facet, ROOT).attributes
     boundary = len(_entity(facet, ROOT).superset_attributes)
     expected = tuple(attributes)
@@ -737,7 +744,7 @@ def test_a_family_declaration_sequence_is_absent_for_every_identity_but_a_root()
     assert animal.family(EntityIdentity("elsewhere", "Animal")) is None
     assert animal.family(_corpus_entity("Pet")) is None
     assert animal.family(_corpus_entity("Dog")) is None
-    dormant_facet = inheritance.view(form_metamodel(dormant_family("tph")))
+    dormant_facet = inheritance.inheritance_facet_of(form_metamodel(dormant_family("tph")))
     assert dormant_facet.family(DORMANT) is None
     assert dormant_facet.family(LIVE) is None
 
@@ -750,7 +757,7 @@ def test_a_family_declaration_sequence_is_absent_for_every_identity_but_a_root()
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     # The compiler reads the metadata protocols only, so an accepted graph the
     # descriptor path never touched compiles into the same trivial views.
-    facet = compile_facet(fake.parity_model())
+    facet = compile_facet(fake.parity_metadata())
     view = facet.entity(fake.ACCOUNT)
     assert view is not None
     assert view.root == fake.ACCOUNT
@@ -765,7 +772,7 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
 
 
 def test_a_value_object_identity_survives_the_projection() -> None:
-    facet = compile_facet(fake.parity_model())
+    facet = compile_facet(fake.parity_metadata())
     view = facet.entity(fake.ACCOUNT)
     assert view is not None
     (contact,) = view.superset_value_objects

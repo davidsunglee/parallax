@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol, TypeGuard
 
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, FacetKey, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel._accepted import FacetKey, facet_of
 
 __all__ = [
     "CONCURRENCY_MODULE",
@@ -20,7 +21,7 @@ __all__ = [
     "Unversioned",
     "VersionSource",
     "concurrency_facet",
-    "view",
+    "concurrency_facet_of",
 ]
 
 CONCURRENCY_MODULE: Final[str] = "m-concurrency"
@@ -160,7 +161,10 @@ FACET_KEY: Final[FacetKey[ConcurrencyFacet]] = FacetKey(CONCURRENCY_MODULE, is_c
 """The typed key this module's facet is installed and retrieved under."""
 
 
-def view(model: Metamodel) -> ConcurrencyFacet:
-    """``model``'s Concurrency Facet: the typed retrieval every behavioral
-    consumer uses, total for an accepted Metamodel."""
-    return model.facet(FACET_KEY)
+def concurrency_facet_of(model: Metamodel) -> ConcurrencyFacet:
+    """``model``'s Concurrency Facet, the typed retrieval every consumer uses.
+
+    Total for an accepted Metamodel, which by construction carries the complete
+    facet set.
+    """
+    return facet_of(model, FACET_KEY)

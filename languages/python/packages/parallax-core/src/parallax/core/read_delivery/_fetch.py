@@ -166,7 +166,7 @@ def correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attribu
     (`m-inheritance` "Members do not shadow across ancestry"), so the superset can
     hold two same-named Attributes and only the chain distinguishes them.
     """
-    position = inheritance.view(meta).entity(attribute.entity)
+    position = inheritance.inheritance_facet_of(meta).entity(attribute.entity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return attribute
     declared = position.applicable_attribute(attribute.name)

@@ -98,8 +98,7 @@ from parallax.core.read_delivery._page_reader import (
 )
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead, ReadPlan
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.storage_layout import DirectColumn, TableLayout
-from parallax.core.storage_layout import view as storage_layout_view
+from parallax.core.storage_layout import DirectColumn, TableLayout, storage_layout_facet_of
 from parallax.core.unit_work import ReadEvidence
 from tests._support.db_port import ConnectsAsItself
 from tests._support.document_reads import fold_mapping_rows
@@ -405,7 +404,7 @@ def _driver_row(
     meta = model.meta
     layout = model.layouts.entity(entity)
     table = _table_layout(meta, entity)
-    storage_view = storage_layout_view(meta).entity(entity)
+    storage_view = storage_layout_facet_of(meta).entity(entity)
     if storage_view is None:  # pragma: no cover - every materialized concrete owns rows
         raise AssertionError(f"{entity.canonical}: no storage layout view")
     projected = frozenset(member.storage.name for member in compiled.projection.value_objects)
@@ -610,13 +609,13 @@ def _identity(model: Metamodel, name: str) -> EntityIdentity:
 
 
 def _table_layout(model: Metamodel, entity: EntityIdentity) -> TableLayout:
-    view = storage_layout_view(model).entity(entity)
+    view = storage_layout_facet_of(model).entity(entity)
     assert view is not None, entity
     return view.layout
 
 
 def _discriminator(model: Metamodel, entity: EntityIdentity) -> tuple[str, str] | None:
-    view = storage_layout_view(model).entity(entity)
+    view = storage_layout_facet_of(model).entity(entity)
     assert view is not None, entity
     assignment = view.discriminator
     return None if assignment is None else (assignment.slot.column.name, assignment.value)

@@ -30,7 +30,7 @@ def _entity(name: str) -> EntityIdentity:
 
 
 def _facet(stem: str) -> concurrency.ConcurrencyFacet:
-    return concurrency.view(_MODELS[stem])
+    return concurrency.concurrency_facet_of(_MODELS[stem])
 
 
 # --------------------------------------------------------------------------

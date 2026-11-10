@@ -129,7 +129,7 @@ PRIMARY_KEY_MULTIPLE: Final[IssueCode] = "metamodel-primary-key-multiple"
 keys are not part of the contract, so this is a defect rather than a shape."""
 
 INDEX_IDENTITY_DUPLICATE: Final[IssueCode] = "metamodel-index-identity-duplicate"
-"""Two Indices of one Entity bear one name, so ``EntityMetadata.index`` has no
+"""Two Indices of one Entity bear one name, so ``CompiledEntity.index`` has no
 single answer for it. Identity alone decides: a frontend hands a derived Index
 over as an ordinary one, so it claims its name like any other, and components
 neither cause nor excuse the collision."""

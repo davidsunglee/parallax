@@ -76,13 +76,13 @@ def test_class_backed_consumer_must_match_the_complete_fixture_contract(
         workload.validate_class_backed(ORDERS_MODEL, Order.where(Order.active == True))  # noqa: E712
     with pytest.raises(ValueError, match="class-backed metadata differs"):
         workload.validate_class_backed(ACCOUNT_MODEL)
-    descriptor_view = inheritance.view(workload.model)
+    descriptor_view = inheritance.inheritance_facet_of(workload.model)
     views = iter((_MissingInheritance(), descriptor_view))
 
     def next_view(_model: Metamodel) -> Any:
         return next(views)
 
-    monkeypatch.setattr(inheritance, "view", next_view)
+    monkeypatch.setattr(inheritance, "inheritance_facet_of", next_view)
     with pytest.raises(ValueError, match="class-backed facets differ"):
         workload.validate_class_backed(ORDERS_MODEL)
 

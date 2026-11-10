@@ -8,8 +8,8 @@ from parallax.core.concurrency import (
     ExplicitVersion,
     TransactionTimeVersion,
     VersionSource,
+    concurrency_facet_of,
 )
-from parallax.core.concurrency import view as concurrency_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -34,8 +34,12 @@ from parallax.core.metamodel import (
     ValueObjectLocation,
     canonical_location_key,
 )
-from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import (
+    Bitemporal,
+    TemporalFacet,
+    TransactionTimeOnly,
+    temporal_facet_of,
+)
 from parallax.evolution.model_evolution._matching import (
     EntityFacts,
     Matching,
@@ -131,8 +135,8 @@ def impacts(
     analysis = _Analysis(
         matching=matching,
         operations=described,
-        earlier=_Endpoint(temporal_view(earlier), concurrency_view(earlier)),
-        later=_Endpoint(temporal_view(matching.later), concurrency_view(matching.later)),
+        earlier=_Endpoint(temporal_facet_of(earlier), concurrency_facet_of(earlier)),
+        later=_Endpoint(temporal_facet_of(matching.later), concurrency_facet_of(matching.later)),
         altered_attributes={
             operation.attribute: operation
             for operation in described

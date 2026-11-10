@@ -259,7 +259,9 @@ _LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
 
 
 def _version_attribute(model: AcceptedMetamodel, entity_name: str) -> AttributeIdentity | None:
-    return concurrency.view(model).version_attribute(case_entity(model, entity_name).identity)
+    return concurrency.concurrency_facet_of(model).version_attribute(
+        case_entity(model, entity_name).identity
+    )
 
 
 def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
@@ -327,7 +329,7 @@ def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel)
     if not isinstance(instruction, KeyedWriteInstruction):
         return False
     entity = instruction.entity
-    position = inheritance.view(model).entity(case_entity(model, entity).identity)
+    position = inheritance.inheritance_facet_of(model).entity(case_entity(model, entity).identity)
     if position is None:  # pragma: no cover - accepted entities have an inheritance position
         return False
     shape = position.member_selection.shape

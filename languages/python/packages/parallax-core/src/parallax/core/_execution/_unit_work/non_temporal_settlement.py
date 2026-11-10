@@ -6,7 +6,7 @@ from typing import Final
 
 from parallax.core.concurrency import next_version
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.planned_rows import key_target
 from parallax.core.write_plan.steps import (
@@ -50,7 +50,7 @@ class NonTemporalFacts:
     write settles with it, but it is not a fact about the mutation.
     """
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     view: InheritanceEntityView
     version_attribute: AttributeIdentity | None
 

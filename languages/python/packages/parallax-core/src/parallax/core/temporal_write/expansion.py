@@ -9,7 +9,7 @@ from parallax.core.base import INFINITY, ConflictError, TemporalBound
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AttributeIdentity,
-    EntityMetadata,
+    CompiledEntity,
     OccurrenceDefinition,
     ValueObjectIdentity,
 )
@@ -121,7 +121,7 @@ class TemporalFacts:
     so a deferred range may retain them and still decide nothing later.
     """
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     view: InheritanceEntityView
     shape: TransactionTimeOnly | Bitemporal
     instant: dt.datetime

@@ -57,7 +57,7 @@ from parallax.core._execution._unit_work.write_items import (
     temporal_intent,
 )
 from parallax.core.base import UsageError
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
@@ -158,8 +158,8 @@ class WriteAdmission:
     )
 
     def __init__(self, meta: Metamodel, *, authority: SourceAuthority) -> None:
-        self._families = inheritance.view(meta)
-        self._temporal_facet = temporal_read.view(meta)
+        self._families = inheritance.inheritance_facet_of(meta)
+        self._temporal_facet = temporal_read.temporal_facet_of(meta)
         self._authority = authority
         self._writes: list[_PendingItem] = []
         # Every claim the buffer holds, by its scope: the position of the write
@@ -716,7 +716,7 @@ class WriteAdmission:
 
     def _rectangle_admits(
         self,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         key: ObjectKey,
         expected: ExpectedTxStart,
         window: TimeInterval,
@@ -745,7 +745,7 @@ class WriteAdmission:
 
     def _starting_revision(
         self,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         key: ObjectKey,
         write: TemporalIntent | _TemporalArrival,
         window: TimeInterval | None,
@@ -805,7 +805,7 @@ class WriteAdmission:
         assert held is None or isinstance(held, _TEMPORAL)
         return held
 
-    def _is_temporal(self, entity: EntityMetadata) -> bool:
+    def _is_temporal(self, entity: CompiledEntity) -> bool:
         """Whether ``entity`` is temporal, so a write of its existing coverage
         composes by object rather than by claimed scope."""
         return isinstance(
@@ -813,10 +813,10 @@ class WriteAdmission:
             temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
         )
 
-    def _is_bitemporal(self, entity: EntityMetadata) -> bool:
+    def _is_bitemporal(self, entity: CompiledEntity) -> bool:
         return isinstance(self._temporal_facet.shape(entity.identity), temporal_read.Bitemporal)
 
-    def _key_name(self, entity: EntityMetadata) -> str:
+    def _key_name(self, entity: CompiledEntity) -> str:
         position = self._families.entity(entity.identity)
         if position is None:  # pragma: no cover - the facet covers every accepted Entity
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")

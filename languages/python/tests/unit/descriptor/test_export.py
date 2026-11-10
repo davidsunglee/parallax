@@ -12,6 +12,7 @@ no partial output and no ``DescriptorError``).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -27,22 +28,29 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    CompiledEntity,
+    CompiledMetadata,
     ConcreteSubtype,
     Document,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     Multiplicity,
     Table,
     TemporalDimension,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
+    accept_metamodel,
 )
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._export import export_document
-from tests._support import fake_metamodel
+from tests._support import fake_metadata
 from tests._support.errors import raises_code
 from tests.unit._metamodel_support import Declaration, instant, key, source
+
+
+def _accepted(entities: Sequence[CompiledEntity]) -> Metamodel:
+    """``entities`` accepted as a model with no facets, which export never reads."""
+    return accept_metamodel(fake_metadata.FakeCompiledMetadata(entities), {})
 
 
 def _corpus_paths() -> list[Path]:
@@ -113,19 +121,19 @@ def test_export_enumerates_entities_in_the_accepted_models_order(path: Path) -> 
 
 
 def test_export_over_an_alternate_implementation_matches_the_descriptor_backed_export() -> None:
-    # `parity_model` builds no descriptor record, so export reads only the
+    # `parity_metamodel` builds no descriptor record, so export reads only the
     # metamodel protocols; `PARITY_DESCRIPTOR` is the same model as text, spelled
     # with its defaults written out. Two implementations of one logical model
     # therefore export one document.
-    raw = case_format.safe_load_yaml(fake_metamodel.PARITY_DESCRIPTOR)
+    raw = case_format.safe_load_yaml(fake_metadata.PARITY_DESCRIPTOR)
     assert isinstance(raw, dict)
-    alternate = export_document(fake_metamodel.parity_model())
+    alternate = export_document(fake_metadata.parity_metamodel())
     descriptor_backed = export_document(models.accepted_model(cast("dict[str, object]", raw)))
     assert alternate == descriptor_backed
 
 
 def test_export_applies_the_omission_set() -> None:
-    exported = _by_identity(export_document(fake_metamodel.parity_model()))
+    exported = _by_identity(export_document(fake_metadata.parity_metamodel()))
     ledger = exported[(None, "Ledger")]
     account = exported[("parallax.fake", "Account")]
     ledger_attributes = {
@@ -184,7 +192,7 @@ def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
     identity = EntityIdentity(None, "Contact")
     postal = ValueObjectIdentity(identity, ("postalAddress",))
     legacy = ValueObjectIdentity(identity, ("legacyAddress",))
-    entity = fake_metamodel.FakeEntity(
+    entity = fake_metadata.FakeCompiledEntity(
         identity,
         declared_container=Table("contact"),
         declared_attributes=(
@@ -198,20 +206,20 @@ def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
             ),
         ),
         declared_value_objects=(
-            fake_metamodel.FakeValueObject(
+            fake_metadata.FakeValueObjectMetadata(
                 postal,
                 Column("postal_address"),
                 attributes=(
-                    fake_metamodel.FakeValueObjectAttribute(
+                    fake_metadata.FakeValueObjectAttributeMetadata(
                         ValueObjectAttributeIdentity(postal, "city"), STRING
                     ),
                 ),
             ),
-            fake_metamodel.FakeValueObject(
+            fake_metadata.FakeValueObjectMetadata(
                 legacy,
                 Column("legacyAddress"),
                 attributes=(
-                    fake_metamodel.FakeValueObjectAttribute(
+                    fake_metadata.FakeValueObjectAttributeMetadata(
                         ValueObjectAttributeIdentity(legacy, "city"), STRING
                     ),
                 ),
@@ -221,7 +229,7 @@ def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
 
     exported = cast(
         "dict[str, object]",
-        export_document(fake_metamodel.FakeMetamodel((entity,)))["entity"],
+        export_document(_accepted((entity,)))["entity"],
     )
     attributes = {
         attribute["name"]: attribute
@@ -248,7 +256,7 @@ def test_export_writes_the_resolved_structured_column_only_where_the_root_owns_i
     root = EntityIdentity(None, "Record")
     child = EntityIdentity(None, "CardRecord")
     entities = (
-        fake_metamodel.FakeEntity(
+        fake_metadata.FakeCompiledEntity(
             root,
             declared_container=Table("record"),
             declared_layout=Document(Column("payload")),
@@ -256,13 +264,13 @@ def test_export_writes_the_resolved_structured_column_only_where_the_root_owns_i
                 AttributeMetadata(AttributeIdentity(root, "note"), STRING, Column("note")),
             ),
         ),
-        fake_metamodel.FakeEntity(
+        fake_metadata.FakeCompiledEntity(
             child,
             declared_layout=Document(Column("payload")),
             inheritance=ConcreteSubtype(root, "card"),
         ),
     )
-    exported = _by_identity(export_document(fake_metamodel.FakeMetamodel(entities)))
+    exported = _by_identity(export_document(_accepted(entities)))
     assert exported[(None, "Record")]["layout"] == {"document": {"column": "payload"}}
     assert "layout" not in exported[(None, "CardRecord")]
 
@@ -277,14 +285,14 @@ def test_export_qualifies_a_same_namespace_parent_and_bares_an_ownerless_one() -
     ownerless = EntityIdentity(None, "Child")
     exported = _by_identity(
         export_document(
-            fake_metamodel.FakeMetamodel(
+            _accepted(
                 (
-                    fake_metamodel.FakeEntity(
+                    fake_metadata.FakeCompiledEntity(
                         owned,
                         declared_container=Table("child"),
                         inheritance=AbstractSubtype(EntityIdentity("family.ns", "Parent")),
                     ),
-                    fake_metamodel.FakeEntity(
+                    fake_metadata.FakeCompiledEntity(
                         ownerless,
                         declared_container=Table("orphan"),
                         inheritance=AbstractSubtype(EntityIdentity(None, "Parent")),
@@ -310,7 +318,7 @@ def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object(
     # parent still formats.
     child = EntityIdentity("child.ns", "Child")
     tags = ValueObjectIdentity(child, ("tags",))
-    entity = fake_metamodel.FakeEntity(
+    entity = fake_metadata.FakeCompiledEntity(
         child,
         declared_container=Table("child"),
         declared_attributes=(
@@ -322,12 +330,12 @@ def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object(
             ),
         ),
         declared_value_objects=(
-            fake_metamodel.FakeValueObject(
+            fake_metadata.FakeValueObjectMetadata(
                 tags,
                 Column("tags"),
                 multiplicity=Multiplicity.MANY,
                 attributes=(
-                    fake_metamodel.FakeValueObjectAttribute(
+                    fake_metadata.FakeValueObjectAttributeMetadata(
                         ValueObjectAttributeIdentity(tags, "label"), STRING
                     ),
                 ),
@@ -335,9 +343,7 @@ def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object(
         ),
         inheritance=AbstractSubtype(EntityIdentity("other.ns", "Parent")),
     )
-    exported = cast(
-        "dict[str, object]", export_document(fake_metamodel.FakeMetamodel((entity,)))["entity"]
-    )
+    exported = cast("dict[str, object]", export_document(_accepted((entity,)))["entity"])
     attributes = cast("list[dict[str, object]]", exported["attributes"])
     assert attributes[0]["readOnly"] is True
     assert exported["inheritance"] == {"role": "abstract-subtype", "parent": "other.ns.Parent"}
@@ -384,7 +390,7 @@ def test_accepted_seam_endpoints_survive_export_import(bitemporal: bool) -> None
 
 
 def test_export_is_deterministic_and_a_canonical_fixpoint() -> None:
-    model = fake_metamodel.parity_model()
+    model = fake_metadata.parity_metamodel()
     first = export_document(model)
     second = export_document(model)
     assert first == second
@@ -401,27 +407,25 @@ class _ExplodingEntity:
         raise RuntimeError("induced export defect")
 
 
-class _ExplodingMetamodel:
-    """A valid model with one Entity that raises during export."""
+class _ExplodingMetadata:
+    """Valid metadata with one Entity that raises during export."""
 
-    def __init__(self, model: Metamodel) -> None:
-        self._model = model
+    def __init__(self, metadata: CompiledMetadata) -> None:
+        self._metadata = metadata
 
     @property
-    def entities(self) -> tuple[EntityMetadata, ...]:
-        return (*self._model.entities, cast("EntityMetadata", _ExplodingEntity()))
+    def entities(self) -> tuple[CompiledEntity, ...]:
+        return (*self._metadata.entities, cast("CompiledEntity", _ExplodingEntity()))
 
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
-        return self._model.entity(identity)
-
-    def facet(self, key: object) -> object:  # pragma: no cover - unused by export
-        raise KeyError(key)
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
+        return self._metadata.entity(identity)
 
 
 def test_export_wraps_an_induced_defect_with_no_partial_output() -> None:
-    model = fake_metamodel.parity_model()
+    model = fake_metadata.parity_metamodel()
+    exploding = accept_metamodel(_ExplodingMetadata(fake_metadata.parity_metadata()), {})
     with raises_code(InternalError, "descriptor-export-failed") as caught:
-        export_document(cast("Metamodel", _ExplodingMetamodel(model)))
+        export_document(exploding)
     error = caught.value
     assert error.args[1].startswith("[document] ")
     assert isinstance(error.__cause__, RuntimeError)

@@ -85,7 +85,7 @@ def entity_identity(meta: Metamodel, name: str) -> EntityIdentity:
 
 
 def attribute_identity(meta: Metamodel, entity: str, member: str) -> AttributeIdentity:
-    position = inheritance.view(meta).entity(entity_identity(meta, entity))
+    position = inheritance.inheritance_facet_of(meta).entity(entity_identity(meta, entity))
     assert position is not None
     attribute = position.applicable_attribute(member)
     assert attribute is not None
@@ -93,7 +93,7 @@ def attribute_identity(meta: Metamodel, entity: str, member: str) -> AttributeId
 
 
 def _value_object(meta: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
-    position = inheritance.view(meta).entity(entity_identity(meta, entity))
+    position = inheritance.inheritance_facet_of(meta).entity(entity_identity(meta, entity))
     assert position is not None
     value_object = position.applicable_value_object(member)
     assert value_object is not None

@@ -83,7 +83,7 @@ def balance_row(value: str, tx_start: dt.datetime = T0) -> PredecessorRow:
 def retained_state(
     meta: Metamodel, entity: EntityIdentity, row: PredecessorRow
 ) -> RetainedObservation:
-    shape = temporal_read.view(meta).shape(entity)
+    shape = temporal_read.temporal_facet_of(meta).shape(entity)
     assert shape is not None
     key = ObjectKey(entity, (("id", 1),))
     state = TemporalObjectStateKey(key, temporal_read.milestone_edge(shape, row, None))

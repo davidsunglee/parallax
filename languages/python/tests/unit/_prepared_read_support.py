@@ -28,8 +28,7 @@ from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
 from tests._support.document_reads import fold_mapping_rows, folded_names
 from tests._support.sql import compile_projected_read, compile_read
 
@@ -48,7 +47,7 @@ def _latest(
     model: Metamodel, identity: EntityIdentity
 ) -> dict[TemporalDimension, TemporalSelection]:
     """The as-of-latest selection on every As-Of Axis ``identity``'s family declares."""
-    shape = temporal_view(model).shape(identity)
+    shape = temporal_facet_of(model).shape(identity)
     if isinstance(shape, Bitemporal):
         return {"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")}
     if isinstance(shape, TransactionTimeOnly):

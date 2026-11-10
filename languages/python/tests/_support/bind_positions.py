@@ -95,7 +95,9 @@ def statement_bind_positions(
         tree = sqlglot.parse_one(_indexed(sql), read=dialect)
     except sqlglot.ParseError:
         return {}
-    layouts = {layout.table.name: layout for layout in storage_layout.view(model).tables}
+    layouts = {
+        layout.table.name: layout for layout in storage_layout.storage_layout_facet_of(model).tables
+    }
     statement = _Statement(model, layouts, binds)
     positions = statement.written(tree)
     for placeholder in tree.find_all(exp.Placeholder):
@@ -119,7 +121,9 @@ def whole_document_binds(
         tree = sqlglot.parse_one(_indexed(sql), read=dialect)
     except sqlglot.ParseError:
         return {}
-    layouts = {layout.table.name: layout for layout in storage_layout.view(model).tables}
+    layouts = {
+        layout.table.name: layout for layout in storage_layout.storage_layout_facet_of(model).tables
+    }
     if isinstance(tree, exp.Insert):
         return _inserted_documents(layouts, tree)
     if isinstance(tree, exp.Update):
@@ -468,7 +472,7 @@ class _Statement:
         declares alike are typed: disjoint siblings may reuse one path with
         different declarations (`m-storage-layout`).
         """
-        facet = storage_layout.view(self._model)
+        facet = storage_layout.storage_layout_facet_of(self._model)
         owners: list[tuple[Document, str | None, str | None]] = []
         for entity in self._model.entities:
             view = facet.entity(entity.identity)

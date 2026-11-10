@@ -27,8 +27,8 @@ from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     TemporalDimension,
 )
@@ -70,9 +70,9 @@ from parallax.core.temporal_read import (
     resolved_query_pin,
     scans_resolved_axis,
     sourced_perspective_terms,
+    temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import PredecessorRow
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
@@ -97,7 +97,7 @@ def _instant(value: str) -> dt.datetime:
 
 
 def _query(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
     **clauses: object,
@@ -110,14 +110,14 @@ def _query(
     )
 
 
-def _attribute(entity: EntityMetadata, name: str) -> AttributeMetadata:
+def _attribute(entity: CompiledEntity, name: str) -> AttributeMetadata:
     attribute = entity.attribute(name)
     assert attribute is not None
     return attribute
 
 
 def _validated(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
     **clauses: object,
@@ -130,7 +130,7 @@ def _validated(
 
 
 def _where(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
 ) -> tuple[str, tuple[object, ...]]:
@@ -145,10 +145,10 @@ def _where(
     return where, statement.binds
 
 
-def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) -> None:
+def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: CompiledEntity) -> None:
     """Fail any read of an Entity's declared As-Of Axes."""
 
-    def refuse(declaration: EntityMetadata, *_dimension: object) -> object:
+    def refuse(declaration: CompiledEntity, *_dimension: object) -> object:
         raise AssertionError(f"{declaration.identity} was asked for its declared axes")
 
     monkeypatch.setattr(type(entity), "declared_as_of_axes", property(refuse))
@@ -414,13 +414,13 @@ class _AxisCells:
 _UNREAD = object()
 
 
-def _shape(entity: EntityMetadata) -> TemporalShape:
-    shape = temporal_view(_ACCEPTED[entity.identity.name]).shape(entity.identity)
+def _shape(entity: CompiledEntity) -> TemporalShape:
+    shape = temporal_facet_of(_ACCEPTED[entity.identity.name]).shape(entity.identity)
     assert shape is not None
     return shape
 
 
-def _start(entity: EntityMetadata, dimension: TemporalDimension) -> AttributeIdentity:
+def _start(entity: CompiledEntity, dimension: TemporalDimension) -> AttributeIdentity:
     axis = entity.as_of_axis(dimension)
     assert axis is not None
     return axis.start_attribute
@@ -944,7 +944,7 @@ def test_the_first_uncovered_instant_is_answered_in_one_pass_that_stops_early() 
 # --------------------------------------------------------------------------- #
 # Valid-Time coverage: one checked interval over a carrier's own cells.         #
 # --------------------------------------------------------------------------- #
-def _end(entity: EntityMetadata, dimension: TemporalDimension) -> AttributeIdentity:
+def _end(entity: CompiledEntity, dimension: TemporalDimension) -> AttributeIdentity:
     axis = entity.as_of_axis(dimension)
     assert axis is not None
     return axis.end_attribute
@@ -968,7 +968,7 @@ def test_bitemporal_coverage_reads_one_valid_time_start_and_end_by_reference(
 
 @pytest.mark.parametrize("entity", [BALANCE, ORDERS], ids=["transaction-time", "non-temporal"])
 def test_a_family_without_valid_time_has_no_coverage_and_reads_nothing(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
 ) -> None:
     rows = _AxisCells(txStart=JAN, txEnd=INFINITY, validStart=JAN, validEnd=INFINITY)
 
@@ -978,7 +978,7 @@ def test_a_family_without_valid_time_has_no_coverage_and_reads_nothing(
 
 def test_an_inherited_position_covers_through_its_family_roots_valid_time_axis() -> None:
     model = accepted_model("rate")
-    shape = temporal_view(model).shape(target(model, "DepositRate").identity)
+    shape = temporal_facet_of(model).shape(target(model, "DepositRate").identity)
     assert isinstance(shape, Bitemporal)
     rows = _AxisCells(validStart=JAN, validEnd=INFINITY)
 
@@ -1046,8 +1046,8 @@ def _policy_selections(valid_time: str, tx_time: str) -> tuple[ResolvedTemporalS
     return oq.validate_object_query(POLICY, query, _POLICY_MODEL).temporal
 
 
-def _shape_axes(model: Metamodel, entity: EntityMetadata) -> Bitemporal:
-    shape = temporal_view(model).shape(entity.identity)
+def _shape_axes(model: Metamodel, entity: CompiledEntity) -> Bitemporal:
+    shape = temporal_facet_of(model).shape(entity.identity)
     assert isinstance(shape, Bitemporal)
     return shape
 
@@ -1077,7 +1077,7 @@ def test_a_non_temporal_target_has_the_empty_perspective_whatever_the_root_pins(
     "valid_time", [_B, "latest"], ids=["valid-time-pinned", "valid-time-latest"]
 )
 def test_a_transaction_time_target_reads_only_the_transaction_time_pin(valid_time: str) -> None:
-    axis = temporal_view(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
+    axis = temporal_facet_of(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
     assert axis is not None
 
     perspective = resolve_perspective(
@@ -1088,7 +1088,7 @@ def test_a_transaction_time_target_reads_only_the_transaction_time_pin(valid_tim
 
 
 def test_a_transaction_time_target_without_a_pin_is_latest() -> None:
-    axis = temporal_view(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
+    axis = temporal_facet_of(_LEASE_MODEL).axis(LEASE.identity, TemporalDimension.TRANSACTION_TIME)
     assert axis is not None
 
     perspective = resolve_perspective(
@@ -1222,14 +1222,14 @@ def _overlap_terms(start: str, end: str, window: tuple[str, str]) -> tuple[_Term
     )
 
 
-def _terms(predicate: object, entity: EntityMetadata) -> tuple[_Term, ...]:
+def _terms(predicate: object, entity: CompiledEntity) -> tuple[_Term, ...]:
     if predicate == ResolvedConstant(True):
         return ()
     terms = predicate.operands if isinstance(predicate, ResolvedAnd) else (predicate,)
     return _comparisons(cast("tuple[object, ...]", terms), entity)
 
 
-def _comparisons(terms: tuple[object, ...], entity: EntityMetadata) -> tuple[_Term, ...]:
+def _comparisons(terms: tuple[object, ...], entity: CompiledEntity) -> tuple[_Term, ...]:
     observed: list[_Term] = []
     for term in terms:
         assert isinstance(term, ResolvedComparison)
@@ -1332,9 +1332,9 @@ _POSITION_LATEST = _latest_term("validEnd") + _latest_term("txEnd")
     ],
 )
 def test_root_selections_lower_to_injected_terms_and_propagate_to_hop_terms(
-    root: EntityMetadata,
+    root: CompiledEntity,
     temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None,
-    hop: EntityMetadata,
+    hop: CompiledEntity,
     root_terms: tuple[_Term, ...],
     hop_terms: tuple[_Term, ...],
 ) -> None:

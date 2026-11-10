@@ -14,7 +14,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core.base import UsageError
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.metamodel import CompiledEntity, entity_by_name
 from parallax.core.predicate import deserialize, validate_predicate
 
 _MODEL = models.load_model(
@@ -22,7 +22,7 @@ _MODEL = models.load_model(
 )
 _FOUND = entity_by_name(_MODEL, "parallax.compatibility.CollectionTwinItem")
 assert _FOUND is not None
-_ITEM: EntityMetadata = _FOUND
+_ITEM: CompiledEntity = _FOUND
 _PREFIX = "parallax.compatibility.CollectionTwinItem"
 
 

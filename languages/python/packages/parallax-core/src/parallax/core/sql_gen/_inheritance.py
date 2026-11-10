@@ -25,8 +25,8 @@ from parallax.core.metamodel import (
     AbstractSubtype,
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     MemberIdentity,
     Multiplicity,
     TablePerConcreteSubtype,
@@ -872,7 +872,7 @@ def _requested(
 
 
 def _plan_single_table_read(
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     view: InheritanceEntityView,
     position: InheritancePositionView,
     layout: PositionLayoutView,
@@ -1143,7 +1143,7 @@ def _result_aliases(spellings: Sequence[str]) -> tuple[str, ...]:
 def plan_resolved_branch_narrow(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     position: tuple[EntityIdentity, ...],
 ) -> BranchNarrowPlan:
     """Plan a mid-predicate narrow from its resolved effective position."""

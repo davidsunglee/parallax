@@ -386,7 +386,7 @@ def test_every_identifier_forms_inherited_joins_through_both_frontends(
     descriptor = domain_model_from_document(_join_documents(spelling, spelling, strategy, document))
     for domain in (typed, descriptor):
         model = model_of(domain)
-        directions = relationship.view(model)
+        directions = relationship.relationship_facet_of(model)
         parent = directions.relationship(
             RelationshipIdentity(EntityIdentity("identifiers", "Link"), "parent")
         )
@@ -402,7 +402,9 @@ def test_every_identifier_forms_inherited_joins_through_both_frontends(
             ("Leaf", (("Root", "id"),)),
             ("Link", (("Link", "id"), ("Link", "parentId"))),
         ):
-            layout = storage_layout.view(model).entity(EntityIdentity("identifiers", entity_name))
+            layout = storage_layout.storage_layout_facet_of(model).entity(
+                EntityIdentity("identifiers", entity_name)
+            )
             assert layout is not None
             for owner, member in members:
                 assert isinstance(

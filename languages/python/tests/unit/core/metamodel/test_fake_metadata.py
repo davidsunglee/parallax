@@ -1,4 +1,4 @@
-"""Lookup parity between the descriptor-backed and the alternate Metamodel."""
+"""Lookup parity between descriptor-backed and alternate metadata, and the fake helpers."""
 
 from __future__ import annotations
 
@@ -8,20 +8,23 @@ from typing import cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core._formation_profile import form_metamodel
+from parallax.core import inheritance
+from parallax.core._formation_profile import BUILTIN_MANIFEST, form_metamodel
 from parallax.core.metamodel import (
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     OccurrenceMetadata,
     PersistenceMode,
     TemporalDimension,
     ValueObjectAttributeMetadata,
 )
+from parallax.core.model_formation import ModelCompilerRequirement
+from parallax.core.relationship import relationship_facet_of
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
-from tests._support import fake_metamodel as fake
+from tests._support import fake_metadata as fake
 
 
 @pytest.fixture(scope="module")
@@ -35,14 +38,14 @@ def formed() -> Metamodel:
 
 @pytest.fixture(scope="module")
 def alternate() -> Metamodel:
-    """The parity model as the alternate implementation states it."""
-    return fake.parity_model()
+    """The parity model accepted over the alternate metadata implementation."""
+    return fake.parity_metamodel()
 
 
 _ENTITIES = (fake.LEDGER, fake.ACCOUNT, fake.AUDIT, fake.ENTRY)
 
 
-def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
+def _entity(model: Metamodel, identity: EntityIdentity) -> CompiledEntity:
     found = model.entity(identity)
     assert found is not None, identity
     return found
@@ -89,7 +92,7 @@ def _occurrence(
 
 
 def test_the_alternate_implementation_constructs_no_descriptor_record() -> None:
-    for entity in fake.parity_model().entities:
+    for entity in fake.parity_metadata().entities:
         assert type(entity).__module__ != records.__name__
 
 
@@ -166,3 +169,23 @@ def test_read_only_persistence_and_the_temporal_axis_survive_both_paths(
         assert audit.as_of_axis(TemporalDimension.VALID_TIME) is None
     ledger = _entity(alternate, fake.LEDGER)
     assert ledger.declared_persistence is None
+
+
+def test_facets_of_reads_every_built_in_facet_through_its_owner(formed: Metamodel) -> None:
+    facets = fake.facets_of(formed)
+    expected = [
+        entry.compiler.facet_key
+        for entry in BUILTIN_MANIFEST.entries
+        if isinstance(entry.compiler, ModelCompilerRequirement)
+    ]
+    assert sorted(key.owner for key in facets) == sorted(key.owner for key in expected)
+    for key in expected:
+        assert key.accepts(facets[key])
+
+
+def test_with_facet_replaces_one_facet_over_the_same_metadata(formed: Metamodel) -> None:
+    doctored = object()
+    replaced = fake.with_facet(formed, inheritance.FACET_KEY, doctored)
+    assert replaced.entities is formed.entities
+    assert inheritance.inheritance_facet_of(replaced) is doctored
+    assert relationship_facet_of(replaced) is relationship_facet_of(formed)

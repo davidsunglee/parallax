@@ -47,8 +47,7 @@ from parallax.core.sql_gen._planning import (
     plan_statement,
     shared_relationship_is_eligible,
 )
-from parallax.core.temporal_read import Bitemporal
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import Bitemporal, temporal_facet_of
 from tests._support.sql import (
     read_position,
     resolved_as_stated,
@@ -82,7 +81,10 @@ def _to_one(model: Metamodel, source: str, path: str) -> ResolvedRelationship:
 
 
 def _eligible(model: Metamodel, hop: ResolvedRelationship, visibility: TemporalPerspective) -> bool:
-    facet, storage = inheritance.view(model), storage_layout.view(model)
+    facet, storage = (
+        inheritance.inheritance_facet_of(model),
+        storage_layout.storage_layout_facet_of(model),
+    )
     seen = dataclasses.replace(hop, temporal_visibility=visibility)
     candidates = plan_relationship_candidates(
         seen, position=None, meta=model, facet=facet, storage=storage
@@ -95,7 +97,7 @@ _INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 def _seen(model: Metamodel, name: str, *, valid: bool, tx: bool) -> TemporalPerspective:
     """``name``'s visibility: Latest on each axis flagged, else At one instant."""
-    shape = temporal_view(model).shape(target(model, name).identity)
+    shape = temporal_facet_of(model).shape(target(model, name).identity)
     assert isinstance(shape, Bitemporal)
     return TemporalPerspective(
         valid_time=(
@@ -156,7 +158,10 @@ def test_a_temporal_hop_off_its_logical_key_is_proven_by_a_unique_key_only_at_la
 
 def test_several_physical_candidates_are_never_proven_unique() -> None:
     hop = _to_many(DOCUMENT, "Folder", "Folder.documents")
-    facet, storage = inheritance.view(DOCUMENT), storage_layout.view(DOCUMENT)
+    facet, storage = (
+        inheritance.inheritance_facet_of(DOCUMENT),
+        storage_layout.storage_layout_facet_of(DOCUMENT),
+    )
     candidates = plan_relationship_candidates(
         hop, position=None, meta=DOCUMENT, facet=facet, storage=storage
     )
@@ -199,7 +204,10 @@ def _planned_shape(
 ) -> tuple[StatementPlan, ReadShape]:
     """``root``'s statement plan and the physical read plan it was planned over."""
     entity = target(family, root)
-    facet, storage = inheritance.view(family), storage_layout.view(family)
+    facet, storage = (
+        inheritance.inheritance_facet_of(family),
+        storage_layout.storage_layout_facet_of(family),
+    )
     narrowed = (
         None if narrow_to is None else tuple(target(family, name).identity for name in narrow_to)
     )
@@ -233,7 +241,7 @@ def _planned_shape(
 
 def _order_term(family: Metamodel, reference: str) -> ResolvedOrderTerm:
     owner, _, name = reference.rpartition(".")
-    view = inheritance.view(family).entity(target(family, owner).identity)
+    view = inheritance.inheritance_facet_of(family).entity(target(family, owner).identity)
     assert view is not None
     attribute = view.applicable_attribute(name)
     assert attribute is not None
@@ -274,8 +282,8 @@ def test_each_quantifier_occurrence_reads_its_own_owner_result_cell(identical: b
         evaluation_context=EvaluationContext.SHARING_ALLOWED,
         entity=basket,
         meta=family,
-        facet=inheritance.view(family),
-        storage=storage_layout.view(family),
+        facet=inheritance.inheritance_facet_of(family),
+        storage=storage_layout.storage_layout_facet_of(family),
     )
     root = _root(plan)
     results = OwnerResultsRef(root.scope_id, 0)

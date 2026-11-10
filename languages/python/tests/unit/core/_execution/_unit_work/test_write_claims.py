@@ -280,7 +280,9 @@ _MODELS = models.load_models()
 
 
 def _versioning(stem: str, entity: str) -> tuple[concurrency.ConcurrencyFacet, EntityIdentity]:
-    return concurrency.view(_MODELS[stem]), EntityIdentity("parallax.compatibility", entity)
+    return concurrency.concurrency_facet_of(_MODELS[stem]), EntityIdentity(
+        "parallax.compatibility", entity
+    )
 
 
 @pytest.mark.parametrize(

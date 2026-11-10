@@ -23,11 +23,11 @@ from parallax.core.metamodel import (
     AttributeReference,
     Cardinality,
     Column,
+    CompiledEntity,
     CompiledMetadata,
     ConcreteSubtype,
     Document,
     EntityIdentity,
-    EntityMetadata,
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
@@ -115,8 +115,8 @@ def _tier_values(layout: storage_layout.TableLayout) -> list[str]:
     return [slot.tier.value for slot in layout.columns]
 
 
-class _VisitedEntities(Sequence[EntityMetadata]):
-    def __init__(self, values: Sequence[EntityMetadata]) -> None:
+class _VisitedEntities(Sequence[CompiledEntity]):
+    def __init__(self, values: Sequence[CompiledEntity]) -> None:
         self._values = tuple(values)
         self.visits = 0
 
@@ -124,12 +124,12 @@ class _VisitedEntities(Sequence[EntityMetadata]):
         return len(self._values)
 
     @overload
-    def __getitem__(self, index: int) -> EntityMetadata: ...
+    def __getitem__(self, index: int) -> CompiledEntity: ...
 
     @overload
-    def __getitem__(self, index: slice) -> Sequence[EntityMetadata]: ...
+    def __getitem__(self, index: slice) -> Sequence[CompiledEntity]: ...
 
-    def __getitem__(self, index: int | slice) -> EntityMetadata | Sequence[EntityMetadata]:
+    def __getitem__(self, index: int | slice) -> CompiledEntity | Sequence[CompiledEntity]:
         if isinstance(index, slice):
             values = self._values[index]
             self.visits += len(values)
@@ -145,14 +145,14 @@ class _CountingMetadata:
         self._entities = _VisitedEntities(metadata.entities)
 
     @property
-    def entities(self) -> Sequence[EntityMetadata]:
+    def entities(self) -> Sequence[CompiledEntity]:
         return self._entities
 
     @property
     def visits(self) -> int:
         return self._entities.visits
 
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
         return self._metadata.entity(identity)
 
 
@@ -422,14 +422,9 @@ def test_the_builtin_manifest_and_profile_install_the_typed_facet_after_its_prer
     )
 
 
-def test_a_formed_model_serves_storage_layout_through_its_typed_view() -> None:
-    model, _, _, _ = _tiered_tph_model()
-    assert storage_layout.view(model) == model.facet(storage_layout.FACET_KEY)
-
-
 def test_empty_audit_tier_is_compiled_end_to_end_with_table_wide_tier_order() -> None:
     model, _, _, _ = _tiered_tph_model()
-    layout = _require_layout(storage_layout.view(model), "record")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "record")
     assert _column_names(layout) == [
         "id",
         "kind",
@@ -460,8 +455,8 @@ def test_internal_audit_designations_cover_all_six_tiers_without_new_declaration
     revised_by = AttributeIdentity(root, "revisedBy")
     facet = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model),
-        inheritance.view(model),
-        relationship.view(model),
+        inheritance.inheritance_facet_of(model),
+        relationship.relationship_facet_of(model),
         audit_designations=frozenset({revised_by}),
     )
     layout = _require_layout(facet, "record")
@@ -487,8 +482,8 @@ def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -
     tx_start = AttributeIdentity(root, "txStart")
     facet = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model),
-        inheritance.view(model),
-        relationship.view(model),
+        inheritance.inheritance_facet_of(model),
+        relationship.relationship_facet_of(model),
         audit_designations=frozenset({tx_start}),
     )
     layout = _require_layout(facet, "record")
@@ -499,7 +494,7 @@ def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -
 
 def test_physical_key_selects_existing_model_key_then_temporal_end_slots() -> None:
     model, root, _, _ = _tiered_tph_model()
-    layout = _require_layout(storage_layout.view(model), "record")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "record")
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
         AttributeIdentity(root, "txEnd"),
@@ -513,7 +508,7 @@ def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_orde
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
     model, table, root = _ranked_temporal_model(mapping)
-    layout = _require_layout(storage_layout.view(model), table)
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
         AttributeIdentity(root, "validEnd"),
@@ -526,7 +521,7 @@ def test_the_primary_key_index_leads_the_indices_over_the_physical_key(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
     model, table, root = _ranked_temporal_model(mapping)
-    layout = _require_layout(storage_layout.view(model), table)
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     primary = layout.primary_key_index
     assert primary is not None
     assert layout.indices == (primary,)
@@ -581,7 +576,7 @@ def test_indices_map_each_declaration_onto_existing_slots_in_component_order() -
         )
     )
     (widget,) = model.entities
-    layout = _require_layout(storage_layout.view(model), "widget")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "widget")
 
     assert _index_names(layout) == ["widget_pk", "widget_rank_label", "widget_code_uq"]
     primary = layout.primary_key_index
@@ -611,7 +606,7 @@ def test_indices_map_each_declaration_onto_existing_slots_in_component_order() -
 
 def test_a_tph_descendant_declared_index_maps_onto_the_shared_table() -> None:
     model = tph_family_with_a_descendant_declared_value_object_and_index()
-    layout = _require_layout(storage_layout.view(model), "root_tbl")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "root_tbl")
     assert _index_names(layout) == ["root_tbl_pk", "leaf_code_uq"]
     (code,) = _require_index(layout, "leaf_code_uq").columns
     assert code is layout.contribution(code.contributor)
@@ -619,7 +614,7 @@ def test_a_tph_descendant_declared_index_maps_onto_the_shared_table() -> None:
 
 
 def test_tpcs_indices_map_onto_every_concrete_table_carrying_their_components() -> None:
-    facet = storage_layout.view(tpcs_family_with_indices_at_every_level())
+    facet = storage_layout.storage_layout_facet_of(tpcs_family_with_indices_at_every_level())
     invoice = _require_layout(facet, "invoice")
     memo = _require_layout(facet, "memo")
     assert _index_names(invoice) == [
@@ -648,7 +643,7 @@ def test_an_authored_index_ends_with_the_tables_axis_ends_in_dimension_rank(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
     model, table, root = _ranked_temporal_model(mapping, indexed=True)
-    layout = _require_layout(storage_layout.view(model), table)
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     constraints = layout.temporal_constraints
     assert constraints is not None
     ends = [AttributeIdentity(root, "validEnd"), AttributeIdentity(root, "txEnd")]
@@ -666,7 +661,7 @@ def test_an_authored_index_ends_with_the_tables_axis_ends_in_dimension_rank(
 
 
 def test_a_non_temporal_index_carries_exactly_its_authored_components() -> None:
-    facet = storage_layout.view(tpcs_family_with_indices_at_every_level())
+    facet = storage_layout.storage_layout_facet_of(tpcs_family_with_indices_at_every_level())
     invoice = _require_layout(facet, "invoice")
     for mapped in invoice.indices[1:]:
         assert mapped.column_attributes == mapped.declaration.attributes
@@ -683,7 +678,7 @@ def _end_keyed(layout: storage_layout.TableLayout, name: str) -> list[str]:
 
 
 def test_unique_and_non_unique_indices_end_with_each_profiles_axis_ends() -> None:
-    facet = storage_layout.view(corpus()["temporal-authored-index"])
+    facet = storage_layout.storage_layout_facet_of(corpus()["temporal-authored-index"])
     handle = _require_layout(facet, "handle")
     assignment = _require_layout(facet, "assignment")
     assert _end_keyed(handle, "handle_code") == ["code", "out_z"]
@@ -720,7 +715,7 @@ def test_a_tph_descendant_index_ends_with_the_roots_axis_ends_on_the_shared_tabl
         },
     )
     root, leaf = EntityIdentity(None, "Root"), EntityIdentity(None, "Leaf")
-    layout = _require_layout(storage_layout.view(model), "root_tbl")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "root_tbl")
     leaf_code = _require_index(layout, "leaf_code_uq")
     assert leaf_code.declaration.attributes == (AttributeIdentity(leaf, "code"),)
     assert leaf_code.column_attributes == (
@@ -757,7 +752,7 @@ def test_tpcs_temporal_indices_reach_only_the_tables_carrying_their_components()
         },
     )
     root = EntityIdentity(None, "Doc")
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     invoice = _require_layout(facet, "invoice")
     memo = _require_layout(facet, "memo")
     # The sibling carries the root's ends but not the descendant's component.
@@ -783,7 +778,9 @@ def test_tpcs_temporal_indices_reach_only_the_tables_carrying_their_components()
 
 
 def test_a_document_layout_index_maps_onto_its_direct_role_slot() -> None:
-    layout = _require_layout(storage_layout.view(corpus()["document-layout"]), "trip")
+    layout = _require_layout(
+        storage_layout.storage_layout_facet_of(corpus()["document-layout"]), "trip"
+    )
     traveler = _require_index(layout, "trip_traveler_id")
     (component,) = traveler.declaration.attributes
     (slot,) = traveler.columns
@@ -794,7 +791,7 @@ def test_a_document_layout_index_maps_onto_its_direct_role_slot() -> None:
 
 def test_an_independently_constructed_equal_slot_matches_by_structure() -> None:
     model, root, _, _ = _tiered_tph_model()
-    layout = _require_layout(storage_layout.view(model), "record")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "record")
     slot = layout.contribution(AttributeIdentity(root, "rootDomain"))
     assert slot is not None
     equal = storage_layout.ColumnSlot(
@@ -813,7 +810,7 @@ def test_an_independently_constructed_equal_slot_matches_by_structure() -> None:
 
 def test_tph_slots_retain_provenance_applicability_and_effective_nullability() -> None:
     model, root, alpha, beta = _tiered_tph_model()
-    layout = _require_layout(storage_layout.view(model), "record")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "record")
     root_domain = layout.contribution(AttributeIdentity(root, "rootDomain"))
     alpha_domain = layout.contribution(AttributeIdentity(alpha, "alphaDomain"))
     discriminator = layout.contribution(storage_layout.InheritanceDiscriminator(root))
@@ -883,7 +880,7 @@ def test_placement_and_contribution_agree_for_every_conventional_top_level_membe
     # contributor owns, so conventional behavior is one case of this contract
     # rather than a parallel path.
     model, entity = _nested_value_object_model()
-    layout = _require_layout(storage_layout.view(model), "contact")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "contact")
     for member in (
         AttributeIdentity(entity, "id"),
         AttributeIdentity(entity, "name"),
@@ -898,7 +895,7 @@ def test_a_conventional_value_object_leaf_is_placed_inside_its_own_structured_co
     # Conventional storage already has Document Paths: a leaf's path begins at
     # the first segment below the occurrence, over that occurrence's own column.
     model, entity = _nested_value_object_model()
-    layout = _require_layout(storage_layout.view(model), "contact")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "contact")
     address = ValueObjectIdentity(entity, ("address",))
     slot = layout.contribution(address)
     assert slot is not None
@@ -916,7 +913,7 @@ def test_a_document_path_names_at_least_one_member() -> None:
     # Every path is relative to the root of the document its slot carries, so an
     # empty one would name the document itself, which is not a member.
     model, entity = _nested_value_object_model()
-    layout = _require_layout(storage_layout.view(model), "contact")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "contact")
     slot = _require_slot(layout, ValueObjectIdentity(entity, ("address",)))
     with pytest.raises(ValueError, match="at least one member"):
         storage_layout.DocumentPath(slot, ())
@@ -926,7 +923,7 @@ def test_placement_is_absent_for_a_member_the_table_does_not_carry() -> None:
     # Absence is a lookup miss, never a "not resolved yet": the facet is
     # published whole and after every Rule Set has succeeded.
     model, entity = _nested_value_object_model()
-    layout = _require_layout(storage_layout.view(model), "contact")
+    layout = _require_layout(storage_layout.storage_layout_facet_of(model), "contact")
     address = ValueObjectIdentity(entity, ("address",))
     assert layout.placement(AttributeIdentity(entity, "absent")) is None
     assert layout.placement(ValueObjectAttributeIdentity(address, "absent")) is None
@@ -1080,7 +1077,7 @@ def test_entity_views_reference_effective_selection_in_complete_resident_order()
 
 def test_columns_entity_views_have_no_document_resident_selection() -> None:
     model, _root, alpha, beta = _tiered_tph_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     assert _require_entity(facet, alpha).document_residents is None
     assert _require_entity(facet, beta).document_residents is None
 
@@ -1183,7 +1180,7 @@ def test_an_inherited_join_endpoint_keeps_the_direct_column_its_role_earns_it() 
 
 def test_branch_placements_are_the_branch_layouts_own_answers_in_member_order() -> None:
     model, root, alpha, beta = _tiered_tph_model()
-    view = storage_layout.view(model).position((alpha, beta))
+    view = storage_layout.storage_layout_facet_of(model).position((alpha, beta))
     assert view is not None
     assert tuple(view.members) == (
         AttributeIdentity(root, "id"),
@@ -1201,7 +1198,7 @@ def test_branch_placements_are_the_branch_layouts_own_answers_in_member_order() 
 
 def test_a_position_over_disjoint_branches_answers_placement_per_branch() -> None:
     model, invoice, memo = _tpcs_model()[0], _tpcs_model()[2], _tpcs_model()[3]
-    view = storage_layout.view(model).position((invoice, memo))
+    view = storage_layout.storage_layout_facet_of(model).position((invoice, memo))
     assert view is not None
     assert len(view.branches) == 2
     for branch in view.branches:
@@ -1220,7 +1217,7 @@ _DORMANT_DETAIL: Final = ValueObjectIdentity(DORMANT_CHILD, ("childDetail",))
 
 
 def test_a_nested_dormant_tph_branch_contributes_to_the_complete_shared_layout() -> None:
-    facet = storage_layout.view(form_metamodel(dormant_family("tph")))
+    facet = storage_layout.storage_layout_facet_of(form_metamodel(dormant_family("tph")))
     layout = _require_layout(facet, "record")
     assert [(slot.column.name, slot.tier.value) for slot in layout.columns] == [
         ("id", "identity"),
@@ -1276,7 +1273,7 @@ def test_a_nested_dormant_tph_branch_contributes_to_the_complete_shared_layout()
 
 
 def test_a_nested_dormant_branch_is_placed_inside_a_shared_document() -> None:
-    facet = storage_layout.view(
+    facet = storage_layout.storage_layout_facet_of(
         form_metamodel(dormant_family("tph", layout=Document(Column("payload"))))
     )
     layout = _require_layout(facet, "record")
@@ -1300,7 +1297,7 @@ def test_a_nested_dormant_branch_is_placed_inside_a_shared_document() -> None:
 
 
 def test_a_dormant_tpcs_branch_reaches_no_concrete_table() -> None:
-    facet = storage_layout.view(form_metamodel(dormant_family("tpcs")))
+    facet = storage_layout.storage_layout_facet_of(form_metamodel(dormant_family("tpcs")))
     layout = _require_layout(facet, "live")
     assert _column_names(layout) == ["id", "title", "live_value", "summary", "live_detail"]
     for member in (
@@ -1323,7 +1320,7 @@ def test_a_dormant_tpcs_branch_reaches_no_concrete_table() -> None:
 
 def test_entity_views_reference_table_slots_and_assign_concrete_discriminators() -> None:
     model, root, alpha, beta = _tiered_tph_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     alpha_view = _require_entity(facet, alpha)
     beta_view = _require_entity(facet, beta)
     assert alpha_view.layout == beta_view.layout
@@ -1349,7 +1346,7 @@ def test_entity_views_reference_table_slots_and_assign_concrete_discriminators()
 
 def test_tpcs_compiles_one_ancestry_derived_layout_per_concrete_table() -> None:
     model, root, invoice, memo = _tpcs_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     assert [layout.table.name for layout in facet.tables] == ["invoice", "memo"]
     invoice_layout = _require_layout(facet, "invoice")
     memo_layout = _require_layout(facet, "memo")
@@ -1367,7 +1364,7 @@ def test_tpcs_compiles_one_ancestry_derived_layout_per_concrete_table() -> None:
 
 def test_tpcs_position_has_one_logical_order_and_slot_or_absence_branch_maps() -> None:
     model, root, invoice, memo = _tpcs_model()
-    position = storage_layout.view(model).position((invoice, memo))
+    position = storage_layout.storage_layout_facet_of(model).position((invoice, memo))
     assert position is not None
     assert [column.contributor for column in position.columns] == [
         AttributeIdentity(root, "id"),
@@ -1383,7 +1380,7 @@ def test_tpcs_position_has_one_logical_order_and_slot_or_absence_branch_maps() -
 
 def test_tph_position_filters_applicability_without_creating_a_new_table_order() -> None:
     model, root, alpha, _ = _tiered_tph_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     position = facet.position((alpha,))
     assert position is not None
     assert len(position.branches) == 1
@@ -1400,7 +1397,7 @@ def test_tph_position_filters_applicability_without_creating_a_new_table_order()
 
 def test_empty_unknown_noncanonical_and_cross_family_positions_are_total() -> None:
     model, _, invoice, memo = _tpcs_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     empty = facet.position(())
     assert empty is not None
     assert tuple(empty.concrete_entities) == ()
@@ -1419,7 +1416,7 @@ def test_empty_unknown_noncanonical_and_cross_family_positions_are_total() -> No
             )
         )
     )
-    assert storage_layout.view(other_model).position((standalone,)) is not None
+    assert storage_layout.storage_layout_facet_of(other_model).position((standalone,)) is not None
 
 
 def test_a_position_spanning_two_families_is_absent_rather_than_a_merged_shape() -> None:
@@ -1434,7 +1431,7 @@ def test_a_position_spanning_two_families_is_absent_rather_than_a_merged_shape()
             Declaration(identity=second, container=Table("second"), attributes=(key(second),)),
         )
     )
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     assert facet.position((first,)) is not None
     assert facet.position((second,)) is not None
     assert facet.position((first, second)) is None
@@ -1442,7 +1439,7 @@ def test_a_position_spanning_two_families_is_absent_rather_than_a_merged_shape()
 
 def test_unknown_table_column_contributor_and_entity_lookups_return_absence() -> None:
     model, root, _, _ = _tiered_tph_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     layout = _require_layout(facet, "record")
     assert facet.table(Table("absent")) is None
     assert facet.entity(EntityIdentity(None, "Absent")) is None
@@ -1480,7 +1477,7 @@ class _FamilylessInheritanceFacet(_CountingInheritanceFacet):
 
 
 class _RootlessMetadata(_CountingMetadata):
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
         return None
 
 
@@ -1503,9 +1500,10 @@ def test_compiling_without_a_declaration_sequence_refuses_rather_than_rebuilding
         storage_layout_compile.compile_facet(
             cast(CompiledMetadata, model),
             cast(
-                inheritance.InheritanceFacet, _FamilylessInheritanceFacet(inheritance.view(model))
+                inheritance.InheritanceFacet,
+                _FamilylessInheritanceFacet(inheritance.inheritance_facet_of(model)),
             ),
-            relationship.view(model),
+            relationship.relationship_facet_of(model),
         )
 
 
@@ -1514,8 +1512,8 @@ def test_compiling_without_a_roots_metadata_refuses_rather_than_guessing_its_pol
     with pytest.raises(RuntimeError, match="is absent from accepted metadata"):
         storage_layout_compile.compile_facet(
             _RootlessMetadata(cast(CompiledMetadata, model)),
-            inheritance.view(model),
-            relationship.view(model),
+            inheritance.inheritance_facet_of(model),
+            relationship.relationship_facet_of(model),
         )
 
 
@@ -1621,7 +1619,7 @@ def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings(
 
 def test_layout_values_and_sequences_are_immutable() -> None:
     model, _, _, _ = _tiered_tph_model()
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     layout = facet.tables[0]
     assert isinstance(facet.tables, tuple)
     assert isinstance(layout.columns, tuple)
@@ -1643,10 +1641,14 @@ def test_repeated_compilation_and_operation_scoped_positions_are_structurally_de
 ):
     model, _, alpha, beta = _tiered_tph_model()
     first = storage_layout_compile.compile_facet(
-        cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
+        cast(CompiledMetadata, model),
+        inheritance.inheritance_facet_of(model),
+        relationship.relationship_facet_of(model),
     )
     second = storage_layout_compile.compile_facet(
-        cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
+        cast(CompiledMetadata, model),
+        inheritance.inheritance_facet_of(model),
+        relationship.relationship_facet_of(model),
     )
     assert tuple(first.tables) == tuple(second.tables)
     first_position = first.position((alpha, beta))
@@ -1665,11 +1667,11 @@ def _standalone_compile_visits(count: int) -> tuple[int, int]:
     )
     model = form_metamodel(source(*declarations))
     counted = _CountingMetadata(cast(CompiledMetadata, model))
-    counted_inheritance = _CountingInheritanceFacet(inheritance.view(model))
+    counted_inheritance = _CountingInheritanceFacet(inheritance.inheritance_facet_of(model))
     storage_layout_compile.compile_facet(
         counted,
         cast(inheritance.InheritanceFacet, counted_inheritance),
-        relationship.view(model),
+        relationship.relationship_facet_of(model),
     )
     return counted.visits, counted_inheritance.visits
 
@@ -1682,6 +1684,6 @@ def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -
 
 
 def test_large_tph_retained_layout_size_scales_with_schema_not_entity_slot_tuples() -> None:
-    small = storage_layout.view(_large_tph_model(24))
-    large = storage_layout.view(_large_tph_model(48))
+    small = storage_layout.storage_layout_facet_of(_large_tph_model(24))
+    large = storage_layout.storage_layout_facet_of(_large_tph_model(48))
     assert _retained_size(large) < _retained_size(small) * 2.7

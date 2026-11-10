@@ -33,7 +33,7 @@ from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._model import model_of
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import inheritance_facet_of
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
@@ -154,7 +154,7 @@ def physical_row(entity: type[Bitemporal], row: PredecessorRow) -> dict[str, obj
 
 
 def _state(entity: type[Bitemporal], row: PredecessorRow) -> TemporalObjectStateKey:
-    shape = temporal_read.view(MODEL).shape(entity.identity)
+    shape = temporal_read.temporal_facet_of(MODEL).shape(entity.identity)
     assert shape is not None
     key = ObjectKey(entity.identity, (("id", row.members["id"]),))
     return TemporalObjectStateKey(key, temporal_read.milestone_edge(shape, row, None))
@@ -204,7 +204,7 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
         write_preparation_of(MODEL),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
-    view = inheritance_view(MODEL).entity(entity.identity)
+    view = inheritance_facet_of(MODEL).entity(entity.identity)
     assert view is not None
     retained = RetainedTargetState(
         _state(entity, stored),
@@ -212,7 +212,7 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
         positional_row(view.member_selection.shape, stored.members, absent=ABSENT),
         stored.document,
     )
-    return replace(target_write(prepared, inheritance_view(MODEL)), retained=retained), stored
+    return replace(target_write(prepared, inheritance_facet_of(MODEL)), retained=retained), stored
 
 
 def plan(

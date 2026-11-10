@@ -8,7 +8,7 @@ from typing import Any, TypeGuard, assert_type, cast
 
 import pytest
 
-from parallax.core import base
+from parallax.core import base, inheritance, relationship
 from parallax.core.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
@@ -18,7 +18,6 @@ from parallax.core.metamodel import (
     Column,
     ConcreteSubtype,
     EntityIdentity,
-    FacetKey,
     IndexIdentity,
     IndexMetadata,
     MemberShape,
@@ -44,6 +43,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     accept_metamodel,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.metamodel._compile import compile_metadata
 from tests.unit._metamodel_support import (
     Declaration,
@@ -323,14 +323,22 @@ def test_a_shape_graph_that_re_enters_one_key_is_a_compiler_contract_failure() -
         compile_metadata(candidate)
 
 
-def test_an_accepted_metamodel_delegates_lookup_and_serves_typed_facets() -> None:
+def test_an_accepted_metamodel_delegates_lookup_and_serves_owner_facets() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
-    facet_key: FacetKey[str] = FacetKey("m-test", _is_text)
-    model = accept_metamodel(metadata, {facet_key: "compiled"})
+    compiled = object()
+    model = accept_metamodel(metadata, {relationship.FACET_KEY: compiled})
     assert model.entities is metadata.entities
     assert model.entity(_ORDER) is metadata.entity(_ORDER)
     assert model.entity(EntityIdentity("parallax.test", "Absent")) is None
-    assert model.facet(facet_key) == "compiled"
+    assert relationship.relationship_facet_of(model) is compiled
+
+
+def test_an_accepted_metamodel_exposes_no_facet_access_or_mutable_state() -> None:
+    model = accept_metamodel(compile_metadata(accepted(source(_model(), _peer()))), {})
+    assert not hasattr(model, "facet")
+    assert not hasattr(model, "facets")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        model._metadata = model._metadata  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
 
 
 def _mappings_within(value: object, seen: set[int]) -> Iterator[Mapping[object, object]]:
@@ -360,15 +368,14 @@ def test_every_index_backing_candidate_or_accepted_lookup_is_read_only() -> None
 
 def test_an_accepted_metamodel_snapshots_the_facet_mapping_it_was_given() -> None:
     metadata = compile_metadata(accepted(source(_model(), _peer())))
-    facet_key: FacetKey[str] = FacetKey("m-test", _is_text)
-    smuggled: FacetKey[str] = FacetKey("m-smuggled", _is_text)
-    supplied: dict[FacetKey[Any], object] = {facet_key: "compiled"}
+    compiled = object()
+    supplied: dict[FacetKey[Any], object] = {relationship.FACET_KEY: compiled}
     model = accept_metamodel(metadata, supplied)
-    supplied[facet_key] = "replaced"
-    supplied[smuggled] = "added"
-    assert model.facet(facet_key) == "compiled"
+    supplied[relationship.FACET_KEY] = object()
+    supplied[inheritance.FACET_KEY] = object()
+    assert relationship.relationship_facet_of(model) is compiled
     with pytest.raises(KeyError):
-        model.facet(smuggled)
+        inheritance.inheritance_facet_of(model)
 
 
 def test_a_facet_key_is_identified_by_its_owning_module() -> None:

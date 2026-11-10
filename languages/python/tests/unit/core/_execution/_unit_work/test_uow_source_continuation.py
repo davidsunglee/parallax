@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work.write_items import StateObservedWrite
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
 from parallax.core.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     AdmittedWrite,
@@ -104,7 +104,7 @@ def _uow(
     return uow, simulated
 
 
-def _entity(meta: Metamodel, name: str) -> EntityMetadata:
+def _entity(meta: Metamodel, name: str) -> CompiledEntity:
     entity = entity_by_name(meta, f"parallax.compatibility.{name}")
     assert entity is not None
     return entity

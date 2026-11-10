@@ -12,7 +12,6 @@ from parallax.core.metamodel import (
     METAMODEL_MODULE,
     CandidateMetamodel,
     CompiledMetadata,
-    FacetKey,
     IssueCode,
     Metamodel,
     MetamodelIssue,
@@ -25,6 +24,7 @@ from parallax.core.metamodel import (
     resolve,
     sort_issues,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation._contributors import (
     FormationProfile,
     ModelCompiler,

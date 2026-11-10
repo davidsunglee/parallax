@@ -9,11 +9,11 @@ from parallax.core.metamodel import (
     ApplicationAssigned,
     AttributeMetadata,
     Cardinality,
+    CompiledEntity,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
     Document,
     EntityIdentity,
-    EntityMetadata,
     IndexMetadata,
     InheritanceMetadata,
     Max,
@@ -90,7 +90,7 @@ _MULTIPLICITIES: Final[dict[Multiplicity, str]] = {
 }
 
 
-def _entity(entity: EntityMetadata) -> dict[str, object]:
+def _entity(entity: CompiledEntity) -> dict[str, object]:
     identity = entity.identity
     out: dict[str, object] = {"name": identity.name}
     if identity.namespace is not None:
@@ -113,7 +113,7 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
     return out
 
 
-def _family_policies(entity: EntityMetadata) -> dict[str, object]:
+def _family_policies(entity: CompiledEntity) -> dict[str, object]:
     """The authored Persistence Mode, Storage Layout, and Temporality Profile.
 
     All three are family-wide and root-owned, so a descendant never spells any of
@@ -134,7 +134,7 @@ def _family_policies(entity: EntityMetadata) -> dict[str, object]:
     return out
 
 
-def _temporality(entity: EntityMetadata) -> str | None:
+def _temporality(entity: CompiledEntity) -> str | None:
     """The Temporality Profile ``entity``'s axes came from, or ``None`` for none.
 
     Non-Temporal is what omission means, so it is never spelled; every other
@@ -144,7 +144,7 @@ def _temporality(entity: EntityMetadata) -> str | None:
     return None if profile == "nontemporal" else profile
 
 
-def _authored_attributes(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+def _authored_attributes(entity: CompiledEntity) -> tuple[AttributeMetadata, ...]:
     """The Entity's Attributes minus the endpoints its declared axes point at.
 
     Canonical form spells what an author writes. Both endpoints of every axis are
@@ -164,7 +164,7 @@ def _authored_attributes(entity: EntityMetadata) -> tuple[AttributeMetadata, ...
     )
 
 
-def _authored_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
+def _authored_indices(entity: CompiledEntity) -> tuple[IndexMetadata, ...]:
     """The Entity's Indices minus the one it derives.
 
     Canonical form spells what an author writes. The primary-key Index is derived

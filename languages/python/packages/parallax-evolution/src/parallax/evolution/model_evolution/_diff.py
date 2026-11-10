@@ -5,10 +5,10 @@ from typing import cast
 
 from parallax.core.metamodel import (
     AttributeMetadata,
+    CompiledEntity,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
     EntityIdentity,
-    EntityMetadata,
     IndexMetadata,
     OccurrenceMetadata,
     RelationshipDeclaration,
@@ -226,21 +226,21 @@ def _declaration_order_operations(matching: Matching) -> Iterator[EvolutionOpera
             )
 
 
-def _added(entity: EntityMetadata) -> EvolutionOperation:
+def _added(entity: CompiledEntity) -> EvolutionOperation:
     """The one entity-level addition for ``entity``'s role in the later endpoint."""
     if isinstance(entity.inheritance, ConcreteSubtype):
         return ConcreteSubtypeAdded(entity.identity)
     return EntityAdded(entity.identity)
 
 
-def _removed(entity: EntityMetadata) -> EvolutionOperation:
+def _removed(entity: CompiledEntity) -> EvolutionOperation:
     """The one entity-level removal for ``entity``'s role in the earlier endpoint."""
     if isinstance(entity.inheritance, ConcreteSubtype):
         return ConcreteSubtypeRemoved(entity.identity)
     return EntityRemoved(entity.identity)
 
 
-def _entity_deltas(earlier: EntityMetadata, later: EntityMetadata) -> tuple[EntityDelta, ...]:
+def _entity_deltas(earlier: CompiledEntity, later: CompiledEntity) -> tuple[EntityDelta, ...]:
     """The Entity's own changed declarations, in the fixed field order.
 
     Inheritance is compared as one whole value, so a role, parent, strategy, tag

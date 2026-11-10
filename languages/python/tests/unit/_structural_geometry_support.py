@@ -46,7 +46,7 @@ from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.storage_layout import view as storage_layout_view
+from parallax.core.storage_layout import storage_layout_facet_of as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
 from tests.unit._workload_spelling_support import leaf_value
 

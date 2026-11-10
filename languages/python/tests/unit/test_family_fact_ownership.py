@@ -38,8 +38,7 @@ from parallax.core import (
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.write_items import ComposedWrite
-from parallax.core.concurrency import ConcurrencyPreference
-from parallax.core.concurrency import view as concurrency_view
+from parallax.core.concurrency import ConcurrencyPreference, concurrency_facet_of
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -212,7 +211,7 @@ def _settled_versions(steps: list[PlannedStep]) -> list[tuple[EntityIdentity, ob
 
 
 def _owner_version(entity: EntityIdentity) -> object:
-    attribute = concurrency_view(_MODEL).version_attribute(entity)
+    attribute = concurrency_facet_of(_MODEL).version_attribute(entity)
     assert attribute is not None
     return attribute
 
@@ -310,7 +309,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     # One close per addressed write.
     assert len(closes) == 3
     for close in closes:
-        shape = temporal_read.view(_TEMPORAL_MODEL).shape(close.entity)
+        shape = temporal_read.temporal_facet_of(_TEMPORAL_MODEL).shape(close.entity)
         assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
         transaction_time = shape.transaction_time
         assert close.target.end_attributes[-1] is transaction_time.end_attribute
@@ -434,7 +433,9 @@ class _PreparedPage:
         self.includes = build_include_tree(
             queried=self.identity, root=(self.identity,), positions=()
         )
-        self.milestones = temporal_read.view(meta).shape(self.identity) if history else None
+        self.milestones = (
+            temporal_read.temporal_facet_of(meta).shape(self.identity) if history else None
+        )
 
     def published(self, publication: str) -> tuple[object, ...]:
         if publication == "rows":
@@ -444,7 +445,7 @@ class _PreparedPage:
                     self.page,
                     meta,
                     lambda root, ordinal: classify_root(
-                        root, meta, concurrency_view(meta), ordinal=ordinal
+                        root, meta, concurrency_facet_of(meta), ordinal=ordinal
                     ),
                 )
             )

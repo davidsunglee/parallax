@@ -19,7 +19,7 @@ from parallax.core._execution._unit_work.write_items import (
     ReadAuthorizedWrite,
 )
 from parallax.core.base import INFINITY, TemporalBound, UsageError, retain_document_value
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import (
@@ -428,8 +428,8 @@ class WriteOwnership:
         *,
         observations: Mapping[ObjectStateKey, RetainedObservation],
     ) -> None:
-        self._temporal_facet = temporal_read.view(meta)
-        self._versioning = concurrency.view(meta)
+        self._temporal_facet = temporal_read.temporal_facet_of(meta)
+        self._versioning = concurrency.concurrency_facet_of(meta)
         self._observations = observations
         # Every changed observed state by its observation's identity; each
         # current row's contributions, the reverse view of the same facts; and
@@ -662,7 +662,7 @@ class WriteOwnership:
         record = self._records.get(identity.object_key)
         return record if record is not None and record.identity is identity else None
 
-    def _is_temporal(self, entity: EntityMetadata) -> bool:
+    def _is_temporal(self, entity: CompiledEntity) -> bool:
         return isinstance(
             self._temporal_facet.shape(entity.identity),
             temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,

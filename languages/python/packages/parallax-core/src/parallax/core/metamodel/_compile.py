@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, TypeGuard, cast
+from typing import Final, TypeGuard
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._identities import (
@@ -20,11 +20,9 @@ from parallax.core.metamodel._shape import (
 )
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
+    CompiledEntity,
     CompiledMetadata,
     EntityDeclaration,
-    EntityMetadata,
-    FacetKey,
-    Metamodel,
     NestedValueObjectMetadata,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
@@ -49,7 +47,6 @@ from parallax.core.metamodel._values import (
 
 __all__ = [
     "METADATA_COMPILER",
-    "accept_metamodel",
     "is_compiled_metadata",
     "value_object_metadata",
 ]
@@ -132,7 +129,7 @@ class _ValueObjectMetadata(_OccurrenceMetadata):
 
 
 @dataclass(frozen=True, slots=True)
-class _EntityMetadata:
+class _CompiledEntity:
     identity: EntityIdentity
     declared_container: StorageContainer | None
     declared_persistence: PersistenceMode | None
@@ -204,8 +201,8 @@ class _EntityMetadata:
 
 @dataclass(frozen=True, slots=True)
 class _CompiledMetadata:
-    entities: tuple[EntityMetadata, ...]
-    _by_identity: Mapping[EntityIdentity, EntityMetadata] = field(
+    entities: tuple[CompiledEntity, ...]
+    _by_identity: Mapping[EntityIdentity, CompiledEntity] = field(
         init=False, repr=False, compare=False
     )
 
@@ -216,29 +213,13 @@ class _CompiledMetadata:
             MappingProxyType({entity.identity: entity for entity in self.entities}),
         )
 
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
         return self._by_identity.get(identity)
-
-
-@dataclass(frozen=True, slots=True)
-class _AcceptedMetamodel:
-    metadata: CompiledMetadata
-    facets: Mapping[FacetKey[Any], object]
-
-    @property
-    def entities(self) -> Sequence[EntityMetadata]:
-        return self.metadata.entities
-
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
-        return self.metadata.entity(identity)
-
-    def facet[T](self, key: FacetKey[T]) -> T:
-        return cast(T, self.facets[key])
 
 
 def compile_metadata(candidate: CandidateMetamodel) -> CompiledMetadata:
     """Compile an accepted candidate into the one immutable accepted graph."""
-    return _CompiledMetadata(tuple(_entity_metadata(entity) for entity in candidate.entities))
+    return _CompiledMetadata(tuple(_compiled_entity(entity) for entity in candidate.entities))
 
 
 def is_compiled_metadata(value: object) -> TypeGuard[CompiledMetadata]:
@@ -256,8 +237,8 @@ def is_compiled_metadata(value: object) -> TypeGuard[CompiledMetadata]:
     return isinstance(value, _CompiledMetadata) and bool(value.entities)
 
 
-def _entity_metadata(declaration: EntityDeclaration) -> EntityMetadata:
-    return _EntityMetadata(
+def _compiled_entity(declaration: EntityDeclaration) -> CompiledEntity:
+    return _CompiledEntity(
         identity=declaration.identity,
         declared_container=declaration.container,
         declared_persistence=declaration.persistence,
@@ -360,17 +341,3 @@ METADATA_COMPILER: Final[MetamodelMetadataCompiler] = MetamodelMetadataCompiler(
 
 It is stateless, so one instance serves every formation; the constant exists so
 a profile names the compiler rather than constructing a second one."""
-
-
-def accept_metamodel(
-    metadata: CompiledMetadata, facets: Mapping[FacetKey[Any], object]
-) -> Metamodel:
-    """Combine the exact Compiled Metadata graph with its complete facet set.
-
-    The accepted Metamodel delegates lookup to that graph rather than copying or
-    re-indexing it, and adds facet retrieval only. Retrieval is total for an
-    accepted Formation Profile, which the formation runner establishes before
-    any compiler runs. The facet mapping is snapshotted into a read-only view, so
-    a caller that keeps its own mapping cannot alter an accepted model's facets.
-    """
-    return _AcceptedMetamodel(metadata, MappingProxyType(dict(facets)))

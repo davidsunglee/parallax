@@ -612,7 +612,7 @@ def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
         tx.insert(Log(id=2, label="fresh"))
 
     error = _failure(database(mar), reopen)
-    layout = storage_layout.view(model_of(_MODEL)).table(Table("mri_log"))
+    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(Table("mri_log"))
     assert layout is not None and layout.temporal_constraints is not None
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
     assert error.constraint_name == layout.temporal_constraints.exclusion_name

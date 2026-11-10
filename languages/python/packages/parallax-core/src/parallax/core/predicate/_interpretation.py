@@ -9,7 +9,7 @@ from parallax.core.predicate._nodes import ComparisonOp, MembershipOp, NullOp, S
 from parallax.core.predicate._resolved import ResolvedPredicate, ResolvedPredicateMember
 
 if TYPE_CHECKING:
-    from parallax.core.metamodel import EntityMetadata
+    from parallax.core.metamodel import CompiledEntity
     from parallax.core.predicate.validate import PositionScope
 
 __all__ = [
@@ -81,4 +81,4 @@ class PredicateInterpretation(Protocol):
     predicate selects within and ``position`` the active concrete set there.
     """
 
-    def __call__(self, root: EntityMetadata, position: PositionScope, /) -> ResolvedPredicate: ...
+    def __call__(self, root: CompiledEntity, position: PositionScope, /) -> ResolvedPredicate: ...

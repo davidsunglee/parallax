@@ -11,7 +11,7 @@ from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     Metamodel,
     OccurrenceMetadata,
     ValueObjectAttributeMetadata,
@@ -186,7 +186,7 @@ class EntityRowScope:
     """
 
     ctx: StatementBuilder[EntityRowScope]
-    entity: EntityMetadata
+    entity: CompiledEntity
     layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
@@ -319,7 +319,7 @@ class EntityRowScope:
     def next_alias(self) -> str:
         return self.ctx.next_alias()
 
-    def child(self, entity: EntityMetadata, alias: str) -> EntityRowScope:
+    def child(self, entity: CompiledEntity, alias: str) -> EntityRowScope:
         """A nested row for a correlated hop's interior: the SAME statement
         context (so a nested hop's binds and aliases continue this statement's
         single sequence), a different active entity and alias.

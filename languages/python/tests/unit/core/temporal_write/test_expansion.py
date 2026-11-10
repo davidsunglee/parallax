@@ -86,8 +86,8 @@ _JAN, _MAR, _JUN, _SEP, _OCT = (
 
 def _facts(meta: Metamodel, entity: EntityIdentity) -> TemporalFacts:
     metadata = meta.entity(entity)
-    view = inheritance.view(meta).entity(entity)
-    shape = temporal_read.view(meta).shape(entity)
+    view = inheritance.inheritance_facet_of(meta).entity(entity)
+    shape = temporal_read.temporal_facet_of(meta).shape(entity)
     assert metadata is not None and view is not None
     assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
     return TemporalFacts(

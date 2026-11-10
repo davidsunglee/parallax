@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Never
 
 from parallax.core import inheritance
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._resolved import ResolvedTemporalSelection
 from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._resolved import (
@@ -89,7 +89,7 @@ class TemporallyResolvedPredicate:
 def resolve_temporal_visibility(
     predicate: ResolvedPredicate,
     *,
-    target: EntityMetadata,
+    target: CompiledEntity,
     model: Metamodel,
     resolution: TemporalResolution,
 ) -> TemporallyResolvedPredicate:
@@ -111,7 +111,7 @@ def resolve_sourced_temporal_visibility(
     predicate: ResolvedPredicate,
     sources: ExecutionValueSources,
     *,
-    target: EntityMetadata,
+    target: CompiledEntity,
     model: Metamodel,
     resolution: TemporalResolution,
 ) -> tuple[TemporallyResolvedPredicate, ExecutionValueSources]:
@@ -128,7 +128,7 @@ def resolve_sourced_temporal_visibility(
 
 def _resolved(
     predicate: ResolvedPredicate,
-    target: EntityMetadata,
+    target: CompiledEntity,
     model: Metamodel,
     resolution: TemporalResolution,
 ) -> tuple[ResolvedPredicate, tuple[ResolvedTemporalSelection, ...] | None]:
@@ -147,8 +147,10 @@ def _resolved(
             return _Resolution(model, ()).predicate(predicate), None
 
 
-def _family_root(target: EntityMetadata, model: Metamodel) -> EntityMetadata:
-    return inheritance.root_metadata(inheritance.view(model), model, target.identity)
+def _family_root(target: CompiledEntity, model: Metamodel) -> CompiledEntity:
+    return inheritance.root_metadata(
+        inheritance.inheritance_facet_of(model), model, target.identity
+    )
 
 
 def _closed(predicate: ResolvedPredicate) -> TemporallyResolvedPredicate:

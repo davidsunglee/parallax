@@ -172,7 +172,7 @@ def _account_target(account_id: int, version: int) -> TargetWrite:
         ),
         write_preparation_of(_ACCOUNT),
     )
-    return target_write(prepared, inheritance.view(_ACCOUNT))
+    return target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT))
 
 
 def _account_insert(account_id: int) -> KeyedInsert:
@@ -801,7 +801,7 @@ def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
             "txEnd": INFINITY,
         }
     )
-    shape = temporal_read.view(_BALANCE).shape(_BALANCE_OBJECT.entity)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(_BALANCE_OBJECT.entity)
     assert shape is not None
     state = TemporalObjectStateKey(_BALANCE_OBJECT, temporal_read.milestone_edge(shape, row, None))
     observation = RetainedObservation(state, TemporalObservation(predecessor=row), None)

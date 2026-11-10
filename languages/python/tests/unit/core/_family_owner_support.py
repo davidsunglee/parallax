@@ -20,15 +20,15 @@ import pytest
 
 from parallax.core.metamodel import (
     AbstractRoot,
+    CompiledEntity,
     CompiledMetadata,
     EntityIdentity,
-    EntityMetadata,
 )
 
 __all__ = ["DescendantsFirst", "family_roots", "record_root_derivations"]
 
 
-def _is_root(entity: EntityMetadata) -> bool:
+def _is_root(entity: CompiledEntity) -> bool:
     return entity.inheritance is None or isinstance(entity.inheritance, AbstractRoot)
 
 
@@ -42,9 +42,9 @@ class DescendantsFirst:
 
     def __init__(self, metadata: CompiledMetadata) -> None:
         self._metadata = metadata
-        self.entities: Sequence[EntityMetadata] = tuple(sorted(metadata.entities, key=_is_root))
+        self.entities: Sequence[CompiledEntity] = tuple(sorted(metadata.entities, key=_is_root))
 
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None:
         return self._metadata.entity(identity)
 
 
@@ -58,7 +58,7 @@ def record_root_derivations(
     derive: Callable[..., object] = getattr(module, name)
     derived: list[EntityIdentity] = []
 
-    def recording(root: EntityMetadata, *rest: object) -> object:
+    def recording(root: CompiledEntity, *rest: object) -> object:
         derived.append(root.identity)
         return derive(root, *rest)
 

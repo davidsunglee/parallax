@@ -13,8 +13,8 @@ from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import (
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     MemberShape,
     Metamodel,
     Multiplicity,
@@ -151,14 +151,14 @@ class _BatchingAdapter:
     def collapses(
         self,
         model: Metamodel,
-        entity: EntityMetadata,
+        entity: CompiledEntity,
         mutation: str,
         rows: Sequence[ManagedRow],
     ) -> bool:
         return batch_write.collapses(model, entity, mutation, [_by_name(row) for row in rows])
 
     def batch_key(
-        self, model: Metamodel, entity: EntityMetadata, mutation: str, row: ManagedRow
+        self, model: Metamodel, entity: CompiledEntity, mutation: str, row: ManagedRow
     ) -> object:
         return collapse_group_key(model, entity, mutation, row)
 

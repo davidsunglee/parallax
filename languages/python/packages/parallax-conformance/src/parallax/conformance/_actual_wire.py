@@ -16,8 +16,8 @@ from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     Multiplicity,
     OccurrenceMetadata,
@@ -61,10 +61,10 @@ class ActualWireProjection:
         return self._typed(member.type, value)
 
     def entity_values(
-        self, entity: EntityMetadata, values: Mapping[str, object], *, omit_framework: bool = False
+        self, entity: CompiledEntity, values: Mapping[str, object], *, omit_framework: bool = False
     ) -> dict[str, object]:
         """Logical member-named values for a public Wire create/change payload."""
-        view = inheritance.view(self._model).entity(entity.identity)
+        view = inheritance.inheritance_facet_of(self._model).entity(entity.identity)
         if view is None:  # pragma: no cover - every accepted Entity has a view
             raise ValueError(f"{entity.identity.canonical}: no inheritance position")
         attributes = {member.identity.name: member for member in view.applicable_attributes}
@@ -305,9 +305,9 @@ class ActualWireProjection:
         return encode_wire(neutral_type, managed)
 
     def _entity_document_members(
-        self, layout: TableLayout, entity: EntityMetadata
+        self, layout: TableLayout, entity: CompiledEntity
     ) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
-        view = inheritance.view(self._model).entity(entity.identity)
+        view = inheritance.inheritance_facet_of(self._model).entity(entity.identity)
         if view is None:  # pragma: no cover - every row owner has an inheritance view
             raise ValueError(f"{entity.identity.canonical}: no inheritance position")
         members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
@@ -321,8 +321,8 @@ class ActualWireProjection:
                 members[occurrence.identity.path[-1]] = occurrence
         return members
 
-    def _table_entities(self, layout: TableLayout) -> tuple[EntityMetadata, ...]:
-        facet = storage_layout.view(self._model)
+    def _table_entities(self, layout: TableLayout) -> tuple[CompiledEntity, ...]:
+        facet = storage_layout.storage_layout_facet_of(self._model)
         return tuple(
             entity
             for entity in self._model.entities
@@ -330,8 +330,8 @@ class ActualWireProjection:
             and entity_view.layout.table == layout.table
         )
 
-    def _table_row_entity(self, layout: TableLayout, row: Mapping[str, object]) -> EntityMetadata:
-        facet = storage_layout.view(self._model)
+    def _table_row_entity(self, layout: TableLayout, row: Mapping[str, object]) -> CompiledEntity:
+        facet = storage_layout.storage_layout_facet_of(self._model)
         candidates = tuple(
             (entity, facet.entity(entity.identity)) for entity in self._table_entities(layout)
         )
@@ -347,7 +347,7 @@ class ActualWireProjection:
             f"{[entity.identity.canonical for entity, _view in candidates]}"
         )
 
-    def _entity(self, identity: EntityIdentity) -> EntityMetadata:
+    def _entity(self, identity: EntityIdentity) -> CompiledEntity:
         entity = self._model.entity(identity)
         if entity is None:
             raise ValueError(f"{identity.canonical!r}: no such Entity")
@@ -360,8 +360,8 @@ class ActualWireProjection:
             raise ValueError(f"{identity.entity.canonical}: no Attribute {identity.name!r}")
         return attribute
 
-    def _applicable_attribute(self, entity: EntityMetadata, name: str) -> AttributeMetadata:
-        view = inheritance.view(self._model).entity(entity.identity)
+    def _applicable_attribute(self, entity: CompiledEntity, name: str) -> AttributeMetadata:
+        view = inheritance.inheritance_facet_of(self._model).entity(entity.identity)
         attribute = None if view is None else view.applicable_attribute(name)
         if attribute is None:
             raise ValueError(f"{entity.identity.canonical}: no applicable Attribute {name!r}")
@@ -377,7 +377,7 @@ class ActualWireProjection:
 
     def _value_object(self, identity: ValueObjectIdentity) -> ValueObjectMetadata:
         entity = self._entity(identity.entity)
-        view = inheritance.view(self._model).entity(entity.identity)
+        view = inheritance.inheritance_facet_of(self._model).entity(entity.identity)
         occurrence = None if view is None else view.applicable_value_object(identity.path[-1])
         if occurrence is None:
             raise ValueError(f"{identity.entity.canonical}: no Value Object {identity.path[-1]!r}")

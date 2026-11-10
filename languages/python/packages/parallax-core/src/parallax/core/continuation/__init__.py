@@ -4,12 +4,11 @@ from dataclasses import dataclass, replace
 from typing import Final
 
 from parallax.core.base import InternalError
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import InheritanceEntityView, inheritance_facet_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     Metamodel,
 )
 from parallax.core.object_query._resolved import (
@@ -22,8 +21,7 @@ from parallax.core.object_query._resolved import (
     derive_page,
     resolved_order_term,
 )
-from parallax.core.temporal_read import ranked_axes, scans_resolved_axis
-from parallax.core.temporal_read import view as temporal_view
+from parallax.core.temporal_read import ranked_axes, scans_resolved_axis, temporal_facet_of
 
 __all__ = ["ContinuationPlan", "ordered", "plan"]
 
@@ -151,7 +149,7 @@ def ordered(query: ResolvedObjectQuery, model: Metamodel) -> ResolvedObjectQuery
 
 
 def _milestone_edge(
-    entity: EntityMetadata, model: Metamodel, query: ResolvedObjectQuery
+    entity: CompiledEntity, model: Metamodel, query: ResolvedObjectQuery
 ) -> tuple[AttributeIdentity, ...]:
     """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
 
@@ -164,7 +162,7 @@ def _milestone_edge(
     """
     if not scans_resolved_axis(query.temporal):
         return ()
-    shape = temporal_view(model).shape(entity.identity)
+    shape = temporal_facet_of(model).shape(entity.identity)
     if shape is None:  # pragma: no cover - the Temporal Facet covers every accepted Entity
         raise InternalError(
             CONTINUATION_PLANNING_FAILED,
@@ -199,14 +197,14 @@ def _attribute(identity: AttributeIdentity, model: Metamodel) -> AttributeMetada
     return attribute
 
 
-def _applicable(entity: EntityMetadata, name: str, model: Metamodel) -> AttributeMetadata | None:
-    position = inheritance_view(model).entity(entity.identity)
+def _applicable(entity: CompiledEntity, name: str, model: Metamodel) -> AttributeMetadata | None:
+    position = inheritance_facet_of(model).entity(entity.identity)
     inherited = None if position is None else position.applicable_attribute(name)
     return inherited or entity.attribute(name)
 
 
-def _family_view(entity: EntityMetadata, model: Metamodel) -> InheritanceEntityView:
-    position = inheritance_view(model).entity(entity.identity)
+def _family_view(entity: CompiledEntity, model: Metamodel) -> InheritanceEntityView:
+    position = inheritance_facet_of(model).entity(entity.identity)
     if position is None:  # pragma: no cover - the Inheritance Facet covers every accepted Entity
         raise InternalError(
             CONTINUATION_PLANNING_FAILED,

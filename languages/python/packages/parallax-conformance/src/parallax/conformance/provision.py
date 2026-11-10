@@ -376,7 +376,7 @@ def _fixture_blocks(
 ) -> dict[EntityIdentity, tuple[str, EntityLayoutView]]:
     """The one fixture block each row-owning Entity's rows come from, with its
     view, resolving every block key by the reference-position spelling rule."""
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     blocks: dict[EntityIdentity, tuple[str, EntityLayoutView]] = {}
     for block in fixtures:
         entity = entity_by_name(model, block)

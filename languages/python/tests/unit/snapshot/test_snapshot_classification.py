@@ -31,8 +31,7 @@ from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
 from parallax.core.base import INFINITY, SQL_NULL, StructuredDocument, UsageError
-from parallax.core.concurrency import ConcurrencyFacet
-from parallax.core.concurrency import view as concurrency_view
+from parallax.core.concurrency import ConcurrencyFacet, concurrency_facet_of
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -51,9 +50,9 @@ from parallax.core.read_delivery._page import Page, PageRows, invalid_result_ref
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
+    temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import connect
 from parallax.snapshot._publication._classify import (
@@ -105,9 +104,9 @@ def _classify(
     model = model_of(ENCODED_ORDERS)
 
     def classified(root: GraphView, ordinal: int) -> tuple[ConformingRoot | NonConformingRoot, int]:
-        return classify_root(root, model, concurrency_view(model), ordinal=offset + ordinal), len(
-            root
-        )
+        return classify_root(
+            root, model, concurrency_facet_of(model), ordinal=offset + ordinal
+        ), len(root)
 
     return each_root(fixture.page(*cast("Any", roots)), model, classified)
 
@@ -207,7 +206,7 @@ def test_a_root_whose_key_never_decoded_locates_itself_by_ordinal_alone() -> Non
         cast("Any", page),
         ENCODED_IDENTITY,
         lambda root, ordinal: classify_root(
-            root, ENCODED_IDENTITY, concurrency_view(ENCODED_IDENTITY), ordinal=3 + ordinal
+            root, ENCODED_IDENTITY, concurrency_facet_of(ENCODED_IDENTITY), ordinal=3 + ordinal
         ),
     )
     root = _classified(classified)
@@ -431,7 +430,7 @@ def _deposit_rate_page(valid_end: object) -> tuple[Page, Bitemporal]:
         },
     )
     model = model_of(read_models.RATE_MODEL)
-    shape = temporal_view(model).shape(fixture.layout_for("DepositRate").concrete)
+    shape = temporal_facet_of(model).shape(fixture.layout_for("DepositRate").concrete)
     assert isinstance(shape, Bitemporal)
     return fixture.page(root), shape
 
@@ -475,7 +474,9 @@ def test_classification_locates_a_root_without_reading_its_axis_ends(
     (verdict,) = each_root(
         page,
         model,
-        lambda root, ordinal: classify_root(root, model, concurrency_view(model), ordinal=ordinal),
+        lambda root, ordinal: classify_root(
+            root, model, concurrency_facet_of(model), ordinal=ordinal
+        ),
     )
 
     assert _classified(verdict).edge == Edge(

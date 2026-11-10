@@ -26,7 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import CompiledEntity, Metamodel, entity_by_name
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, scope
 
@@ -44,7 +44,7 @@ class _Prepared(Exception):
     """Ends a door's call once preparation has been handed what it selected."""
 
 
-def _account(model: Metamodel) -> EntityMetadata:
+def _account(model: Metamodel) -> CompiledEntity:
     entity = entity_by_name(model, "Account")
     assert entity is not None
     return entity

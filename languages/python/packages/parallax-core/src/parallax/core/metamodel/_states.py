@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
-from typing import Protocol, TypeGuard
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Protocol
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._identities import (
@@ -28,13 +27,14 @@ from parallax.core.metamodel._values import (
     ValueObjectOccurrenceDeclaration,
 )
 
+if TYPE_CHECKING:
+    from parallax.core.metamodel._accepted import Metamodel
+
 __all__ = [
     "CandidateMetamodel",
+    "CompiledEntity",
     "CompiledMetadata",
     "EntityDeclaration",
-    "EntityMetadata",
-    "FacetKey",
-    "Metamodel",
     "NestedValueObjectMetadata",
     "OccurrenceMetadata",
     "UnresolvedEntityDeclaration",
@@ -205,7 +205,7 @@ class ValueObjectMetadata(OccurrenceMetadata, Protocol):
     def storage(self) -> StorageLocation: ...
 
 
-class EntityMetadata(Protocol):
+class CompiledEntity(Protocol):
     """One Entity's accepted local declaration view.
 
     Every property whose effective value may differ through inheritance carries
@@ -251,49 +251,11 @@ class CompiledMetadata(Protocol):
     """
 
     @property
-    def entities(self) -> Sequence[EntityMetadata]: ...
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None: ...
+    def entities(self) -> Sequence[CompiledEntity]: ...
+    def entity(self, identity: EntityIdentity) -> CompiledEntity | None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class FacetKey[T]:
-    """The typed key one compiling module's facet is installed and retrieved under.
-
-    Identity is the owning module's catalog identity alone, so a module owns
-    exactly one key and two keys naming one owner are the same key. The type
-    parameter carries the facet's type through :meth:`Metamodel.facet` and is
-    erased at run time, so ``accepts`` is its run-time counterpart: the owner's
-    own decision procedure for "is this value my facet?", which the formation
-    seam calls on whatever a compiler returned before installing it. Only the
-    owner can answer that — a facet may be a Protocol, and no generic check can
-    see through the erased parameter — so supplying ``accepts`` is part of
-    declaring a key, and a value it rejects is a compiler contract failure.
-    ``accepts`` never participates in equality or hashing, so an equal key may
-    carry any check at all; the seam therefore calls the check on the key its own
-    authoritative declaration holds, never one a contributor handed it.
-    """
-
-    owner: str
-    accepts: Callable[[object], TypeGuard[T]] = field(compare=False)
-
-
-class Metamodel(Protocol):
-    """The accepted model: Compiled Metadata plus its complete facet set.
-
-    It exists only after every formation rule succeeded and every compiler ran,
-    and it is not a subtype of either formation input. ``facet`` is total for an
-    accepted Formation Profile and is an internal collaboration seam — each
-    owning module exposes its facet through a typed ``view(model)`` function
-    instead.
-    """
-
-    @property
-    def entities(self) -> Sequence[EntityMetadata]: ...
-    def entity(self, identity: EntityIdentity) -> EntityMetadata | None: ...
-    def facet[T](self, key: FacetKey[T]) -> T: ...
-
-
-def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
+def entity_by_name(model: Metamodel, name: str) -> CompiledEntity | None:
     """The accepted Metadata a bare-or-canonical Entity spelling names within
     ``model``, or ``None`` when it names none — rejecting an ambiguous bare name.
 
@@ -315,7 +277,7 @@ def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
     rule and answers a different question — what a reference means where it was
     declared — so it never adjudicates a reference position.
     """
-    bare: EntityMetadata | None = None
+    bare: CompiledEntity | None = None
     bare_matches = 0
     for entity in model.entities:
         identity = entity.identity

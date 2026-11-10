@@ -301,11 +301,11 @@ def test_deferred_sources_release_the_family_owners_once_every_origin_resolves()
             {**_deposit_rate_columns(), "id": 2},
         ),
     )
-    assert sources._families is inheritance.view(model)
-    assert sources._versioning is concurrency.view(model)
-    assert sources._temporal is temporal_read.view(model)
+    assert sources._families is inheritance.inheritance_facet_of(model)
+    assert sources._versioning is concurrency.concurrency_facet_of(model)
+    assert sources._temporal is temporal_read.temporal_facet_of(model)
     sources[0]
-    assert sources._temporal is temporal_read.view(model)
+    assert sources._temporal is temporal_read.temporal_facet_of(model)
     sources[1]
     assert (sources._families, sources._versioning, sources._temporal) == (None, None, None)
 

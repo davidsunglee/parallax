@@ -93,7 +93,9 @@ def _uow(
 
 
 def _selection(meta: Metamodel, entity: str) -> EntityMemberSelection:
-    view = inheritance.view(meta).entity(EntityIdentity("parallax.compatibility", entity))
+    view = inheritance.inheritance_facet_of(meta).entity(
+        EntityIdentity("parallax.compatibility", entity)
+    )
     assert view is not None
     return view.member_selection
 

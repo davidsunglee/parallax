@@ -26,7 +26,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, INT64, TIMESTAMP
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.navigate import (
     PropagatedRootSelections,
     RootSelections,
@@ -59,7 +59,7 @@ _LATEST: dict[TemporalDimension, TemporalSelection] = {
 def _compiled_as(
     op: oa.PredicateNode,
     meta: Metamodel,
-    entity: EntityMetadata,
+    entity: CompiledEntity,
     temporal: dict[TemporalDimension, TemporalSelection],
     resolution: type[RootSelections | PropagatedRootSelections],
 ) -> CompiledPredicate:

@@ -14,11 +14,10 @@ from parallax.core.inheritance._facet import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeMetadata,
+    CompiledEntity,
     CompiledMetadata,
     ConcreteSubtype,
     EntityIdentity,
-    EntityMetadata,
-    FacetKey,
     InheritanceStrategy,
     PersistenceMode,
     PrimaryKey,
@@ -29,6 +28,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     inheritance_parent,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModuleIdentity
 
 __all__ = ["MODEL_COMPILER", "root_metadata"]
@@ -36,7 +36,7 @@ __all__ = ["MODEL_COMPILER", "root_metadata"]
 
 def root_metadata(
     inheritance: InheritanceFacet, metadata: CompiledMetadata, entity: EntityIdentity
-) -> EntityMetadata:
+) -> CompiledEntity:
     """The accepted Metadata of ``entity``'s family root, resolved through the facet.
 
     The one read of a root's own declarations, for downstream compilers over
@@ -87,7 +87,7 @@ def compile_facet(metadata: CompiledMetadata) -> InheritanceFacet:
     return inheritance_facet([facts[entity.identity] for entity in metadata.entities])
 
 
-def _primary_key(root: EntityMetadata) -> AttributeMetadata:
+def _primary_key(root: CompiledEntity) -> AttributeMetadata:
     """The one primary-key Attribute ``root`` declares for its whole family.
 
     Validation asks the one-key rule of every position, the root included, so an
@@ -101,7 +101,7 @@ def _primary_key(root: EntityMetadata) -> AttributeMetadata:
 
 
 def _ancestry(
-    entity: EntityMetadata, by_identity: Mapping[EntityIdentity, EntityMetadata]
+    entity: CompiledEntity, by_identity: Mapping[EntityIdentity, CompiledEntity]
 ) -> tuple[EntityIdentity, ...]:
     """``entity``'s chain from its family root down to itself.
 
@@ -118,8 +118,8 @@ def _ancestry(
 
 
 def _concrete_subtypes(
-    entity: EntityMetadata,
-    by_identity: Mapping[EntityIdentity, EntityMetadata],
+    entity: CompiledEntity,
+    by_identity: Mapping[EntityIdentity, CompiledEntity],
     children: Mapping[EntityIdentity, list[EntityIdentity]],
 ) -> tuple[EntityIdentity, ...]:
     """``entity`` itself when it is concrete, otherwise every concrete leaf below
@@ -148,8 +148,8 @@ def _concrete_subtypes(
 
 
 def _facts(
-    entity: EntityMetadata,
-    by_identity: Mapping[EntityIdentity, EntityMetadata],
+    entity: CompiledEntity,
+    by_identity: Mapping[EntityIdentity, CompiledEntity],
     ancestry: tuple[EntityIdentity, ...],
     children: Mapping[EntityIdentity, list[EntityIdentity]],
     primary_key: AttributeMetadata,
@@ -182,7 +182,7 @@ def _facts(
 
 
 def _container(
-    entity: EntityMetadata, root: EntityMetadata, strategy: InheritanceStrategy | None
+    entity: CompiledEntity, root: CompiledEntity, strategy: InheritanceStrategy | None
 ) -> StorageContainer | None:
     """The one container a read or write of this position targets.
 
@@ -204,7 +204,7 @@ def _tag_column(strategy: InheritanceStrategy | None) -> str | None:
             return None
 
 
-def _tag_value(entity: EntityMetadata, strategy: InheritanceStrategy | None) -> str | None:
+def _tag_value(entity: CompiledEntity, strategy: InheritanceStrategy | None) -> str | None:
     """The value this position's rows carry in the shared table's tag column.
 
     Only a table-per-hierarchy concrete subtype has one: an abstract position
@@ -217,7 +217,7 @@ def _tag_value(entity: EntityMetadata, strategy: InheritanceStrategy | None) -> 
     return None
 
 
-def _persistence(root: EntityMetadata) -> PersistenceMode:
+def _persistence(root: CompiledEntity) -> PersistenceMode:
     """The family's effective Persistence Mode, defaulted at its one owner.
 
     Persistence is root-owned and uniform, so absence on the root is the Read

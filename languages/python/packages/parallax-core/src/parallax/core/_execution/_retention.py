@@ -173,9 +173,9 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         evidence_context: ReadEvidenceContext,
         pin: Pin,
     ) -> None:
-        self._families = inheritance.view(meta)
-        self._versioning = concurrency.view(meta)
-        self._temporal = temporal_read.view(meta)
+        self._families = inheritance.inheritance_facet_of(meta)
+        self._versioning = concurrency.concurrency_facet_of(meta)
+        self._temporal = temporal_read.temporal_facet_of(meta)
         retained: list[_PendingObservation] = [
             pending
             if not isinstance(pending, _ReadEvidenceFetchedRow)

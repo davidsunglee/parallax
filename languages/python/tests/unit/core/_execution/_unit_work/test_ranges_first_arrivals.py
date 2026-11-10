@@ -181,7 +181,7 @@ def _balance_row(value: str, tx_start: dt.datetime = T0) -> PredecessorRow:
 
 
 def _balance_observed(row: PredecessorRow) -> RetainedObservation:
-    shape = temporal_read.view(_BALANCE).shape(_BALANCE_ENTITY)
+    shape = temporal_read.temporal_facet_of(_BALANCE).shape(_BALANCE_ENTITY)
     assert shape is not None
     state = TemporalObjectStateKey(_BALANCE_OBJECT, temporal_read.milestone_edge(shape, row, None))
     return RetainedObservation(state, TemporalObservation(predecessor=row), None)
@@ -294,7 +294,7 @@ def _balance_target(tx_start: dt.datetime, **members: object) -> TargetWrite:
             TargetWriteInstruction("amend", "Balance", {"id": 1, **members}, if_tx_start=tx_start),
             write_preparation_of(_BALANCE),
         ),
-        inheritance.view(_BALANCE),
+        inheritance.inheritance_facet_of(_BALANCE),
     )
 
 

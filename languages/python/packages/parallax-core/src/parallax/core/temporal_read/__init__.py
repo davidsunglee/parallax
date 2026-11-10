@@ -15,7 +15,7 @@ from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     Metamodel,
 )
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
@@ -63,7 +63,7 @@ from parallax.core.temporal_read._facet import (
     TemporalShape,
     TransactionTimeOnly,
     ranked_axes,
-    view,
+    temporal_facet_of,
 )
 
 __all__ = [
@@ -93,8 +93,8 @@ __all__ = [
     "resolved_query_pin",
     "scans_resolved_axis",
     "sourced_perspective_terms",
+    "temporal_facet_of",
     "valid_time_coverage",
-    "view",
 ]
 
 
@@ -450,7 +450,7 @@ def _not_an_endpoint(attribute: AttributeIdentity) -> UsageError:
 def inject_resolved_as_of(
     predicate: ResolvedPredicate,
     selections: tuple[ResolvedTemporalSelection, ...],
-    entity: EntityMetadata,
+    entity: CompiledEntity,
 ) -> ResolvedPredicate:
     """Append temporal terms from managed, resolved selections."""
     terms = [term for selection in selections for term in _selection_terms(selection, entity)]
@@ -461,7 +461,7 @@ def inject_sourced_as_of(
     predicate: ResolvedPredicate,
     sources: ExecutionValueSources,
     selections: tuple[ResolvedTemporalSelection, ...],
-    entity: EntityMetadata,
+    entity: CompiledEntity,
 ) -> tuple[ResolvedPredicate, ExecutionValueSources]:
     """:func:`inject_resolved_as_of`, carrying ``predicate``'s execution-value
     sources to where the appended terms leave its occurrences, and sourcing each
@@ -477,7 +477,7 @@ def inject_sourced_as_of(
 
 
 def perspective_terms(
-    perspective: TemporalPerspective, target: EntityMetadata
+    perspective: TemporalPerspective, target: CompiledEntity
 ) -> tuple[ResolvedComparison, ...]:
     """The comparisons restricting the current object to ``perspective``, in
     canonical axis rank.
@@ -493,7 +493,7 @@ def perspective_terms(
 
 
 def sourced_perspective_terms(
-    perspective: TemporalPerspective, target: EntityMetadata
+    perspective: TemporalPerspective, target: CompiledEntity
 ) -> tuple[tuple[ResolvedComparison, ExecutionValueSource | None], ...]:
     """:func:`perspective_terms`, each beside the execution value a template
     renders it from, if any.
@@ -509,7 +509,7 @@ def sourced_perspective_terms(
 
 
 def _selection_terms(
-    selection: ResolvedTemporalSelection, entity: EntityMetadata
+    selection: ResolvedTemporalSelection, entity: CompiledEntity
 ) -> tuple[ResolvedComparison, ...]:
     start = cast("AttributeMetadata", entity.attribute(selection.axis.start_attribute.name))
     end = cast("AttributeMetadata", entity.attribute(selection.axis.end_attribute.name))
@@ -552,7 +552,7 @@ def _selection_sources(
 
 
 def _sourced_selection_terms(
-    selection: ResolvedTemporalSelection, entity: EntityMetadata
+    selection: ResolvedTemporalSelection, entity: CompiledEntity
 ) -> Iterable[tuple[ResolvedComparison, ExecutionValueSource | None]]:
     return zip(_selection_terms(selection, entity), _selection_sources(selection), strict=True)
 
@@ -588,7 +588,7 @@ def scans_resolved_axis(selections: tuple[ResolvedTemporalSelection, ...]) -> bo
 
 
 def propagated_selections(
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     model: Metamodel,
     root_selections: tuple[ResolvedTemporalSelection, ...],
@@ -600,7 +600,7 @@ def propagated_selections(
     dimension, and otherwise Latest; selections in a dimension the family does
     not declare are ignored.
     """
-    shape = view(model).shape(target.identity)
+    shape = temporal_facet_of(model).shape(target.identity)
     if shape is None:  # pragma: no cover - accepted metadata is total
         raise UsageError(TEMPORAL_READ_INVALID, f"{target.identity.canonical}: no temporal shape")
     return tuple(_propagated(axis, root_selections) for axis in ranked_axes(shape))
@@ -622,7 +622,7 @@ def _instant_of(selection: ResolvedAsOfSelection) -> _dt.datetime:
 
 
 def resolve_perspective(
-    target: EntityMetadata,
+    target: CompiledEntity,
     *,
     model: Metamodel,
     root_selections: tuple[ResolvedTemporalSelection, ...],

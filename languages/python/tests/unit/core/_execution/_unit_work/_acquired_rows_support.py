@@ -62,7 +62,7 @@ class HeldRows:
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         self.requests.append(request)
-        view = inheritance.view(self.model).entity(request.entity.identity)
+        view = inheritance.inheritance_facet_of(self.model).entity(request.entity.identity)
         assert view is not None
         selection = view.member_selection
         if isinstance(request, CompletionRequest):
@@ -84,7 +84,7 @@ class HeldRows:
             return False
         if not all(windows):
             return True
-        shape = temporal_read.view(self.model).shape(request.entity.identity)
+        shape = temporal_read.temporal_facet_of(self.model).shape(request.entity.identity)
         assert shape is not None
         coverage = valid_time_coverage(shape, row, None)
         assert coverage is not None

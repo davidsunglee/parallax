@@ -27,7 +27,7 @@ from parallax.core.base import (
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import CompiledEntity, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate._execution_values import ExecutionValueSource
 from parallax.core.predicate._resolved import ResolvedAnd, ResolvedConstant, ResolvedMembership
@@ -74,8 +74,8 @@ WALLET = corpus_model("wallet")
 def _builder() -> StatementBuilder:
     return StatementBuilder(
         WALLET,
-        inheritance.view(WALLET),
-        storage_layout.view(WALLET),
+        inheritance.inheritance_facet_of(WALLET),
+        storage_layout.storage_layout_facet_of(WALLET),
         POSTGRES,
     )
 
@@ -102,7 +102,7 @@ COLLECTIONS = corpus_model("predicate-collections")
 TRAVERSAL = corpus_model("predicate-traversal")
 
 
-def _planned_read(family: Metamodel, entity: EntityMetadata) -> PlannedEntityQuery:
+def _planned_read(family: Metamodel, entity: CompiledEntity) -> PlannedEntityQuery:
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
@@ -113,12 +113,20 @@ def _planned_read(family: Metamodel, entity: EntityMetadata) -> PlannedEntityQue
 
 
 def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
-    return StatementBuilder(family, inheritance.view(family), storage_layout.view(family), POSTGRES)
+    return StatementBuilder(
+        family,
+        inheritance.inheritance_facet_of(family),
+        storage_layout.storage_layout_facet_of(family),
+        POSTGRES,
+    )
 
 
 def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> StatementPlan:
     entity = next(entity for entity in family.entities if entity.identity.name == root)
-    facet, storage = inheritance.view(family), storage_layout.view(family)
+    facet, storage = (
+        inheritance.inheritance_facet_of(family),
+        storage_layout.storage_layout_facet_of(family),
+    )
     read = plan_read_shape(_planned_read(family, entity), facet, storage, False, False)
     return plan_statement(
         resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
@@ -145,7 +153,7 @@ _OWNER_TAGGED = oa.And(
 
 def _basket_row(builder: StatementBuilder[EntityRowScope]) -> EntityRowScope:
     basket = next(entity for entity in COLLECTIONS.entities if entity.identity.name == "Basket")
-    view = storage_layout.view(COLLECTIONS).entity(basket.identity)
+    view = storage_layout.storage_layout_facet_of(COLLECTIONS).entity(basket.identity)
     assert view is not None
     return EntityRowScope(builder, basket, view.layout)
 
@@ -169,7 +177,10 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Vehicle.dealer.name"), value="x")
     plan = _statement_plan(TRAVERSAL, "Vehicle", op)
     vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
-    facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
+    facet, storage = (
+        inheritance.inheritance_facet_of(TRAVERSAL),
+        storage_layout.storage_layout_facet_of(TRAVERSAL),
+    )
     read = plan_read_shape(_planned_read(TRAVERSAL, vehicle), facet, storage, False, False)
     assert isinstance(read, TpcsUnionReadPlan)
     assert list(plan.root_scopes) == [branch.identity for branch in read.branches]

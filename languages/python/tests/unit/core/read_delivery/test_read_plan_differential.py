@@ -133,7 +133,7 @@ def _levels_from_the_include_tree(plan: ReadPlan) -> list[tuple[EntityIdentity, 
 
 
 def _expected_repeating(plan: ReadPlan, meta: Metamodel) -> frozenset[int]:
-    facet = inheritance.view(meta)
+    facet = inheritance.inheritance_facet_of(meta)
 
     def view(entity: EntityIdentity) -> inheritance.InheritanceEntityView:
         found = facet.entity(entity)

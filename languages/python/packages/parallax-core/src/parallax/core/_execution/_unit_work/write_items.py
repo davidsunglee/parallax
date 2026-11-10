@@ -29,7 +29,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import CompiledEntity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
@@ -114,7 +114,7 @@ class KeyedInsert:
         return "insert"
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
     @property
@@ -137,7 +137,7 @@ class InsertBatch:
         return "insert"
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
     @property
@@ -206,7 +206,7 @@ class StateObservedWrite:
         return _revision_phase(self.instruction)
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
     @property
@@ -268,7 +268,7 @@ class ObjectLockedWrite:
         return _revision_phase(self.instruction)
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
 
@@ -290,7 +290,7 @@ class ObjectLockedBatch:
         return _revision_phase(self.instruction)
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
 
@@ -331,7 +331,7 @@ class InsertionAuthorizedWrite:
         return _revision_phase(self.instruction)
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
     @property
@@ -393,7 +393,7 @@ class TargetWrite:
         return _revision_phase(self.instruction)
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.instruction.target
 
     @property
@@ -594,7 +594,7 @@ class ComposedTemporalWrite:
     composed write's rows are of.
     """
 
-    target: EntityMetadata
+    target: CompiledEntity
     object_key: ObjectKey
     intents: tuple[TemporalIntent, ...]
     transform: CoverageTransform
@@ -772,7 +772,7 @@ class ComposedBitemporalOpening:
         return "insert"
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.insert.target
 
     @property
@@ -854,7 +854,7 @@ class PostRemovalInsert:
         return "insert"
 
     @property
-    def target(self) -> EntityMetadata:
+    def target(self) -> CompiledEntity:
         return self.insert.target
 
 

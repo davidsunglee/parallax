@@ -51,7 +51,7 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
-    EntityMetadata,
+    CompiledEntity,
     Metamodel,
     TablePerConcreteSubtype,
     entity_by_name,
@@ -199,7 +199,7 @@ MATRIX_MODEL: Final = DomainModel(
 MATRIX_META: Final[Metamodel] = model_of(MATRIX_MODEL)
 
 
-def matrix_entity(strategy: Strategy, layout: Layout, name: str) -> EntityMetadata:
+def matrix_entity(strategy: Strategy, layout: Layout, name: str) -> CompiledEntity:
     """``name``'s accepted metadata in the ``strategy``/``layout`` matrix family."""
     metadata = entity_by_name(MATRIX_META, f"read.projection.matrix.{strategy}.{layout}.{name}")
     assert metadata is not None

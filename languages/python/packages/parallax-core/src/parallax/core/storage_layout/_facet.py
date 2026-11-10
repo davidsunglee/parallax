@@ -12,7 +12,6 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
     EntityIdentity,
-    FacetKey,
     IndexMetadata,
     MemberIdentity,
     MemberShape,
@@ -20,6 +19,7 @@ from parallax.core.metamodel import (
     Table,
     ValueObjectIdentity,
 )
+from parallax.core.metamodel._accepted import FacetKey, facet_of
 from parallax.core.storage_layout._rules import STORAGE_LAYOUT_MODULE
 
 __all__ = [
@@ -49,8 +49,8 @@ __all__ = [
     "TableLayout",
     "TemporalHistoryConstraints",
     "storage_layout_facet",
+    "storage_layout_facet_of",
     "table_layout",
-    "view",
 ]
 
 
@@ -605,6 +605,10 @@ FACET_KEY: Final[FacetKey[StorageLayoutFacet]] = FacetKey(
 """The typed key used to install and retrieve the Storage Layout Facet."""
 
 
-def view(model: Metamodel) -> StorageLayoutFacet:
-    """Return ``model``'s typed Storage Layout Facet."""
-    return model.facet(FACET_KEY)
+def storage_layout_facet_of(model: Metamodel) -> StorageLayoutFacet:
+    """``model``'s Storage Layout Facet, the typed retrieval every consumer uses.
+
+    Total for an accepted Metamodel, which by construction carries the complete
+    facet set.
+    """
+    return facet_of(model, FACET_KEY)

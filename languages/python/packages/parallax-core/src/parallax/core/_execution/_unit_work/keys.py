@@ -10,7 +10,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     WriteInstruction,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity, Metamodel, entity_by_name
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.steps import MaxPlusOne
 
@@ -36,13 +36,13 @@ def object_key(
     never coalesced nor observation-bound, and opens no insertion.
     """
     if isinstance(instruction, PreparedKeyedInstruction):
-        return resolve_object_key(instruction, inheritance.view(model))
+        return resolve_object_key(instruction, inheritance.inheritance_facet_of(model))
     if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) != 1:
         return None
     entity = entity_by_name(model, instruction.entity)
     if entity is None:
         return None
-    name = _key_attribute(entity, inheritance.view(model)).name
+    name = _key_attribute(entity, inheritance.inheritance_facet_of(model)).name
     row = instruction.rows[0]
     return _identity(entity, name, row.get(name, _UNSTATED))
 
@@ -70,7 +70,7 @@ _UNSTATED: Final = object()
 
 
 def _key_attribute(
-    entity: EntityMetadata, families: inheritance.InheritanceFacet
+    entity: CompiledEntity, families: inheritance.InheritanceFacet
 ) -> AttributeIdentity:
     """``entity``'s family primary-key Attribute — the one key derivation both
     entry points share, so the family primary key stays one decision."""
@@ -80,7 +80,7 @@ def _key_attribute(
     return position.primary_key.identity
 
 
-def _identity(entity: EntityMetadata, name: str, value: object) -> ObjectKey | None:
+def _identity(entity: CompiledEntity, name: str, value: object) -> ObjectKey | None:
     if value is _UNSTATED or isinstance(value, Mapping | MaxPlusOne):
         return None
     return ObjectKey(entity.identity, ((name, value),))

@@ -130,7 +130,7 @@ _TAIL = _span(_JUN, INFINITY, 200)
 
 
 def _retained(row: PredecessorRow) -> RetainedObservation:
-    shape = temporal_read.view(_SPANS).shape(_SPAN)
+    shape = temporal_read.temporal_facet_of(_SPANS).shape(_SPAN)
     assert shape is not None
     key = ObjectKey(_SPAN, (("id", 1),))
     state = TemporalObjectStateKey(key, temporal_read.milestone_edge(shape, row, None))
@@ -163,7 +163,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
         write_preparation_of(_SPANS),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
-    return target_write(prepared, inheritance.view(_SPANS))
+    return target_write(prepared, inheritance.inheritance_facet_of(_SPANS))
 
 
 def _plan(

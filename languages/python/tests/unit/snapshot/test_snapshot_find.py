@@ -58,7 +58,7 @@ from parallax.core.base import (
     TooManyResultsFound,
     UsageError,
 )
-from parallax.core.concurrency import view as concurrency_view
+from parallax.core.concurrency import concurrency_facet_of
 from parallax.core.db_port import (
     ArrayBind,
     DatabaseConnection,
@@ -917,7 +917,7 @@ def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge()
         result.page,
         INVOICE,
         lambda root, ordinal: classify_root(
-            root, INVOICE, concurrency_view(INVOICE), ordinal=ordinal
+            root, INVOICE, concurrency_facet_of(INVOICE), ordinal=ordinal
         ),
     )
     assert not isinstance(verdict, NonConformingRoot)

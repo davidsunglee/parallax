@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from parallax.core.metamodel import (
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     Max,
     PkGeneration,
     PrimaryKey,
@@ -27,7 +27,7 @@ def generates(generation: PkGeneration) -> bool:
     return isinstance(generation, (Max, Sequence))
 
 
-def generated_key_attribute(entity: EntityMetadata) -> AttributeMetadata | None:
+def generated_key_attribute(entity: CompiledEntity) -> AttributeMetadata | None:
     """``entity``'s own primary-key Attribute whose value the framework allocates.
 
     A local view of ``entity``'s own declarations, so an inheritance participant

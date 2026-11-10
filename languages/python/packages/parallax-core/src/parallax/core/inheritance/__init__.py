@@ -14,7 +14,7 @@ from parallax.core.inheritance._facet import (
     InheritanceFacet,
     InheritanceFamilyView,
     InheritancePositionView,
-    view,
+    inheritance_facet_of,
 )
 from parallax.core.inheritance._rules import ISSUE_CODES, RULE_SET
 from parallax.core.inheritance._table_groups import (
@@ -27,9 +27,9 @@ from parallax.core.inheritance._table_groups import (
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
+    CompiledEntity,
     ConcreteSubtype,
     EntityIdentity,
-    EntityMetadata,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
@@ -55,11 +55,11 @@ __all__ = [
     "TableGroupContributor",
     "TopLevelValueObjectTableContributor",
     "family_variant_name",
+    "inheritance_facet_of",
     "project_table_groups",
     "reject_predicate_write",
     "root_metadata",
     "validate_subtype_write",
-    "view",
 ]
 
 
@@ -100,7 +100,7 @@ _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", WIRE_TY
 
 
 def validate_subtype_write(
-    model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
+    model: AcceptedMetamodel, entity: CompiledEntity, row: Mapping[str, object]
 ) -> None:
     """Validate a concrete-subtype write payload's SHAPE, raising the refusal
     coded with the rule it breaks.
@@ -123,7 +123,7 @@ def validate_subtype_write(
     """
     if entity.inheritance is None:
         return
-    facet = view(model)
+    facet = inheritance_facet_of(model)
     position = _entity_view(facet, entity.identity)
     root = _entity_view(facet, position.root)
     key = position.primary_key.identity.name
@@ -191,7 +191,7 @@ def _entity_view(facet: InheritanceFacet, identity: EntityIdentity) -> Inheritan
     return position
 
 
-def reject_predicate_write(entity: EntityMetadata) -> None:
+def reject_predicate_write(entity: CompiledEntity) -> None:
     """Reject a predicate-selected (set-based) write on ANY inheritance-family
     ``entity`` — root, abstract-subtype, or concrete-subtype alike — with the
     SAME ``subtype-write-set-based-unsupported`` classification

@@ -78,8 +78,8 @@ _LAYOUTS = pytest.mark.parametrize("meta", [_COLUMNS, _DOCUMENT], ids=["columns"
 
 def _facts(meta: Metamodel) -> TemporalFacts:
     metadata = meta.entity(_SPAN)
-    view = inheritance.view(meta).entity(_SPAN)
-    shape = temporal_read.view(meta).shape(_SPAN)
+    view = inheritance.inheritance_facet_of(meta).entity(_SPAN)
+    shape = temporal_read.temporal_facet_of(meta).shape(_SPAN)
     assert metadata is not None and view is not None
     assert isinstance(shape, temporal_read.Bitemporal)
     return TemporalFacts(

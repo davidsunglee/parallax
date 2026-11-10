@@ -4,14 +4,13 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.inheritance import InheritanceEntityView, inheritance_facet_of
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     IndexIdentity,
     IndexMetadata,
     Metamodel,
@@ -24,8 +23,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     derive_primary_key_index,
 )
-from parallax.core.relationship import RelationshipMetadata
-from parallax.core.relationship import view as relationship_view
+from parallax.core.relationship import RelationshipMetadata, relationship_facet_of
 from parallax.evolution.model_evolution._values import (
     Absent,
     DeclarationCollection,
@@ -55,7 +53,7 @@ class EntityFacts:
     the family's root fixes.
     """
 
-    declaration: EntityMetadata
+    declaration: CompiledEntity
     family: InheritanceEntityView
 
 
@@ -175,7 +173,7 @@ def _paired[I, D](
 
 
 def _entities(model: Metamodel) -> tuple[tuple[EntityIdentity, EntityFacts], ...]:
-    facet = inheritance_view(model)
+    facet = inheritance_facet_of(model)
     paired: list[tuple[EntityIdentity, EntityFacts]] = []
     for entity in model.entities:
         family = facet.entity(entity.identity)
@@ -229,7 +227,7 @@ def _value_object_attributes(
 def _relationships(
     model: Metamodel,
 ) -> tuple[tuple[RelationshipIdentity, RelationshipFacts], ...]:
-    facet = relationship_view(model)
+    facet = relationship_facet_of(model)
     paired: list[tuple[RelationshipIdentity, RelationshipFacts]] = []
     for entity in model.entities:
         for declaration in entity.declared_relationships:
@@ -248,7 +246,7 @@ def _as_of_axes(model: Metamodel) -> tuple[tuple[AxisKey, AsOfAxisMetadata], ...
     )
 
 
-def _authored_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
+def _authored_indices(entity: CompiledEntity) -> tuple[IndexMetadata, ...]:
     """``entity``'s Indices without the derived primary-key one.
 
     The derived Index is not independently authored, so it never receives an

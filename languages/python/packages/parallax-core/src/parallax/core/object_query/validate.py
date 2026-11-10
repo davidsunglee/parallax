@@ -7,8 +7,8 @@ from parallax.core import inheritance
 from parallax.core.base import ManagedValue, NeutralType, UsageError
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
+    CompiledEntity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     RelationshipIdentity,
     entity_by_name,
@@ -80,7 +80,7 @@ TEMPORAL_READ_DIMENSION_SELECTION_CARDINALITY: Final = (
 
 
 def validate_object_query(
-    root: EntityMetadata, query: QueryInput, model: Metamodel
+    root: CompiledEntity, query: QueryInput, model: Metamodel
 ) -> ResolvedObjectQuery:
     """Validate ``query`` against ``model``, raising a model-aware refusal.
 
@@ -217,11 +217,13 @@ def _scope_identities(model: Metamodel, scope: PositionScope) -> tuple[EntityIde
 
 
 def _validate_temporal_selections(
-    root: EntityMetadata, query: QueryClauses, model: Metamodel
+    root: CompiledEntity, query: QueryClauses, model: Metamodel
 ) -> tuple[ResolvedTemporalSelection, ...]:
     # `m-object-query` cannot reach the Temporal Facet, so the family's axes are
     # read from its root's accepted declaration.
-    declarer = inheritance.root_metadata(inheritance.view(model), model, root.identity)
+    declarer = inheritance.root_metadata(
+        inheritance.inheritance_facet_of(model), model, root.identity
+    )
     declared: dict[TemporalDimension, AsOfAxisMetadata] = {
         "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time": axis
         for axis in declarer.declared_as_of_axes

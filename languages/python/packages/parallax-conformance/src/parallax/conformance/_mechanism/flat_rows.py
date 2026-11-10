@@ -137,7 +137,7 @@ def _concrete_members(
             f"`_type`; this one published {sorted(node)}"
         )
     entity = case_entity(model, node_type)
-    view = inheritance.view(model).entity(entity.identity)
+    view = inheritance.inheritance_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - every accepted Entity has a view
         raise UnclassifiedEngineError(f"{entity.identity.canonical}: no inheritance position")
     return frozenset(
@@ -155,7 +155,7 @@ def _read_projection(
     the query's resolved narrowing: narrowing an abstract read shrinks its
     superset without making the read concrete.
     """
-    facet = inheritance.view(model)
+    facet = inheritance.inheritance_facet_of(model)
     entity = case_entity(model, query.target.canonical)
     view = facet.entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
@@ -234,7 +234,7 @@ def _attribute_column(
 def _in_own_column(
     model: AcceptedMetamodel, concretes: Sequence[EntityIdentity], attribute: AttributeMetadata
 ) -> bool:
-    facet = storage_layout.view(model)
+    facet = storage_layout.storage_layout_facet_of(model)
     return any(
         isinstance(view.layout.placement(attribute.identity), storage_layout.DirectColumn)
         for concrete in concretes

@@ -27,7 +27,7 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeMetadata,
-    EntityMetadata,
+    CompiledEntity,
     InheritanceMetadata,
     Metamodel,
     PrimaryKey,
@@ -137,7 +137,7 @@ _EVERY_INHERITED_FACT: Final[frozenset[str]] = frozenset(
 _DEEPEST_ANCESTRY: Final[int] = 3
 
 
-def _locally_declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+def _locally_declared_primary_key(entity: CompiledEntity) -> tuple[AttributeMetadata, ...]:
     """The primary key ``entity``'s OWN local declaration carries, in declared
     order — the root-local reading the family's owner is measured against.
     """
@@ -148,8 +148,8 @@ def _locally_declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMeta
     )
 
 
-def _family_shape(model: Metamodel, entity: EntityMetadata, position: InheritanceMetadata) -> str:
-    families = inheritance.view(model)
+def _family_shape(model: Metamodel, entity: CompiledEntity, position: InheritanceMetadata) -> str:
+    families = inheritance.inheritance_facet_of(model)
     strategy = inheritance.root_metadata(families, model, entity.identity).inheritance
     strategy_name = (
         "table-per-hierarchy"
@@ -163,11 +163,11 @@ def _family_shape(model: Metamodel, entity: EntityMetadata, position: Inheritanc
     return f"{strategy_name} concrete subtype"
 
 
-def _divergent_owners(model: Metamodel, entity: EntityMetadata) -> list[str]:
+def _divergent_owners(model: Metamodel, entity: CompiledEntity) -> list[str]:
     """Each family fact ``entity`` does not answer with its root's own object."""
-    families = inheritance.view(model)
-    temporal = temporal_read.view(model)
-    versioning = concurrency.view(model)
+    families = inheritance.inheritance_facet_of(model)
+    temporal = temporal_read.temporal_facet_of(model)
+    versioning = concurrency.concurrency_facet_of(model)
     view = families.entity(entity.identity)
     assert view is not None
     root_view = families.entity(view.root)
@@ -216,9 +216,9 @@ def test_the_measured_families_span_both_strategies_every_position_and_every_fac
     inherited: set[str] = set()
     for stem in _FAMILIES:
         model = corpus()[stem]
-        facet = inheritance.view(model)
-        temporal = temporal_read.view(model)
-        versioning = concurrency.view(model)
+        facet = inheritance.inheritance_facet_of(model)
+        temporal = temporal_read.temporal_facet_of(model)
+        versioning = concurrency.concurrency_facet_of(model)
         for entity in model.entities:
             position = entity.inheritance
             if position is None:

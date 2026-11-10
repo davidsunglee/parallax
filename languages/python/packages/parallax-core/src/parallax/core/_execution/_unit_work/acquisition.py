@@ -6,7 +6,7 @@ from typing import Final, Protocol, cast
 
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import EntityMemberSelection
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, CompiledEntity
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, TemporalObjectStateKey
 from parallax.core.write_plan.predecessor_rows import PredecessorRows, PredecessorRowsBuilder
@@ -40,7 +40,7 @@ class TargetReadRequest:
     input its classification takes, for a :class:`CompletionRequest` to judge
     if the row is reused."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     key: ObjectKey
     valid_from: ManagedValue | None
     retains: bool = False
@@ -106,7 +106,7 @@ class CoverageReadRequest:
     when ``shared_lock``. Each row is returned whole however little of it a window
     reaches, and the rows of several objects are told apart by their keys."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     key_attribute: AttributeIdentity
     terms: tuple[CoverageTerm, ...]
     shared_lock: bool
@@ -122,7 +122,7 @@ class CompletionRequest:
     completed rows, in order, beside the raw ``documents`` they were read with
     — ``None`` where the read projected no Structured Column."""
 
-    entity: EntityMetadata
+    entity: CompiledEntity
     key_attribute: AttributeIdentity
     rows: tuple[tuple[object, ...], ...]
     documents: tuple[object | None, ...] | None

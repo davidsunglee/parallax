@@ -43,7 +43,7 @@ from parallax.core import (
 from parallax.core.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityMetadata, TablePerConcreteSubtype, entity_by_name
+from parallax.core.metamodel import CompiledEntity, TablePerConcreteSubtype, entity_by_name
 
 __all__ = [
     "FAMILIES",
@@ -146,7 +146,7 @@ FAMILY_AXES: Final = pytest.mark.parametrize(
 )
 
 
-def member_metadata(strategy: Strategy, layout: Layout, member: Member) -> EntityMetadata:
+def member_metadata(strategy: Strategy, layout: Layout, member: Member) -> CompiledEntity:
     """``member``'s accepted metadata in the ``strategy``/``layout`` family."""
     metadata = entity_by_name(model_of(MODEL), f"{FAMILIES[(strategy, layout)].namespace}.{member}")
     assert metadata is not None

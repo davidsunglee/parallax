@@ -14,12 +14,11 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    CompiledEntity,
     CompiledMetadata,
     ConcreteSubtype,
     Document,
     EntityIdentity,
-    EntityMetadata,
-    FacetKey,
     IndexMetadata,
     MemberIdentity,
     MemberShape,
@@ -32,6 +31,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     derive_primary_key_index,
 )
+from parallax.core.metamodel._accepted import FacetKey
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
 from parallax.core.relationship import RelationshipFacet
@@ -94,7 +94,7 @@ class _SlotDraft:
 class _CompilationIndex:
     metadata: CompiledMetadata
     inheritance: InheritanceFacet
-    entities: tuple[EntityMetadata, ...]
+    entities: tuple[CompiledEntity, ...]
     roots: tuple[EntityIdentity, ...]
     joined: frozenset[AttributeIdentity]
     primary_keys: Mapping[EntityIdentity, IndexMetadata]
@@ -132,7 +132,7 @@ def _entity_view(inheritance: InheritanceFacet, identity: EntityIdentity) -> Inh
     return view
 
 
-def _entity(index: _CompilationIndex, identity: EntityIdentity) -> EntityMetadata:
+def _entity(index: _CompilationIndex, identity: EntityIdentity) -> CompiledEntity:
     entity = index.metadata.entity(identity)
     if entity is None:
         raise RuntimeError(f"Entity {identity.canonical!r} is absent from accepted metadata")
@@ -243,7 +243,7 @@ def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
     return tuple(groups)
 
 
-def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGroup | None:
+def _owned_group(index: _CompilationIndex, entity: CompiledEntity) -> _LayoutGroup | None:
     """The Table mapping ``entity`` owns, or absence where it owns none.
 
     A standalone Entity owns its declared Table, a table-per-hierarchy root owns
@@ -302,7 +302,7 @@ def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGro
     )
 
 
-def _temporal_designations(root: EntityMetadata) -> frozenset[AttributeIdentity]:
+def _temporal_designations(root: CompiledEntity) -> frozenset[AttributeIdentity]:
     return frozenset(
         attribute
         for axis in root.declared_as_of_axes

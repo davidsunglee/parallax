@@ -21,9 +21,9 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    CompiledEntity,
     Document,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -119,7 +119,7 @@ def columns_model() -> Metamodel:
     return _accept(None)
 
 
-def entity(model: Metamodel, name: str) -> EntityMetadata:
+def entity(model: Metamodel, name: str) -> CompiledEntity:
     """The Entity ``name`` denotes in ``model``, named as a corpus case names it."""
     for declared in model.entities:
         if declared.identity.name == name:

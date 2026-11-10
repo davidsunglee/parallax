@@ -382,18 +382,18 @@ class Workload:
         if tuple(class_model.entities) != tuple(descriptor_model.entities):
             raise ValueError(f"{self.id}: class-backed metadata differs from its descriptor")
         class_facets = (
-            inheritance.view(class_model),
-            relationship.view(class_model),
-            storage_layout.view(class_model),
-            temporal_read.view(class_model),
-            concurrency.view(class_model),
+            inheritance.inheritance_facet_of(class_model),
+            relationship.relationship_facet_of(class_model),
+            storage_layout.storage_layout_facet_of(class_model),
+            temporal_read.temporal_facet_of(class_model),
+            concurrency.concurrency_facet_of(class_model),
         )
         descriptor_facets = (
-            inheritance.view(descriptor_model),
-            relationship.view(descriptor_model),
-            storage_layout.view(descriptor_model),
-            temporal_read.view(descriptor_model),
-            concurrency.view(descriptor_model),
+            inheritance.inheritance_facet_of(descriptor_model),
+            relationship.relationship_facet_of(descriptor_model),
+            storage_layout.storage_layout_facet_of(descriptor_model),
+            temporal_read.temporal_facet_of(descriptor_model),
+            concurrency.concurrency_facet_of(descriptor_model),
         )
         for entity in descriptor_model.entities:
             identity = entity.identity

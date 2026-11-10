@@ -82,7 +82,7 @@ from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._records import Attribute, Entity, Inheritance
 from parallax.descriptor._records import Metamodel as Records
-from tests._support import fake_metamodel
+from tests._support import fake_metadata
 from tests._support.binary32 import narrowed
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read, read_position, resolved_as_stated
@@ -118,7 +118,7 @@ def _compile_resolved_product(
 
 def test_an_element_scope_admits_constants_and_refuses_attribute_subjects() -> None:
     customer = target(CUSTOMER, "Customer")
-    position = inheritance.view(CUSTOMER).entity(customer.identity)
+    position = inheritance.inheritance_facet_of(CUSTOMER).entity(customer.identity)
     assert position is not None
     address = position.applicable_value_object("address")
     assert address is not None
@@ -782,10 +782,10 @@ def test_optimistic_and_default_reads_take_no_lock() -> None:
 # carries is compiled from the same metadata a formed model's would be.         #
 # --------------------------------------------------------------------------- #
 def _fake_model() -> Metamodel:
-    base = fake_metamodel.parity_model()
+    base = fake_metadata.parity_metadata()
     inheritance_facet = inheritance_compile.compile_facet(base)
     temporal_facet = temporal_read_compile.compile_facet(base, inheritance_facet)
-    return fake_metamodel.parity_model(
+    return fake_metadata.parity_metamodel(
         {
             concurrency.FACET_KEY: concurrency_compile.compile_facet(
                 base, inheritance_facet, temporal_facet
@@ -802,7 +802,7 @@ def _fake_model() -> Metamodel:
 
 def test_a_record_free_model_compiles_the_same_reads() -> None:
     model = _fake_model()
-    account = model.entity(fake_metamodel.ACCOUNT)
+    account = model.entity(fake_metadata.ACCOUNT)
     assert account is not None
 
     scalars = compile_read(oa.TrueNode(), model, POSTGRES, account)
@@ -818,8 +818,8 @@ def test_a_record_free_model_compiles_the_same_reads() -> None:
 
 def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:
     model = _fake_model()
-    account = model.entity(fake_metamodel.ACCOUNT)
-    entry = model.entity(fake_metamodel.ENTRY)
+    account = model.entity(fake_metadata.ACCOUNT)
+    entry = model.entity(fake_metadata.ENTRY)
     assert account is not None
     assert entry is not None
 
@@ -862,7 +862,7 @@ def _guarded_read(
     meta: Metamodel, name: str, op: oa.PredicateNode, resolution: str
 ) -> CompiledRead:
     entity = target(meta, name)
-    root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
+    root = inheritance.root_metadata(inheritance.inheritance_facet_of(meta), meta, entity.identity)
     selections = tuple(ResolvedLatestSelection(axis) for axis in root.declared_as_of_axes)
     modes: dict[str, TemporalResolution] = {
         "root": RootSelections(selections),

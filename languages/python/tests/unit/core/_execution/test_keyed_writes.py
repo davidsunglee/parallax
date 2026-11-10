@@ -36,7 +36,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, KeyedInsert
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import CompiledEntity, EntityIdentity, Metamodel, entity_by_name
 from parallax.core.write_plan import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
@@ -48,7 +48,7 @@ _ADVICE: Final = KeyedWriteRefusalAdvice(
 )
 
 
-def _account(model: Metamodel) -> EntityMetadata:
+def _account(model: Metamodel) -> CompiledEntity:
     entity = entity_by_name(model, "Account")
     assert entity is not None
     return entity
@@ -62,7 +62,7 @@ def _key(entity: EntityIdentity, account_id: int) -> ObjectKey:
 
 
 def _prepared(
-    model: Metamodel, mutation: KeyedMutation, entity: EntityMetadata, row: Mapping[str, object]
+    model: Metamodel, mutation: KeyedMutation, entity: CompiledEntity, row: Mapping[str, object]
 ) -> PreparedKeyedInstruction:
     return prepare_typed_write(
         keyed_instruction(mutation, entity.identity, row), write_preparation_of(model)
@@ -72,7 +72,7 @@ def _prepared(
 type Named = Literal["evidence", "authoring", "both", "neither"]
 
 
-def _resolved(entity: EntityMetadata, named: Named) -> ResolvedKeyedWriteSource:
+def _resolved(entity: CompiledEntity, named: Named) -> ResolvedKeyedWriteSource:
     """A source whose Read Evidence names account 2 and whose insertion
     authority names account 3, as ``named`` selects; neither is this attempt's,
     so the write is refused for its evidence."""

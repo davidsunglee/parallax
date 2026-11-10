@@ -11,7 +11,7 @@ from parallax.core._execution._keyed_writes import (
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import lifecycle_state_of
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import CompiledEntity
 from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotNodeState,
@@ -55,7 +55,7 @@ source. The not-stored repair is one spelling for both interfaces."""
 
 
 def resolve_keyed_write_source(
-    entity: EntityMetadata, source: EntityBase | WireEntity, /
+    entity: CompiledEntity, source: EntityBase | WireEntity, /
 ) -> ResolvedKeyedWriteSource:
     """What ``source`` states about the state a keyed write of ``entity``
     revises, read from the carrier its publication or insertion filed.
@@ -97,7 +97,7 @@ def resolve_keyed_write_source(
 
 
 def resolve_keyed_insert(
-    entity: EntityMetadata, value: EntityBase | Mapping[str, object], /
+    entity: CompiledEntity, value: EntityBase | Mapping[str, object], /
 ) -> ResolvedKeyedInsert:
     """What ``value`` states about the row an insert of ``entity`` opens.
 

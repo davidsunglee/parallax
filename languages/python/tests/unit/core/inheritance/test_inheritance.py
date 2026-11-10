@@ -52,10 +52,10 @@ from parallax.core.metamodel import (
     AttributeReference,
     Cardinality,
     Column,
+    CompiledEntity,
     ConcreteSubtype,
     EntityIdentity,
     EntityLocation,
-    EntityMetadata,
     ExactEntityReference,
     IssueCode,
     MetamodelIssue,
@@ -122,7 +122,7 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
 _REJECTIONS = _descriptor_rejection_cases()
 
 
-def _metadata(stem: str, name: str) -> EntityMetadata:
+def _metadata(stem: str, name: str) -> CompiledEntity:
     """One corpus Entity's accepted Metadata, formed from its own model file."""
     model = corpus_model(stem)
     metadata = model.entity(EntityIdentity("parallax.compatibility", name))
@@ -241,7 +241,7 @@ _VO_ENTITY = Entity(
 _VO_META = Metamodel(entities=(_VO_ENTITY,))
 
 
-def _require_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
+def _require_metadata(model: AcceptedMetamodel, entity: Entity) -> CompiledEntity:
     metadata = model.entity(EntityIdentity(entity.namespace, entity.name))
     assert metadata is not None
     return metadata
@@ -252,7 +252,7 @@ _VO_METADATA = _require_metadata(_VO_MODEL, _VO_ENTITY)
 
 
 def _member(name: str) -> AttributeMetadata | ValueObjectMetadata:
-    position = inheritance.view(_VO_MODEL).entity(_VO_METADATA.identity)
+    position = inheritance.inheritance_facet_of(_VO_MODEL).entity(_VO_METADATA.identity)
     assert position is not None
     member = position.member_selection.binding(name)
     assert member is not None
@@ -353,7 +353,7 @@ _INVOICE_ACCEPTED = form_metamodel(
 
 
 def _assignment_rejects(value: object) -> bool:
-    position = inheritance.view(_INVOICE_MODEL).entity(_INVOICE_METADATA.identity)
+    position = inheritance.inheritance_facet_of(_INVOICE_MODEL).entity(_INVOICE_METADATA.identity)
     assert position is not None
     member = position.member_selection.binding("amount")
     assert member is not None
@@ -550,7 +550,7 @@ def test_a_cycle_is_reported_once_from_its_canonically_first_member() -> None:
 
 def test_independent_families_coexist_in_one_model() -> None:
     formed = form_metamodel(unresolved_metamodel(parse_document(_INDEPENDENT_FAMILIES)))
-    facet = inheritance.view(formed)
+    facet = inheritance.inheritance_facet_of(formed)
     views = {
         entity.identity.name: found
         for entity in formed.entities

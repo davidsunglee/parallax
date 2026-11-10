@@ -8,12 +8,12 @@ from typing import Final, Protocol, TypeGuard
 from parallax.core.metamodel import (
     Cardinality,
     EntityIdentity,
-    FacetKey,
     Metamodel,
     RelationshipIdentity,
     RelationshipJoin,
     RelationshipOrder,
 )
+from parallax.core.metamodel._accepted import FacetKey, facet_of
 
 __all__ = [
     "FACET_KEY",
@@ -23,7 +23,7 @@ __all__ = [
     "RelationshipMetadata",
     "inverted",
     "relationship_facet",
-    "view",
+    "relationship_facet_of",
 ]
 
 RELATIONSHIP_MODULE: Final[str] = "m-relationship"
@@ -180,11 +180,10 @@ FACET_KEY: Final[FacetKey[RelationshipFacet]] = FacetKey(RELATIONSHIP_MODULE, is
 """The typed key this module's facet is installed and retrieved under."""
 
 
-def view(model: Metamodel) -> RelationshipFacet:
-    """``model``'s Relationship Facet.
+def relationship_facet_of(model: Metamodel) -> RelationshipFacet:
+    """``model``'s Relationship Facet, the typed retrieval every consumer uses.
 
-    The typed retrieval every behavioral consumer uses, so generic facet lookup
-    stays an internal formation seam. Total for an accepted Metamodel, which by
-    construction carries the complete facet set.
+    Total for an accepted Metamodel, which by construction carries the complete
+    facet set.
     """
-    return model.facet(FACET_KEY)
+    return facet_of(model, FACET_KEY)

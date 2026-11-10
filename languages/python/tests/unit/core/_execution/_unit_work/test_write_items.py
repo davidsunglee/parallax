@@ -42,7 +42,7 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalIntent,
     WritePhase,
 )
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import CompiledEntity
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -223,7 +223,7 @@ if TYPE_CHECKING:
         opening_key: ObjectKey | None = opening.object_key
         evidence: tuple[ReadEvidence, ...] = ordered.source_evidence
         phase: WritePhase = composed_write.phase
-        target: EntityMetadata = composed_write.target
+        target: CompiledEntity = composed_write.target
         scope = (
             observed.claim_scope,
             locked.claim_scope,
@@ -244,7 +244,7 @@ if TYPE_CHECKING:
         pending_intents: tuple[TemporalIntent, ...] = coverage.intents
         pending_transform: CoverageTransform = coverage.transform
         pending_key: ObjectKey = coverage.object_key
-        pending_target: EntityMetadata = coverage.target
+        pending_target: CompiledEntity = coverage.target
         del pending_intents, pending_transform, pending_key, pending_target
         _ = coverage.instruction  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a composition holds no one instruction
         _ = locked.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an object-locked row is no temporal write
