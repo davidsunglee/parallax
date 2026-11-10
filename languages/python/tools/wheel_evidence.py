@@ -56,6 +56,20 @@ def _between(start: object, end: object) -> float | None:
     return _seconds((after - before).total_seconds(), "timestamp interval")
 
 
+def _queue(created: object, started: object) -> float | None:
+    """The wait from creation to start, or ``None`` when the start precedes creation.
+
+    GitHub stamps a run's creation and start separately at one-second resolution,
+    and a rerun attempt gives each job carried over from an earlier attempt the new
+    attempt's creation time while keeping its original start. Neither ordering
+    measures a wait.
+    """
+    before, after = _instant(created), _instant(started)
+    if before is None or after is None or after < before:
+        return None
+    return _seconds((after - before).total_seconds(), "timestamp interval")
+
+
 def job_timings(job: Mapping[str, Any], observed_at: str) -> Document:
     completed = job.get("status") == "completed"
     skipped = completed and job.get("conclusion") == "skipped"
@@ -71,9 +85,7 @@ def job_timings(job: Mapping[str, Any], observed_at: str) -> Document:
         "created_at": job.get("created_at"),
         "started_at": job.get("started_at"),
         "completed_at": job.get("completed_at"),
-        "queue_seconds": None
-        if skipped
-        else _between(job.get("created_at"), job.get("started_at")),
+        "queue_seconds": None if skipped else _queue(job.get("created_at"), job.get("started_at")),
         "runner_seconds": 0.0 if skipped else _between(job.get("started_at"), end),
         "runner_seconds_final": skipped or (completed and job.get("completed_at") is not None),
     }
@@ -100,7 +112,7 @@ def execution_timings(
         "workflow_started_at": run.get("run_started_at"),
         "workflow_completed_at": end if completed else None,
         "workflow_completion_basis": "run.updated_at" if completed else None,
-        "workflow_queue_seconds": _between(run.get("created_at"), run.get("run_started_at")),
+        "workflow_queue_seconds": _queue(run.get("created_at"), run.get("run_started_at")),
         "workflow_elapsed_seconds": elapsed if completed else None,
         "workflow_elapsed_observed_seconds": elapsed,
         "workflow_execution_observed_seconds": _between(run.get("run_started_at"), end),
@@ -406,7 +418,7 @@ def render(summary: Document) -> str:
             "aggregate observed runner time: "
             f"{execution.get('aggregate_runner_observed_seconds')} s.",
             "Final workflow and aggregate runner totals remain null until all jobs finish. "
-            "Queue delay is unknown when a job has no creation timestamp. "
+            "Queue delay is unknown when a job has no creation timestamp or started before it. "
             "Parallel runner durations overlap and are not workflow elapsed time.",
         ]
     )
