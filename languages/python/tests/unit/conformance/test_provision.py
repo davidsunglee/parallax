@@ -88,27 +88,44 @@ _GRADE_ROW = {"id": 1, "ordinal": 1, "label": "low"}
 
 
 @pytest.mark.parametrize(
-    ("fixtures", "refusal"),
+    ("model", "fixtures", "refusal"),
     [
-        ({"parallax.compatibility.Grade": "not-a-list"}, "must be a list of rows"),
-        ({"parallax.compatibility.Grade": None}, "must be a list of rows"),
-        ({"parallax.compatibility.Grade": [_GRADE_ROW, "not-a-mapping"]}, "must be a mapping"),
+        ("grade", {"parallax.compatibility.Grade": "not-a-list"}, "must be a list of rows"),
+        ("grade", {"parallax.compatibility.Grade": None}, "must be a list of rows"),
         (
+            "grade",
+            {"parallax.compatibility.Grade": [_GRADE_ROW, "not-a-mapping"]},
+            "must be a mapping",
+        ),
+        (
+            "grade",
             {"parallax.compatibility.Grade": [{**_GRADE_ROW, "unknownKey": "x"}]},
             r"names \['unknownKey'\]",
         ),
-        ({"parallax.compatibility.Grdae": [_GRADE_ROW]}, "name no row-owning Entity"),
         (
+            "grade",
+            {"parallax.compatibility.Grdae": [_GRADE_ROW]},
+            "'parallax.compatibility.Grdae' names no Entity",
+        ),
+        (
+            "grade",
             {"parallax.compatibility.Grade": [_GRADE_ROW], "Grade": [_GRADE_ROW]},
-            r"\['Grade'\] name no row-owning Entity of the model, or name one a second time",
+            "blocks 'parallax.compatibility.Grade' and 'Grade' both name",
+        ),
+        ("document", {"FinancialDocument": [{"id": 1}]}, "which owns no rows"),
+        ("shared-local-name", {"SharedVariant": [{"id": 7}]}, "'SharedVariant' is ambiguous"),
+        (
+            "shared-local-name",
+            {"archive.SharedVariant": [{"id": 1}], "SharedVariant": [{"id": 7}]},
+            "'SharedVariant' is ambiguous",
         ),
     ],
 )
 def test_fixture_statements_refuse_a_malformed_fixture(
-    fixtures: dict[str, object], refusal: str
+    model: str, fixtures: dict[str, object], refusal: str
 ) -> None:
     with pytest.raises(ValueError, match=refusal):
-        provision.fixture_statements(_MODELS["grade"], fixtures)
+        provision.fixture_statements(_MODELS[model], fixtures)
 
 
 def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:
