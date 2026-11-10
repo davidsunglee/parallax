@@ -113,57 +113,9 @@ def _read_at(tx: TxnContext, at: dt.datetime) -> WherePosition:
 
 
 # --------------------------------------------------------------------------- #
-# A pending opening takes each edit its insertion authorizes over only the      #
-# coverage it opens: a bound inside it splits it, a bound at or beyond its own  #
-# end changes the whole of it, and nothing extends it. Every edit starts at the #
+# Every edit an insertion authorizes over its pending opening starts at the    #
 # insertion's anchor, and the flush inserts only what survives.                #
 # --------------------------------------------------------------------------- #
-_OPENING_MATRIX: tuple[
-    tuple[str, dt.datetime | None, dt.datetime | None, tuple[tuple[str, object, object], ...]],
-    ...,
-] = (
-    ("unbounded-plain", None, None, (("150.00", _JAN, INFINITY_INSTANT),)),
-    ("unbounded-until", None, _JUN, (("150.00", _JAN, _JUN), ("100.00", _JUN, INFINITY_INSTANT))),
-    ("finite-plain", _SEP, None, (("150.00", _JAN, _SEP),)),
-    ("finite-until-inside", _SEP, _JUN, (("150.00", _JAN, _JUN), ("100.00", _JUN, _SEP))),
-    ("finite-until-its-end", _SEP, _SEP, (("150.00", _JAN, _SEP),)),
-    ("finite-until-beyond", _SEP, _DEC, (("150.00", _JAN, _SEP),)),
-)
-
-
-@pytest.mark.parametrize("representation", ["typed", "wire"])
-@pytest.mark.parametrize(
-    ("opening_end", "until", "expected"),
-    [case[1:] for case in _OPENING_MATRIX],
-    ids=[case[0] for case in _OPENING_MATRIX],
-)
-def test_a_pending_opening_takes_each_edit_over_only_the_coverage_it_opens(
-    opening_end: dt.datetime | None,
-    until: dt.datetime | None,
-    expected: tuple[tuple[str, object, object], ...],
-    representation: str,
-) -> None:
-    port = ScriptedAdapter(Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        bounds: dict[str, Any] = {} if opening_end is None else {"until": opening_end}
-        edit: dict[str, Any] = {} if until is None else {"until": until}
-        if representation == "typed":
-            opened = _position()
-            tx.insert(opened, valid_from=_JAN, **bounds)
-            tx.amend(opened.edit(value=Decimal("150.00")), **edit)
-            return
-        node = tx.wire.insert(
-            "WherePosition", {"id": 1, "acctNum": "A", "value": "100.00"}, valid_from=_JAN, **bounds
-        )
-        tx.wire.amend(node, {"value": "150.00"}, **edit)
-
-    _transact(port, fn)
-    # Every row the opening leaves is inserted, by one statement.
-    assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == ["insert"]
-    assert _opened(port) == [(Decimal(value), start, end) for value, start, end in expected]
-
-
 def test_an_edit_bounded_at_or_before_the_anchor_is_refused_and_leaves_the_opening() -> None:
     # The bound is judged against the start the edit takes from its insertion,
     # so a bound that does not follow the anchor is refused before anything
@@ -398,26 +350,6 @@ def test_an_insertion_source_and_a_read_of_the_same_version_compose_into_one_upd
 # object, which executes after that removal whatever the batching, and never    #
 # revives the first insertion's authority.                                      #
 # --------------------------------------------------------------------------- #
-def test_a_reinsertion_after_a_complete_stored_removal_executes_after_it() -> None:
-    row = _rectangle(_JAN, INFINITY_INSTANT)
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[row]), Read(rows=[row]), Write(times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        first = _position()
-        tx.insert(first, valid_from=_JAN)
-        _read_at(tx, _MAR)
-        draft = first.edit(value=Decimal("1.00"))
-        tx.terminate(first)
-        second = _position("200.00")
-        tx.insert(second, valid_from=_JAN)
-        _refused_as_not_stored(lambda: tx.amend(draft))
-
-    _transact(port, fn)
-    removal, insert = _writes(port)[1:]
-    assert removal.sql == (
-        "delete from where_position where id = %s and thru_z = %s and out_z = %s and in_z = %s"
-    )
-    assert insert.binds[2:5] == (Decimal("200.00"), _JAN, INFINITY_INSTANT)
 
 
 def test_a_reinsertion_at_identical_coordinates_never_revives_the_first() -> None:

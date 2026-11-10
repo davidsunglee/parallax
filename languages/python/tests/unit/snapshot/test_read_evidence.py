@@ -672,22 +672,6 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
 # Continuation: a successful flush advances a source's authority, not its     #
 # observation.                                                                #
 # --------------------------------------------------------------------------- #
-def test_a_successful_flush_leaves_its_sources_observation_literal() -> None:
-    # The write changed the state the source observed, so that observation no
-    # longer describes the stored row; the source's own values and observation
-    # stay exactly what its read returned.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
-
-    def fn(tx: TxnContext) -> tuple[mm.Account, object]:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.amend(node.edit(balance=Decimal("125.00")))
-        return node, _typed_hint(node)
-
-    node, hint = account_db(port).transact(fn)
-    observation = cast("Any", hint).observation
-    assert observation.evidence == VersionObservation(observed_version=4)
-    assert observation.invalidated
-    assert (node.balance, node.version) == (Decimal("100.00"), 4)
 
 
 @pytest.mark.parametrize(

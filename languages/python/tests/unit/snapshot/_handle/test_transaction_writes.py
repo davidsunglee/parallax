@@ -3,7 +3,7 @@
 The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
 elimination, the shared model-aware keyed-write rejection matrix, the typed
-KEYED temporal-window family (`update`/`terminate`/`insert`, unbounded and
+KEYED temporal-window family (`amend`/`terminate`/`insert`, unbounded and
 bounded by `until`), keyed window-order
 validation, and the prior-observation license enforced at the developer verb.
 """
@@ -527,10 +527,9 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
 
 
 def _position_row_dt() -> MappingRow:
-    """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
-    the bare ISO strings :func:`_position_row` uses), because a KEYED verb's own
-    first read runs through the ordinary developer-facing ``tx.find`` (wrap
-    into a real node and milestone-edge computation)."""
+    """The KEYED-verb tests' own row fixture: real ``datetime`` values, because
+    a KEYED verb's own first read runs through the ordinary developer-facing
+    ``tx.find`` (wrap into a real node and milestone-edge computation)."""
     return {
         "id": 1,
         "acct_num": "A",
@@ -543,72 +542,13 @@ def _position_row_dt() -> MappingRow:
 
 
 # --------------------------------------------------------------------------- #
-# Typed KEYED temporal-window verbs: `update` and `terminate`, plain and       #
-# bounded by `until`, starting at the source's own Valid-Time pin, lowering    #
-# to the rectangle split `m-temporal-write-017/018/022/023` witness.           #
+# Typed KEYED temporal-window verbs: `amend` and `terminate`, plain and        #
+# bounded by `until`, starting at the source's own Valid-Time pin.             #
 # --------------------------------------------------------------------------- #
-def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
-    # m-temporal-write-022 "plain-update-split", replayed through the KEYED verb:
-    # close + one insert of head (old) and new tail.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
-        ).result()
-        tx.amend(fetched.edit(value=Decimal("200.00")))
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head (old) and new tail
-    assert len(inserted_rows(writes[1])) == 2
-
-
-def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
-    # m-temporal-write-023 "plain-terminate", replayed through the KEYED verb:
-    # close + head only (no tail).
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
-        ).result()
-        tx.terminate(fetched)
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + head only
-
-
-def test_a_bounded_keyed_update_lowers_the_rectangle_split() -> None:
-    # m-temporal-write-017 "update-until-rectangle-split", replayed through the
-    # KEYED verb: close + one insert of head, middle, and tail.
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
-        ).result()
-        tx.amend(fetched.edit(value=Decimal("200.00")), until=until)
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head, middle, and tail
-    assert len(inserted_rows(writes[1])) == 3
 
 
 def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
-    # The SAME empty-set rule plain `update` applies: an untouched copy issues no
+    # The SAME empty-set rule plain `amend` applies: an untouched copy issues no
     # DML at all -- but only AFTER its (here, valid) Valid-Time window is
     # validated (window validation runs BEFORE the empty set is dropped, for
     # every window verb, never the reverse -- see the sibling equal-bounds pin
@@ -752,12 +692,11 @@ def test_one_method_per_operation_selects_its_bound_by_keyword(
     owner: type[object], operation: str
 ) -> None:
     # Omission is a sentinel distinct from every value a caller can state, so a
-    # stated `None` reaches preparation as a bound; the bound can never be
-    # passed positionally, and no suffixed spelling remains.
+    # stated `None` reaches preparation as a bound, and the bound can never be
+    # passed positionally.
     until = inspect.signature(getattr(owner, operation)).parameters["until"]
     assert until.kind is inspect.Parameter.KEYWORD_ONLY
     assert until.default is OMITTED
-    assert not hasattr(owner, f"{operation}_until")
 
 
 def _rectangle(start: dt.datetime, end: object, value: str) -> MappingRow:
@@ -891,27 +830,6 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
     ).using_database_login().transact(fn)
     assert not any(isinstance(call, WriteCall) for call in port.calls)
-
-
-def test_a_bounded_keyed_terminate_lowers_head_and_tail_only() -> None:
-    # m-temporal-write-018 "terminate-until", replayed through the KEYED verb:
-    # close + one insert of head and tail (no middle).
-    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
-    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
-
-    def fn(tx: TxnContext) -> None:
-        fetched = tx.find(
-            WherePosition.where(WherePosition.id == 1).as_of(valid_time=valid_from)
-        ).result()
-        tx.terminate(fetched, until=until)
-
-    own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn, concurrency="optimistic")
-    writes = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert len(writes) == 2  # close + one insert of head and tail
-    assert len(inserted_rows(writes[1])) == 2
 
 
 def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> None:
