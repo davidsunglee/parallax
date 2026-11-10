@@ -45,6 +45,11 @@ specification's portable families, such as the execution lifecycle's
 transitions and outcomes, stay whole; only aliases an application can neither
 construct nor match leave application exports.
 
+*Superseded in part (2026-11, [the binding's error surface](../../spec/python.md#8-deployable-artifact-topology)):*
+An error's code lives at the root only where no class or typed field answers
+what an application decides from it. Every other code stays with its defining
+owner; its string serves logs and people.
+
 Publishing every useful name from one module was rejected: roots would mix what
 an application calls with what it matches on, and a vocabulary of a hundred
 operation types would bury the dozen calls and results. Publishing first-party

@@ -51,6 +51,7 @@ from parallax.core import (
     ConnectionAcquisitionError,
     EditError,
     InternalError,
+    InvalidValueError,
     NoResultFound,
     ParallaxError,
     UnsupportedError,
@@ -378,6 +379,11 @@ def _insert_a_taken_key(_: Any, db: ScopedDatabase) -> object:
     return db.transact(lambda tx: tx.insert(_ORDER_TEN))
 
 
+def _find_with_a_mistyped_value(_: Any, db: ScopedDatabase) -> object:
+    mistyped = {"eq": {"path": "Customer.id", "value": "one"}}
+    return db.wire.find({"target": "Customer", "predicate": mistyped}).results()
+
+
 @pytest.mark.parametrize(
     ("failing", "kind", "status"),
     [
@@ -385,6 +391,7 @@ def _insert_a_taken_key(_: Any, db: ScopedDatabase) -> object:
         pytest.param(_delete_at_a_stale_version, WritePreconditionError, 412, id="precondition"),
         pytest.param(_amend_once_after_another_writer, ConflictError, 409, id="conflict"),
         pytest.param(_edit_a_name_away, EditError, 422, id="refused-edit"),
+        pytest.param(_find_with_a_mistyped_value, InvalidValueError, 422, id="invalid-value"),
         pytest.param(_delete_payments_by_predicate, UnsupportedError, 501, id="unsupported"),
         pytest.param(_find_an_entity_the_model_lacks, UsageError, 500, id="usage"),
         pytest.param(_insert_a_taken_key, DatabaseError, 500, id="duplicate-key"),
@@ -441,28 +448,30 @@ def test_a_client_query_answers_200_with_its_results(profile_run: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ("predicate", "code"),
+    ("predicate", "expected_status", "code"),
     [
         pytest.param(
             {"eq": {"path": "Customer.nickname", "value": "Ada"}},
+            400,
             "path-unknown-member",
             id="unknown-member",
         ),
         pytest.param(
             {"eq": {"path": "Customer.id", "value": "one"}},
+            422,
             "neutral-literal-type-mismatch",
             id="wrong-type",
         ),
     ],
 )
-def test_a_refused_client_query_answers_400_with_its_rejected_rule(
-    profile_run: Any, predicate: Mapping[str, object], code: str
+def test_a_refused_client_query_answers_its_status_with_its_rejected_rule(
+    profile_run: Any, predicate: Mapping[str, object], expected_status: int, code: str
 ) -> None:
     db = _shop(profile_run)
 
     status, body = find_with_a_client_query(db, {"target": "Customer", "predicate": predicate})
 
-    assert status == 400
+    assert status == expected_status
     assert isinstance(body, dict)
     assert body["code"] == code
     assert code in case_format.rejected_rules()
@@ -767,6 +776,72 @@ def test_a_failure_a_later_run_may_get_past_answers_503(
 
     assert failed.value.is_transient
     assert http_status_for(failed.value) == 503
+
+
+def _a_job_that_catches(
+    db: ScopedDatabase, failure: type[Exception], raise_failure: Callable[[TxnContext], object]
+) -> Callable[[TxnContext], object]:
+    """A job that catches a ``failure`` a joined call raised, which leaves its
+    transaction rollback-only."""
+
+    def job(_: TxnContext) -> None:
+        with contextlib.suppress(failure):
+            db.transact(raise_failure)
+
+    return job
+
+
+def _find_customer_one(tx: TxnContext) -> object:
+    return tx.find(Customer.where(Customer.id == 1)).result_or_none()
+
+
+def _refuse_the_job(_: TxnContext) -> None:
+    raise LookupError("no such account")
+
+
+def test_a_caught_deadlock_that_outlasts_the_retries_is_handed_back_and_answers_503() -> None:
+    later: list[None] = []
+    with ScriptedAdapter(
+        Transact(Read(raises=_database_error("deadlock", "40P01"))),
+        Transact(Read(raises=_database_error("deadlock", "40P01"))),
+    ) as adapter:
+        db = _single_attempt(adapter)
+        job = _a_job_that_catches(db, DatabaseError, _find_customer_one)
+        run_or_retry_later(db, job, lambda: later.append(None))
+        with pytest.raises(UsageError) as failed:
+            db.transact(job)
+
+    assert later == [None]
+    assert failed.value.code == "transaction-rollback-only"
+    assert isinstance(failed.value.__cause__, DatabaseError)
+    assert http_status_for(failed.value) == 503
+
+
+def test_a_caught_application_exception_escapes_the_queue_and_answers_500() -> None:
+    later: list[None] = []
+    with ScriptedAdapter(Transact()) as adapter:
+        db = _single_attempt(adapter)
+        job = _a_job_that_catches(db, LookupError, _refuse_the_job)
+        with pytest.raises(UsageError) as escaped:
+            run_or_retry_later(db, job, lambda: later.append(None))
+
+    assert later == []
+    assert escaped.value.code == "transaction-rollback-only"
+    assert isinstance(escaped.value.__cause__, LookupError)
+    assert http_status_for(escaped.value) == 500
+
+
+def test_a_value_that_does_not_fit_its_member_answers_422_through_the_shipped_surface() -> None:
+    mistyped = {"eq": {"path": "Customer.id", "value": "one"}}
+    with ScriptedAdapter() as adapter:
+        db = _scripted(adapter)
+        status, body = find_with_a_client_query(db, {"target": "Customer", "predicate": mistyped})
+        with pytest.raises(InvalidValueError) as failed:
+            db.wire.find({"target": "Customer", "predicate": mistyped})
+
+    assert (status, body) == (422, {"code": failed.value.code, "detail": str(failed.value)})
+    assert failed.value.code == "neutral-literal-type-mismatch"
+    assert http_status_for(failed.value) == 422
 
 
 def test_the_shop_root_composes_through_the_shipped_surface(

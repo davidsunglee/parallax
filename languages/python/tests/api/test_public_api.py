@@ -394,11 +394,19 @@ def test_an_application_home_publishes_the_objects_their_owners_define(home: str
             assert getattr(import_module(value.__module__), value.__qualname__) is value, name
 
 
+def test_the_root_publishes_the_stored_data_issue_vocabulary_its_owner_defines() -> None:
+    root = import_module("parallax.core")
+    owner = import_module("parallax.core._stored_data")
+    assert root.StoredDataIssue is owner.StoredDataIssue
+    assert root.MISSING_STORED_VALUE is owner.MISSING_STORED_VALUE
+
+
 _ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
     "parallax.core": frozenset(
         {
             "ParallaxError",
             "UsageError",
+            "InvalidValueError",
             "UnsupportedError",
             "EditError",
             "MetamodelValidationError",
@@ -486,7 +494,7 @@ def _shipped_exceptions() -> list[type[BaseException]]:
 
 def test_every_application_error_is_rooted_in_parallax_error() -> None:
     assert all(issubclass(kind, ParallaxError) for kind in _error_surface())
-    assert len(_error_surface()) == 20
+    assert len(_error_surface()) == 21
     root = import_module("parallax.core")
     assert {
         name

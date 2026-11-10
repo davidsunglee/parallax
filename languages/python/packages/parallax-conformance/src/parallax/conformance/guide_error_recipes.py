@@ -12,6 +12,7 @@ from parallax.core import (
     DomainModel,
     EditError,
     Entity,
+    InvalidValueError,
     LoggingLifecycleProvider,
     MetamodelValidationError,
     NoResultFound,
@@ -129,7 +130,7 @@ def http_status_for(error: Exception) -> int:
             return 412
         case ConflictError():
             return 409
-        case EditError():
+        case EditError() | InvalidValueError():
             return 422
         case UnsupportedError():
             return 501
@@ -145,6 +146,8 @@ def find_with_a_client_query(
     """Answer a query document a client sent: its results, or why it was refused."""
     try:
         return 200, db.wire.find(document).results()
+    except InvalidValueError as refused:
+        return 422, {"code": refused.code, "detail": str(refused)}
     except UsageError as refused:
         return 400, {"code": refused.code, "detail": str(refused)}
 

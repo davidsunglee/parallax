@@ -33,7 +33,7 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import StructuredDocument, UsageError
+from parallax.core.base import InvalidValueError, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import MappingRow
 from parallax.core.read_delivery import InvalidData
@@ -612,8 +612,9 @@ def test_an_illegal_wire_assignment_is_refused_statically(
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, code, match=match):
+        with raises_code(UsageError, code, match=match) as refused:
             tx.wire.amend(_node(tx, _ACCOUNT_QUERY), changes)
+        assert isinstance(refused.value, InvalidValueError) is code.startswith("neutral-literal-")
 
     db_for(ACCOUNT, port).transact(fn)
     assert _writes(port) == []
@@ -826,11 +827,12 @@ def test_a_predicate_writes_members_are_all_resolved_before_any_value_is_judged(
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-instruction-invalid", match="declared member"):
+        with raises_code(UsageError, "write-instruction-invalid", match="declared member") as name:
             tx.wire.amend_where(_PERSON_TARGET, {"undeclared": 1, "name": 5})
+        assert not isinstance(name.value, InvalidValueError)
         with raises_code(UsageError, "write-instruction-invalid", match="declared member"):
             tx.wire.amend_where(_PERSON_TARGET, {"name": 5, "undeclared": 1})
-        with raises_code(UsageError, "neutral-literal-type-mismatch"):
+        with raises_code(InvalidValueError, "neutral-literal-type-mismatch"):
             tx.wire.amend_where(_PERSON_TARGET, {"name": 5})
 
     db_for(PERSON, port).transact(fn)

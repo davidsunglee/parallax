@@ -26,7 +26,7 @@ from parallax.core import (
 )
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core.base import Int32, UsageError
+from parallax.core.base import Int32, InvalidValueError, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.write_plan.managed_row import ManagedRow, named_members
 from tests._support.errors import raises_code
@@ -159,7 +159,9 @@ def test_an_omitted_required_member_is_refused(
 ) -> None:
     del addressed, empty
     with raises_code(
-        UsageError, "write-required-attribute-missing", match=r"owner: a replacement states every"
+        InvalidValueError,
+        "write-required-attribute-missing",
+        match=r"owner: a replacement states every",
     ):
         prepare(form({"id": 1, "note": "n"}), write_preparation_of(_MODEL))
 
@@ -171,7 +173,9 @@ def test_a_required_member_stated_null_is_refused_as_an_assignment(
 ) -> None:
     del addressed, empty
     with raises_code(
-        UsageError, "write-instruction-invalid", match=r"owner: required attribute is absent"
+        InvalidValueError,
+        "write-assignment-value-type-mismatch",
+        match=r"owner: required attribute is absent",
     ):
         prepare(form({"id": 1, "owner": None}), write_preparation_of(_MODEL))
 

@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import Attr, DomainModel, Entity, InvalidValueError, attr
 from parallax.core.base import UsageError
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._expressions import AttributeRef
@@ -99,7 +99,11 @@ def test_a_typed_assignment_no_set_judged_refuses_an_invalid_element_at_its_posi
     )
     refusal = _refusal(lambda tx: tx.amend_where(Order.where(Order.id == 1), unjudged))
 
-    assert refusal.code == "write-instruction-invalid"
+    assert isinstance(refusal, InvalidValueError)
+    assert refusal.code == "write-assignment-value-type-mismatch"
+    assert refusal.args[1].endswith(
+        ".Order.tags[1]: value 3 does not match the declared type String()"
+    )
     assert isinstance(refusal.__cause__, UsageError)
     assert refusal.__cause__.code == "write-assignment-value-type-mismatch"
     assert refusal.__cause__.args[1] == "tags[1]: value 3 does not match the declared type String()"

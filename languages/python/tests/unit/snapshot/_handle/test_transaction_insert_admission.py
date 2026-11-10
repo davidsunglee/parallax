@@ -26,7 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.base import INFINITY, UsageError
+from parallax.core.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -269,7 +269,7 @@ def test_an_earlier_missing_required_member_wins_over_a_later_invalid_value(
 
     def fn(tx: TxnContext) -> None:
         with pytest.raises(
-            UsageError, match=r"Parcel\.weight: required attribute is absent \(or null\)$"
+            InvalidValueError, match=r"Parcel\.weight: required attribute is absent \(or null\)$"
         ) as refused:
             write(values)(tx)
         assert refused.value.code == "write-required-attribute-missing"
@@ -282,7 +282,7 @@ def test_an_earlier_missing_required_member_wins_over_a_later_invalid_value(
 def test_a_typed_earlier_invalid_value_wins_over_a_later_missing_required_member() -> None:
     def fn(tx: TxnContext) -> None:
         with pytest.raises(
-            UsageError,
+            InvalidValueError,
             match=r"Parcel\.weight: value Decimal\('2\.505'\) does not match the declared "
             r"type Numeric\(precision=6, scale=2\)$",
         ):
@@ -296,7 +296,7 @@ def test_a_wire_payload_is_judged_in_member_order_not_its_key_order() -> None:
     payload = {"count": 2**40, "label": "L", "weight": "2.505", "id": 1}
 
     def fn(tx: TxnContext) -> None:
-        with pytest.raises(UsageError, match=r"\.Parcel\.weight: ") as refused:
+        with pytest.raises(InvalidValueError, match=r"\.Parcel\.weight: ") as refused:
             tx.wire.insert("Parcel", payload)
         assert refused.value.code.startswith("neutral-literal-")
 
@@ -319,8 +319,9 @@ def test_a_rows_names_are_judged_before_its_values(
         UsageError,
         "write-instruction-invalid",
         match=r"Parcel: keyed write row names undeclared member\(s\) \['bogus'\]",
-    ):
+    ) as refused:
         prepare(KeyedWriteInstruction("insert", _PARCEL, (row,)), write_preparation_of(_META))
+    assert not isinstance(refused.value, InvalidValueError)
 
 
 @pytest.mark.parametrize(("prepare", "decimal"), _PREPARERS, ids=_LANE_IDS)

@@ -492,6 +492,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
     with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as excinfo:
         db.transact(outer, itself)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert not excinfo.value.is_transient
     assert ran == []
     assert port.calls == [BeginCall(), RollbackCall()]
 
@@ -752,6 +753,22 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 
     assert db.transact(outer, itself) == "caught"
     assert port.calls.count(BeginCall()) == 2
+
+
+def test_a_rollback_only_refusal_that_outlasts_the_retries_is_transient_as_its_cause_is() -> None:
+    port = ScriptedAdapter(Transact(Read(raises=deadlock())), Transact(Read(raises=deadlock())))
+    db = scope(port)
+
+    def outer(_tx: TxnAttempt) -> str:
+        with contextlib.suppress(DatabaseError):
+            db.transact(lambda inner_tx: WireDatabaseView(inner_tx).find(_account_seven()), itself)
+        return "caught"
+
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as exhausted:
+        db.transact(outer, itself, retry=fast_retry(1))
+    assert isinstance(exhausted.value.__cause__, DatabaseError)
+    assert exhausted.value.is_transient
+    assert "2 attempts (max_retries=1)" in "".join(exhausted.value.__notes__)
 
 
 # --------------------------------------------------------------------------- #

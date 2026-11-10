@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import inheritance
-from parallax.core.base import INFINITY, UsageError
+from parallax.core.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.metamodel import AttributeMetadata, accept_metamodel
 from parallax.core.object_query import (
     AsOf,
@@ -233,7 +233,9 @@ def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> UsageError:
 def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> UsageError:
     with pytest.raises(UsageError) as excinfo:
         _validate(target, op, meta)
-    return excinfo.value
+    refusal = excinfo.value
+    assert isinstance(refusal, InvalidValueError) is refusal.code.startswith("neutral-literal-")
+    return refusal
 
 
 def _eq(path: str, value: ScalarLiteral) -> Comparison:

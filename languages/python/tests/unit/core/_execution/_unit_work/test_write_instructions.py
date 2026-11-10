@@ -41,7 +41,7 @@ from parallax.core import (
 )
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core.base import INFINITY, UsageError
+from parallax.core.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import TimeInterval
@@ -709,7 +709,9 @@ def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_anoth
 def test_a_replacement_refuses_an_omitted_required_value_object(
     prepare: Any, celsius: object
 ) -> None:
-    with raises_code(UsageError, "write-required-value-object-missing", match=r"probe.*absent"):
+    with raises_code(
+        InvalidValueError, "write-required-value-object-missing", match=r"probe.*absent"
+    ):
         prepare(
             _target(
                 "replace",
@@ -724,7 +726,7 @@ def test_a_replacement_refuses_an_omitted_required_value_object(
 @pytest.mark.parametrize(
     ("prepare", "celsius", "code"),
     [
-        pytest.param(_prepare_typed, "1.00", "write-instruction-invalid", id="typed"),
+        pytest.param(_prepare_typed, "1.00", "write-assignment-value-type-mismatch", id="typed"),
         pytest.param(_prepare_wire_target, "1.001", "neutral-literal-out-of-space", id="wire"),
     ],
 )
@@ -733,7 +735,7 @@ def test_a_replacement_judges_its_members_in_declaration_order(
 ) -> None:
     # The inadmissible Attribute precedes the omitted required Value Object in
     # member order, so it is refused first, on both lanes.
-    with raises_code(UsageError, code, match=r"\.celsius"):
+    with raises_code(InvalidValueError, code, match=r"\.celsius"):
         prepare(
             _target(
                 "replace",
@@ -1351,8 +1353,9 @@ _ALL = predicate_algebra.TrueNode()
 def test_the_target_is_judged_before_the_payload(
     prepare: Any, instruction: wi.WriteInstruction, model: Any, message: str
 ) -> None:
-    with raises_code(UsageError, "write-instruction-invalid", match=message):
+    with raises_code(UsageError, "write-instruction-invalid", match=message) as refused:
         prepare(instruction, model)
+    assert not isinstance(refused.value, InvalidValueError)
 
 
 _INVERTED_ID = predicate_algebra.Range(predicate_algebra.FieldSubject("Position.id"), 10, 1)

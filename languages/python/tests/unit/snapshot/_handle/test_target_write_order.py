@@ -30,7 +30,7 @@ from typing import Final
 
 import pytest
 
-from parallax.core.base import UsageError
+from parallax.core.base import InvalidValueError, UsageError
 from parallax.core.unit_work import (
     WritePreconditionError,
 )
@@ -962,7 +962,7 @@ _PAYLOAD: Final[tuple[_Row, ...]] = (
         TargetWriteScenario(_ACCOUNT, "replace", payload="incomplete"),
         _wire(
             _refused(
-                UsageError,
+                InvalidValueError,
                 "Account.owner: a replacement states every required member, and this one is absent",
                 code="write-required-attribute-missing",
             )

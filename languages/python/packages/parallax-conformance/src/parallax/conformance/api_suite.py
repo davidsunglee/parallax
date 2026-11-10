@@ -639,7 +639,6 @@ RECIPES: Final[list[Recipe]] = [
             "\n"
             "from parallax.core import (\n"
             "    DRIVER_MANAGED,\n"
-            "    TRANSACTION_AUTHORITY_MISMATCH,\n"
             "    ConnectionAcquisitionError,\n"
             "    CredentialSource,\n"
             "    Password,\n"
@@ -764,6 +763,7 @@ RECIPES: Final[list[Recipe]] = [
             "    InternalError,\n"
             "    InvalidData,\n"
             "    InvalidDataError,\n"
+            "    InvalidValueError,\n"
             "    MetamodelIssue,\n"
             "    MetamodelValidationError,\n"
             "    NoResultFound,\n"
@@ -817,7 +817,7 @@ RECIPES: Final[list[Recipe]] = [
     ),
     Recipe(
         recipe_id="answer-a-client-query",
-        title="Answer a client's mistake in a query document with a 400",
+        title="Answer a client's mistake in a query document with a 400 or a 422",
         snippet=_sources(guide_error_recipes.find_with_a_client_query),
     ),
     Recipe(
@@ -977,7 +977,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises UsageError(code="write-required-attribute-missing")',
+        '# raises InvalidValueError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-040",
@@ -995,7 +995,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises UsageError(code="write-required-attribute-missing")',
+        '# raises InvalidValueError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-041",
@@ -1013,7 +1013,7 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises UsageError(code="write-required-attribute-missing")',
+        '# raises InvalidValueError(code="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-042",
@@ -1027,13 +1027,13 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises UsageError(code="write-required-value-object-missing")',
+        '# raises InvalidValueError(code="write-required-value-object-missing")',
     ),
     Example(
         "m-value-object-044",
         "A write missing a required TOP-LEVEL value object entirely",
         'db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))\n'
-        '# raises UsageError(code="write-required-value-object-missing")',
+        '# raises InvalidValueError(code="write-required-value-object-missing")',
     ),
     # Rejected-case preparation proofs for predicate writes: the Typed verb
     # refuses the SAME instruction the corpus's own rejected lane prepares
