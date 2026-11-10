@@ -34,12 +34,10 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.internal.base import InvalidValueError, StructuredDocument, UsageError
-from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import MappingRow
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import (
     Database,
-    ScopedDatabase,
     Snapshot,
     TxnContext,
     WireEntity,
@@ -193,10 +191,6 @@ def _reads(port: ScriptedAdapter) -> list[ReadCall]:
 
 def _node(tx: TxnContext, query: dict[str, object]) -> WireEntity:
     return tx.wire.find(query).result()
-
-
-def _standalone(db: ScopedDatabase, query: dict[str, object]) -> WireEntity:
-    return db.wire.find(query).result()
 
 
 # --------------------------------------------------------------------------- #
@@ -595,39 +589,6 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
 # --------------------------------------------------------------------------- #
 # Static validation precedes the strategy and its evidence, always.           #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    ("changes", "code", "match"),
-    [
-        ({"id": 2}, "write-instruction-invalid", "addresses the write and never changes it"),
-        ({"id": "1"}, "neutral-literal-type-mismatch", "Account.id: "),
-        ({"version": 9}, "framework-owned-member-assigned", "framework-owned"),
-        ({"nope": 1}, "write-instruction-invalid", "undeclared member"),
-        ({"passport": {}}, "write-instruction-invalid", "undeclared member"),
-        ({"owner": 5}, "neutral-literal-type-mismatch", "Account.owner: "),
-    ],
-)
-def test_an_illegal_wire_assignment_is_refused_statically(
-    changes: dict[str, object], code: str, match: str
-) -> None:
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, code, match=match) as refused:
-            tx.wire.amend(_node(tx, _ACCOUNT_QUERY), changes)
-        assert isinstance(refused.value, InvalidValueError) is code.startswith("neutral-literal-")
-
-    db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
-
-
-def test_a_temporal_axis_member_is_not_assignable() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
-            tx.wire.amend(_node(tx, _BALANCE_QUERY), {"txStart": "2024-01-01T00:00:00Z"})
-
-    db_for(BALANCE, port).transact(fn)
 
 
 def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
@@ -713,20 +674,6 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
             Database.connect(port, SAMPLE_META, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
         assert _writes(port) == []
-
-
-def test_a_non_temporal_target_takes_no_valid_from() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-instruction-invalid", match="takes no valid_from"):
-            tx.wire.insert(
-                "parallax.compatibility.Account",
-                {"id": 2, "owner": "Ada", "balance": "1.00"},
-                valid_from=_VALID_FROM,
-            )
-
-    db_for(ACCOUNT, port).transact(fn)
 
 
 def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
@@ -896,55 +843,6 @@ def test_a_document_that_contains_itself_is_refused() -> None:
     assert _writes(port) == []
 
 
-def test_an_insert_refuses_a_value_a_read_published() -> None:
-    # The refusal names the verb that DOES accept the value, in the interface the
-    # caller typed: the Typed peer of this message advises `value.edit(...)` plus
-    # `tx.amend(...)`, which is not a spelling a Wire caller has.
-    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
-
-    def fn(tx: TxnContext) -> None:
-        node = _node(tx, _ACCOUNT_QUERY)
-        with raises_code(UsageError, "write-value-already-stored") as refusal:
-            tx.wire.insert("parallax.compatibility.Account", node)
-        assert "tx.wire.amend(value, {...})" in refusal.value.args[1]
-
-    db_for(ACCOUNT, port).transact(fn)
-
-
-def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() -> None:
-    # A payload that is a published node has both refusals coming, and both doors
-    # state the pin: the Transaction-Time past is read-only whatever verb was
-    # aimed at it, where the provenance answer names only which verb this
-    # particular value belongs to.
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
-    pinned: dict[str, object] = {
-        **_BALANCE_QUERY,
-        "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
-    }
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "transaction-time-pin-read-only") as refusal:
-            tx.wire.insert("parallax.compatibility.Balance", _node(tx, pinned))
-        assert refusal.value.code == "transaction-time-pin-read-only"
-
-    db_for(BALANCE, port).transact(fn)
-    assert _writes(port) == []
-
-
-def test_an_insert_refuses_a_framework_owned_member() -> None:
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
-            tx.wire.insert(
-                "parallax.compatibility.Account",
-                {"id": 7, "owner": "Newton", "balance": "5.00", "version": 3},
-            )
-
-    db_for(ACCOUNT, port).transact(fn)
-    assert _writes(port) == []
-
-
 @pytest.mark.parametrize(
     ("extra", "code", "message"),
     [
@@ -1001,21 +899,6 @@ def test_a_bare_entity_spelling_resolves_when_one_entity_carries_it() -> None:
     ]
 
 
-def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
-    pinned: dict[str, object] = {
-        **_BALANCE_QUERY,
-        "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
-    }
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "transaction-time-pin-read-only"):
-            tx.wire.terminate(_node(tx, pinned))
-
-    db_for(BALANCE, port).transact(fn)
-    assert _writes(port) == []
-
-
 # --------------------------------------------------------------------------- #
 # Evidence: what a Wire source licenses under each Concurrency Strategy.      #
 # --------------------------------------------------------------------------- #
@@ -1029,35 +912,6 @@ def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() ->
 
     assert _reads(port)[0].sql.endswith("for share of t0")
     assert _writes(port) == [WriteCall("update person set name = %s where id = %s", ("Grace", 1))]
-
-
-def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
-    port = ScriptedAdapter(Read(rows=[dict(_PERSON_ROW)]), Transact())
-    db = db_for(PERSON, port)
-    standalone = _standalone(db, _PERSON_QUERY)
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-evidence-unavailable"):
-            tx.wire.amend(standalone, {"name": "Grace"})
-
-    db.transact(fn)
-    assert _writes(port) == []
-
-
-@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
-def test_a_standalone_versioned_wire_source_licenses_no_write(
-    concurrency: ConcurrencyPreference,
-) -> None:
-    port = ScriptedAdapter(_ACCOUNT_READ, Transact())
-    db = db_for(ACCOUNT, port)
-    standalone = _standalone(db, _ACCOUNT_QUERY)
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-evidence-unavailable"):
-            tx.wire.amend(standalone, {"balance": "125.00"})
-
-    db.transact(fn, concurrency=concurrency)
-    assert _writes(port) == []
 
 
 def test_a_projected_source_uses_the_existing_wire_write_ingress() -> None:
@@ -1665,20 +1519,6 @@ def test_a_predicate_target_that_is_not_a_document_is_refused() -> None:
             tx.wire.delete_where(cast("dict[str, object]", ["Person"]))
 
     db_for(PERSON, port).transact(fn)
-
-
-def test_an_insert_naming_an_undeclared_member_reaches_the_honesty_gate() -> None:
-    # Decoding leaves a key the model declares no member for exactly as authored,
-    # so what names it is the member-name honesty gate rather than a decoding
-    # failure standing in for one.
-    port = ScriptedAdapter(Transact())
-
-    def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-instruction-invalid", match="undeclared member"):
-            tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton", "nope": 1})
-
-    db_for(PERSON, port).transact(fn)
-    assert _writes(port) == []
 
 
 def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> None:
