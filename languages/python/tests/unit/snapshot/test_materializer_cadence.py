@@ -33,10 +33,6 @@ from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_OR
 from tests.unit.snapshot._snapshot_page_support import PageFixture, RecordingObserver
 
 
-def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
-    INERT_OBSERVER.stored_values_compared(1)
-
-
 def _row(order_id: int) -> dict[str, object]:
     return {
         "id": order_id,

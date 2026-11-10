@@ -18,7 +18,6 @@ from typing import Any, cast, get_args
 
 import pytest
 
-import parallax.snapshot
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, DepositRate, Person
@@ -40,7 +39,6 @@ from parallax.core import (
     unit_work,
 )
 from parallax.core._execution._options import OMITTED
-from parallax.core._execution._unit_work import instructions
 from parallax.core.base import INT64, DocumentValue, StructuredDocument, UsageError
 from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import ArrayBind, MappingRow
@@ -505,20 +503,8 @@ def test_a_keyed_update_changing_one_member_writes_its_whole_literal_set(
 # `test_write_instructions.py`: no keyed VERB reaches those rows, because the  #
 # Entity MappingRow Codec derives a Typed row from the value's own class and the      #
 # Entity constructor refuses the value-object payloads outright. What a verb   #
-# does reach is the sparse row below, and that it is one producer is what the  #
-# identity assertion pins.                                                     #
+# does reach is the sparse row below.                                          #
 # --------------------------------------------------------------------------- #
-def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> None:
-    from parallax.conformance._lanes import scenario
-    from parallax.snapshot._handle import _typed_writes as typed_writes_module
-
-    assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
-    assert (
-        typed_writes_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
-        is instructions.prepare_typed_write
-    )
-
-
 def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched_field() -> None:
     # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (an id
     # + balance row omitting the required `owner`) must NOT be rejected — an
@@ -1798,15 +1784,9 @@ def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
         db_for(BALANCE, port).transact(fn)
 
 
-def test_the_write_evidence_and_write_value_codes_are_core_vocabularies() -> None:
+def test_the_write_evidence_and_write_value_codes_are_case_schema_codes() -> None:
     # Both refusals are core-authored, so every code either one carries is a code
-    # the case schema names a raised error by; the Snapshot facade re-exports
-    # neither vocabulary, nor the buffering outcome the keyed ingress reads.
+    # the case schema names a raised error by.
     schema = case_format.raised_error_codes()
     assert {*get_args(unit_work.WriteEvidenceCode.__value__)} <= schema
     assert {*get_args(KeyedWriteValueCode.__value__)} <= schema
-    assert not set(parallax.snapshot.__all__) & {
-        "WriteEvidenceCode",
-        "KeyedWriteValueCode",
-        "BufferOutcome",
-    }

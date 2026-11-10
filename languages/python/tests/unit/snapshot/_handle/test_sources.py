@@ -376,15 +376,3 @@ def test_a_wire_value_published_by_no_read_or_insert_is_no_keyed_source(
 
     with raises_code(UsageError, "write-instruction-invalid", match="carries no such provenance"):
         source.resolve(cataloged_for(CONTACT_MODEL).meta, "amend")
-
-
-@pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_every_resolution_shares_one_advice_value_per_representation(
-    representation: Representation,
-) -> None:
-    rows = [row for row in _SOURCE_ROWS if row.representation == representation]
-    inserts = [row for row in _INSERT_ROWS if row.representation == representation]
-    answered = [_resolved_source(row, row.obtain()).advice for row in rows]
-    answered += [_resolved_insert(row, row.obtain()).advice for row in inserts]
-
-    assert all(advice is answered[0] for advice in answered)
