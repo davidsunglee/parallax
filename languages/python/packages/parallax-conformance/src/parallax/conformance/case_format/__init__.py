@@ -659,10 +659,9 @@ def default_cases_dir() -> Path:
     return find_repo_root() / "core" / "compatibility" / "cases"
 
 
-def load_cases(directory: Path | None = None) -> list[Case]:
-    """Load every case under ``directory`` (default: the discovered corpus)."""
-    root = directory if directory is not None else default_cases_dir()
-    return [load_case(path) for path in sorted(root.rglob("*.yaml"))]
+def load_cases() -> list[Case]:
+    """Load every case in the discovered corpus."""
+    return [load_case(path) for path in sorted(default_cases_dir().rglob("*.yaml"))]
 
 
 def raised_error_codes() -> frozenset[str]:
@@ -719,21 +718,10 @@ class SelectionFilter:
     exclude: frozenset[str]
 
 
-def is_selected(
-    case: Case,
-    flt: SelectionFilter,
-    *,
-    milestone_tags: Iterable[str] | None = None,
-    implemented_modules: frozenset[str] | None = None,
-) -> bool:
-    """Evaluate the case-selection expression for one case.
-
-    Base membership is ``shape ∈ claimed caseShapes`` ∧ ``module-tags ⊆ claimed
-    modules`` ∧ the ``caseTags`` include/exclude filters. ``milestone_tags``
-    adds the ``--parallax-tags`` capability intersection (the case must carry at
-    least one), and ``implemented_modules`` restricts to cases whose module tags
-    are *all* implemented — the always-on reachable-intersection filter.
-    """
+def is_selected(case: Case, flt: SelectionFilter) -> bool:
+    """Evaluate the case-selection expression for one case: ``shape ∈ claimed
+    caseShapes`` ∧ ``module-tags ⊆ claimed modules`` ∧ the ``caseTags``
+    include/exclude filters."""
     if case.shape not in flt.case_shapes:
         return False
     if not case.module_tags <= flt.modules:
@@ -741,31 +729,9 @@ def is_selected(
     tag_set = set(case.tags)
     if flt.include and tag_set.isdisjoint(flt.include):
         return False
-    if flt.exclude and not tag_set.isdisjoint(flt.exclude):
-        return False
-    if milestone_tags is not None and tag_set.isdisjoint(set(milestone_tags)):
-        return False
-    if implemented_modules is None:
-        return True
-    return case.module_tags <= implemented_modules
+    return not flt.exclude or tag_set.isdisjoint(flt.exclude)
 
 
-def select(
-    cases: Iterable[Case],
-    flt: SelectionFilter,
-    *,
-    milestone_tags: Iterable[str] | None = None,
-    implemented_modules: frozenset[str] | None = None,
-) -> list[Case]:
+def select(cases: Iterable[Case], flt: SelectionFilter) -> list[Case]:
     """The subset of ``cases`` the selection expression admits (order preserved)."""
-    milestone = list(milestone_tags) if milestone_tags is not None else None
-    return [
-        case
-        for case in cases
-        if is_selected(
-            case,
-            flt,
-            milestone_tags=milestone,
-            implemented_modules=implemented_modules,
-        )
-    ]
+    return [case for case in cases if is_selected(case, flt)]

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+import psycopg
+
 from parallax.conformance.profile import profile_dialects
 
 __all__ = ["ADAPTER", "ORDERED_WRITE_TRANSPORT_TAG", "SNAPSHOT_CLAIM", "Adapter", "Claim"]
@@ -50,8 +52,6 @@ class Claim:
         """The authored exclusions, plus ``ordered-write-transport`` where the
         libpq psycopg loaded cannot run a pipeline, so no run connection this
         process opens holds ordered write transport."""
-        import psycopg
-
         if psycopg.capabilities.has_pipeline():
             return self.exclude
         return (*self.exclude, ORDERED_WRITE_TRANSPORT_TAG)

@@ -32,7 +32,7 @@ type Editable = Note | NoteTag
 
 
 def reachable_edit_cases(cases: list[case_format.Case] | None = None) -> list[case_format.Case]:
-    """Every edit case in the active implemented slice."""
+    """Every edit case in the active slice."""
     return [case for case in sweep.reachable_cases(cases=cases) if case.shape == "edit"]
 
 

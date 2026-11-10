@@ -5,7 +5,7 @@ import socket
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Never
 
 import psycopg
 from psycopg.rows import TupleRow, tuple_row
@@ -31,15 +31,12 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.postgres import PostgresRole
-from parallax.postgres._authorization import install_role, restore_role
 from parallax.postgres._connection import PostgresConnection, initialize_connection
 from parallax.snapshot import Database, ScopedDatabase
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
     from types import TracebackType
-    from typing import LiteralString
 
     from parallax.core.db_port import (
         Bind,
@@ -240,9 +237,8 @@ class ControlledScope:
     THIS scope when it finally executes.
     """
 
-    def __init__(self, runtime: ControlledRuntime, role: PostgresRole | None) -> None:
+    def __init__(self, runtime: ControlledRuntime) -> None:
         self._runtime = runtime
-        self._role = role
         self._execution: PostgresConnection | None = None
         self._spent = False
         self._cleanup_result: CleanupResult | None = None
@@ -267,38 +263,6 @@ class ControlledScope:
 
     def _entered(self) -> DatabaseConnection:
         execution = self._runtime.admit(self)
-        role = self._role
-        if role is not None:
-            try:
-                install_role(self._runtime.native, role)
-            except BaseException as exc:
-                self._cleanup_result = self._runtime.invalidate(
-                    self,
-                    (
-                        _cleanup_issue(
-                            "inspect", "suspect", RuntimeError("role installation failed")
-                        ),
-                    ),
-                )
-                if not isinstance(exc, Exception):
-                    raise
-                raise ConnectionAcquisitionError(
-                    "the requested database principal could not be installed",
-                    reason="authorization_failed",
-                ) from exc
-            try:
-                self._runtime.confirm_authorization(self)
-            except BaseException:
-                try:
-                    self._runtime.restore_authorization()
-                except Exception as restore_error:
-                    self._cleanup_result = self._runtime.invalidate(
-                        self,
-                        (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
-                    )
-                else:
-                    self._cleanup_result = self._runtime.release(self)
-                raise
         self._execution = execution
         return execution
 
@@ -326,36 +290,17 @@ class ControlledScope:
                     self,
                     (_cleanup_issue("inspect", "suspect", RuntimeError("revocation failed")),),
                 )
-            elif self._role is not None:
-                try:
-                    self._runtime.restore_authorization()
-                except Exception as restore_error:
-                    self._cleanup_result = self._runtime.invalidate(
-                        self,
-                        (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
-                    )
-                else:
-                    self._cleanup_result = self._runtime.release(self)
             else:
                 self._cleanup_result = self._runtime.release(self)
 
 
 @dataclass(frozen=True, slots=True)
-class _RestorationBoundary:
-    runtime: ControlledRuntime
-
-    def execute(self, statement: LiteralString) -> psycopg.Cursor[TupleRow]:
-        return self.runtime.execute_restoration(statement)
-
-
-@dataclass(frozen=True, slots=True)
 class _ControlledContextSource:
     runtime: ControlledRuntime
-    role: PostgresRole | None
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
         del policy
-        return ControlledScope(self.runtime, self.role)
+        return ControlledScope(self.runtime)
 
 
 class ControlledRuntime:
@@ -383,7 +328,6 @@ class ControlledRuntime:
         self._connection = connection
         self._login_identity = login_identity
         self._state = threading.Lock()
-        self._retirement_changed = threading.Condition(self._state)
         # Held for the whole of a control action, and taken BEFORE the state
         # lock by anything that admits a scope. Revalidating a captured scope
         # and acting on it have to be one step: between a check and an act, a
@@ -406,10 +350,6 @@ class ControlledRuntime:
         self._active: ControlledScope | None = None
         self._closed = False
         self._retired = False
-        self._retirement_active = False
-        self._restoration_pending = False
-        self._restoration_active = False
-        self._restoration_boundary = _RestorationBoundary(self)
         self._on_retired: Callable[[], None] | None = None
 
     @property
@@ -435,14 +375,13 @@ class ControlledRuntime:
         return self._connection
 
     def login_source(self) -> ConnectionContextSource:
-        return _ControlledContextSource(self, None)
+        return _ControlledContextSource(self)
 
-    def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
-        if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the boundary
-            raise UsageError(
-                AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
-            )
-        return _ControlledContextSource(self, authorization)
+    def principal_source(self, authorization: object) -> Never:
+        del authorization
+        raise UsageError(
+            AUTHORIZATION_INVALID, "a controlled runtime executes under its database login alone"
+        )
 
     def admit(self, scope: ControlledScope) -> PostgresConnection:
         with self._admission, self._state:
@@ -458,53 +397,6 @@ class ControlledRuntime:
                 )
             self._active = scope
             return PostgresConnection(self._connection)
-
-    def confirm_authorization(self, scope: ControlledScope) -> None:
-        with self._admission, self._state:
-            if self._closed or self._active is not scope:
-                raise ConnectionAcquisitionError(
-                    "this controlled runtime closed while installing authorization",
-                    reason="closed",
-                )
-
-    def restore_authorization(self) -> None:
-        """Restore the login role unless session retirement already owns cleanup.
-
-        Cleanup owns the retirement claim through the call into the shared role
-        helper, closing the gap in which teardown could condemn the session
-        before RESET ROLE began. The controlled execution boundary publishes
-        entry into that call; only then may termination interrupt a blocked
-        round trip.
-        """
-        restore_error: Exception | None = None
-        with self._retirement:
-            with self._retirement_changed:
-                if self._retired:
-                    return
-                self._restoration_pending = True
-
-            try:
-                restore_role(self._restoration_boundary)
-            except Exception as exc:
-                restore_error = exc
-            finally:
-                with self._retirement_changed:
-                    self._restoration_pending = False
-                    self._restoration_active = False
-                    self._retirement_changed.notify_all()
-
-        with self._retirement_changed:
-            while self._retirement_active:
-                self._retirement_changed.wait()
-            retired = self._retired
-        if restore_error is not None and not retired:
-            raise restore_error
-
-    def execute_restoration(self, statement: LiteralString) -> psycopg.Cursor[TupleRow]:
-        with self._retirement_changed:
-            self._restoration_active = True
-            self._retirement_changed.notify_all()
-        return self._connection.execute(statement)
 
     def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:
@@ -597,53 +489,29 @@ class ControlledRuntime:
         Termination is not a close and does not go through one, but what it
         leaves behind is a retired runtime: closing that session again would
         establish nothing new, and its opener may forget it. The caller owns a
-        :meth:`retiring` claim, including the interrupting claim that can run
-        while native role restoration holds the retirement lock.
+        :meth:`retiring` claim.
         """
         with self._state:
             self._closed = True
         self._complete_retirement()
 
     @contextlib.contextmanager
-    def retiring(self, *, interrupt_restoration: bool = False) -> Generator[bool]:
+    def retiring(self) -> Generator[bool]:
         """The claim on ending this session — true while there is still a session to end.
 
         What every path that destroys this session enters: it holds the claim
         across the native teardown and the completion that publishes it, so
         exactly one path ends the session and every other one finds it already
-        ended. Termination may interrupt restoration only after RESET ROLE has
-        crossed into native I/O; before that boundary it waits for the ordinary
-        claim so condemnation cannot overtake the reset call.
+        ended.
 
         The claim is released whether or not retirement was reached, which is
         what keeps a refused close retryable: what a later attempt observes is
         the retirement flag, not a claim somebody once took.
         """
-        owns_lock = self._retirement.acquire(blocking=not interrupt_restoration)
-        if not owns_lock:
-            with self._retirement_changed:
-                while self._restoration_pending and not self._restoration_active:
-                    self._retirement_changed.wait()
-                interrupts_restoration = self._restoration_active and not self._retired
-                if interrupts_restoration:
-                    self._retirement_active = True
-            if not interrupts_restoration:
-                self._retirement.acquire()
-                owns_lock = True
-
-        with self._retirement_changed:
-            pending = not self._retired
-            if pending:
-                self._retirement_active = True
-        try:
+        with self._retirement:
+            with self._state:
+                pending = not self._retired
             yield pending
-        finally:
-            if pending:
-                with self._retirement_changed:
-                    self._retirement_active = False
-                    self._retirement_changed.notify_all()
-            if owns_lock:
-                self._retirement.release()
 
     def report_retirement_to(self, observer: Callable[[], None]) -> None:
         """Call *observer* once this session is gone, immediately if it already is.
@@ -855,7 +723,7 @@ class PostgresInterleavedExecution:
         and the miss is recorded rather than dressed up as a termination this
         escalation achieved.
         """
-        with self._runtime.retiring(interrupt_restoration=True) as pending:
+        with self._runtime.retiring() as pending:
             if not pending:
                 return TerminationReport(
                     terminated=False,

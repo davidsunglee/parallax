@@ -208,12 +208,7 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
 
     The scenario and writeSequence lanes emit the keyed unit-of-work DML (and, for a
     scenario, the read-lock reads); an error case has no compile artifact (a
-    lane-honest ``UnclassifiedEngineError`` names the run lane that grades it); every reachable
-    conflict case declares ``compileEligibility: run-only`` (m-concurrency's own
-    single-connection concurrency intent — `compile_case` already answers the
-    defined ``run-only`` envelope before ever reaching here), so a conflict case
-    reaching this dispatch is mis-declared, named loudly rather than silently
-    falling through to the read compiler's unrelated ``UnclassifiedEngineError``; any other
+    lane-honest ``UnclassifiedEngineError`` names the run lane that grades it); any other
     shape falls through to the read compiler, which raises the loud non-read
     ``UnclassifiedEngineError`` the caller renders as an ``error``.
     """
@@ -230,12 +225,6 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
         raise engine.UnclassifiedEngineError(
             f"{case.path.name}: an error case's trigger DML is authored, not compiled "
             "(m-case-format); `run` grades the single-connection trigger"
-        )
-    if case.shape == "conflict":
-        raise engine.UnclassifiedEngineError(
-            f"{case.path.name}: a conflict case's single-connection concurrency intent "
-            "(m-concurrency) is always declared `compileEligibility: run-only`; a reachable "
-            "conflict case missing that declaration is mis-declared, not compilable"
         )
     return engine.compile_read_case(case, dialect)
 

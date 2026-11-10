@@ -150,7 +150,6 @@ def compile_scenario(
                         dialect,
                         concurrency,
                         entry_instant(entries[0]),
-                        [],
                         rollback=step.get("rollback") is True,
                     )
                     emissions.extend(

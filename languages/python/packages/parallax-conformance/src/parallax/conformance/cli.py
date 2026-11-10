@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Final
 
-from parallax.conformance import adapter, case_format
+from parallax.conformance import adapter, case_format, engine, provision
 from parallax.conformance.profile import profile_for
 
 __all__ = ["main"]
@@ -67,8 +67,6 @@ def _run_self_managed(
         return adapter.unsupported("run", diagnostic)
     if case.shape == "rejected":
         return adapter.run_case(case_path, profile.unprovisioned())
-
-    from parallax.conformance import engine, provision
 
     with profile.provisioned() as run:
         meta = engine.load_case_setup_metamodel(case)

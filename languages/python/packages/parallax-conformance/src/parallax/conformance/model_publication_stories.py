@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass
 
 from parallax.conformance.story_models import (
     ACCOUNT_MODEL,
     NICKNAMED_ACCOUNT_MODEL,
-    Account,
     NicknamedAccount,
 )
 from parallax.core.db_port import (
@@ -37,7 +35,6 @@ __all__ = [
     "UnpublishableUpdateError",
     "a_running_service_publishes_an_evolved_model_without_restarting",
     "apply_schema_delta",
-    "publication_snippet",
     "unilateral",
 ]
 
@@ -212,26 +209,4 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
         created_indices=created_indices,
         after_edition=after,
         nickname=nickname,
-    )
-
-
-def publication_snippet() -> str:
-    """The story's own source — the Usage Guide snippet that cannot drift.
-
-    Both model endpoints, the application's own refusal, what one update
-    answers, and the update itself: a snippet showing the three calls alone
-    would document the surface without the order that is the only thing an
-    application has to get right.
-    """
-    return "\n\n\n".join(
-        inspect.getsource(part).rstrip("\n")
-        for part in (
-            Account,
-            NicknamedAccount,
-            UnpublishableUpdateError,
-            unilateral,
-            apply_schema_delta,
-            PublishedUpdate,
-            a_running_service_publishes_an_evolved_model_without_restarting,
-        )
     )
