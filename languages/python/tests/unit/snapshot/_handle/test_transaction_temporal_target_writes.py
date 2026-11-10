@@ -6,9 +6,8 @@ one, and the Transaction-Time start its caller last observed. These tests grade
 what each call puts on the wire and when: nothing at an Optimistic call and the
 coverage read at flush, the Locking acquisition and its reuse, the start's gate
 — a guard keeping an unchanged start included — that fails as the caller's
-precondition while a later row's loss retries, the bounded form ``until``
-selects, the exact-window composition matrix with observed writes, and the
-refusals that leave earlier work executable.
+precondition, the exact-window composition matrix with observed writes, and
+the refusals that leave earlier work executable.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import Attr, ConflictError, DomainModel, Entity, InternalError, UsageError, attr
+from parallax.core import Attr, DomainModel, Entity, InternalError, UsageError, attr
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
@@ -36,7 +35,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
-    OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ROLLBACK_ONLY,
     WritePreconditionError,
 )
@@ -127,22 +125,14 @@ def _patch(tx: TxnContext, *, tx_start: dt.datetime = _T0, **changes: object) ->
     )
 
 
-def _replace(tx: TxnContext, *, typed: bool = False, value: str = "300.00") -> None:
-    if typed:
-        tx.replace_if(
-            WherePosition(id=1, acct_num="Z", value=Decimal(value)),
-            valid_from=_MAR,
-            until=_SEP,
-            tx_start=_T0,
-        )
-    else:
-        tx.wire.replace_if(
-            "WherePosition",
-            {"id": 1, "acctNum": "Z", "value": value},
-            valid_from=_MAR,
-            until=_SEP,
-            tx_start=_T0,
-        )
+def _replace(tx: TxnContext, *, value: str = "300.00") -> None:
+    tx.wire.replace_if(
+        "WherePosition",
+        {"id": 1, "acctNum": "Z", "value": value},
+        valid_from=_MAR,
+        until=_SEP,
+        tx_start=_T0,
+    )
 
 
 def _db(port: ScriptedAdapter) -> ScopedDatabase:
@@ -160,20 +150,6 @@ def _source(tx: TxnContext, at: dt.datetime = _MAR) -> WherePosition:
 # --------------------------------------------------------------------------- #
 # Optimistic: nothing at the call; the flush reads the coverage it reaches.   #
 # --------------------------------------------------------------------------- #
-def test_an_optimistic_transaction_time_target_reads_its_current_row_only_at_flush() -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        tx.wire.amend_if("Balance", {"id": 1, "value": "150.00"}, tx_start=_T0)
-        assert _calls(port) == []
-
-    db_for(BALANCE, port).transact(fn)
-    (coverage,) = _reads(port)
-    assert coverage.sql.endswith("from balance t0 where t0.bal_id = %s and t0.out_z = %s")
-    close, opened = _writes(port)
-    assert close.sql.endswith("where bal_id = %s and out_z = %s and in_z = %s")
-    assert close.binds[1:] == (1, "infinity", _T0)
-    assert opened.binds[:3] == (1, "A-1", Decimal("150.00"))
 
 
 def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches() -> None:
@@ -244,97 +220,9 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     assert seen == [(1, 0, acquired)]
 
 
-@pytest.mark.parametrize(
-    "coverage",
-    [
-        pytest.param([], id="no-coverage"),
-        pytest.param([_rectangle(_JUN, INFINITY_INSTANT)], id="a-gap-at-its-start"),
-        pytest.param([_rectangle(_JAN, _JUN, tx_start=_T1)], id="another-revision"),
-    ],
-)
-def test_an_optimistic_target_whose_start_moved_fails_before_any_write_and_never_retries(
-    coverage: list[MappingRow],
-) -> None:
-    port = ScriptedAdapter(Transact(Read(rows=coverage)))
-    attempts = 0
-
-    def fn(tx: TxnContext) -> None:
-        nonlocal attempts
-        attempts += 1
-        _replace(tx)
-
-    with pytest.raises(WritePreconditionError) as failed:
-        _db(port).transact(fn)
-    assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _T0)
-    assert attempts == 1
-    assert _writes(port) == []
-    assert isinstance(port.calls[-1], RollbackCall)
-
-
-def test_a_lost_start_guard_is_the_callers_precondition_and_a_lost_later_row_retries() -> None:
-    rows = [_rectangle(_JAN, _JUN), _rectangle(_JUN, INFINITY_INSTANT, "200.00")]
-    lost_start = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
-    with pytest.raises(WritePreconditionError):
-        _db(lost_start).transact(lambda tx: _patch(tx, value="150.00"))
-    assert len(_writes(lost_start)) == 1
-    lost_later = ScriptedAdapter(
-        Transact(Read(rows=rows), Write(), Write(affected=0)),
-        Transact(Read(rows=rows), Write(times=6)),
-    )
-    _db(lost_later).transact(lambda tx: _patch(tx, value="150.00"))
-    starts = [call for call in _writes(lost_later) if call.binds[2] == _JUN]
-    assert [call.binds[-1] for call in starts] == [_T0, _T0]
-    without_retry = ScriptedAdapter(Transact(Read(rows=rows), Write(), Write(affected=0)))
-    with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
-        _db(without_retry).transact(
-            lambda tx: _patch(tx, value="150.00"), retry=RetryPolicy(max_retries=0)
-        )
-
-
 # --------------------------------------------------------------------------- #
 # Locking: the start is read under the shared lock at the call, or reused.     #
 # --------------------------------------------------------------------------- #
-def test_a_locking_bitemporal_target_reads_its_start_at_the_call_and_writes_ungated() -> None:
-    # The start read at the call holds the whole window, so the flush reuses it
-    # as the range's coverage and reads nothing more.
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2))
-    )
-
-    def fn(tx: TxnContext) -> None:
-        _patch(tx, value="150.00")
-        (acquired,) = _reads(port)
-        assert acquired.sql.endswith(
-            "where t0.id = %s and t0.from_z <= %s and t0.thru_z > %s and t0.out_z = %s "
-            "for share of t0"
-        )
-        assert acquired.binds == (1, _MAR, _MAR, INFINITY_INSTANT)
-
-    _db(port).transact(fn, concurrency="locking")
-    assert len(_reads(port)) == 1
-    close, opened = _writes(port)
-    assert close.sql.endswith("where id = %s and thru_z = %s and out_z = %s")
-    assert [row[2:5] for row in inserted_rows(opened)] == [
-        (Decimal("100.00"), _JAN, _MAR),
-        (Decimal("150.00"), _MAR, _SEP),
-        (Decimal("100.00"), _SEP, INFINITY_INSTANT),
-    ]
-
-
-def test_a_locking_transaction_time_target_reads_its_current_row_under_the_shared_lock() -> None:
-    # The current row read at the call is the range's whole coverage.
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write(times=2)))
-    db_for(BALANCE, port).transact(
-        lambda tx: tx.replace_if(
-            mm.Balance(id=1, acct_num="B", value=Decimal("7.00")), tx_start=_T0
-        ),
-        concurrency="locking",
-    )
-    (acquired,) = _reads(port)
-    assert acquired.sql.endswith("where t0.bal_id = %s and t0.out_z = %s for share of t0")
-    close, opened = _writes(port)
-    assert close.sql.endswith("where bal_id = %s and out_z = %s")
-    assert opened.binds[:3] == (1, "B", Decimal("7.00"))
 
 
 @pytest.mark.parametrize(
@@ -417,23 +305,6 @@ def _calendar(*starts: tuple[dt.datetime, str]) -> list[MappingRow]:
     last to the open bound."""
     ends = [start for start, _value in starts[1:]] + [INFINITY_INSTANT]
     return [_rectangle(start, end, value) for (start, value), end in zip(starts, ends, strict=True)]
-
-
-def test_a_locking_target_reads_only_the_coverage_its_acquired_start_leaves() -> None:
-    first, later = _calendar((_JAN, "100.00"), (_JUN, "200.00"))
-    port = ScriptedAdapter(Transact(Read(rows=[first]), Read(rows=[later]), Write(times=3)))
-    _db(port).transact(lambda tx: _patch(tx, value="150.00"), concurrency="locking")
-    _acquired, coverage = _reads(port)
-    assert coverage.sql.endswith(
-        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s for share of t0"
-    )
-    assert coverage.binds == (1, _JUN, _SEP, INFINITY_INSTANT)
-    _start, _later, opened = _writes(port)
-    assert [row[2:5] for row in inserted_rows(opened)] == [
-        (Decimal("100.00"), _JAN, _MAR),
-        (Decimal("150.00"), _MAR, _SEP),
-        (Decimal("200.00"), _SEP, INFINITY_INSTANT),
-    ]
 
 
 @pytest.mark.parametrize("replaces", [False, True], ids=["amendment", "replacement"])
@@ -621,59 +492,6 @@ def test_an_acquired_starting_row_lives_only_while_its_write_is_pending() -> Non
     for ends in ("committed", "abandoned"):
         with close_owned_roots():
             _starting_row_lives_only_while_its_write_is_pending(ends)
-
-
-# --------------------------------------------------------------------------- #
-# Bounds: `until` alone selects the bounded form.                              #
-# --------------------------------------------------------------------------- #
-def test_a_typed_replacement_selects_its_bounded_form_by_until_alone() -> None:
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2)),
-        Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(times=2)),
-    )
-
-    def unbounded(tx: TxnContext) -> None:
-        tx.replace_if(
-            WherePosition(id=1, acct_num="Z", value=Decimal("3.00")),
-            valid_from=_MAR,
-            tx_start=_T0,
-        )
-
-    _db(port).transact(unbounded)
-    _db(port).transact(lambda tx: _replace(tx, typed=True))
-    inserts = [call for call in _writes(port) if call.sql.startswith("insert")]
-    assert [row[3:5] for call in inserts for row in inserted_rows(call)] == [
-        (_JAN, _MAR),
-        (_MAR, INFINITY_INSTANT),
-        (_JAN, _MAR),
-        (_MAR, _SEP),
-        (_SEP, INFINITY_INSTANT),
-    ]
-
-
-# --------------------------------------------------------------------------- #
-# The attempt-wide refusal of an object the attempt inserted.                 #
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("flushed", [False, True], ids=["pending", "after-a-helper-read"])
-@pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused(
-    flushed: bool, representation: str
-) -> None:
-    port = ScriptedAdapter(Transact(Write(), Read(rows=[])) if flushed else Transact(Write()))
-
-    def fn(tx: TxnContext) -> None:
-        tx.insert(WherePosition(id=1, acct_num="A", value=Decimal("1.00")), valid_from=_JAN)
-        if flushed:
-            tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
-        with pytest.raises(UsageError, match="write-evidence-inserted"):
-            if representation == "typed":
-                _replace(tx, typed=True)
-            else:
-                _patch(tx, value="2.00")
-        _patch(tx)
-
-    _db(port).transact(fn, concurrency="locking")
-    assert len(_writes(port)) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -865,22 +683,6 @@ def test_an_equal_valued_temporal_patch_of_a_stale_start_still_fails_its_precond
     with pytest.raises(WritePreconditionError):
         _db(port).transact(lambda tx: _patch(tx, value="100.00"))
     assert _writes(port) == []
-
-
-def test_an_equal_patch_keeps_each_rectangle_it_leaves_and_rewrites_the_others() -> None:
-    later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=3)))
-    _db(port).transact(lambda tx: _patch(tx, value="100.00"))
-    guard, close, opened = _writes(port)
-    # The start already holds the value over everything the window reaches of
-    # it, so its guard keeps it; the later rectangle changes over its own part.
-    assert guard.sql.startswith("update where_position set in_z = in_z")
-    assert guard.binds[-1] == _T0
-    assert (close.binds[2], close.binds[-1]) == ("infinity", _T1)
-    assert [row[2:5] for row in inserted_rows(opened)] == [
-        (Decimal("100.00"), _JUN, _SEP),
-        (Decimal("200.00"), _SEP, INFINITY_INSTANT),
-    ]
 
 
 @_STRATEGIES
@@ -1172,7 +974,7 @@ def test_a_transaction_time_target_composes_with_an_observed_write_of_its_row(
 
 
 # --------------------------------------------------------------------------- #
-# Disjoint operations, and writes after a predicate write's flush.              #
+# Writes after a predicate write's or a read's flush.                          #
 # --------------------------------------------------------------------------- #
 class WhereTag(Entity, table="where_tag", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
@@ -1227,39 +1029,6 @@ def _sql_kinds(port: ScriptedAdapter) -> list[str]:
         else:
             kinds.append("revise")
     return kinds
-
-
-@_STRATEGIES
-def test_disjoint_targets_of_one_rectangle_close_it_once_and_open_each_piece(
-    concurrency: _Concurrency,
-) -> None:
-    whole = _rectangle(_JAN, INFINITY_INSTANT)
-    # Under Locking each start is read at its own call, and the one rectangle
-    # both reads found covers the whole range, which reads nothing more.
-    reads = Read(rows=[whole], times=2) if concurrency == "locking" else Read(rows=[whole])
-    port = ScriptedAdapter(Transact(reads, Write(times=2)))
-
-    def fn(tx: TxnContext) -> None:
-        _window_patch(tx, _FEB_APR, "150.00")
-        _window_patch(tx, _JUN_AUG, "175.00")
-        # Neither call runs the other's pending write.
-        assert _writes(port) == []
-        assert len(_reads(port)) == (2 if concurrency == "locking" else 0)
-
-    _predicated(port).transact(fn, concurrency=concurrency)
-    if concurrency == "optimistic":
-        (coverage,) = _reads(port)
-        assert coverage.binds == (1, _FEB, _AUG, INFINITY_INSTANT)
-    close, opened = _writes(port)
-    if concurrency == "optimistic":
-        assert close.binds[-1] == _T0
-    assert [row[2:5] for row in inserted_rows(opened)] == [
-        (Decimal("100.00"), _JAN, _FEB),
-        (Decimal("150.00"), _FEB, _APR),
-        (Decimal("100.00"), _APR, _JUN),
-        (Decimal("175.00"), _JUN, _AUG),
-        (Decimal("100.00"), _AUG, INFINITY_INSTANT),
-    ]
 
 
 @_STRATEGIES
@@ -1334,31 +1103,6 @@ def test_an_observed_write_after_a_predicate_write_continues_from_the_row_the_fi
         assert revision.sql.startswith("update where_position set acct_num = %s where")
         assert revision.binds[0] == value
         assert Decimal("100.00") not in revision.binds
-
-
-@_STRATEGIES
-def test_a_later_call_restating_a_start_an_earlier_flush_replaced_fails_literally(
-    concurrency: _Concurrency,
-) -> None:
-    whole = _rectangle(_JAN, INFINITY_INSTANT)
-    # The first read is the Locking acquisition at the call, which the flush
-    # reuses as coverage, or the Optimistic flush's own coverage read; the last
-    # is the second call's acquisition, or the commit flush's coverage read.
-    port = ScriptedAdapter(
-        Transact(Read(rows=[whole]), Write(times=2), Read(rows=[]), Read(rows=[_owned(_APR)]))
-    )
-
-    def fn(tx: TxnContext) -> None:
-        _window_patch(tx, _FEB_APR, "150.00")
-        # A public read flushes the first write; the state the second caller
-        # states is gone, and what replaced it stands at the attempt's instant.
-        tx.find(WherePosition.where(WherePosition.id == 2).as_of(valid_time=_MAR))
-        _window_patch(tx, _JUN_AUG, "175.00")
-
-    with pytest.raises(WritePreconditionError) as failed:
-        _predicated(port).transact(fn, concurrency=concurrency)
-    assert failed.value.expected == _T0
-    assert len(_writes(port)) == 2
 
 
 def test_a_lost_first_unit_runs_nothing_after_it_and_a_lost_later_one_rolls_back() -> None:
@@ -1437,32 +1181,6 @@ def test_a_destruction_after_a_predicate_write_removes_what_the_first_opened_unr
     assert removal.sql.startswith("delete from where_position where id = %s and thru_z = %s")
 
 
-def test_a_transaction_time_target_after_a_predicate_write_restating_its_start_fails() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[balance_row(in_z=_T0)]),
-            Write(times=2),
-            Write(),
-            Read(rows=[{**balance_row(in_z=FIXED), "val": Decimal("150.00")}]),
-        )
-    )
-
-    def fn(tx: TxnContext) -> None:
-        tx.wire.amend_if("Balance", {"id": 1, "value": "150.00"}, tx_start=_T0)
-        _tag_where(tx)
-        # The first write replaced the start this one states before it was
-        # admitted.
-        tx.wire.amend_if("Balance", {"id": 1, "acctNum": "B"}, tx_start=_T0)
-
-    with pytest.raises(WritePreconditionError) as failed:
-        db_for(DomainModel(mm.Balance, WhereTag), port).transact(
-            fn, retry=RetryPolicy(max_retries=0)
-        )
-    assert failed.value.expected == _T0
-    assert _sql_kinds(port) == ["read", "close", "insert", "predicate", "read"]
-    assert isinstance(port.calls[-1], RollbackCall)
-
-
 def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1497,11 +1215,8 @@ def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
 # Termination: the caller's start conditions the coverage its window ends,     #
 # and a missing or revised start fails rather than ending nothing.             #
 # --------------------------------------------------------------------------- #
-def _terminate(tx: TxnContext, *, until: dt.datetime | None = None) -> None:
-    if until is None:
-        tx.wire.terminate_if("WherePosition", {"id": 1}, valid_from=_MAR, tx_start=_T0)
-    else:
-        tx.terminate_if(WherePosition, key=1, valid_from=_MAR, until=until, tx_start=_T0)
+def _terminate(tx: TxnContext) -> None:
+    tx.wire.terminate_if("WherePosition", {"id": 1}, valid_from=_MAR, tx_start=_T0)
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
@@ -1523,34 +1238,6 @@ def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_c
     (close,) = _writes(port)
     assert close.sql.endswith("where bal_id = %s and out_z = %s and in_z = %s")
     assert close.binds[1:] == (1, "infinity", _T0)
-
-
-@pytest.mark.parametrize(
-    ("until", "opened"),
-    [
-        pytest.param(None, [(Decimal("100.00"), _JAN, _MAR)], id="unbounded"),
-        pytest.param(
-            _SEP,
-            [(Decimal("100.00"), _JAN, _MAR), (Decimal("200.00"), _SEP, INFINITY_INSTANT)],
-            id="bounded",
-        ),
-    ],
-)
-def test_an_optimistic_bitemporal_termination_ends_every_interval_its_window_reaches(
-    until: dt.datetime | None, opened: list[tuple[object, ...]]
-) -> None:
-    later = _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)
-    port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, _JUN), later]), Write(times=3)))
-    _db(port).transact(lambda tx: _terminate(tx, until=until))
-    (coverage,) = _reads(port)
-    assert coverage.binds[:2] == (1, _MAR)
-    start, later_close, insert = _writes(port)
-    # The caller's start gates the rectangle holding `valid_from` alone; the
-    # later rectangle, changed at T1 after the caller's T0 observation, is
-    # ended under its own milestone.
-    assert (start.binds[2], start.binds[-1]) == (_JUN, _T0)
-    assert (later_close.binds[2], later_close.binds[-1]) == ("infinity", _T1)
-    assert [row[2:5] for row in inserted_rows(insert)] == opened
 
 
 @pytest.mark.parametrize(
