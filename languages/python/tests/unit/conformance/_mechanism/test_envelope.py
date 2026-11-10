@@ -12,8 +12,7 @@ import datetime as dt
 import decimal
 
 from parallax.conformance._mechanism.envelope import Emission
-from parallax.core.base import STRING, InternalError, NeutralType
-from parallax.core.base import Decimal as DecimalType
+from parallax.core.base import STRING, InternalError, NeutralType, Numeric
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._context import (
     SQL_GENERATION_FAILED,
@@ -25,7 +24,7 @@ _UPDATE = "update account set balance = ?"
 
 
 def _balance(value: object, declared: NeutralType | None = None) -> LoweredStatement:
-    bind_type = DecimalType(8, 2) if declared is None else declared
+    bind_type = Numeric(8, 2) if declared is None else declared
     return LoweredStatement(_UPDATE, (value,), (_TypedBindSpan(0, 1, bind_type, "MANAGED"),))
 
 

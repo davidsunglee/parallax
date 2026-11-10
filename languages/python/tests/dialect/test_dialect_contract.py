@@ -35,9 +35,9 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     FrozenMap,
     NeutralType,
+    Numeric,
     StructuredDocument,
 )
 from parallax.core.dialect import (
@@ -116,7 +116,7 @@ def test_column_type_mapping(dialect: Dialect) -> None:
     assert dialect.column_type(TIME, None) == "time"
     assert dialect.column_type(STRING, 64) == "varchar(64)"
     assert dialect.column_type(STRING, None) == "text"
-    assert dialect.column_type(Decimal(18, 2), None) == "numeric(18, 2)"
+    assert dialect.column_type(Numeric(18, 2), None) == "numeric(18, 2)"
 
 
 @pytest.mark.parametrize(
@@ -127,7 +127,7 @@ def test_column_type_mapping(dialect: Dialect) -> None:
         (INT64, None, "bigint"),
         (FLOAT32, None, "real"),
         (FLOAT64, None, "double precision"),
-        (Decimal(18, 2), None, "decimal(18, 2)"),
+        (Numeric(18, 2), None, "decimal(18, 2)"),
         (STRING, 64, "varchar(64)"),
         (STRING, None, "text"),
         (BYTES, None, "bytea"),
@@ -211,7 +211,7 @@ def test_nested_extraction_and_cast(dialect: Dialect) -> None:
     assert dialect.nested_cast("EXT", STRING) == "EXT"  # text compares directly
     assert dialect.nested_cast("EXT", INT64) == "cast(EXT as bigint)"
     assert dialect.nested_cast("EXT", FLOAT64) == "cast(EXT as double precision)"
-    assert dialect.nested_cast("EXT", Decimal(18, 2)) == "cast(EXT as decimal(18, 2))"
+    assert dialect.nested_cast("EXT", Numeric(18, 2)) == "cast(EXT as decimal(18, 2))"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

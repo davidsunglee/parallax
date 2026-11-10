@@ -11,9 +11,7 @@ against PostgreSQL in depth. Its example uses these imports:
 ```python
 import logging
 
-from parallax.core import DomainModel
-from parallax.core.db_port import CredentialSource
-from parallax.core.execution_lifecycle import LoggingLifecycleProvider
+from parallax.core import CredentialSource, DomainModel, LoggingLifecycleProvider
 from parallax.postgres import (
     OnDemandOptions,
     PoolOptions,

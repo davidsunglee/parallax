@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Decimal
+from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Numeric
 from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import (
     Document,
@@ -112,7 +112,7 @@ def test_a_shared_document_is_typed_by_the_owner_its_row_tags() -> None:
         document = statement_bind_positions(model, sql, binds)[2]
         assert isinstance(document, Document)
         details.append(document.members["detail"])
-    assert details == [STRING, Decimal(18, 2)]
+    assert details == [STRING, Numeric(18, 2)]
 
 
 _CASH_DETAIL = "cast(jsonb_extract_path_text(p.payload, ?) as numeric) = ?"
@@ -125,7 +125,7 @@ _CASH_DETAIL = "cast(jsonb_extract_path_text(p.payload, ?) as numeric) = ?"
             f"p.kind = ? and {_CASH_DETAIL} and exists "
             "(select 1 from payment_document q where q.kind = ?)",
             ["cash", "detail", 25, "card"],
-            {2: Decimal(18, 2)},
+            {2: Numeric(18, 2)},
             id="its-own-scope-tags-the-owner",
         ),
         pytest.param(
@@ -208,7 +208,7 @@ def test_a_shared_document_column_array_types_each_row_by_its_own_tag() -> None:
     assert isinstance(documents, EachElement)
     assert [cast("Document", document).members["detail"] for document in documents.elements] == [
         STRING,
-        Decimal(18, 2),
+        Numeric(18, 2),
         STRING,
     ]
 

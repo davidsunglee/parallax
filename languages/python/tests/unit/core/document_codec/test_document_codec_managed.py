@@ -29,8 +29,8 @@ from parallax.core.base import (
     INT32,
     JSON,
     STRING,
-    Decimal,
     NeutralType,
+    Numeric,
     retain_document_value,
 )
 from parallax.core.document_codec import (
@@ -58,13 +58,13 @@ _ORIGIN = MemberShape(
 _ENTRY = MemberShape(
     members=(
         ScalarDefinition("kind", STRING, True),
-        ScalarDefinition("price", Decimal(12, 2), True),
+        ScalarDefinition("price", Numeric(12, 2), True),
     )
 )
 _SHAPE = MemberShape(
     members=(
         ScalarDefinition("flag", BOOLEAN, True),
-        ScalarDefinition("amount", Decimal(12, 2), True),
+        ScalarDefinition("amount", Numeric(12, 2), True),
         ScalarDefinition("day", DATE, True),
         ScalarDefinition("payload", BYTES, True),
         OccurrenceDefinition("origin", Multiplicity.ONE, True, _ORIGIN),

@@ -21,8 +21,16 @@ from parallax.core._execution._write_lowering import (
     LoweringCursor,
     stream_physical,
 )
-from parallax.core.base import INFINITY, INT32, INT64, JSON, STRING, TIMESTAMP, InternalError
-from parallax.core.base import Decimal as DecimalType
+from parallax.core.base import (
+    INFINITY,
+    INT32,
+    INT64,
+    JSON,
+    STRING,
+    TIMESTAMP,
+    InternalError,
+    Numeric,
+)
 from parallax.core.db_port import JSON_NULL, ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -115,7 +123,7 @@ def test_distinct_values_of_unversioned_updates_bind_one_array_per_source_column
     )
     assert arrays(statement) == [
         (INT64, [1, 2, 3]),
-        (DecimalType(18, 2), [Decimal("111.00"), Decimal("222.00"), None]),
+        (Numeric(18, 2), [Decimal("111.00"), Decimal("222.00"), None]),
     ]
 
 
@@ -134,7 +142,7 @@ def test_versioned_updates_bind_each_gate_and_planned_advance_per_row() -> None:
     assert arrays(statement) == [
         (INT64, [1, 2]),
         (INT32, [3, 7]),
-        (DecimalType(18, 2), [Decimal("50.00"), Decimal("60.00")]),
+        (Numeric(18, 2), [Decimal("50.00"), Decimal("60.00")]),
         (INT32, [4, 8]),
     ]
 
@@ -741,7 +749,7 @@ def test_revisions_assign_payload_and_valid_start_per_row() -> None:
         "t.out_z = ? returning v.ord"
     )
     assert arrays(statement)[2:4] == [
-        (DecimalType(18, 2), [Decimal("1.00"), Decimal("2.00")]),
+        (Numeric(18, 2), [Decimal("1.00"), Decimal("2.00")]),
         (TIMESTAMP, [instant(3), instant(4)]),
     ]
 

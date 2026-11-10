@@ -222,7 +222,7 @@ _NON_IDENTIFIERS = (
     base.BOOLEAN,
     base.FLOAT32,
     base.FLOAT64,
-    base.Decimal(18, 2),
+    base.Numeric(18, 2),
     base.BYTES,
     base.DATE,
     base.TIME,
@@ -311,13 +311,13 @@ def test_a_shape_key_compares_by_reference_not_structure() -> None:
 
 
 def test_a_decimal_type_requires_serializable_bounds() -> None:
-    assert base.Decimal(18, 2) == base.Decimal(precision=18, scale=2)
+    assert base.Numeric(18, 2) == base.Numeric(precision=18, scale=2)
     with pytest.raises(ValueError, match="precision"):
-        base.Decimal(0, 9)
+        base.Numeric(0, 9)
     with pytest.raises(ValueError, match="scale"):
-        base.Decimal(2, 5)
+        base.Numeric(2, 5)
     with pytest.raises(ValueError, match="scale"):
-        base.Decimal(2, -1)
+        base.Numeric(2, -1)
 
 
 @pytest.mark.parametrize(
@@ -345,20 +345,20 @@ def test_a_decimal_type_requires_serializable_bounds() -> None:
         (float("-inf"), base.FLOAT64, False),
         (2, base.FLOAT64, False),
         ("x", base.FLOAT64, False),
-        (decimal.Decimal("1.5"), base.Decimal(18, 2), True),
-        (decimal.Decimal("1.500"), base.Decimal(18, 2), True),
-        (decimal.Decimal("-1.5"), base.Decimal(18, 2), True),
-        (decimal.Decimal("0.000"), base.Decimal(18, 2), True),
-        (decimal.Decimal("1.234"), base.Decimal(18, 2), False),
-        (decimal.Decimal("1234567890123456.78"), base.Decimal(18, 2), True),
-        (decimal.Decimal("12345678901234567.89"), base.Decimal(18, 2), False),
-        (decimal.Decimal("100"), base.Decimal(3, 0), True),
-        (decimal.Decimal("1E+2"), base.Decimal(2, 0), False),
-        (decimal.Decimal("NaN"), base.Decimal(18, 2), False),
-        (decimal.Decimal("Infinity"), base.Decimal(18, 2), False),
-        (1.5, base.Decimal(18, 2), False),
-        (2, base.Decimal(18, 2), False),
-        (object(), base.Decimal(18, 2), False),
+        (decimal.Decimal("1.5"), base.Numeric(18, 2), True),
+        (decimal.Decimal("1.500"), base.Numeric(18, 2), True),
+        (decimal.Decimal("-1.5"), base.Numeric(18, 2), True),
+        (decimal.Decimal("0.000"), base.Numeric(18, 2), True),
+        (decimal.Decimal("1.234"), base.Numeric(18, 2), False),
+        (decimal.Decimal("1234567890123456.78"), base.Numeric(18, 2), True),
+        (decimal.Decimal("12345678901234567.89"), base.Numeric(18, 2), False),
+        (decimal.Decimal("100"), base.Numeric(3, 0), True),
+        (decimal.Decimal("1E+2"), base.Numeric(2, 0), False),
+        (decimal.Decimal("NaN"), base.Numeric(18, 2), False),
+        (decimal.Decimal("Infinity"), base.Numeric(18, 2), False),
+        (1.5, base.Numeric(18, 2), False),
+        (2, base.Numeric(18, 2), False),
+        (object(), base.Numeric(18, 2), False),
         ("text", base.STRING, True),
         ("\ud800", base.STRING, False),
         (1, base.STRING, False),
@@ -510,8 +510,8 @@ def _coerced_member(value: object, declared: base.NeutralType) -> bool:
 @pytest.mark.parametrize(
     ("value", "declared", "expected"),
     [
-        (3, base.Decimal(18, 2), True),
-        (1.5, base.Decimal(18, 2), False),
+        (3, base.Numeric(18, 2), True),
+        (1.5, base.Numeric(18, 2), False),
         (3, base.FLOAT64, True),
         (2**53 + 1, base.FLOAT64, False),
         (3, base.FLOAT32, True),
@@ -537,7 +537,7 @@ def test_coerce_neutral_input_applies_only_the_narrow_input_policy_widenings(
 
 def test_coerce_neutral_input_leaves_an_already_native_value_unchanged() -> None:
     native = decimal.Decimal("1.50")
-    assert base.coerce_neutral_input(native, base.Decimal(18, 2)) is native
+    assert base.coerce_neutral_input(native, base.Numeric(18, 2)) is native
     stamp = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     assert base.coerce_neutral_input(stamp, base.TIMESTAMP) is stamp
 
@@ -564,7 +564,7 @@ def test_managed_value_exclusions_survive_developer_coercion_unchanged() -> None
         pass
 
     values = (
-        (ExcludedInteger(0), base.Decimal(1, 0)),
+        (ExcludedInteger(0), base.Numeric(1, 0)),
         (ExcludedInteger(0), base.FLOAT64),
         (ExcludedFloat(0.0), base.FLOAT64),
         (ExcludedText("123e4567-e89b-12d3-a456-426614174000"), base.UUID),

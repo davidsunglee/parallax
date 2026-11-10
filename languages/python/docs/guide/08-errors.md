@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping
 from pydantic import ValidationError
 
 from parallax.core import (
+    Category,
     ConflictError,
     ConnectionAcquisitionError,
     CredentialResolutionError,
@@ -36,10 +37,13 @@ from parallax.core import (
     EditError,
     Entity,
     InternalError,
+    InvalidData,
     InvalidDataError,
+    MetamodelIssue,
     MetamodelValidationError,
     NoResultFound,
     ParallaxError,
+    PhysicalIndexName,
     PublicationConflictError,
     TooManyResultsFound,
     TransactionRollbackError,
@@ -48,9 +52,6 @@ from parallax.core import (
     UsageError,
     WritePreconditionError,
 )
-from parallax.core.db_error import Category, PhysicalIndexName
-from parallax.core.metamodel import MetamodelIssue
-from parallax.core.read_delivery import InvalidData
 from parallax.descriptor import DescriptorError
 from parallax.evolution import SchemaDelta, UnsupportedSchemaEvolutionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, is_view_loaded

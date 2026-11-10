@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Protocol
 
 from parallax.core import read_planning
-from parallax.core.execution_lifecycle import ResultRepresentation
+from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.temporal_read import TemporalShape

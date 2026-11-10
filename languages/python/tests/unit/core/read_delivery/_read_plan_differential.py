@@ -14,11 +14,10 @@ from typing import Any, Final, cast
 from parallax.conformance import _case_ingress, case_format, engine
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import Date as DateType
-from parallax.core.base import Decimal as DecimalType
 from parallax.core.base import Float32 as Float32Type
 from parallax.core.base import Int32 as Int32Type
 from parallax.core.base import Int64 as Int64Type
-from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
+from parallax.core.base import ManagedValue, NeutralType, Numeric, matches_neutral_type
 from parallax.core.base import String as StringType
 from parallax.core.base import Timestamp as TimestampType
 from parallax.core.base import Uuid as UuidType
@@ -129,7 +128,7 @@ def _example_key(neutral_type: NeutralType) -> ManagedValue:
             return "k"
         case UuidType():
             return uuid.UUID(int=7)
-        case DecimalType(scale=scale):
+        case Numeric(scale=scale):
             return Decimal(7).scaleb(-scale)
         case DateType():
             return dt.date(2024, 1, 7)

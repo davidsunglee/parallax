@@ -72,8 +72,8 @@ def _rejects_everything(value: object) -> TypeGuard[str]:
 _GEO = ValueObjectShapeDeclaration(
     ValueObjectShapeKey(),
     attributes=(
-        ValueObjectAttributeDeclaration("lat", base.Decimal(9, 6)),
-        ValueObjectAttributeDeclaration("lon", base.Decimal(9, 6), nullable=True),
+        ValueObjectAttributeDeclaration("lat", base.Numeric(9, 6)),
+        ValueObjectAttributeDeclaration("lon", base.Numeric(9, 6), nullable=True),
     ),
 )
 _ADDRESS = ValueObjectShapeDeclaration(
@@ -208,7 +208,7 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     leaf = nested.attribute("lon")
     assert leaf is not None
     assert leaf.identity == ValueObjectAttributeIdentity(nested.identity, "lon")
-    assert leaf.type == base.Decimal(9, 6)
+    assert leaf.type == base.Numeric(9, 6)
     assert leaf.nullable is True
     assert nested.attribute("absent") is None
 

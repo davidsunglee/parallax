@@ -16,7 +16,6 @@ from parallax.core.concurrency import ConcurrencyPreference
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_query_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     DatabaseCallScope,
@@ -27,6 +26,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_read_root,
     open_stream_root,
 )
+from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode, QueryInput
 from parallax.core.object_query._resolved import ResolvedObjectQuery

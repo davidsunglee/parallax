@@ -1959,7 +1959,7 @@ def test_configuration_opens_the_runtime_it_describes(monkeypatch: pytest.Monkey
     # What `open` delegates to, and with what, is only observable by calling it,
     # so this is the one place the suite spells the acquisition the access guard
     # exists to refuse — over a stub, reaching no server.
-    from parallax.postgres import adapter as adapter_module
+    from parallax.postgres import _adapter as adapter_module
 
     opened: list[tuple[object, ...]] = []
 

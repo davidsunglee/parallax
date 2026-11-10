@@ -31,8 +31,8 @@ from parallax.core.base import (
     INT64,
     STRING,
     TIMESTAMP,
-    Decimal,
     NeutralType,
+    Numeric,
 )
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -411,7 +411,7 @@ def _account() -> CompiledEntity:
         declared_attributes=(
             _attribute(ACCOUNT, "id", INT64, key=True, generation=MAX),
             _attribute(ACCOUNT, "ledgerLabel", STRING, column="ledger_label", max_length=40),
-            _attribute(ACCOUNT, "balance", Decimal(18, 2)),
+            _attribute(ACCOUNT, "balance", Numeric(18, 2)),
             _attribute(ACCOUNT, "openedOn", DATE, column="opened_on", nullable=True),
         ),
         declared_relationships=(

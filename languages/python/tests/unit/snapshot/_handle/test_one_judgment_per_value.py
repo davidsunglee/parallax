@@ -27,9 +27,9 @@ from parallax.core.base import (
     INFINITY,
     INT64,
     STRING,
-    Decimal,
     Int32,
     NeutralType,
+    Numeric,
     coerce_neutral_input,
     matches_neutral_type,
     retain_document_value,
@@ -71,7 +71,7 @@ class Drawer(Entity, table="drawer", namespace=_NS, layout=Document):
 
 
 _MODEL = DomainModel(Shelf, Drawer)
-_DECLARED: Final[tuple[NeutralType, ...]] = (INT64, STRING, Decimal(precision=8, scale=2))
+_DECLARED: Final[tuple[NeutralType, ...]] = (INT64, STRING, Numeric(precision=8, scale=2))
 
 # id, price, name, both `sizes` elements, and both `spot` members.
 _AUTHORED_SCALARS: Final = 7

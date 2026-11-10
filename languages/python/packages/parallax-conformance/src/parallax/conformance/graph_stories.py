@@ -55,7 +55,7 @@ from parallax.conformance.vo_models import (
     Location,
     Supplier,
 )
-from parallax.core.object_query import LATEST, TX_TIME
+from parallax.core import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
 from parallax.snapshot import ScopedDatabase, Snapshot, TxnContext
 

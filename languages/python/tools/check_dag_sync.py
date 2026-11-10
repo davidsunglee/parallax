@@ -401,6 +401,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         {"parallax.core.entity", "parallax.core.metamodel", "parallax.core.relationship"}
     ),
     "parallax.core.unit_work": frozenset({"parallax.core._execution._unit_work"}),
+    "parallax.evolution.operations": frozenset({"parallax.evolution.model_evolution"}),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: resolving a target and
     # validating a query names no SQL generation, no dialect, no Database Port,

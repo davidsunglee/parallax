@@ -20,7 +20,7 @@ from parallax.conformance.evolution_wire import (
     schema_cell,
     unsupported_cell,
 )
-from parallax.core.base import STRING, Decimal
+from parallax.core.base import STRING, Numeric
 from parallax.core.dialect import PhysicalIndexName
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -139,7 +139,7 @@ _ADDRESS = ValueObjectIdentity(_ORDER, ("address",))
 _GEO = ValueObjectIdentity(_ORDER, ("address", "geo"))
 _CITY = ValueObjectAttributeIdentity(_ADDRESS, "city")
 _INDEX = IndexIdentity(_ORDER, "orderSku")
-DECIMAL_18_2 = Decimal(18, 2)
+DECIMAL_18_2 = Numeric(18, 2)
 
 
 def _spelled(*operations: EvolutionOperation) -> list[dict[str, Any]]:

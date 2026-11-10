@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import DATE, INT64, STRING, TIMESTAMP, Decimal
+from parallax.core.base import DATE, INT64, STRING, TIMESTAMP, Numeric
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -656,7 +656,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
     assert label.type == STRING
     assert label.max_length == 40
     assert label.read_only
-    assert balance.type == Decimal(18, 2)
+    assert balance.type == Numeric(18, 2)
     assert balance.optimistic_locking
     assert balance.primary_key is NOT_PRIMARY_KEY
     assert opened.type == DATE
@@ -963,8 +963,8 @@ def test_an_incoherent_inheritance_record_is_rejected(
         ("int64", INT64),
         ("string", STRING),
         ("timestamp", TIMESTAMP),
-        ("decimal(18,2)", Decimal(18, 2)),
-        ("decimal(1,0)", Decimal(1, 0)),
+        ("decimal(18,2)", Numeric(18, 2)),
+        ("decimal(1,0)", Numeric(1, 0)),
     ],
 )
 def test_a_valid_spelling_denotes_its_structured_type(spelling: str, expected: object) -> None:

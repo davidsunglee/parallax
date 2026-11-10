@@ -132,8 +132,11 @@ from parallax.core import (
     ConflictError,
     DomainModel,
     Edge,
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
     NoResultFound,
     Pin,
+    RootExecution,
     TemporalBound,
     TooManyResultsFound,
     UsageError,
@@ -151,14 +154,11 @@ from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptRolledBack,
     ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
     ReadFinished,
-    RootExecution,
     TransactionAttemptFinished,
-    TransactionAttemptOutcome,
     TransactionAttemptStarted,
 )
+from parallax.core.execution_lifecycle._events import TransactionAttemptOutcome
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,

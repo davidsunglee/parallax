@@ -16,13 +16,13 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import read_planning
-from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
     StreamActivity,
     StreamBatchActivity,
 )
+from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.object_query import ObjectQueryNode, deserialize, validate_object_query
 from parallax.core.object_query._resolved import ResolvedObjectQuery

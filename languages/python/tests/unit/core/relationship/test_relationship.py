@@ -12,7 +12,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, INT64, STRING, UUID, Decimal, NeutralType
+from parallax.core.base import INT32, INT64, STRING, UUID, NeutralType, Numeric
 from parallax.core.metamodel import (
     NOT_PRIMARY_KEY,
     AbstractRoot,
@@ -690,7 +690,7 @@ def test_mismatch_names_the_defining_join_once_even_with_a_reverse(
 
 @pytest.mark.parametrize(
     ("left", "right", "mismatch"),
-    [(Decimal(18, 2), Decimal(18, 2), False), (Decimal(18, 2), Decimal(18, 4), True)],
+    [(Numeric(18, 2), Numeric(18, 2), False), (Numeric(18, 2), Numeric(18, 4), True)],
 )
 def test_declared_decimal_parameters_compare_as_values_on_ordinary_endpoints(
     left: NeutralType, right: NeutralType, mismatch: bool

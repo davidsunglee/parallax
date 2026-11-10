@@ -55,9 +55,9 @@ from parallax.core.base import (
     FrozenMap,
     InternalError,
     NeutralType,
+    Numeric,
     StructuredDocument,
 )
-from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -486,7 +486,7 @@ def _initialized() -> AdaptersMap:
         pytest.param(FLOAT32, [1.5, None, -0.25], 1021, id="float32"),
         pytest.param(FLOAT64, [0.1, None, 1e300], 1022, id="float64"),
         pytest.param(
-            DecimalType(10, 2),
+            Numeric(10, 2),
             [decimal.Decimal("1.50"), None, decimal.Decimal("-0.01")],
             1231,
             id="decimal",

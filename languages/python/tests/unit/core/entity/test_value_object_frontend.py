@@ -17,8 +17,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, UsageError, ValueObject, attr
-from parallax.core.base import Decimal as NeutralDecimal
-from parallax.core.base import Float64, NeutralType, String
+from parallax.core.base import Float64, NeutralType, Numeric, String
 from parallax.core.entity import Predicate
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._expressions import (
@@ -338,7 +337,7 @@ def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> N
 
     (leaf,) = shape_of(Money).shape.attributes
     assert leaf.name == "due"
-    assert leaf.type == NeutralDecimal(12, 4)
+    assert leaf.type == Numeric(12, 4)
 
 
 @pytest.mark.parametrize(

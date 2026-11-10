@@ -144,7 +144,7 @@ CONNECT_SEAMS: frozenset[str] = frozenset(
         "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
         "parallax.conformance._postgres_control.open_session",
         "parallax.postgres.PostgresAdapter.open",
-        "parallax.postgres.adapter.PostgresAdapter.open",
+        "parallax.postgres._adapter.PostgresAdapter.open",
         "psycopg.connect",
     }
 )
@@ -184,7 +184,7 @@ SEAMS: frozenset[str] = PROVISION_SEAMS | CONNECT_SEAMS | AWS_SEAMS
 # it to be a declared seam under its own constructor.
 INSTANCE_SEAMS: Mapping[str, frozenset[str]] = {
     "parallax.postgres.PostgresAdapter": frozenset({"open"}),
-    "parallax.postgres.adapter.PostgresAdapter": frozenset({"open"}),
+    "parallax.postgres._adapter.PostgresAdapter": frozenset({"open"}),
     "tests._support.aws_run.AwsPorts": frozenset({"session"}),
 }
 

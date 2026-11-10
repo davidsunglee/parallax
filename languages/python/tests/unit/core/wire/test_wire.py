@@ -30,9 +30,9 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    Decimal,
     ManagedValue,
     NeutralType,
+    Numeric,
     UsageError,
     canonical_managed_member,
     coerce_neutral_input,
@@ -89,7 +89,7 @@ _CANONICAL: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] = (
     (INT64, 2**40, 2**40),
     (FLOAT32, 1048576.25, 1048576.2),
     (FLOAT64, 562949953421312.25, 562949953421312.2),
-    (Decimal(12, 2), decimal.Decimal("1.50"), "1.50"),
+    (Numeric(12, 2), decimal.Decimal("1.50"), "1.50"),
     (STRING, "alpha", "alpha"),
     (BYTES, b"\x0a\x1b", "0a1b"),
     (DATE, dt.date(2026, 1, 15), "2026-01-15"),
@@ -211,10 +211,10 @@ def test_admitted_alternatives_normalize_to_canonical_output(
         (FLOAT32, "1e39", "neutral-literal-out-of-space"),
         (FLOAT64, '"1.0"', "neutral-literal-type-mismatch"),
         (FLOAT64, "1e309", "neutral-literal-out-of-space"),
-        (Decimal(4, 2), "10.25", "neutral-literal-type-mismatch"),
-        (Decimal(4, 2), "true", "neutral-literal-type-mismatch"),
-        (Decimal(4, 2), '"10.2"', "neutral-literal-noncanonical"),
-        (Decimal(4, 2), '"123.45"', "neutral-literal-out-of-space"),
+        (Numeric(4, 2), "10.25", "neutral-literal-type-mismatch"),
+        (Numeric(4, 2), "true", "neutral-literal-type-mismatch"),
+        (Numeric(4, 2), '"10.2"', "neutral-literal-noncanonical"),
+        (Numeric(4, 2), '"123.45"', "neutral-literal-out-of-space"),
         (STRING, "42", "neutral-literal-type-mismatch"),
         (STRING, '"\\ud800"', "neutral-literal-out-of-space"),
         (BYTES, "42", "neutral-literal-type-mismatch"),
@@ -257,19 +257,19 @@ _RULE_DECODED: list[tuple[NeutralType, str, object]] = [
     (INT32, "2147483647", 2**31 - 1),
     (INT32, "-2147483648", -(2**31)),
     (INT64, "-9223372036854775808", -(2**63)),
-    (Decimal(4, 2), '"10.25"', decimal.Decimal("10.25")),
-    (Decimal(4, 2), '"-0.50"', decimal.Decimal("-0.50")),
-    (Decimal(1, 0), '"9"', decimal.Decimal("9")),
+    (Numeric(4, 2), '"10.25"', decimal.Decimal("10.25")),
+    (Numeric(4, 2), '"-0.50"', decimal.Decimal("-0.50")),
+    (Numeric(1, 0), '"9"', decimal.Decimal("9")),
     (STRING, '"caf\u00e9"', "café"),
     (JSON, '{"name": "caf\u00e9"}', {"name": "café"}),
 ]
 _RULE_REFUSED: list[tuple[NeutralType, str, wire.NeutralLiteralCode]] = [
     (INT32, "-2147483649", "neutral-literal-out-of-space"),
     (INT64, "-9223372036854775809", "neutral-literal-out-of-space"),
-    (Decimal(4, 2), '"100.00"', "neutral-literal-out-of-space"),
-    (Decimal(4, 2), '"1.005"', "neutral-literal-out-of-space"),
-    (Decimal(4, 2), '"1.5"', "neutral-literal-noncanonical"),
-    (Decimal(1, 0), '"10"', "neutral-literal-out-of-space"),
+    (Numeric(4, 2), '"100.00"', "neutral-literal-out-of-space"),
+    (Numeric(4, 2), '"1.005"', "neutral-literal-out-of-space"),
+    (Numeric(4, 2), '"1.5"', "neutral-literal-noncanonical"),
+    (Numeric(1, 0), '"10"', "neutral-literal-out-of-space"),
     (STRING, '"\udfff"', "neutral-literal-out-of-space"),
     (JSON, '["\ud800"]', "neutral-literal-out-of-space"),
 ]
@@ -470,14 +470,14 @@ def test_out_of_space_authored_numbers_are_not_scalar_or_json_members() -> None:
 
 
 def test_decimal_zero_encodes_at_declared_scale_without_rescaling_its_exponent() -> None:
-    neutral_type = Decimal(4, 2)
+    neutral_type = Numeric(4, 2)
     assert wire.encode_wire(neutral_type, decimal.Decimal("0.000")) == "0.00"
     assert wire.encode_wire(neutral_type, decimal.Decimal("0E+1000000000")) == "0.00"
     assert wire.encode_wire(neutral_type, decimal.Decimal("-0E+1000000000")) == "0.00"
 
 
 def test_decimal_encoding_normalizes_trailing_coefficient_zeros_before_scaling() -> None:
-    neutral_type = Decimal(4, 2)
+    neutral_type = Numeric(4, 2)
     for managed, canonical in (
         (decimal.Decimal("1.500"), "1.50"),
         (decimal.Decimal("-1.500"), "-1.50"),
@@ -492,7 +492,7 @@ def test_decimal_encoding_does_not_cross_the_host_integer_string_limit() -> None
         pytest.skip("the interpreter has no integer string-conversion limit")
     digits = (1,) * (limit + 1)
     managed = decimal.Decimal((0, digits, 0))
-    neutral_type = Decimal(len(digits), 0)
+    neutral_type = Numeric(len(digits), 0)
 
     encoded = wire.encode_wire(neutral_type, managed)
 
@@ -623,7 +623,7 @@ _HOOKED_CARRIERS: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] =
     (INT64, _HookedInteger(1), 1),
     (STRING, _HookedText("value"), "value"),
     (FLOAT64, _HookedFloat(2.0), 2.0),
-    (Decimal(1, 0), _HookedDecimal("1"), "1"),
+    (Numeric(1, 0), _HookedDecimal("1"), "1"),
     (BYTES, _HookedOctets(b"a"), "61"),
     (DATE, _HookedDate(2026, 1, 1), "2026-01-01"),
     (TIME, _HookedTime(1), "01:00:00"),
@@ -663,11 +663,11 @@ _CANONICAL_MEMBER_CARRIERS: tuple[tuple[NeutralType, object], ...] = (
     (STRING, _Label.X),
     (FLOAT64, -0.0),
     (FLOAT32, -0.0),
-    (Decimal(10, 2), decimal.Decimal(1)),
-    (Decimal(10, 2), decimal.Decimal("1.500")),
-    (Decimal(10, 2), decimal.Decimal("-0")),
-    (Decimal(10, 0), decimal.Decimal("1E+2")),
-    (Decimal(10, 0), decimal.Decimal("0.000")),
+    (Numeric(10, 2), decimal.Decimal(1)),
+    (Numeric(10, 2), decimal.Decimal("1.500")),
+    (Numeric(10, 2), decimal.Decimal("-0")),
+    (Numeric(10, 0), decimal.Decimal("1E+2")),
+    (Numeric(10, 0), decimal.Decimal("0.000")),
     (TIMESTAMP, dt.datetime(2026, 1, 1, 3, tzinfo=dt.timezone(dt.timedelta(hours=3)))),
     (JSON, _Level.ONE),
     (JSON, _Label.X),
@@ -720,7 +720,7 @@ def test_encoding_rejects_exclusions_before_extracting_builtin_carriers() -> Non
         pass
 
     values = (
-        (Decimal(2, 1), ExcludedDecimal("1.5")),
+        (Numeric(2, 1), ExcludedDecimal("1.5")),
         (STRING, ExcludedText("value")),
         (BYTES, ExcludedOctets(b"a")),
         (DATE, ExcludedDate(2026, 1, 1)),
@@ -989,14 +989,14 @@ _NONMEMBERS: tuple[tuple[NeutralType, object, str], ...] = (
     (FLOAT32, 1, "1 is not a member of the declared value space <Float32>"),
     (FLOAT64, math.inf, "inf is not a member of the declared value space <Float64>"),
     (
-        Decimal(4, 2),
+        Numeric(4, 2),
         decimal.Decimal("1.234"),
-        "<Decimal> is not a member of the declared value space <Decimal>",
+        "<Decimal> is not a member of the declared value space <Numeric>",
     ),
     (
-        Decimal(4, 2),
+        Numeric(4, 2),
         decimal.Decimal("NaN"),
-        "<Decimal> is not a member of the declared value space <Decimal>",
+        "<Decimal> is not a member of the declared value space <Numeric>",
     ),
     (STRING, "\ud800", "'\\ud800' is not a member of the declared value space <String>"),
     (BYTES, "61", "'61' is not a member of the declared value space <Bytes>"),
@@ -1033,7 +1033,7 @@ def test_encoding_refuses_nonmembers_without_developer_coercion() -> None:
     with raises_code(UsageError, "wire-encoding-failed"):
         wire.encode_wire(FLOAT32, 1)
     with raises_code(UsageError, "wire-encoding-failed"):
-        wire.encode_wire(Decimal(4, 2), 1)
+        wire.encode_wire(Numeric(4, 2), 1)
 
 
 @pytest.mark.parametrize("neutral_type", [INT64, FLOAT32, FLOAT64])
@@ -1075,7 +1075,7 @@ _KIND_WITNESSES: tuple[tuple[NeutralType, object], ...] = (
     (INT64, 2**40),
     (FLOAT32, 1.5),
     (FLOAT64, 2.5),
-    (Decimal(precision=5, scale=2), decimal.Decimal("1.50")),
+    (Numeric(precision=5, scale=2), decimal.Decimal("1.50")),
     (STRING, "a"),
     (BYTES, b"\x01"),
     (DATE, dt.date(2024, 2, 29)),
@@ -1104,7 +1104,7 @@ _CONVERTER_TYPES: tuple[NeutralType, ...] = (
     INT64,
     FLOAT32,
     FLOAT64,
-    Decimal(6, 2),
+    Numeric(6, 2),
     STRING,
     BYTES,
     DATE,

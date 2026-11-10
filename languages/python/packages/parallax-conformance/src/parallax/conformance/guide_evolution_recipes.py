@@ -3,10 +3,16 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from parallax.conformance.guide_models import Payment
-from parallax.core import Attr, ConcreteSubtype, DomainModel, attr
-from parallax.core.dialect import POSTGRES
-from parallax.core.execution import ServingModel, prepare_model
-from parallax.core.read_delivery import InvalidData
+from parallax.core import (
+    POSTGRES,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    InvalidData,
+    ServingModel,
+    attr,
+    prepare_model,
+)
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import CoordinatedEvolution, Evolution, evolve, schema_delta
 from parallax.postgres import PostgresAdapter, PostgresRole

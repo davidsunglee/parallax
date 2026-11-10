@@ -23,6 +23,7 @@ from parallax.core import (
     TX_TIME,
     VALID_TIME,
     Attr,
+    InvalidData,
     InvalidDataError,
     NoResultFound,
     Pin,
@@ -34,7 +35,6 @@ from parallax.core import (
     UsageError,
     attr,
 )
-from parallax.core.read_delivery import InvalidData
 from parallax.snapshot import (
     ReadOnlyTxnContext,
     ScopedDatabase,

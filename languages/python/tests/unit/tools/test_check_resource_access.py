@@ -99,9 +99,9 @@ def test_the_adapter_open_is_a_seam_on_an_instance_as_much_as_on_the_class() -> 
     # Importing the module that defines it rather than the package that exports
     # it is not a way past the resolution either.
     assert _seams(
-        "from parallax.postgres import adapter as adapter_module\n"
+        "from parallax.postgres import _adapter as adapter_module\n"
         "adapter_module.PostgresAdapter('').open()\n"
-    ) == ["parallax.postgres.adapter.PostgresAdapter.open"]
+    ) == ["parallax.postgres._adapter.PostgresAdapter.open"]
 
 
 def test_an_adapter_instance_is_followed_the_way_a_seam_itself_is() -> None:

@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from parallax.conformance.guide_models import Customer, Order
-from parallax.core import UsageError
-from parallax.core.db_port import Password
-from parallax.core.execution import TRANSACTION_AUTHORITY_MISMATCH
+from parallax.core import TRANSACTION_AUTHORITY_MISMATCH, Password, UsageError
 from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 

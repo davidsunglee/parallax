@@ -390,10 +390,26 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
 # the calls a Flush executes; read delivery opens the Database Calls and
 # Stream Batches it executes; and Snapshot's Wire editable-data copy refuses
 # re-entry before it reads a node, its write verbs entering the attempt's doors,
-# which refuse it. Keyed by reaching module and private module, so another
-# importer is a new §7 decision.
+# which refuse it. The application seams — the Provider and Handler protocols,
+# the built-in Providers, the pool observer, the root value and the refusal
+# codes — are published by the `parallax.core` root rather than the vocabulary,
+# so the root and Snapshot's composition read them from their defining modules,
+# and the read representation a read or stream reports is an alias the
+# vocabulary does not publish. Keyed by reaching module and private module, so
+# another importer is a new §7 decision.
 ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
     {
+        *(
+            ("parallax.core", f"parallax.core.execution_lifecycle.{module}")
+            for module in (
+                "_activity",
+                "_errors",
+                "_events",
+                "_fanout",
+                "_logging",
+                "_pool_observation",
+            )
+        ),
         *(
             (f"parallax.core._execution.{module}", "parallax.core.execution_lifecycle._activity")
             for module in (
@@ -412,6 +428,17 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
             (f"parallax.core.read_delivery.{module}", "parallax.core.execution_lifecycle._activity")
             for module in ("_delivery", "_fetch", "_page_reader", "_stream")
         ),
+        *(
+            (f"parallax.core.{module}", "parallax.core.execution_lifecycle._events")
+            for module in (
+                "_execution._read_pipeline",
+                "_execution._transaction._attempt",
+                "read_delivery._publication",
+                "read_delivery._stream",
+            )
+        ),
+        ("parallax.snapshot._handle._database", "parallax.core.execution_lifecycle._activity"),
+        ("parallax.snapshot._handle._read", "parallax.core.execution_lifecycle._events"),
         ("parallax.snapshot._handle._wire_writes", "parallax.core.execution_lifecycle._activity"),
     }
 )

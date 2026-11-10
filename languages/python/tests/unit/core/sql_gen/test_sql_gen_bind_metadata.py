@@ -23,8 +23,8 @@ from parallax.core.base import (
     FrozenMap,
     InternalError,
     ManagedValue,
+    Numeric,
 )
-from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import CompiledEntity, Metamodel
@@ -197,7 +197,7 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
 
 
 def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() -> None:
-    decimal_type = DecimalType(8, 2)
+    decimal_type = Numeric(8, 2)
     statement = _builder()
     statement.bind_managed(Decimal("1.20"), decimal_type)
     statement.bind_managed(Decimal("2.30"), decimal_type)
@@ -270,7 +270,7 @@ def test_a_document_array_projects_sql_null_and_the_literal_json_null_alike_as_n
 
 def test_comparison_text_projection_retains_the_owned_text_without_codec_work() -> None:
     builder = _builder()
-    builder.bind_comparison_text("12.340", DecimalType(8, 2))
+    builder.bind_comparison_text("12.340", Numeric(8, 2))
     assert builder.finish("select ?").wire_binds() == ("12.340",)
 
 

@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
-from parallax.core import UsageError
+from parallax.core import (
+    TRANSACTION_ACCESS_MODE_MISMATCH,
+    DomainModel,
+    ReadOnlyTxnOptions,
+    UsageError,
+)
 from parallax.core.db_port import DatabaseAdapter
-from parallax.core.entity import DomainModel
-from parallax.core.execution import TRANSACTION_ACCESS_MODE_MISMATCH, ReadOnlyTxnOptions
 from parallax.snapshot import ReadOnlyTxnContext, connect
 
 __all__ = [

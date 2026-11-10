@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 import builtins
 import re
+from importlib import import_module
 
 import pytest
 
 from parallax.conformance import case_format, guide_models
 from parallax.conformance.usage_guide import snippet_sources
+from tests._support.distributions import DISTRIBUTION_ROOTS, PRODUCTION_PACKAGES
 
 _GUIDE = case_format.find_repo_root() / "languages" / "python" / "docs" / "guide"
 _MARKER = re.compile(r"<!-- example: ([a-z0-9][a-z0-9-]*) -->")
@@ -17,6 +19,16 @@ _EXAMPLE_BLOCK = re.compile(r"<!-- example: .*?<!-- /example -->", re.DOTALL)
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _SHOP_MODEL_NAMES: frozenset[str] = frozenset(guide_models.__all__) - {"SHOP_MODEL"}
 _NOTHING_ASSUMED: frozenset[str] = frozenset()
+_APPLICATION_MODULES: frozenset[str] = frozenset(
+    {DISTRIBUTION_ROOTS[package] for package in PRODUCTION_PACKAGES}
+    | {
+        "parallax.core.execution_lifecycle",
+        "parallax.core.introspection",
+        "parallax.evolution.operations",
+        "parallax.aws.postgres",
+    }
+)
+"""The distribution roots, the three vocabulary modules, and the one extra module."""
 
 
 def _bound_and_loaded(source: str) -> tuple[set[str], set[str]]:
@@ -78,3 +90,28 @@ def test_each_chapters_imports_bind_what_its_snippets_read_and_only_what_it_name
 
     assert loaded - bound - set(dir(builtins)) - assumed == set()
     assert imported - loaded - named == set()
+
+
+def test_every_guide_import_names_an_exported_name_of_an_application_module() -> None:
+    # The guide teaches the application surface, so each `parallax` name it
+    # imports comes from the one module an application imports it from.
+    misplaced: list[str] = []
+    for source_id, source in snippet_sources().items():
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                misplaced += [
+                    f"{source_id}: import {alias.name}"
+                    for alias in node.names
+                    if alias.name.split(".")[0] == "parallax"
+                ]
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("parallax."):
+                module = node.module or ""
+                exported: set[str] = (
+                    set(import_module(module).__all__) if module in _APPLICATION_MODULES else set()
+                )
+                misplaced += [
+                    f"{source_id}: from {module} import {alias.name}"
+                    for alias in node.names
+                    if alias.name not in exported
+                ]
+    assert misplaced == []

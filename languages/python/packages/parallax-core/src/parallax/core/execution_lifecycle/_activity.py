@@ -162,7 +162,7 @@ class ExecutionLifecycleProvider(Protocol):
 
         Called before execution state, clocks, or database work. An ordinary
         failure aborts the operation with a
-        :data:`~parallax.core.execution_lifecycle.LIFECYCLE_PROVIDER_FAILED`
+        :data:`~parallax.core.LIFECYCLE_PROVIDER_FAILED`
         refusal and is never reinterpreted as a decline.
         """
         ...

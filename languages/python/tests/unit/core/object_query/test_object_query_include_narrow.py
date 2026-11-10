@@ -39,8 +39,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import TIMESTAMP, UsageError
-from parallax.core.base import Decimal as NeutralDecimal
+from parallax.core.base import TIMESTAMP, Numeric, UsageError
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._expressions import authored_include_path
@@ -96,7 +95,7 @@ def _document_where(predicate: Any) -> object:
     return node.where
 
 
-_AMOUNT = NeutralDecimal(precision=18, scale=2)
+_AMOUNT = Numeric(precision=18, scale=2)
 _LOCAL_NS = "parallax.tests.include"
 _DOC_NS = "parallax.compatibility"
 

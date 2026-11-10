@@ -25,7 +25,7 @@ def test_every_scope_submodule_imports() -> None:
     assert "parallax.core.predicate" in imported
     assert "parallax.descriptor._ingest" in imported
     assert "parallax.snapshot._publication" in imported
-    assert "parallax.postgres.adapter" in imported
+    assert "parallax.postgres._adapter" in imported
     assert f"parallax.postgres._cloaders_{psycopg.pq.__impl__}" in imported
     assert "parallax.conformance.cli" in imported
 

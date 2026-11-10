@@ -5,13 +5,13 @@ from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.core import continuation, read_planning
 from parallax.core.base import UsageError
-from parallax.core.execution_lifecycle import ResultRepresentation
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     ActivityTarget,
     StreamActivity,
     StreamBatchActivity,
 )
+from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import QueryClauses
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery

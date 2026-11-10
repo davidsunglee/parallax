@@ -35,13 +35,15 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.read_delivery import InvalidDataError
 from parallax.descriptor import export_yaml
 from parallax.evolution import (
-    ConcreteSubtypeAdded,
-    ConcreteSubtypeRemoved,
     CoordinatedEvolution,
     CoordinationReason,
     CoordinationRequirement,
-    QueryResultMembershipChanged,
     UnilateralEvolution,
+)
+from parallax.evolution.operations import (
+    ConcreteSubtypeAdded,
+    ConcreteSubtypeRemoved,
+    QueryResultMembershipChanged,
 )
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, TxnContext

@@ -284,7 +284,7 @@ def test_a_typed_earlier_invalid_value_wins_over_a_later_missing_required_member
         with pytest.raises(
             UsageError,
             match=r"Parcel\.weight: value Decimal\('2\.505'\) does not match the declared "
-            r"type Decimal\(precision=6, scale=2\)$",
+            r"type Numeric\(precision=6, scale=2\)$",
         ):
             tx.insert(Parcel.model_construct(id=1, weight=Decimal("2.505"), count=3))
 

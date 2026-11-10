@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core import ExecutionLifecycleHandlerError, LoggingLifecycleProvider, RootExecution
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     CleanupIssue,
@@ -55,7 +56,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteRowsCompleted,
     DirectFailure,
     ExecutionEvent,
-    ExecutionLifecycleHandlerError,
     FlushCompleted,
     FlushFailed,
     FlushFinished,
@@ -63,8 +63,6 @@ from parallax.core.execution_lifecycle import (
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,
-    LifecycleLogDetail,
-    LoggingLifecycleProvider,
     OuterInvocation,
     OuterInvocationCommitted,
     OuterInvocationFailed,
@@ -74,7 +72,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -90,6 +87,7 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationStarted,
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
+from parallax.core.execution_lifecycle._logging import LifecycleLogDetail
 from parallax.core.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.db_port import (

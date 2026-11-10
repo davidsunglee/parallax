@@ -25,6 +25,7 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
+from parallax.core import RootExecution
 from parallax.core.base import UsageError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -54,7 +55,6 @@ from parallax.core.execution_lifecycle import (
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
-    DatabaseCallKind,
     DatabaseCallNotExecuted,
     DatabaseCallStarted,
     DatabaseCallUnconfirmed,
@@ -79,7 +79,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     ReleaseFinished,
     ReleaseStarted,
-    RootExecution,
     StreamBatchCompleted,
     StreamBatchFailed,
     StreamBatchFinished,
@@ -95,6 +94,7 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationStarted,
 )
 from parallax.core.execution_lifecycle._diagnostics import DatabaseFailureDiagnostic
+from parallax.core.execution_lifecycle._events import DatabaseCallKind
 from parallax.core.sql_gen import LoweredStatement
 
 _EXECUTION = uuid4()

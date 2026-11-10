@@ -43,8 +43,8 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.base import (
     INFINITY,
     INT64,
-    Decimal,
     InternalError,
+    Numeric,
     String,
     TemporalBound,
     UsageError,
@@ -1126,7 +1126,7 @@ def test_non_uniform_multi_row_update_applies_one_grouped_effect_per_member_set(
     ]
     arrays = [[cast("ArrayBind", bind) for bind in e.binds] for e in emissions]
     assert [[(bind.element_type, bind.values) for bind in binds] for binds in arrays] == [
-        [(INT64, [1, 2]), (Decimal(18, 2), [111.00, 222.00])],
+        [(INT64, [1, 2]), (Numeric(18, 2), [111.00, 222.00])],
         [(INT64, [3, 4]), (String(), ["Zed", "Ada"])],
     ]
 

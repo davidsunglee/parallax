@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.base import Decimal
+from parallax.core.base import Numeric
 from parallax.descriptor._type_spelling import format_type_spelling, parse_type_spelling
 
 # Comfortably above CPython's default int/str conversion guard
@@ -25,11 +25,11 @@ _HUGE_DIGITS = "9" * 5000
 
 def test_a_huge_precision_spelling_parses_to_its_structured_decimal() -> None:
     spelling = f"decimal({_HUGE_DIGITS},2)"
-    assert parse_type_spelling(spelling) == Decimal(_HUGE_VALUE, 2)
+    assert parse_type_spelling(spelling) == Numeric(_HUGE_VALUE, 2)
 
 
 def test_a_huge_precision_decimal_formats_to_its_canonical_spelling() -> None:
-    neutral = Decimal(_HUGE_VALUE, 2)
+    neutral = Numeric(_HUGE_VALUE, 2)
     assert format_type_spelling(neutral) == f"decimal({_HUGE_DIGITS},2)"
 
 
@@ -48,7 +48,7 @@ def test_a_huge_scale_still_enforces_the_scale_not_exceeding_precision_bound() -
 def test_a_zero_scale_formats_to_the_single_digit_zero() -> None:
     # `scale` may be exactly 0 (unlike `precision`, which is always >= 1) —
     # the chunked int-to-digits conversion's own zero case.
-    assert format_type_spelling(Decimal(_HUGE_VALUE, 0)) == f"decimal({_HUGE_DIGITS},0)"
+    assert format_type_spelling(Numeric(_HUGE_VALUE, 0)) == f"decimal({_HUGE_DIGITS},0)"
 
 
 @pytest.mark.parametrize("spelling", ["decimal(0,9)", "decimal(2,5)", "decimal(09,2)"])

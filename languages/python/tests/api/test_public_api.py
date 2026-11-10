@@ -13,12 +13,13 @@ public classmethod constructors that class declares.
 from __future__ import annotations
 
 import functools
+import inspect
 import json
 from collections.abc import Callable, Iterable, Mapping
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
-from typing import Final, TypeAliasType, get_args
+from typing import Final, TypeAliasType, get_args, get_type_hints
 
 import pytest
 from griffe import Alias, Class, GriffeLoader, Module, Object
@@ -317,6 +318,77 @@ def test_unit_work_exports_the_codes_a_refused_write_instruction_carries() -> No
     )
 
 
+_LIFECYCLE_VOCABULARY: Final = "parallax.core.execution_lifecycle"
+_LIFECYCLE_SEAMS: Final = frozenset(
+    {
+        "ExecutionLifecycleHandler",
+        "ExecutionLifecycleHandlerError",
+        "ExecutionLifecycleProvider",
+        "FanoutLifecycleProvider",
+        "LIFECYCLE_PROVIDER_FAILED",
+        "LIFECYCLE_REENTERED",
+        "LoggingLifecycleProvider",
+        "PoolMetricsObserver",
+        "PoolObservation",
+        "RootExecution",
+    }
+)
+
+
+def test_the_lifecycle_seams_are_published_by_the_core_root_not_the_vocabulary() -> None:
+    assert set(_declared_exports(_module("parallax.core"))) >= _LIFECYCLE_SEAMS
+    assert not _LIFECYCLE_SEAMS & set(_declared_exports(_module(_LIFECYCLE_VOCABULARY)))
+
+
+def _family(alias: object, owners: frozenset[str]) -> dict[str, type]:
+    """Every class ``owners`` define that ``alias`` reaches through unions,
+    aliases, and the fields of the classes it reaches."""
+    reached: dict[str, type] = {}
+    pending: list[object] = [alias]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, TypeAliasType):
+            pending.append(current.__value__)
+        elif isinstance(current, type) and current.__module__ in owners:
+            if current.__name__ not in reached:
+                reached[current.__name__] = current
+                pending.extend(get_type_hints(current).values())
+        else:
+            pending.extend(get_args(current))
+    return reached
+
+
+def test_the_lifecycle_vocabulary_publishes_the_whole_portable_event_family() -> None:
+    vocabulary = import_module(_LIFECYCLE_VOCABULARY)
+    family = _family(
+        vocabulary.ExecutionEvent,
+        frozenset({f"{_LIFECYCLE_VOCABULARY}._events", f"{_LIFECYCLE_VOCABULARY}._diagnostics"}),
+    )
+    assert sum(name.endswith(("Started", "Finished")) for name in family) == 18
+    assert {name: getattr(vocabulary, name, None) for name in family} == family
+    published = set(_declared_exports(_module(_LIFECYCLE_VOCABULARY)))
+    assert set(family) | {"ExecutionEvent"} == published
+
+
+@pytest.mark.parametrize(
+    "home",
+    [
+        "parallax.core",
+        _LIFECYCLE_VOCABULARY,
+        "parallax.core.introspection",
+        "parallax.evolution",
+        "parallax.evolution.operations",
+    ],
+)
+def test_an_application_home_publishes_the_objects_their_owners_define(home: str) -> None:
+    module = import_module(home)
+    for name in _declared_exports(_module(home)):
+        value = getattr(module, name)
+        if isinstance(value, type) or inspect.isfunction(value):
+            assert value.__module__ != home, name
+            assert getattr(import_module(value.__module__), value.__qualname__) is value, name
+
+
 _ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
     "parallax.core": frozenset(
         {
@@ -410,10 +482,11 @@ def _shipped_exceptions() -> list[type[BaseException]]:
 def test_every_application_error_is_rooted_in_parallax_error() -> None:
     assert all(issubclass(kind, ParallaxError) for kind in _error_surface())
     assert len(_error_surface()) == 20
+    root = import_module("parallax.core")
     assert {
         name
         for name in _declared_exports(_module("parallax.core"))
-        if name.endswith(("Error", "Found"))
+        if isinstance(value := getattr(root, name), type) and issubclass(value, BaseException)
     } == _ERROR_SURFACE["parallax.core"]
 
 

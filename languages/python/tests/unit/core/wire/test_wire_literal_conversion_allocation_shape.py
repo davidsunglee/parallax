@@ -11,8 +11,7 @@ from decimal import Decimal
 from typing import Final
 
 from parallax.core import inheritance, predicate, storage_layout
-from parallax.core.base import FLOAT64, STRING, UsageError
-from parallax.core.base import Decimal as DecimalType
+from parallax.core.base import FLOAT64, STRING, Numeric, UsageError
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._context import (
     LoweredStatement,
@@ -137,7 +136,7 @@ def test_typed_bind_metadata_stays_structural_as_bind_counts_grow() -> None:
 def _decimal_conversion(digits: int) -> Span:
     literal = "1" * digits + ".00"
     wire_value = loads(f'"{literal}"')
-    declared = DecimalType(digits + 2, 2)
+    declared = Numeric(digits + 2, 2)
 
     def convert(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         opened()

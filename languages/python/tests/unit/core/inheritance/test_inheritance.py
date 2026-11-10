@@ -14,8 +14,7 @@ from parallax.conformance import case_format
 from parallax.core import UnsupportedError, inheritance
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, UsageError, typed_converter
-from parallax.core.base import Decimal as DecimalType
+from parallax.core.base import STRING, Numeric, UsageError, typed_converter
 from parallax.core.document_codec._plan import (
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
@@ -346,7 +345,7 @@ _INVOICE_ACCEPTED = form_metamodel(
         Declaration(
             identity=_INVOICE,
             container=Table("invoice"),
-            attributes=(key(_INVOICE), attribute(_INVOICE, "amount", type=DecimalType(18, 2))),
+            attributes=(key(_INVOICE), attribute(_INVOICE, "amount", type=Numeric(18, 2))),
         )
     )
 )

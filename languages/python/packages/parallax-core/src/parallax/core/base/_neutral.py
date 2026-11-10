@@ -32,7 +32,6 @@ __all__ = [
     "Boolean",
     "Bytes",
     "Date",
-    "Decimal",
     "Float32",
     "Float64",
     "Int32",
@@ -42,6 +41,7 @@ __all__ = [
     "ManagedValue",
     "ManagedValueExclusion",
     "NeutralType",
+    "Numeric",
     "ScalarConverter",
     "String",
     "Time",
@@ -95,10 +95,12 @@ class Float64:
 
 
 @dataclass(frozen=True, slots=True)
-class Decimal:
+class Numeric:
     """Exact fixed-point values at a declared precision and scale.
 
-    The sole parametric variant. Both parameters are required and bounded by
+    The core specification names this type Decimal; Python names it after the
+    SQL type so that it never shadows the :class:`decimal.Decimal` carrier its
+    members are written in. The sole parametric variant. Both parameters are required and bounded by
     ``precision >= 1`` and ``0 <= scale <= precision``, so every constructed
     value has a serializable spelling; a violation raises :class:`ValueError`.
     """
@@ -157,7 +159,7 @@ type NeutralType = (
     | Int64
     | Float32
     | Float64
-    | Decimal
+    | Numeric
     | String
     | Bytes
     | Date
@@ -304,7 +306,7 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     This is the boundary the DEVELOPER-facing write validators call — a
     runtime argument already carries a native Python value, never a wire
     literal, so only the input policy's own typed conversions apply: an
-    :class:`int` for a :class:`Decimal`, a lossless :class:`int` for a float,
+    :class:`int` for a :class:`Numeric`, a lossless :class:`int` for a float,
     and a canonical UUID string. A host float is
     projected immediately to the declared width, at Float32 to the value
     :func:`host_float_binary32` says it names, negative zero normalizes to
@@ -357,7 +359,7 @@ def _is_float64_member(value: object, _declared: Float64) -> bool:
     return isinstance(value, float) and _math.isfinite(float.__float__(value))
 
 
-def is_decimal_member(value: object, declared: Decimal) -> bool:
+def is_decimal_member(value: object, declared: Numeric) -> bool:
     """Decimal membership for a value that is not a :class:`ManagedValueExclusion`."""
     return isinstance(value, _decimal.Decimal) and _is_exact_decimal(
         value, declared.precision, declared.scale
@@ -393,7 +395,7 @@ def _is_json_member(value: object, _declared: Json) -> bool:
     return value is not None and _is_json_value(value)
 
 
-def _coerce_decimal_input(value: object, _declared: Decimal) -> object:
+def _coerce_decimal_input(value: object, _declared: Numeric) -> object:
     return _decimal.Decimal(int.__int__(value)) if _is_integer(value) else value
 
 
@@ -429,7 +431,7 @@ def _is_float_carrier(value: object, declared: Float32 | Float64) -> bool:
     return _is_integer(value) and _exact_float_of_integer(int.__int__(value), declared) is not None
 
 
-def _is_decimal_carrier(value: object, _declared: Decimal) -> bool:
+def _is_decimal_carrier(value: object, _declared: Numeric) -> bool:
     return isinstance(value, _decimal.Decimal) or _is_integer(value)
 
 
@@ -463,7 +465,7 @@ _MEMBERSHIP_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
     Int64: is_integer_member,
     Float32: _is_float32_member,
     Float64: _is_float64_member,
-    Decimal: is_decimal_member,
+    Numeric: is_decimal_member,
     String: is_string_member,
     Bytes: _is_bytes_member,
     Date: _is_date_member,
@@ -473,7 +475,7 @@ _MEMBERSHIP_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
     Json: _is_json_member,
 }
 _COERCION_RULES: Final[_Mapping[type[NeutralType], _Rule[object]]] = {
-    Decimal: _coerce_decimal_input,
+    Numeric: _coerce_decimal_input,
     Float32: _coerce_float_input,
     Float64: _coerce_float_input,
     Timestamp: _coerce_timestamp_input,
@@ -486,7 +488,7 @@ _CARRIER_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
     Int64: _is_integer_carrier,
     Float32: _is_float_carrier,
     Float64: _is_float_carrier,
-    Decimal: _is_decimal_carrier,
+    Numeric: _is_decimal_carrier,
     String: _is_string_carrier,
     Bytes: _is_bytes_member,
     Date: _is_date_member,
@@ -519,7 +521,7 @@ def typed_converter(declared: NeutralType) -> ScalarConverter:
     shared = _NULLARY_TYPED_CONVERTERS.get(type(declared))
     if shared is not None:
         return shared
-    if isinstance(declared, Decimal):
+    if isinstance(declared, Numeric):
         return _typed_decimal(declared)
     return _general_typed_converter(declared)
 
@@ -571,7 +573,7 @@ def _typed_float(declared: Float32 | Float64) -> ScalarConverter:
     return convert
 
 
-def _typed_decimal(declared: Decimal) -> ScalarConverter:
+def _typed_decimal(declared: Numeric) -> ScalarConverter:
     precision, scale = declared.precision, declared.scale
     general = _general_typed_converter(declared)
 
@@ -648,7 +650,7 @@ def _typed_json(value: object) -> object:
     raise _typed_mismatch(value, JSON)
 
 
-# Every variant but Decimal is nullary, so one converter serves each wherever it is declared.
+# Every variant but Numeric is nullary, so one converter serves each wherever it is declared.
 _NULLARY_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], ScalarConverter]] = {
     Boolean: _typed_boolean(BOOLEAN),
     Int32: _typed_integer(INT32),
@@ -1236,7 +1238,7 @@ def base_managed_carrier(value: object, declared: NeutralType) -> object:  # noq
             return int.__int__(value)
         case Float32() | Float64() if isinstance(value, float):
             return float.__float__(value)
-        case Decimal() if isinstance(value, _decimal.Decimal):
+        case Numeric() if isinstance(value, _decimal.Decimal):
             sign, digits, exponent = _decimal.Decimal.as_tuple(value)
             if isinstance(exponent, int):
                 return _decimal.Decimal((sign, digits, exponent))
@@ -1266,7 +1268,7 @@ def canonical_managed_member(value: object, declared: NeutralType) -> object:
     match declared:
         case Float32() | Float64():
             return 0.0 if member == 0.0 else member
-        case Decimal(scale=scale):
+        case Numeric(scale=scale):
             return _decimal_at_scale(cast("_decimal.Decimal", member), scale)
         case Timestamp():
             return utc_instant(cast("_dt.datetime", member))

@@ -13,7 +13,6 @@ from parallax.core.base import (
     Boolean,
     Bytes,
     Date,
-    Decimal,
     DocumentRead,
     Float32,
     Float64,
@@ -22,6 +21,7 @@ from parallax.core.base import (
     Int64,
     Json,
     NeutralType,
+    Numeric,
     String,
     StructuredDocument,
     Time,
@@ -471,7 +471,7 @@ class Dialect:
         declarable type compares as the extracted text, because the canonical spelling
         `m-document-codec` writes already equates and orders correctly as text.
         """
-        if isinstance(neutral_type, Decimal):
+        if isinstance(neutral_type, Numeric):
             return f"cast({extraction} as decimal({neutral_type.precision}, {neutral_type.scale}))"
         cast_type = _EXTRACTION_CASTS.get(type(neutral_type))
         return extraction if cast_type is None else f"cast({extraction} as {cast_type})"
@@ -646,7 +646,7 @@ class Dialect:
         `m-dialect`'s placeholder cast form owns each spelling. It is a separate
         decision from :meth:`column_type`, which only some spellings happen to match.
         """
-        if isinstance(neutral_type, Decimal):
+        if isinstance(neutral_type, Numeric):
             return f"decimal({neutral_type.precision}, {neutral_type.scale})"
         if isinstance(neutral_type, Int32):
             return "int"
@@ -667,7 +667,7 @@ class Dialect:
         """
         if not extracted:
             element = _ARRAY_ELEMENT_TYPES[type(neutral_type)]
-        elif isinstance(neutral_type, Decimal):
+        elif isinstance(neutral_type, Numeric):
             element = "decimal"
         else:
             element = _EXTRACTION_CASTS.get(type(neutral_type), "text")
@@ -679,7 +679,7 @@ class Dialect:
         match neutral_type:
             case String():
                 return f"varchar({max_length})" if max_length is not None else "text"
-            case Decimal(precision, scale):
+            case Numeric(precision, scale):
                 return f"numeric({precision}, {scale})"
             case _:
                 return _FIXED_COLUMN_TYPES[type(neutral_type)]
@@ -821,7 +821,7 @@ _ARRAY_ELEMENT_TYPES: Final[Mapping[type, str]] = {
     Int64: "bigint",
     Float32: "real",
     Float64: "double precision",
-    Decimal: "decimal",
+    Numeric: "decimal",
     String: "text",
     Bytes: "bytea",
     Date: "date",

@@ -36,9 +36,9 @@ from parallax.core.base import (
     TIMESTAMP,
     UUID,
     NeutralType,
+    Numeric,
     UsageError,
 )
-from parallax.core.base import Decimal as DecimalType
 from parallax.core.metamodel import (
     AbstractRoot,
     AsOfAxisMetadata,
@@ -70,7 +70,7 @@ from tests.unit._metamodel_support import Declaration, attribute, identity, key,
 # shape with no further nesting), and a to-many value object (`tags`) for the
 # array walk.
 _WIDGET = identity("Widget")
-_MONEY = DecimalType(precision=18, scale=2)
+_MONEY = Numeric(precision=18, scale=2)
 
 _SCALARS: dict[str, NeutralType] = {
     "marker": INT64,
@@ -416,13 +416,13 @@ _BUNDLE_MODEL = form_metamodel(
             "amounts",
             (Decimal("1.00"), Decimal("1.234")),
             "Bundle.amounts[1]: value Decimal('1.234') does not match the declared type "
-            "Decimal(precision=18, scale=2)",
+            "Numeric(precision=18, scale=2)",
         ),
         (
             "amounts",
             (10**17,),
             "Bundle.amounts[0]: value 100000000000000000 does not match the declared type "
-            "Decimal(precision=18, scale=2)",
+            "Numeric(precision=18, scale=2)",
         ),
         (
             "weights",

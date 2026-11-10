@@ -35,8 +35,8 @@ from typing import Final
 from uuid import uuid4
 
 import parallax.core.execution_lifecycle._activity as _activity
+from parallax.core import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution import RetryPolicy
-from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
     DeliveryState,

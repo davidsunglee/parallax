@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import MutableSequence, Sequence
+from decimal import Decimal
 from typing import Protocol, get_args
 
 import pytest
@@ -24,11 +25,15 @@ from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
     AbstractSubtype,
+    ApplicationAssigned,
     Attr,
+    Columns,
     ConcreteSubtype,
     Document,
     DomainModel,
     Entity,
+    Int32,
+    Numeric,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -39,8 +44,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity._errors import MetamodelLookupCode
-from parallax.core.introspection import EntityIdentity, Table, TemporalDimension
-from parallax.core.metamodel import Columns
+from parallax.core.introspection import EntityIdentity, PrimaryKey, Table, TemporalDimension
 from tests._support.errors import raises_code
 
 _SPEC_CODES = frozenset({"metamodel-invalid-entity-reference", "metamodel-entity-not-found"})
@@ -255,6 +259,26 @@ def test_reading_back_answers_the_classes_the_author_wrote() -> None:
     assert deferred.inheritance is FAMILIES.entity(Voucher).inheritance
     assert FAMILIES.entity(Invoice).parent == deferred.identity
     assert FAMILIES.entity(Sloop).inheritance == ConcreteSubtype()
+
+
+class Ledger(Entity, table="ledger", namespace="ops", layout=Columns()):
+    id: Attr[int] = attr(primary_key=True)
+    total: Attr[Decimal] = attr(precision=12, scale=2)
+    entries: Attr[int] = attr(type=Int32)
+
+
+def test_written_column_types_layout_and_key_generation_read_back_as_the_root_classes() -> None:
+    ledger = DomainModel(Ledger).entity(Ledger)
+    total = ledger.declared.attribute("total")
+    entries = ledger.declared.attribute("entries")
+    assert total is not None and entries is not None
+    assert total.type == Numeric(precision=12, scale=2)
+    assert type(entries.type) is Int32
+    assert ledger.declared.layout is None
+    assert ledger.effective.layout == Columns()
+    key = ledger.effective.primary_key
+    assert key is not None and isinstance(key.primary_key, PrimaryKey)
+    assert isinstance(key.primary_key.generation, ApplicationAssigned)
 
 
 def test_a_subtype_declares_none_of_the_root_owned_facts() -> None:

@@ -160,13 +160,13 @@ PACKAGES = PY_ROOT / "packages"
 # interface — is itself a finding.
 EXEMPTIONS: Mapping[str, str] = {
     "parallax-core/src/parallax/core/__init__.py": (
-        "distribution package interface: re-exports the §8 `parallax.core` developer "
-        "surface across the entity, predicate and temporal-read scopes, so no single "
-        "scope owns it"
+        "distribution package interface: re-exports the §8 `parallax.core` application "
+        "surface across the entity, execution, lifecycle, port and metamodel scopes, so "
+        "no single scope owns it"
     ),
     "parallax-evolution/src/parallax/evolution/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.evolution` surface "
-        "(`evolve`, `ABSENT`, and the closed evolution vocabulary) across the "
+        "(`evolve`, `schema_delta`, `ABSENT`, and their results) across the "
         "`parallax.evolution._domain_models`, `parallax.evolution.model_evolution`, and "
         "`parallax.evolution.schema_delta` scopes, so no single scope owns it"
     ),
