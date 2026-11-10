@@ -1,5 +1,3 @@
-# Negative (m-metamodel): a defining join targets an Entity the model does not
-# declare.
 model: models/person.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, m-relationship, rejected, negative, relationship, slice-snapshot-1]
 shape: rejected

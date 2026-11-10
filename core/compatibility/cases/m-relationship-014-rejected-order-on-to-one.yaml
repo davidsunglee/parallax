@@ -1,5 +1,3 @@
-# Negative (m-relationship): a many-to-one direction, whose target Multiplicity is
-# One, declares an ordering.
 model: models/identifier-types.yaml
 tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
 shape: rejected

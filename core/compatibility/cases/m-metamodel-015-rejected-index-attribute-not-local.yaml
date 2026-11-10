@@ -1,6 +1,3 @@
-# Negative (m-metamodel, m-inheritance): a concrete subtype's Index names an
-# Attribute its root declares. Index components are local to their Entity, so an
-# inherited Attribute is not one.
 model: models/payment.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, m-inheritance, rejected, negative, index, slice-snapshot-1]
 shape: rejected

@@ -1,5 +1,3 @@
-# Negative (m-relationship): a reverse declaration sits on an Entity its defining
-# peer does not target, so the two describe different associations.
 model: models/identifier-types.yaml
 tags: [m-relationship, m-model-formation, relationship, rejected, slice-snapshot-1]
 shape: rejected

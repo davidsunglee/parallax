@@ -1,4 +1,3 @@
-# Negative (m-metamodel): one Attribute occurs twice in one Index.
 model: models/person.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1]
 shape: rejected

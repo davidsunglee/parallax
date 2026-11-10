@@ -1890,8 +1890,6 @@ _RELATIONSHIP_QUANTIFIER_SIBLING_REASON: Final[str] = (
     "another relationship — no distinct developer-facing shape to add"
 )
 
-# A back-reference level's refusal and its narrowed views: the ordinary include
-# spelling, whose count and selection the run sweep grades.
 _INHERITANCE_FAMILY_FORMATION_REJECT_REASON: Final[str] = (
     "a `when.model` family invariant Model Formation's Inheritance Rule Set classifies "
     "at model construction (a `MetamodelValidationError` issue), not a query or write "
@@ -1908,6 +1906,8 @@ _NARROW_EMPTY_EFFECTIVE_SET_REASON: Final[str] = (
     "by the rejected sweep"
 )
 
+# A back-reference level's refusal and its narrowed views: the ordinary include
+# spelling, whose count and selection the run sweep grades.
 _BACK_REFERENCE_PATH_REFUSAL_REASON: Final[str] = (
     "the rejected lane's `deep-fetch-past-back-reference`: the developer spelling is the "
     "ordinary include path the exercised orders stories show, and the refusal is graded by "

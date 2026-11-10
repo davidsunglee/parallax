@@ -16,7 +16,7 @@ Compiler, which requires no other facet. Its complete Issue Code set is:
 
 | Code | Rule |
 |---|---|
-| `relationship-join-source-invalid` | A defining join's source Attribute is not a local Attribute of the declaring Entity. |
+| `relationship-join-source-invalid` | A defining join's source Attribute is neither declared on nor inherited by the declaring Entity. |
 | `relationship-join-target-invalid` | A defining join's target Attribute does not belong to the target Entity established by the declaration reference. |
 | `relationship-join-type-mismatch` | Resolved defining join endpoints have unequal declared neutral types or multiplicities. |
 | `relationship-cardinality-join-mismatch` | Cardinality and join orientation cannot identify the required one/many sides. |
@@ -25,7 +25,7 @@ Compiler, which requires no other facet. Its complete Issue Code set is:
 | `relationship-reverse-inconsistent` | A reverse declaration's source/target orientation is inconsistent with the defining direction. |
 | `relationship-defining-duplicate` | More than one reverse declaration claims the same defining declaration. |
 | `relationship-order-on-to-one` | Ordering is declared for a direction whose target multiplicity is One. |
-| `relationship-order-attribute-invalid` | An ordering term does not name a target-local Attribute, or names a scalar collection. |
+| `relationship-order-attribute-invalid` | An ordering term does not name an Attribute declared on or inherited by the target Entity, or names a scalar collection. |
 
 Reference absence is a foundational `m-metamodel` issue, not a second
 relationship-owned missing-reference code.
@@ -39,9 +39,9 @@ A type mismatch is reported only when both endpoints resolve. Its location is th
 Rule Sets run in unspecified order over one Candidate Metamodel, so a Rule Set
 that needs relationship facts cannot consume the Relationship Facet. The join
 endpoints such a Rule Set needs are, for each **defining** declaration whose
-`join.source` names a local Attribute of the declaring Entity and whose
-`join.target` names an Attribute of the Entity its reference establishes, both
-Identities. Reading them emits no Issue and depends on no other Rule Set's
+`join.source` names an Attribute declared on or inherited by the declaring
+Entity and whose `join.target` names an Attribute of the Entity its reference
+establishes, both Identities. Reading them emits no Issue and depends on no other Rule Set's
 outcome.
 
 Restricting the projection to defining declarations loses nothing. A reverse
