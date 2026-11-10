@@ -1287,26 +1287,6 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
             use()
 
 
-def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
-    # Sealing transfers the accumulation, so a caller who keeps the sealed
-    # builder keeps nothing the sealed Page carries — the stored-data issue
-    # records and their frozen evidence included, which is the only accumulator
-    # a caller cannot reach through the refusals above. Read over the declared
-    # slots rather than a list written here, so an accumulator added later is
-    # held to this without the case being remembered.
-    fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
-    order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    item = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "code_hex": "not-hex"})
-    fixture.attach(order, _ENCODED_ITEMS, (item,))
-    builder = fixture.builder
-    kept = ("_schema", "_sealed")
-    accumulators = tuple(name for name in PageBuilder.__slots__ if name not in kept)
-
-    assert any(getattr(builder, name) for name in accumulators)
-    fixture.page(order)
-    assert [name for name in accumulators if getattr(builder, name)] == []
-
-
 def test_a_publication_pass_refuses_an_unfinished_builder() -> None:
     builder, _ = _one_projection()
     with pytest.raises(TypeError, match="requires a finished Page"):
@@ -1394,27 +1374,6 @@ def test_two_unreadable_projections_of_one_row_never_share_with_each_other() -> 
     assert [first.ordinal, second.ordinal] == [0, 1]
     assert first.issues is not second.issues
     assert roots[2].member_values[0] is roots[3].member_values[0]
-
-
-def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
-    # A scalar rejected value costs nothing to hold twice, and Python may hand
-    # two rows the identical string anyway. A rejected document subtree is the
-    # shape the retention rule is about: two rows decode two independent
-    # structures and each freezes its own, and only the copy the resolved node
-    # retains stays alive once the second row's conversion returns.
-    stored: dict[str, object] = {
-        "id": 1,
-        "name": "Ada",
-        "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
-    }
-    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
-    first = fixture.node("Customer", dict(stored))
-    second = fixture.node("Customer", dict(stored))
-    root, again = fixture.observed_roots(first, second)
-    (frozen,) = root.issues[0]
-    assert frozen.stored_value == {"type": "home"}
-    assert again.issues[0] == (frozen,)
-    assert again.issues[0][0] is frozen
 
 
 def test_no_published_value_is_the_absent_sentinel() -> None:

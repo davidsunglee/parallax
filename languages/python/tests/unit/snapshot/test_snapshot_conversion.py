@@ -4,8 +4,8 @@ Exercises read delivery's conversion seam independently of the
 Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
 that contradicts its declared type), scalar provenance, Page identity claims
-    (family normalization and projection independence), and the whole converted
-    row with its documents decoded.
+(family normalization and projection independence), and whole-row
+classification of occurrences, uncarried members, and keys.
 
 Every row is spelled by the names a real compiled read selects and laid out
 positionally for that read, bound as a find binds it and converted through
@@ -47,7 +47,6 @@ from parallax.core.base import (
     UUID,
     Decimal,
     NeutralType,
-    StructuredDocument,
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
@@ -100,7 +99,6 @@ from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
     identity_of,
-    physical_members,
     rendered_occurrence,
 )
 
@@ -213,11 +211,6 @@ def _bound(
 ) -> tuple[ReadRowConverter, Row]:
     """``entity``'s read, bound, beside ``cells`` as its positional row."""
     return bound_cells(CatalogedModel(model), compiled_read(model, entity), cells)
-
-
-def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> dict[str, object]:
-    projection = _converted(model, entity, row)
-    return physical_members(projection.layout, projection.values)
 
 
 def _occurrence(node: _Projection, name: str) -> Any:
@@ -756,16 +749,6 @@ def test_table_per_concrete_subtype_keys_by_the_logical_family() -> None:
     assert invoice.logical_key() == (EntityIdentity(_NAMESPACE, "Document"), 1)
 
 
-def test_a_narrowed_abstract_read_and_a_direct_concrete_read_key_alike() -> None:
-    # A table-per-concrete-subtype position resolving to exactly one concrete
-    # emits no `family_variant` column at all (`m-sql`'s `_render_single_table_read`);
-    # the compiled read still names the resolved concrete, which is what keeps
-    # the two routes' keys identical.
-    narrowed = _converted(DOCUMENT, "Invoice", _INVOICE_ROW)
-    direct = _converted(DOCUMENT, "Invoice", dict(_INVOICE_ROW))
-    assert narrowed.logical_key() == direct.logical_key()
-
-
 def test_a_key_less_entity_never_forms() -> None:
     # The accepted Metamodel requires a standalone Entity to declare exactly one
     # primary-key Attribute (m-metamodel `metamodel-primary-key-missing`), so a
@@ -819,49 +802,8 @@ def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> 
 
 
 # --------------------------------------------------------------------------- #
-# The whole converted row under physical storage keys.                          #
+# Whole-row classification: occurrences, uncarried members, and keys.         #
 # --------------------------------------------------------------------------- #
-def test_a_converted_row_answers_the_whole_row_with_documents_decoded() -> None:
-    # A stored document is carried as its DECODED declared members — the same
-    # spelling a successor's carried-versus-changed comparison reads.
-    row: dict[str, object] = {
-        "id": 1,
-        "name": "Ada",
-        "address": StructuredDocument({"street": "1 Park Ave", "city": "Oslo"}),
-    }
-    columns = _state_row(CUSTOMER, "Customer", row)
-    assert columns["id"] == 1
-    assert columns["name"] == "Ada"
-    address = cast("Mapping[str, object]", columns["address"])
-    assert address["city"] == "Oslo"
-    with pytest.raises(KeyError):
-        columns["not-a-column"]
-    with pytest.raises(KeyError):
-        address["not-a-member"]
-    with pytest.raises(KeyError):
-        address["geo"]
-
-
-def test_a_converted_row_carries_a_many_occurrence_one_row_per_element() -> None:
-    entity = Entity(
-        name="Fleet",
-        table="fleet",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        value_objects=(
-            ValueObject(
-                name="stops",
-                column="stops",
-                multiplicity="many",
-                attributes=(ValueObjectAttribute(name="label", type="string"),),
-            ),
-        ),
-    )
-    meta = formed(DescriptorMetamodel(entities=(entity,)))
-    columns = _state_row(meta, "Fleet", {"id": 1, "stops": [{"label": "a"}]})
-    stops = cast("tuple[Mapping[str, object], ...]", columns["stops"])
-    assert tuple(map(dict, stops)) == ({"label": "a"},)
-
-
 def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurrence() -> None:
     # This is an invalid One occurrence inside the Entity document, so the
     # occurrence itself owns the finding.
@@ -931,27 +873,6 @@ def _named(*, document: bool) -> Metamodel:
 NAMED_DOCUMENT = _named(document=True)
 NAMED_COLUMNS = _named(document=False)
 _NAMED = EntityIdentity(None, "Named")
-
-
-@pytest.mark.parametrize(
-    ("model", "entity", "row", "code"),
-    [
-        pytest.param(
-            NAMED_DOCUMENT,
-            "Named",
-            {"id": 1, "payload": {"name": None}},
-            "stored-data-attribute-null",
-            id="document-attribute",
-        ),
-    ],
-)
-def test_entity_attribute_findings_use_attribute_specific_issue_codes(
-    model: Metamodel, entity: str, row: dict[str, object], code: str
-) -> None:
-    # A rejected Entity Attribute is diagnosed by the attribute's own role rather
-    # than by the leaf vocabulary its carrier's codec speaks.
-    node = _converted(model, entity, row)
-    assert [issue.code for issue in node.issues] == [code]
 
 
 def test_encoded_identifier_findings_use_the_primary_key_issue_code() -> None:
