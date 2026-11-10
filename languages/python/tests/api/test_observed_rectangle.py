@@ -4,11 +4,12 @@ Two families of proof share the need for a real database: what a write leaves
 CLOSED and CURRENT is only observable there, because a recording port reports
 every addressed write as affecting a row whichever row it addressed.
 
-The first is the observed-rectangle close under optimistic concurrency: one key
+The first is the observed-rectangle close under either strategy: one key
 holding two current rectangles, read at two Valid-Time coordinates and corrected
 from the first read's value. The Docker-free lane pins what the close ADDRESSES
-and what its gate BINDS (`tests/unit/test_temporal_write_lowering.py`); only a
-real database shows the gate MATCHED the right rectangle.
+and what its gate BINDS
+(`tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py`); only a
+real database shows the close MATCHED the right rectangle.
 
 The second is repeated writes inside one attempt. Every flush of an attempt
 stamps one Transaction Instant, so a later write can address a row an earlier
@@ -81,17 +82,20 @@ _CURRENT_ROWS = (
 _CLOSED_ROWS = "select from_z from position where out_z <> 'infinity' order by from_z"
 
 
-def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: Any) -> None:
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_close_settles_against_the_rectangle_it_read(
+    profile_run: Any, concurrency: Literal["optimistic", "locking"]
+) -> None:
     # A key carrying a retroactive rectangle beside its current one — what an
     # earlier correction leaves behind — is read latest, read again at a
     # Valid-Time instant inside the retroactive rectangle to compare against, and
     # then corrected from the value the FIRST read handed back. The current
     # rectangle is the one closed and split; the retroactive one is left exactly
     # as it was, still current on the Transaction-Time axis and still carrying its
-    # own value. The distinction is that the optimistic gate cannot rescue a
-    # misresolved address: it binds the same observation the address came from, so
-    # a close aimed at the wrong rectangle gates on that rectangle's own `in_z`,
-    # matches one row, and reports success. Which row was closed is therefore the
+    # own value. The distinction is that neither strategy rescues a misresolved
+    # address: Locking renders no gate, and the Optimistic gate binds the same
+    # observation the address came from, so a close aimed at the wrong rectangle
+    # matches one row and reports success. Which row was closed is therefore the
     # only observable that separates the two outcomes, and it needs a real
     # database to read.
     profile_run.reset(model_of(_POSITION), {})
@@ -113,7 +117,7 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
         tx.find(Position.where(Position.id == 1).as_of(valid_time=_VP)).result()
         tx.amend(current.edit(value=Decimal("150.00")))
 
-    db.transact(correct, concurrency="optimistic")
+    db.transact(correct, concurrency=concurrency)
 
     closed = profile_run.port.execute(_CLOSED_ROWS, [])
     assert [row[0] for row in closed] == [_V2]
