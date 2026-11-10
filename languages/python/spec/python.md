@@ -911,8 +911,10 @@ would collide only if co-installed; documented, accepted).
   alike: the `neutral-literal-*` decoding refusals, `write-value-type-mismatch`,
   `write-required-attribute-missing`, `write-required-value-object-missing`, and
   `write-assignment-value-type-mismatch`, the assignment judgement's verdict on a
-  value assigned beside the key. An undeclared member, a query path, and every
-  other structural rule stay plain `UsageError`. A
+  value assigned beside the key, and the `query-expression-invalid` a Typed query
+  operand its member's declared type does not admit raises. An undeclared member,
+  a query path, a `None` query operand, and every other structural rule stay
+  plain `UsageError`. A
   `UsageError(transaction-rollback-only)` is transient exactly when the failure
   that doomed the transaction, its `__cause__`, is a transient `ParallaxError`.
 - **Direct declaration.** A distribution directly declares every third-party

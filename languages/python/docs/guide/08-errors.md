@@ -193,7 +193,8 @@ parsing messages.
   can't accept with a `UsageError` whose `code` names the rule, such as
   `query-expression-invalid`.
   `Customer.name == 3` compares text with a number, a `Decimal` with more places than
-  its attribute declares can't be compared with it, `limit(-1)` isn't positive, and
+  its attribute declares can't be compared with it, and both raise the
+  `InvalidValueError` described under "A value" below. `limit(-1)` isn't positive, and
   `as_of(...)` on `Customer` asks for history that `Customer` doesn't keep. Whether the
   model declares the query's target can only be checked when the query runs, so that
   refusal, a `UsageError` with code `query-target-not-in-model`, comes before anything is
@@ -221,11 +222,12 @@ parsing messages.
 - **A value.** A value that doesn't fit the member it is stated for raises
   `InvalidValueError`, a `UsageError` that says the value, not the shape of the request,
   is wrong: a value of the wrong type, one outside its type's range, or no value where
-  the member requires one. A write raises it for a member's value, and a
-  [Wire](03-reading.md#the-wire-api) query for a value it compares a member with. Its
-  `code` names the rule, such as `write-required-attribute-missing`, or
-  `neutral-literal-type-mismatch` for a Wire value of the wrong type. A name the model
-  doesn't declare is a plain `UsageError`.
+  the member requires one. A write raises it for a member's value, and a query, typed
+  or [Wire](03-reading.md#the-wire-api), for a value it compares a member with. Its
+  `code` names the rule, such as `write-required-attribute-missing`,
+  `neutral-literal-type-mismatch` for a Wire value of the wrong type, or
+  `query-expression-invalid` for a typed one. A name the model doesn't declare, and
+  comparing with `None` rather than testing for null, is a plain `UsageError`.
 
 A release check can report every problem in a model at once:
 

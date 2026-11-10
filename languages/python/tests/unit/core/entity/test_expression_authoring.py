@@ -25,7 +25,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import UsageError
+from parallax.core.base import InvalidValueError, UsageError
 from parallax.core.entity import model_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuantifier
@@ -144,11 +144,13 @@ def test_a_string_pattern_is_admitted_as_a_string_literal() -> None:
         lambda: Part.sku.like(cast("Any", 5)),
     ):
         with raises_code(
-            UsageError, "query-expression-invalid", match="developer-input rule violated"
+            InvalidValueError, "query-expression-invalid", match="developer-input rule violated"
         ):
             known()
     deferred = Basket.where(Basket.owner.name.ends_with("\ud800"))
-    with raises_code(UsageError, "query-expression-invalid", match="developer-input rule violated"):
+    with raises_code(
+        InvalidValueError, "query-expression-invalid", match="developer-input rule violated"
+    ):
         _resolved(deferred)
 
 

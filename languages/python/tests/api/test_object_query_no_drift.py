@@ -58,7 +58,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core import DomainModel, Entity, ObjectQuery, Predicate
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import UsageError
+from parallax.core.base import InvalidValueError, UsageError
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST, deserialize
@@ -404,12 +404,11 @@ AUTHORING_REJECTIONS: dict[str, Callable[[], object]] = {
 
 @pytest.mark.parametrize("case_id", sorted(AUTHORING_REJECTIONS), ids=sorted(AUTHORING_REJECTIONS))
 def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str) -> None:
-    assert case_document(corpus_case(case_id))["then"]["rejectedRule"] in {
-        "neutral-literal-type-mismatch",
-        "string-predicate-non-string-member",
-    }
-    with raises_code(UsageError, "query-expression-invalid"):
+    rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
+    assert rule in {"neutral-literal-type-mismatch", "string-predicate-non-string-member"}
+    with raises_code(UsageError, "query-expression-invalid") as caught:
         AUTHORING_REJECTIONS[case_id]()
+    assert isinstance(caught.value, InvalidValueError) is (rule == "neutral-literal-type-mismatch")
 
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))

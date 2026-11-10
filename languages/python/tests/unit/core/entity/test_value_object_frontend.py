@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import Attr, Entity, UsageError, ValueObject, attr
+from parallax.core import Attr, Entity, InvalidValueError, UsageError, ValueObject, attr
 from parallax.core.base import Float64, NeutralType, Numeric, String
 from parallax.core.entity import Predicate
 from parallax.core.entity._declaration import shape_of
@@ -252,7 +252,7 @@ def test_an_entity_rooted_value_object_predicate_carries_the_dotted_canonical_pa
 
 
 def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> None:
-    with raises_code(UsageError, "query-expression-invalid") as caught:
+    with raises_code(InvalidValueError, "query-expression-invalid") as caught:
         _ = vm.Customer.address.geo.elevation == "high"
     message = str(caught.value)
     assert "parallax.compatibility.Customer.address.geo.elevation" in message
@@ -264,6 +264,7 @@ def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> N
 def test_invalid_relative_operand_reports_the_complete_developer_input_rule() -> None:
     with raises_code(UsageError, "query-expression-invalid") as caught:
         _field(vm.Geo.elevation).__eq__(None)
+    assert not isinstance(caught.value, InvalidValueError)
     message = str(caught.value)
     assert "elevation" in message
     assert "declared NeutralType" in message
