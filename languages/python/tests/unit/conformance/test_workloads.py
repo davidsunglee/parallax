@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -19,6 +19,7 @@ from parallax.conformance.workloads import (
     GeometryLevel,
     Workload,
     ancestor_levels,
+    canonical_source,
     catalog,
     plan_levels,
     scalar_type_digest,
@@ -449,3 +450,106 @@ def test_live_history_and_query_coordinates_belong_to_the_workload_digest() -> N
         )
 
     assert workload_digest(read=read) != workload_digest()
+
+
+def _live_source_edited(edit: Callable[[str], str]) -> str:
+    def read(path: Path) -> str:
+        text = path.read_text()
+        return edit(text) if path.name == "live_read_workloads.py" else text
+
+    return workload_digest(read=read)
+
+
+def _appended(addition: str) -> Callable[[str], str]:
+    def edit(text: str) -> str:
+        return text + addition
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        _appended("\nimport os.path\nfrom collections import abc\n"),
+        _replaced("import datetime as dt\n", "import datetime as dt  # time\n\n"),
+        _appended('\n"""Revised trailing prose."""\n'),
+    ],
+    ids=["imports", "formatting", "prose"],
+)
+def test_the_live_read_source_enters_the_workload_digest_as_executable_syntax(
+    edit: Callable[[str], str],
+) -> None:
+    assert _live_source_edited(edit) == workload_digest()
+
+
+_EXECUTABLE: Final = """\
+from __future__ import annotations
+
+import hashlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+__all__ = ["VALUE", "measured"]
+
+VALUE = "operational"
+
+
+def measured(values: Sequence[int]) -> int:
+    \"\"\"Measured prose.\"\"\"
+    from math import fsum
+
+    return int(fsum(values))
+
+
+def digest() -> str:
+    return hashlib.sha256(VALUE.encode()).hexdigest()
+"""
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        _EXECUTABLE.replace("import hashlib\n", "import hashlib as hashing\nimport json\n"),
+        _EXECUTABLE.replace("    from math import fsum\n", "    from math import fsum, prod\n"),
+        _EXECUTABLE.replace("    from collections.abc import Sequence\n", "    import typing\n"),
+        _EXECUTABLE.replace('"""Measured prose."""', '"""Revised prose."""'),
+        _EXECUTABLE.replace(
+            'VALUE = "operational"\n', '"Prose."\nVALUE = (\n    "operational"\n)\n'
+        ),
+        "# A comment.\n" + _EXECUTABLE.replace("\n\n\n", "\n\n"),
+    ],
+    ids=["moved-import", "local-import", "type-only-import", "docstring", "layout", "comments"],
+)
+def test_canonical_source_ignores_imports_prose_and_positions(edited: str) -> None:
+    assert canonical_source(edited) == canonical_source(_EXECUTABLE)
+
+
+@pytest.mark.parametrize(
+    "edited",
+    [
+        _EXECUTABLE.replace('VALUE = "operational"', 'VALUE = "changed"'),
+        _EXECUTABLE.replace('"measured"]', '"renamed"]'),
+        _EXECUTABLE.replace("int(fsum(values))", "round(fsum(values))"),
+        _EXECUTABLE.replace("def measured(values", "def renamed(values"),
+        _EXECUTABLE + "\nTRAILING = 1\n",
+    ],
+    ids=["literal", "export-string", "call", "name", "statement"],
+)
+def test_canonical_source_retains_every_executable_statement(edited: str) -> None:
+    assert canonical_source(edited) != canonical_source(_EXECUTABLE)
+
+
+def test_canonical_source_omits_only_the_named_top_level_functions() -> None:
+    omitted = frozenset({"digest"})
+    revised = _EXECUTABLE.replace("VALUE.encode()", "b'other'")
+    assert canonical_source(revised, omit_functions=omitted) == canonical_source(
+        _EXECUTABLE, omit_functions=omitted
+    )
+    assert canonical_source(revised) != canonical_source(_EXECUTABLE)
+    nested = _EXECUTABLE.replace("    from math import fsum\n", "    def digest() -> None: ...\n")
+    revised_nested = nested.replace("def digest() -> None: ...", "def digest() -> int: ...")
+    assert canonical_source(revised_nested, omit_functions=omitted) != canonical_source(
+        nested, omit_functions=omitted
+    )

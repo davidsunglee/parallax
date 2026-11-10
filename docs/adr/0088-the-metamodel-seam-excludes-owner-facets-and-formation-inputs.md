@@ -24,3 +24,8 @@ the seam requires.
 
 Python keeps `FacetKey`, `Metamodel.facet`, and its typed views as its own design.
 Whether those names belong on its application-facing surface is a separate question.
+
+*Superseded in part (2026-11, [Python ADR 0016](../../languages/python/docs/adr/0016-applications-spell-names-from-roots-and-vocabulary-modules.md)):*
+Python's accepted Metamodel is a concrete first-party class without a `facet`
+member; generic facet access is private behind each owner's typed accessor, and
+none of these names is application API. The seam decision stands.

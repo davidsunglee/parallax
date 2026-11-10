@@ -10,16 +10,17 @@ member, or provenance whose recorded lock digest is absent or malformed.
 
 A workload digest covers what was measured — the frozen workload manifest,
 each workload's measured fixture sections, and the parsed content of its model
-— and never the instruments that measured it, nor comments, formatting, or
-fixture keys no workload reads. A capture is taken once at its producing
-commit; the blocking memory gates are the cost class's, and whether a later
-instrument edit leaves two captures comparable is a judgement recorded beside
-the evidence. A capture whose readings were changed after that run, whose
-envelopes were re-classified under a later Budget Contract, whose workload
-digest was re-stated under a later digest definition, or one of whose members
-was re-measured after its collection failed records the change in the
-``adjustment`` of its ``conditions.json``, and verification and comparison both
-state it rather than presenting the amended capture as the run's own.
+— and never the instruments that measured it, nor comments, formatting,
+standalone prose, import statements, or fixture keys no workload reads. A
+capture is taken once at its producing commit; the blocking memory gates are
+the cost class's, and whether a later instrument edit leaves two captures
+comparable is a judgement recorded beside the evidence. A capture whose
+readings were changed after that run, whose envelopes were re-classified under
+a later Budget Contract, whose workload digest was re-stated under a later
+digest definition, or one of whose members was re-measured after its
+collection failed records the change in the ``adjustment`` of its
+``conditions.json``, and verification and comparison both state it rather than
+presenting the amended capture as the run's own.
 
 Comparison pairs readings only when their subject, runtime, window, workload,
 cell, and unit all agree, names every cell present on one side alone, and
@@ -129,7 +130,12 @@ from snapshot_delivery_overhead import (
 from snapshot_delivery_overhead import (
     unit as snapshot_unit,
 )
-from tests.unit._workload_digest_support import WRITE_SOURCES, write_digest
+from tests.unit._workload_digest_support import (
+    FEATURE_SOURCE,
+    WRITE_SOURCES,
+    feature_digest,
+    write_digest,
+)
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
@@ -1899,9 +1905,10 @@ manifests, and a digest of each generated dataset (its rows, root entity, root
 count, and fanout) at every scale a measurement reads it: its fixture's, the
 Budget Contract's scaling root counts, and the held control's."""
 
-type CodeIdentityRunner = Callable[[Path], tuple[int, str, str]]
-"""Runs :data:`CODE_IDENTITY_PROGRAM` in the checkout whose Python workspace is
-the given path, and answers its exit status, stdout, and stderr."""
+type ProgramRunner = Callable[[Path, str], tuple[int, str, str]]
+"""Runs a Python program in the checkout whose Python workspace is the given
+path, through that checkout's own frozen environment, and answers its exit
+status, stdout, and stderr."""
 
 
 def text_at(commit: str, path: Path) -> str:
@@ -1916,139 +1923,339 @@ def text_at(commit: str, path: Path) -> str:
     return completed.stdout.decode("utf-8")
 
 
-def _code_identity(runner: CodeIdentityRunner, workspace: Path, label: str) -> object:
-    returncode, stdout, stderr = runner(workspace)
+def _program_output(runner: ProgramRunner, workspace: Path, program: str, label: str) -> object:
+    returncode, stdout, stderr = runner(workspace, program)
     if returncode != 0:
-        raise ValueError(
-            f"the code identity at {label} exited {returncode}: {stderr.strip() or stdout.strip()}"
-        )
+        raise ValueError(f"{label} exited {returncode}: {stderr.strip() or stdout.strip()}")
     try:
         return json.loads(stdout.strip().splitlines()[-1])
     except (IndexError, ValueError) as error:
-        raise ValueError(f"the code identity at {label} is not JSON: {error}") from error
+        raise ValueError(f"{label} is not JSON: {error}") from error
 
 
-def _prove_measurement_unchanged(
-    commit: str, digest: str, runner: CodeIdentityRunner, worktree: WorktreeFactory
-) -> None:
-    label = commit[:12]
-    if workload_digest(catalog(), read=lambda path: text_at(commit, path)) != digest:
-        raise ValueError(f"the measured workload inputs at {label} differ from HEAD's")
-    try:
-        with worktree(commit) as checkout:
-            produced = _code_identity(runner, checkout / "languages" / "python", label)
-    except subprocess.CalledProcessError as error:
-        raise ValueError(f"git could not check out {label}: {error.stderr or error}") from error
+def _is_digest(value: object) -> bool:
+    return isinstance(value, str) and LOCK_DIGEST_PATTERN.fullmatch(value) is not None
+
+
+def _digests(value: object, count: int, label: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(cast("list[object]", value)) != count
+        or not all(_is_digest(member) for member in cast("list[object]", value))
+    ):
+        raise ValueError(f"{label} is not {count} SHA-256 digests: {value!r}")
+    return cast("list[str]", value)
+
+
+def _code_identity(runner: ProgramRunner, workspace: Path, label: str) -> list[object]:
+    identity = _program_output(
+        runner, workspace, CODE_IDENTITY_PROGRAM, f"the code identity at {label}"
+    )
+    fields = cast("list[object]", identity) if isinstance(identity, list) else []
+    if (
+        len(fields) != 4
+        or not isinstance(fields[0], int)
+        or isinstance(fields[0], bool)
+        or not _is_digest(fields[1])
+        or not _is_digest(fields[2])
+        or not isinstance(fields[3], dict)
+        or not all(
+            isinstance(key, str) and _is_digest(value)
+            for key, value in cast("dict[object, object]", fields[3]).items()
+        )
+    ):
+        raise ValueError(
+            f"the code identity at {label} is not an offset, two manifest digests, and "
+            f"generated dataset digests: {identity!r}"
+        )
+    return fields
+
+
+def _workload_digest_program(module: str, function: str) -> str:
+    return f"import json\nfrom {module} import {function}\nprint(json.dumps({function}()))\n"
+
+
+FROZEN_MANIFESTS_PROGRAM: Final = """\
+import json
+from parallax.conformance import workloads
+print(json.dumps([workloads.structural_digest(), workloads.scalar_type_digest()]))
+"""
+"""Prints the frozen structural and scalar-type manifests as the checkout
+running it defines them."""
+
+
+def _recorded_sources_match(
+    commit: str, conditions: Conditions, subject: str, sources: Sequence[str]
+) -> list[str]:
+    captured: Mapping[str, str] = conditions[subject].sources if subject in conditions else {}
+    texts = [text_at(commit, WORKSPACE / relative) for relative in sources]
+    for relative, text in zip(sources, texts, strict=True):
+        if captured.get(relative) != hashlib.sha256(text.encode("utf-8")).hexdigest():
+            raise ValueError(f"the captured {subject} source {relative} differs at {commit[:12]}")
+    return texts
+
+
+def _clean_producer(subject: str, provenance: Document) -> None:
+    if provenance["dirty"]:
+        raise ValueError(f"the {subject} capture names a dirty producing tree")
+
+
+@dataclass(frozen=True, slots=True)
+class DigestProof:
+    """How a stale workload digest one family of members records is proven to
+    identify what HEAD's digest definition identifies.
+
+    Every family is held to one rule: the producing commit's own digest code,
+    run by ``digest_program`` in that commit's checkout, reproduces the
+    recorded digest, and HEAD's digest code gives the producing commit's
+    inputs exactly HEAD's digest. ``admit`` refuses provenance the family
+    cannot prove from, before any checkout, and answers what the adjustment
+    discloses about the provenance it accepted; ``unchanged`` proves what the
+    family measures beyond its digest's inputs.
+    """
+
+    family: str
+    subjects: frozenset[str]
+    current: Callable[[], str]
+    digest_program: str
+    admit: Callable[[str, Sequence[Document], Conditions], Document]
+    inputs_at: Callable[[str, Conditions, Path, ProgramRunner], str]
+    unchanged: Callable[[Path, ProgramRunner], None]
+
+
+TREE_SEARCH_DEPTH: Final = 4096
+"""How many of HEAD's ancestors, newest first, :func:`tree_twin` searches."""
+
+
+def tree_twin(commit: str) -> str | None:
+    """The newest of HEAD's nearest :data:`TREE_SEARCH_DEPTH` ancestors, in Git's
+    default history order, whose tree is byte-identical to ``commit``'s, or
+    ``None`` when ``commit`` does not resolve or no such ancestor exists.
+
+    A rebase or squash merge that changed nothing leaves exactly such an
+    ancestor, so a capture at the rewritten commit measured that ancestor's code.
+    """
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{commit}^{{tree}}"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if resolved.returncode != 0:
+        return None
+    tree = resolved.stdout.strip()
+    history = subprocess.run(
+        ["git", "log", f"--max-count={TREE_SEARCH_DEPTH}", "--format=%H %T", "HEAD"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for line in history.stdout.splitlines():
+        ancestor, ancestor_tree = line.split()
+        if ancestor_tree == tree:
+            return ancestor
+    return None
+
+
+def _admit_snapshot(
+    commit: str, _provenances: Sequence[Document], _conditions: Conditions
+) -> Document:
+    if is_published(commit):
+        return {}
+    twin = tree_twin(commit)
+    if twin is None:
+        raise ValueError(
+            f"the producing commit {commit[:12]} is not an ancestor of HEAD, and none of "
+            f"HEAD's nearest {TREE_SEARCH_DEPTH} ancestors has its tree"
+        )
+    return {"treeIdenticalAncestor": twin}
+
+
+def _snapshot_inputs_at(
+    commit: str, _conditions: Conditions, _checkout: Path, _runner: ProgramRunner
+) -> str:
+    return workload_digest(catalog(), read=lambda path: text_at(commit, path))
+
+
+def _snapshot_code_unchanged(checkout: Path, runner: ProgramRunner) -> None:
+    produced = _code_identity(runner, checkout, "the producing commit")
     current = _code_identity(runner, WORKSPACE, "HEAD")
     if produced != current:
         raise ValueError(
-            f"the workload code at {label} differs from HEAD's: {produced} != {current}"
+            f"the workload code at the producing commit differs from HEAD's: "
+            f"{produced} != {current}"
         )
 
 
-def run_write_code_identity(workspace: Path) -> tuple[int, str, str]:
-    return _run_frozen(
-        workspace,
-        [
-            "-c",
-            "import json; from parallax.conformance import workloads; "
-            "print(json.dumps([workloads.structural_digest(), workloads.scalar_type_digest()]))",
-        ],
-    )
+def _admit_write(commit: str, provenances: Sequence[Document], conditions: Conditions) -> Document:
+    for provenance in provenances:
+        _clean_producer(WRITE_SUBJECT, provenance)
+    _recorded_sources_match(commit, conditions, WRITE_SUBJECT, WRITE_SOURCES)
+    return {}
 
 
-def _prove_write_unchanged(
-    commit: str, recorded: str, conditions: Conditions, worktree: WorktreeFactory
+def _write_inputs_at(
+    commit: str, conditions: Conditions, checkout: Path, runner: ProgramRunner
 ) -> str:
-    sources = [text_at(commit, WORKSPACE / relative) for relative in WRITE_SOURCES]
-    captured_sources = conditions[WRITE_SUBJECT].sources
-    for relative, source in zip(WRITE_SOURCES, sources, strict=True):
-        if captured_sources.get(relative) != hashlib.sha256(source.encode("utf-8")).hexdigest():
-            raise ValueError(
-                f"the captured write-lowering source {relative} differs at {commit[:12]}"
-            )
+    sources = _recorded_sources_match(commit, conditions, WRITE_SUBJECT, WRITE_SOURCES)
+    manifests = _digests(
+        _program_output(
+            runner, checkout, FROZEN_MANIFESTS_PROGRAM, "the write-lowering frozen manifests"
+        ),
+        2,
+        "the write-lowering frozen manifests",
+    )
+    return write_digest(sources, manifests)
+
+
+def _admit_feature(
+    commit: str, provenances: Sequence[Document], conditions: Conditions
+) -> Document:
+    for provenance in provenances:
+        _clean_producer(FEATURE_SUBJECT, provenance)
+    _recorded_sources_match(commit, conditions, FEATURE_SUBJECT, (FEATURE_SOURCE,))
+    return {}
+
+
+def _feature_inputs_at(
+    commit: str, conditions: Conditions, _checkout: Path, _runner: ProgramRunner
+) -> str:
+    (source,) = _recorded_sources_match(commit, conditions, FEATURE_SUBJECT, (FEATURE_SOURCE,))
+    return feature_digest(source)
+
+
+def _nothing_beyond_inputs(_checkout: Path, _runner: ProgramRunner) -> None:
+    return None
+
+
+DIGEST_PROOFS: Final[tuple[DigestProof, ...]] = (
+    DigestProof(
+        "Snapshot",
+        frozenset({SNAPSHOT_SUBJECT, LIFECYCLE_SUBJECT, INSTANCE_STATE_SUBJECT}),
+        lambda: workload_digest(),
+        _workload_digest_program("parallax.conformance.workloads", "workload_digest"),
+        _admit_snapshot,
+        _snapshot_inputs_at,
+        _snapshot_code_unchanged,
+    ),
+    DigestProof(
+        "write-lowering",
+        frozenset({WRITE_SUBJECT}),
+        lambda: write_report.lowering_support.write_lowering_digest(),
+        _workload_digest_program("tests.unit._write_lowering_support", "write_lowering_digest"),
+        _admit_write,
+        _write_inputs_at,
+        _nothing_beyond_inputs,
+    ),
+    DigestProof(
+        "feature-boundary",
+        frozenset({FEATURE_SUBJECT}),
+        lambda: feature_report.workload_digest(),
+        _workload_digest_program("tests.unit._feature_boundary_support", "workload_digest"),
+        _admit_feature,
+        _feature_inputs_at,
+        _nothing_beyond_inputs,
+    ),
+)
+"""Every workload digest family :func:`redigest` can re-state, each with the
+members recording it."""
+
+
+def _stale_families(
+    members: Sequence[Document],
+) -> list[tuple[DigestProof, str, list[Document]]]:
+    stale: list[tuple[DigestProof, str, list[Document]]] = []
+    for proof in DIGEST_PROOFS:
+        provenances = [
+            cast("Document", member["provenance"])
+            for member in members
+            if member["subject"] in proof.subjects
+        ]
+        recorded = {str(provenance["workloadDigest"]) for provenance in provenances}
+        if len(recorded) > 1:
+            raise ValueError(f"the {proof.family} members record different workload digests")
+        if recorded and recorded != {proof.current()}:
+            stale.append((proof, recorded.pop(), provenances))
+    return stale
+
+
+def _prove_digest_unchanged(
+    proof: DigestProof,
+    recorded: str,
+    commit: str,
+    conditions: Conditions,
+    checkout: Path,
+    runner: ProgramRunner,
+) -> str:
+    label = commit[:12]
+    produced = _program_output(
+        runner, checkout, proof.digest_program, f"the {proof.family} digest code at {label}"
+    )
+    if not _is_digest(produced):
+        raise ValueError(
+            f"the {proof.family} digest code at {label} answered {produced!r}, not a digest"
+        )
+    if produced != recorded:
+        raise ValueError(
+            f"the {proof.family} digest code at {label} does not reproduce the recorded digest"
+        )
+    current = proof.current()
+    if proof.inputs_at(commit, conditions, checkout, runner) != current:
+        raise ValueError(f"the {proof.family} workload inputs at {label} differ from HEAD's")
+    proof.unchanged(checkout, runner)
+    return current
+
+
+def _redigest_revisions(
+    members: Sequence[Document],
+    commit: str,
+    conditions: Conditions,
+    runner: ProgramRunner,
+    worktree: WorktreeFactory,
+) -> tuple[dict[str, tuple[str, str]], Document]:
+    stale = _stale_families(members)
+    if not stale:
+        raise ValueError("the supported workload digests are already HEAD's")
+    disclosed: dict[str, object] = {}
+    for proof, _recorded, provenances in stale:
+        disclosed.update(proof.admit(commit, provenances, conditions))
+    revisions: dict[str, tuple[str, str]] = {}
     try:
         with worktree(commit) as checkout:
-            manifests = _code_identity(
-                run_write_code_identity, checkout / "languages" / "python", commit[:12]
-            )
+            workspace = checkout / "languages" / "python"
+            for proof, recorded, _provenances in stale:
+                current = _prove_digest_unchanged(
+                    proof, recorded, commit, conditions, workspace, runner
+                )
+                for member in members:
+                    if member["subject"] in proof.subjects:
+                        revisions[str(member["subject"])] = (recorded, current)
     except subprocess.CalledProcessError as error:
         raise ValueError(
             f"git could not check out {commit[:12]}: {error.stderr or error}"
         ) from error
-    if (
-        not isinstance(manifests, list)
-        or len(cast("list[object]", manifests)) != 2
-        or not all(isinstance(value, str) for value in cast("list[object]", manifests))
-    ):
-        raise ValueError("the write-lowering frozen manifests are not two digests")
-    frozen = cast("list[str]", manifests)
-    historical = write_digest(sources, frozen)
-    if recorded not in {historical, write_digest(sources, frozen, legacy=True)}:
-        raise ValueError("the recorded write-lowering digest does not match its producing source")
-    current = write_report.lowering_support.write_lowering_digest()
-    if historical != current:
-        raise ValueError("the write-lowering workload code or frozen manifests differ from HEAD's")
-    return current
-
-
-def _snapshot_redigest(
-    document: Document, commit: str, runner: CodeIdentityRunner, worktree: WorktreeFactory
-) -> tuple[str, str] | None:
-    snapshot = _snapshot(document)
-    if snapshot is None:
-        raise ValueError("the portfolio has no single snapshot-delivery member")
-    recorded = str(cast("Document", snapshot["provenance"])["workloadDigest"])
-    current = workload_digest()
-    if recorded == current:
-        return None
-    if not is_published(commit):
-        raise ValueError(f"the producing commit {commit[:12]} is not an ancestor of HEAD")
-    _prove_measurement_unchanged(commit, current, runner, worktree)
-    return recorded, current
-
-
-def _redigest_revisions(
-    document: Document,
-    commit: str,
-    conditions: Conditions,
-    runner: CodeIdentityRunner,
-    worktree: WorktreeFactory,
-) -> dict[str, tuple[str, str]]:
-    revisions: dict[str, tuple[str, str]] = {}
-    snapshot_change = _snapshot_redigest(document, commit, runner, worktree)
-    members = cast("Sequence[Document]", document["members"])
-    for member in members:
-        subject = str(member["subject"])
-        provenance = cast("Document", member["provenance"])
-        recorded = str(provenance["workloadDigest"])
-        if snapshot_change is not None and recorded == snapshot_change[0]:
-            revisions[subject] = snapshot_change
-        if (
-            subject == WRITE_SUBJECT
-            and recorded != write_report.lowering_support.write_lowering_digest()
-        ):
-            if provenance["dirty"]:
-                raise ValueError("the write-lowering capture names a dirty producing tree")
-            revisions[subject] = (
-                recorded,
-                _prove_write_unchanged(commit, recorded, conditions, worktree),
-            )
-    return revisions
+    return revisions, disclosed
 
 
 def redigest(
     portfolio: Path,
-    runner: CodeIdentityRunner | None = None,
+    runner: ProgramRunner | None = None,
     worktree: WorktreeFactory | None = None,
 ) -> None:
-    """Re-state stale Snapshot and write-lowering workload identities.
+    """Re-state every stale workload digest family under HEAD's digest definition.
 
-    Snapshot requires a producing ancestor and its original dynamic input proof.
-    Write lowering also accepts a resolvable rebased producer, after verifying
-    its recorded source hashes, legacy or canonical digest, executable syntax,
-    and frozen manifests. All proofs complete before any evidence is replaced;
-    measurements, producing provenance, and captured conditions stay intact.
+    Each family is proven by :class:`DigestProof`'s one rule over the single
+    producing commit. Snapshot requires that commit to be an ancestor of HEAD,
+    or to have the byte-identical tree of an ancestor :func:`tree_twin` finds,
+    which the adjustment names, and its code identity to equal HEAD's; write
+    lowering and feature boundaries accept the exact resolvable producing
+    commit of a clean tree after verifying the source hashes its conditions
+    record, and write lowering the frozen manifests its checkout defines. The
+    recorded provenance is never rewritten. Every proof completes before any
+    evidence is replaced; measurements, producing provenance, and captured
+    conditions stay intact.
     """
     document, conditions, durations = _reclassification_inputs(portfolio)
     members = cast("Sequence[Document]", document["members"])
@@ -2064,15 +2271,15 @@ def redigest(
             "the members embed a Budget Contract other than HEAD's committed one; "
             "reclassify or recapture instead"
         )
-    revisions = _redigest_revisions(
-        document,
+    if _snapshot(document) is None:
+        raise ValueError("the portfolio has no single snapshot-delivery member")
+    revisions, disclosed = _redigest_revisions(
+        members,
         commit,
         load_conditions(portfolio.parent / CONDITIONS_FILE),
-        runner or run_code_identity,
+        runner or run_frozen_program,
         worktree or base_worktree,
     )
-    if not revisions:
-        raise ValueError("the supported workload digests are already HEAD's")
     restated: dict[str, Document] = {
         str(member["subject"]): {
             **member,
@@ -2112,10 +2319,12 @@ def redigest(
             "redigested": {
                 **identity,
                 "producingCommit": commit,
+                **disclosed,
                 "members": sorted(restated),
                 "unchanged": (
-                    "every reading, sample, comparison, and measurement condition; the measured "
-                    "workload inputs and code identity at the producing commit equal HEAD's"
+                    "every reading, sample, comparison, and measurement condition; the producing "
+                    "commit's own digest code reproduces each recorded digest, and HEAD's digest "
+                    "code finds the producing commit's measured inputs equal to HEAD's"
                 ),
             },
         },
@@ -2969,9 +3178,9 @@ def run_base(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:
     return _run_frozen(workspace, ["tools/cost_report.py", *arguments])
 
 
-def run_code_identity(workspace: Path) -> tuple[int, str, str]:
-    """:data:`CODE_IDENTITY_PROGRAM` through the checkout's own frozen environment."""
-    return _run_frozen(workspace, ["-c", CODE_IDENTITY_PROGRAM])
+def run_frozen_program(workspace: Path, program: str) -> tuple[int, str, str]:
+    """``program`` through the checkout's own frozen environment."""
+    return _run_frozen(workspace, ["-c", program])
 
 
 def _run_frozen(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:

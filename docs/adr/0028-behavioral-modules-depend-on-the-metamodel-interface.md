@@ -177,12 +177,23 @@ facets atomically. This mechanism introduces no contributor imports,
 registration, string-keyed public map, or ambient facet side table in
 `m-metamodel`.
 
+*Superseded in part (2026-11, [Python ADR 0016](../../languages/python/docs/adr/0016-applications-spell-names-from-roots-and-vocabulary-modules.md)):*
+Python's accepted Metamodel carries no generic `facet` member. Generic retrieval
+is private to its metamodel package, behind each owner's typed accessor, and
+`FacetKey` is first-party rather than exported.
+
 There is deliberately no generic flattened Entity Metadata view: effective
 members depend on the question being asked. A concrete ancestry chain, an
 abstract-position projection superset, a family identity, and a physical table
 column set are distinct `m-inheritance` views even when they begin with the same
 local declarations. `models.meta(...)` therefore remains the declaration view;
 callers obtain contextual effective answers only through the owning facet.
+
+*Superseded in part (2026-11, [Python ADR 0016](../../languages/python/docs/adr/0016-applications-spell-names-from-roots-and-vocabulary-modules.md)):*
+Python applications no longer read the declaration view through `meta(...)`.
+`model.entity(key)` returns resolved Entity Metadata whose declared and
+effective profiles the Entity frontend builds from the owning facets; behavioral
+modules still read contextual effective views only through those facets.
 
 The interface preserves semantic absence without preserving irrelevant source
 spelling; generic Optional/Presence wrappers and
@@ -445,6 +456,10 @@ lookup. Ordered enumeration remains a separate immutable sequence contract.
 The Python `models.meta(...)` facade accepts its documented class/string/
 identity conveniences and translates a miss into `MetamodelLookupError` rather
 than returning null.
+
+*Superseded in part (2026-11, [Python ADR 0016](../../languages/python/docs/adr/0016-applications-spell-names-from-roots-and-vocabulary-modules.md)):*
+that application lookup is `model.entity(key)`, returning resolved Entity
+Metadata rather than this local declaration contract.
 
 The complete Entity Metadata contract is:
 

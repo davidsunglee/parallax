@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -251,4 +250,6 @@ def driver_for(name: str) -> Generator[Driver]:
 
 def workload_digest() -> str:
     """Fingerprint the frozen workloads and their controls, excluding instruments."""
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    from tests.unit._workload_digest_support import feature_digest
+
+    return feature_digest(Path(__file__).read_text(encoding="utf-8"))

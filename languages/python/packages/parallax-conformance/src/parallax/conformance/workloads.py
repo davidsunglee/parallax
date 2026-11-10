@@ -44,6 +44,7 @@ __all__ = [
     "ScriptedRows",
     "Workload",
     "ancestor_levels",
+    "canonical_source",
     "catalog",
     "plan_levels",
     "scalar_type_digest",
@@ -485,6 +486,38 @@ def _file_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+class _ExecutableSyntax(ast.NodeTransformer):
+    def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return None
+        return self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        return None
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        return None
+
+
+def canonical_source(source: str, *, omit_functions: frozenset[str] = frozenset()) -> bytes:
+    """The executable syntax of Python ``source`` as a workload digest covers it.
+
+    Standalone string expressions, import statements, comments, and source
+    positions are excluded, so moving where a name is imported from or revising
+    prose leaves it unchanged; every other statement, name, and literal is
+    retained. ``omit_functions`` names top-level functions excluded whole: a
+    workload's own digest declaration describes its identity rather than
+    running inside a measured window.
+    """
+    tree = ast.parse(source)
+    tree.body = [
+        node
+        for node in tree.body
+        if not (isinstance(node, ast.FunctionDef) and node.name in omit_functions)
+    ]
+    return ast.dump(_ExecutableSyntax().visit(tree), include_attributes=False).encode("utf-8")
+
+
 def workload_digest(
     workloads: Mapping[str, Workload] | None = None,
     *,
@@ -493,8 +526,8 @@ def workload_digest(
     """The SHA-256 digest of what ``workloads`` measure: each workload's id, the
     canonical JSON of its fixture's measured sections and of its parsed model,
     every number keeping its authored meaning, the generated-key offset, and the
-    structural and scalar-type manifests, and the executable live-read fixture
-    and query definitions.
+    structural and scalar-type manifests, and the :func:`canonical_source` of
+    the live-read fixture and query definitions.
     Comments, formatting, and fixture keys outside the measured sections leave
     it unchanged.
 
@@ -516,7 +549,7 @@ def workload_digest(
     live_source = text_of(
         case_format.find_repo_root() / "languages/python/tests/_support/live_read_workloads.py"
     )
-    digest.update(ast.dump(ast.parse(live_source), include_attributes=False).encode("utf-8"))
+    digest.update(canonical_source(live_source))
     return digest.hexdigest()
 
 

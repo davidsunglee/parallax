@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 from collections.abc import Sequence
 from typing import Final
+
+from parallax.conformance.workloads import canonical_source
 
 WRITE_SOURCES: Final = (
     "tests/unit/_write_lowering_support.py",
@@ -12,38 +13,23 @@ WRITE_SOURCES: Final = (
     "tests/unit/_workload_spelling_support.py",
 )
 
-
-class _WithoutProse(ast.NodeTransformer):
-    def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            return None
-        return self.generic_visit(node)
+FEATURE_SOURCE: Final = "tests/unit/_feature_boundary_support.py"
 
 
-def canonical_source(source: str, *, omit_digest: bool = False) -> bytes:
-    """Executable syntax without prose or source positions.
-
-    The write workload's digest declaration describes its identity rather than
-    running inside a measured window, so only that top-level declaration may
-    be omitted while proving a change to the digest definition itself.
-    """
-    tree = ast.parse(source)
-    if omit_digest:
-        tree.body = [
-            node
-            for node in tree.body
-            if not (isinstance(node, ast.FunctionDef) and node.name == "write_lowering_digest")
-        ]
-    return ast.dump(_WithoutProse().visit(tree), include_attributes=False).encode("utf-8")
-
-
-def write_digest(sources: Sequence[str], manifests: Sequence[str], *, legacy: bool = False) -> str:
+def write_digest(sources: Sequence[str], manifests: Sequence[str]) -> str:
+    """The write-lowering identity of ``sources``, in :data:`WRITE_SOURCES`
+    order, and the frozen structural and scalar-type ``manifests``."""
     digest = hashlib.sha256()
-    for index, source in enumerate(sources[:3] if legacy else sources):
-        digest.update(
-            source.encode("utf-8") if legacy else canonical_source(source, omit_digest=index == 0)
-        )
+    for index, source in enumerate(sources):
+        omitted = frozenset({"write_lowering_digest"}) if index == 0 else frozenset[str]()
+        digest.update(canonical_source(source, omit_functions=omitted))
         digest.update(b"\0")
     for manifest in manifests:
         digest.update(manifest.encode("utf-8"))
     return digest.hexdigest()
+
+
+def feature_digest(source: str) -> str:
+    """The feature-boundary identity of the :data:`FEATURE_SOURCE` text ``source``."""
+    canonical = canonical_source(source, omit_functions=frozenset({"workload_digest"}))
+    return hashlib.sha256(canonical).hexdigest()

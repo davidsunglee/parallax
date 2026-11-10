@@ -1239,7 +1239,7 @@
             "warmups": 3
           }
         },
-        "workloadDigest": "a6e6cc3437f5aee7ceb070ba383bee2a8ffadfa19f79e8846599ca0f81896cfe"
+        "workloadDigest": "816363e7a904bc8c7eb061a6c65ddd8dc791735b8c0231e3bbc4057bee46335d"
       },
       "readings": [
         {
@@ -12872,7 +12872,7 @@
             "warmupPairs": 200
           }
         },
-        "workloadDigest": "a6e6cc3437f5aee7ceb070ba383bee2a8ffadfa19f79e8846599ca0f81896cfe"
+        "workloadDigest": "816363e7a904bc8c7eb061a6c65ddd8dc791735b8c0231e3bbc4057bee46335d"
       },
       "readings": [
         {
@@ -13596,7 +13596,7 @@
             ]
           }
         },
-        "workloadDigest": "a6e6cc3437f5aee7ceb070ba383bee2a8ffadfa19f79e8846599ca0f81896cfe"
+        "workloadDigest": "816363e7a904bc8c7eb061a6c65ddd8dc791735b8c0231e3bbc4057bee46335d"
       },
       "readings": [
         {
@@ -18506,7 +18506,7 @@
             "wire-insert-response": "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen node it answers; no flush, lowering, or serialization"
           }
         },
-        "workloadDigest": "da4dbdaa85549dddcf045b56836fabaaa4bf4c76d13e251d927375d9773d994a"
+        "workloadDigest": "be1c44c91276dc500502027fbb36d4206b1e42169cd7500f38b16c6e9b560208"
       },
       "readings": [
         {
@@ -39425,7 +39425,7 @@
             "typed-predicate-binding": "Typed interpretation and read preflight under a prepared model selection; query authoring and model preparation excluded."
           }
         },
-        "workloadDigest": "26f7387163d5743685b3887b19bb1fa79b084e601338b37761950bedd174de8b"
+        "workloadDigest": "f11a041ce587ca5424f74f0b3cf7720835afb03de49ab61154a4cf6ca46fc811"
       },
       "readings": [
         {
