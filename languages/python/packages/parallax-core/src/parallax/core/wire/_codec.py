@@ -18,7 +18,6 @@ from parallax.core.base import (
     FLOAT64,
     INT32,
     INT64,
-    JSON,
     STRING,
     TIME,
     TIMESTAMP,
@@ -40,7 +39,6 @@ from parallax.core.base import (
     Timestamp,
     UsageError,
     Uuid,
-    adopt_frozen_map,
     matches_neutral_type,
     nearest_binary32_of_spelling,
     nearest_float_at_width,
@@ -149,15 +147,12 @@ def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> Manage
 
 def wire_converter(neutral_type: NeutralType) -> ScalarConverter:
     """The Wire lane's conversion for ``neutral_type``: :func:`decode_wire`
-    resolved once to its type's own decoder, with the owned form of a Json
-    value, raising a decoding refusal."""
+    resolved once to its type's own decoder, raising a decoding refusal."""
     shared = _NULLARY_WIRE_CONVERTERS.get(type(neutral_type))
     return _wire_converter(neutral_type) if shared is None else shared
 
 
 def _wire_converter(neutral_type: NeutralType) -> ScalarConverter:
-    if isinstance(neutral_type, Json):
-        return _decode_owned_json
     decode = _WIRE_DECODERS[type(neutral_type)]
 
     def convert(value: object) -> object:
@@ -166,24 +161,6 @@ def _wire_converter(neutral_type: NeutralType) -> ScalarConverter:
         return decode(value, neutral_type).managed
 
     return convert
-
-
-def _decode_owned_json(value: object) -> object:
-    if _is_unrecognized_exclusion(value):
-        _fail(NEUTRAL_LITERAL_TYPE_MISMATCH, value, JSON)
-    try:
-        return normalize_json_carrier(
-            value,
-            normalize_scalar=_normalize_json_scalar,
-            top_level=True,
-            accept_mappings=True,
-            seal_list=tuple,
-            seal_dict=adopt_frozen_map,
-        )
-    except JsonCarrierFailure as exc:
-        _fail(_json_failure_reason(exc), value, JSON)
-    except _JsonFailure as exc:
-        _fail(exc.reason, value, JSON)
 
 
 def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
@@ -780,7 +757,8 @@ _WIRE_DECODERS: Final[Mapping[type[NeutralType], Callable[[object, Any], _Decode
         }
     )
 )
-# Every variant but Decimal is nullary, so one converter serves each wherever it is declared.
+# Every declarable variant but Decimal is nullary, so one converter serves each wherever it is
+# declared.
 _NULLARY_WIRE_CONVERTERS: Final[Mapping[type[NeutralType], ScalarConverter]] = MappingProxyType(
     {
         type(declared): _wire_converter(declared)
@@ -796,7 +774,6 @@ _NULLARY_WIRE_CONVERTERS: Final[Mapping[type[NeutralType], ScalarConverter]] = M
             TIME,
             TIMESTAMP,
             UUID,
-            JSON,
         )
     }
 )

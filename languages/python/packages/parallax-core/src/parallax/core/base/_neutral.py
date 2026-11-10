@@ -511,9 +511,8 @@ answering the owned managed value or raising the lane's mismatch as a
 
 def typed_converter(declared: NeutralType) -> ScalarConverter:
     """The Typed lane's conversion for ``declared``: :func:`coerce_neutral_input`
-    followed by :func:`matches_neutral_type`, with the owned form of a Json
-    value, as one call refusing with :data:`NEUTRAL_TYPE_MISMATCH`, whose message
-    names the converted value.
+    followed by :func:`matches_neutral_type`, as one call refusing with
+    :data:`NEUTRAL_TYPE_MISMATCH`, whose message names the converted value.
 
     An exact built-in carrier takes its type's own rule directly; every other
     input, a subclass or an excluded carrier included, takes the general rule.
@@ -633,24 +632,8 @@ def _typed_timestamp(declared: Timestamp) -> ScalarConverter:
     return convert
 
 
-def _typed_json(value: object) -> object:
-    # The package defines the frozen carriers after importing this module.
-    from parallax.core.base import adopt_frozen_map
-
-    if value is not None:
-        try:
-            return normalize_json_carrier(
-                value,
-                normalize_scalar=_json_membership_scalar,
-                seal_list=tuple,
-                seal_dict=adopt_frozen_map,
-            )
-        except JsonCarrierFailure:
-            pass
-    raise _typed_mismatch(value, JSON)
-
-
-# Every variant but Numeric is nullary, so one converter serves each wherever it is declared.
+# Every declarable variant but Numeric is nullary, so one converter serves each wherever it is
+# declared.
 _NULLARY_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], ScalarConverter]] = {
     Boolean: _typed_boolean(BOOLEAN),
     Int32: _typed_integer(INT32),
@@ -663,7 +646,6 @@ _NULLARY_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], ScalarConverter]] =
     Time: _typed_time(TIME),
     Timestamp: _typed_timestamp(TIMESTAMP),
     Uuid: _typed_exact(_uuid.UUID)(UUID),
-    Json: _typed_json,
 }
 
 
@@ -1020,9 +1002,6 @@ class _JsonVisit:
 @dataclass(frozen=True, slots=True)
 class _JsonLeave:
     identity: int
-    parent: _JsonContainer
-    location: _JsonLocation
-    container: _JsonContainer
 
 
 type _JsonTraversal = _JsonVisit | _JsonLeave
@@ -1034,15 +1013,8 @@ def normalize_json_carrier(
     normalize_scalar: _Callable[[object], object],
     top_level: bool = False,
     accept_mappings: bool = False,
-    seal_list: _Callable[[list[object]], object] | None = None,
-    seal_dict: _Callable[[dict[str, object]], object] | None = None,
 ) -> object:
-    """Normalize one JSON carrier through the shared iterative container walk.
-
-    ``seal_list`` and ``seal_dict`` replace each normalized container once its
-    members are complete, so a caller owning the result in another container
-    form builds it in this same walk.
-    """
+    """Normalize one JSON carrier through the shared iterative container walk."""
     root: list[object] = [None]
     active_containers: set[int] = set()
     pending: list[_JsonTraversal] = [_JsonVisit(value, root, 0, top_level)]
@@ -1050,7 +1022,6 @@ def normalize_json_carrier(
         task = pending.pop()
         if isinstance(task, _JsonLeave):
             active_containers.remove(task.identity)
-            _seal_json_container(task, seal_list, seal_dict)
             continue
         current = task.value
         if isinstance(current, ManagedValueExclusion) and isinstance(current, (list, _Mapping)):
@@ -1065,7 +1036,7 @@ def normalize_json_carrier(
             items = base_list_carrier(base_current)
             normalized_list: list[object] = [None] * len(items)
             _assign_json_value(task.parent, task.location, normalized_list)
-            _enter_json_container(base_current, task, normalized_list, active_containers, pending)
+            _enter_json_container(base_current, active_containers, pending)
             for index in range(len(items) - 1, -1, -1):
                 pending.append(_JsonVisit(items[index], normalized_list, index))
             continue
@@ -1075,7 +1046,7 @@ def normalize_json_carrier(
             normalized_items = _normalize_json_member_names(items)
             normalized_object: dict[str, object] = {}
             _assign_json_value(task.parent, task.location, normalized_object)
-            _enter_json_container(mapping, task, normalized_object, active_containers, pending)
+            _enter_json_container(mapping, active_containers, pending)
             for name, member in reversed(normalized_items):
                 pending.append(_JsonVisit(member, normalized_object, name))
             continue
@@ -1087,23 +1058,8 @@ def normalize_json_carrier(
     return root[0]
 
 
-def _seal_json_container(
-    leave: _JsonLeave,
-    seal_list: _Callable[[list[object]], object] | None,
-    seal_dict: _Callable[[dict[str, object]], object] | None,
-) -> None:
-    container = leave.container
-    if isinstance(container, list):
-        if seal_list is not None:
-            _assign_json_value(leave.parent, leave.location, seal_list(container))
-    elif seal_dict is not None:
-        _assign_json_value(leave.parent, leave.location, seal_dict(container))
-
-
 def _enter_json_container(
     value: object,
-    visit: _JsonVisit,
-    normalized: _JsonContainer,
     active_containers: set[int],
     pending: list[_JsonTraversal],
 ) -> None:
@@ -1111,7 +1067,7 @@ def _enter_json_container(
     if identity in active_containers:
         raise JsonCarrierFailure("cycle", "cyclic containers are not Json content")
     active_containers.add(identity)
-    pending.append(_JsonLeave(identity, visit.parent, visit.location, normalized))
+    pending.append(_JsonLeave(identity))
 
 
 def _json_mapping_items(value: _Mapping[object, object]) -> list[tuple[object, object]]:

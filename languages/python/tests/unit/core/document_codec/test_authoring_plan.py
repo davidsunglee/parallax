@@ -14,7 +14,6 @@ from parallax.core.base import (
     INT64,
     STRING,
     TIMESTAMP,
-    FrozenMap,
     NeutralType,
     Numeric,
     ScalarConverter,
@@ -267,16 +266,6 @@ def test_a_catalog_compiles_one_plan_per_shape_and_one_converter_per_type() -> N
     assert sorted(map(repr, compiled)) == sorted(
         map(repr, (INT64, STRING, TIMESTAMP, Numeric(8, 5)))
     )
-
-
-def test_owned_json_content_is_frozen_once() -> None:
-    from parallax.core.base import JSON
-
-    shape = MemberShape((ScalarDefinition("doc", JSON, False),))
-    (cell,) = _plan(shape).complete_row(({"a": [1]},), lane=_WIRE, required=0b1).cells
-
-    assert cell == FrozenMap({"a": (1,)})
-    assert type(cell) is FrozenMap
 
 
 def test_authored_values_read_a_payload_in_member_order() -> None:

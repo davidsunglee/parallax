@@ -17,14 +17,12 @@ from typing import cast
 
 import pytest
 
-from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, JSON, FrozenMap, InternalError, NeutralType
+from parallax.core.base import INFINITY, FrozenMap, InternalError, NeutralType
 from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
-    Table,
     ValueObjectIdentity,
 )
 from parallax.core.storage_layout import RelationalDocument
@@ -46,8 +44,6 @@ from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
-from tests.unit._metamodel_support import Declaration, attribute, key, source
-from tests.unit._metamodel_support import identity as entity_identity
 
 _EXPEDITIONS: Metamodel = corpus_model("document-layout-restored-member")
 _EXPEDITION = EntityIdentity("parallax.compatibility", "Expedition")
@@ -370,33 +366,6 @@ def test_a_row_executing_only_directly_stored_members_keeps_its_retained_documen
     keyed = _successor(ChangedFrom(_predecessor()), {_ID: 7})
 
     assert _document(preparer.row(_EXPEDITION, keyed)) is _STORED
-
-
-def test_a_json_member_compares_as_a_persisted_document() -> None:
-    entity = entity_identity("Ledger")
-    model = form_metamodel(
-        source(
-            Declaration(
-                identity=entity,
-                container=Table("ledger"),
-                attributes=(key(entity), attribute(entity, "entries", type=JSON)),
-            )
-        )
-    )
-    preparer = LayoutPayloadPreparer(model)
-    entries = AttributeIdentity(entity, "entries")
-
-    def row(value: object) -> WriteRow:
-        return WriteRow(
-            row=managed_row_of(model, {AttributeIdentity(entity, "id"): 1, entries: value}),
-            origin=NEW_LINEAGE,
-        )
-
-    same, respelled, other = row({"a": [1]}), row({"a": [1.0]}), row({"a": [True]})
-    assert not preparer.proven_unequal_non_interval(entity, same, respelled)
-    assert preparer.proven_unequal_non_interval(entity, same, other)
-    assert preparer.equal_non_interval(preparer.row(entity, same), preparer.row(entity, respelled))
-    assert not preparer.equal_non_interval(preparer.row(entity, same), preparer.row(entity, other))
 
 
 def test_a_subtypes_rows_store_and_compare_its_discriminator() -> None:

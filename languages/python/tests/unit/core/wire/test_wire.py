@@ -1111,7 +1111,6 @@ _CONVERTER_TYPES: tuple[NeutralType, ...] = (
     TIME,
     TIMESTAMP,
     UUID,
-    JSON,
 )
 _CONVERTER_SPELLINGS: tuple[str, ...] = (
     "null",
@@ -1163,10 +1162,9 @@ def test_a_wire_converter_decodes_and_owns_exactly_as_decoding_then_retaining(
         assert type(converted) is type(expected)
 
 
-@pytest.mark.parametrize("declared", [STRING, JSON], ids=repr)
-def test_a_wire_converter_refuses_an_excluded_carrier(declared: NeutralType) -> None:
+def test_a_wire_converter_refuses_an_excluded_carrier() -> None:
     class _Excluded(str, ManagedValueExclusion):
         pass
 
     with raises_code(UsageError, "neutral-literal-type-mismatch"):
-        wire_codec.wire_converter(declared)(_Excluded("text"))
+        wire_codec.wire_converter(STRING)(_Excluded("text"))

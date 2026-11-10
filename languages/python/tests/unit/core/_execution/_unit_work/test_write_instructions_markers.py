@@ -17,15 +17,13 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import JSON, UsageError
+from parallax.core.base import UsageError
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import Metamodel, Table
+from parallax.core.metamodel import Metamodel
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.steps import MAX_PLUS_ONE, SelfIncrement
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
-from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _MODELS = models.load_models()
 _PK_MAX = _MODELS["pk-max"]
@@ -42,17 +40,6 @@ class Counter(TxTemporal, table="counter", namespace="insert.markers"):
 
 
 _COUNTER = model_of(DomainModel(Counter))
-
-_DOCUMENT = identity("MarkedDocument")
-_JSON_MODEL = form_metamodel(
-    source(
-        Declaration(
-            identity=_DOCUMENT,
-            container=Table("marked_document"),
-            attributes=(key(_DOCUMENT), attribute(_DOCUMENT, "payload", type=JSON)),
-        )
-    )
-)
 
 
 def _row(
@@ -107,25 +94,6 @@ def test_a_temporal_assignment_plans_in_the_successor_rows_insert_context(
         r"not recognized for insert planning$",
     ):
         prepare(increment, preparation)
-
-
-@pytest.mark.parametrize("prepare", _PREPARERS, ids=_LANES)
-def test_a_scalar_json_attribute_keeps_its_root_marker_reading(
-    prepare: Callable[..., object],
-) -> None:
-    canonical = _DOCUMENT.canonical
-    marked = KeyedWriteInstruction(
-        "insert", canonical, ({"id": 1, "payload": {"computed": "maxPlusOne"}},)
-    )
-    assert _row(prepare, marked, _JSON_MODEL)["payload"] is MAX_PLUS_ONE
-    # A mapping of another shape is a Json document like any other.
-    shaped = KeyedWriteInstruction(
-        "insert", canonical, ({"id": 1, "payload": {"computed": "maxPlusOne", "x": 1}},)
-    )
-    assert dict(_row(prepare, shaped, _JSON_MODEL)["payload"]) == {  # pyright: ignore[reportArgumentType, reportCallIssue]
-        "computed": "maxPlusOne",
-        "x": 1,
-    }
 
 
 @pytest.mark.parametrize("prepare", _PREPARERS, ids=_LANES)

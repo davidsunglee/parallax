@@ -534,7 +534,7 @@ class _ExcludedText(str, ManagedValueExclusion):
     pass
 
 
-_EVERY_TYPE: tuple[base.NeutralType, ...] = (
+_DECLARABLE_TYPES: tuple[base.NeutralType, ...] = (
     base.BOOLEAN,
     base.INT32,
     base.INT64,
@@ -547,8 +547,8 @@ _EVERY_TYPE: tuple[base.NeutralType, ...] = (
     base.TIME,
     base.TIMESTAMP,
     base.UUID,
-    base.JSON,
 )
+_EVERY_TYPE: tuple[base.NeutralType, ...] = (*_DECLARABLE_TYPES, base.JSON)
 _UUID_TEXT = "123e4567-e89b-12d3-a456-426614174000"
 _CANDIDATES: tuple[object, ...] = (
     None,
@@ -684,7 +684,7 @@ def _general_typed_conversion(value: object, declared: base.NeutralType) -> tupl
     return base.matches_neutral_type(managed, declared), base.retain_document_value(managed)
 
 
-@pytest.mark.parametrize("declared", _EVERY_TYPE, ids=repr)
+@pytest.mark.parametrize("declared", _DECLARABLE_TYPES, ids=repr)
 def test_a_typed_converter_answers_coercion_then_membership_as_one_call(
     declared: base.NeutralType,
 ) -> None:
@@ -694,8 +694,7 @@ def test_a_typed_converter_answers_coercion_then_membership_as_one_call(
         if member:
             converted = convert(candidate)
             assert converted == managed
-            # Owned Json content keeps each scalar in its built-in carrier.
-            assert type(converted) is type(managed) or declared == base.JSON
+            assert type(converted) is type(managed)
         else:
             with raises_code(base.UsageError, "neutral-type-mismatch") as refused:
                 convert(candidate)
@@ -710,17 +709,3 @@ def test_a_typed_float32_converter_names_the_spelled_number_rounded_once() -> No
     hosts = [float(spelling) for spelling in rounding_witnesses()]
 
     assert [convert(host) for host in hosts] == [rounded_once(repr(host)) for host in hosts]
-
-
-def test_a_typed_json_converter_owns_its_containers_in_the_judging_walk() -> None:
-    source: dict[str, object] = {"a": [1, {"b": None}], "c": "text"}
-
-    converted = base.typed_converter(base.JSON)(source)
-
-    assert converted == base.retain_document_value(source)
-    assert type(converted) is base.FrozenMap
-    owned = cast("Mapping[str, object]", converted)
-    assert type(owned["a"]) is tuple
-    assert type(cast("tuple[object, ...]", owned["a"])[1]) is base.FrozenMap
-    cast("list[object]", source["a"]).append(2)
-    assert owned["a"] == (1, base.FrozenMap({"b": None}))
