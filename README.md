@@ -243,6 +243,4 @@ Set that endpoint as `docker.host` in your per-machine, untracked
 
 ## License
 
-Copyright 2026 David Lee.
-
 Licensed under the [Apache License, Version 2.0](LICENSE).
