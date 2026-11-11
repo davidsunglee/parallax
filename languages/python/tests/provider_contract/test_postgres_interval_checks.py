@@ -29,12 +29,12 @@ _MAR = datetime(2024, 3, 1, tzinfo=UTC)
 
 _INSERT_POSITION = (
     "insert into position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-    "values (%s, %s, %s, %s, %s, %s, %s)"
+    "values (?, ?, ?, ?, ?, ?, ?)"
 )
 _CHECKS = (
     "select t0.conname, pg_get_constraintdef(t0.oid), t0.convalidated "
     "from pg_constraint t0 join pg_class t1 on t1.oid = t0.conrelid "
-    "where t1.relname = %s and t0.contype = 'c' order by t0.conname"
+    "where t1.relname = ? and t0.contype = 'c' order by t0.conname"
 )
 
 
@@ -133,12 +133,12 @@ def test_an_external_write_of_an_empty_or_inverted_interval_is_refused_by_name(
 def test_an_update_that_closes_a_row_at_its_own_start_is_refused(profile_run: Any) -> None:
     model = _provision(profile_run, "balance.yaml")
     profile_run.port.execute_write(
-        "insert into balance (bal_id, acct_num, val, in_z, out_z) values (%s, %s, %s, %s, %s)",
+        "insert into balance (bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
         [1, "A", 1, _FEB, INFINITY],
     )
     error = _refused(
         profile_run,
-        "update balance set out_z = %s where bal_id = %s and out_z = %s",
+        "update balance set out_z = ? where bal_id = ? and out_z = ?",
         [_FEB, 1, INFINITY],
     )
     assert (
@@ -207,8 +207,8 @@ def test_a_staged_check_governs_new_writes_and_validates_once_the_rows_are_corre
     stored = _refused(profile_run, f"alter table position validate constraint {tx}", [])
     assert (stored.category, stored.constraint_name) == ("constraintViolation", tx)
 
-    profile_run.port.execute_write("update position set in_z = %s where pos_id = %s", [_JAN, 1])
-    profile_run.port.execute_write("delete from position where pos_id = %s", [2])
+    profile_run.port.execute_write("update position set in_z = ? where pos_id = ?", [_JAN, 1])
+    profile_run.port.execute_write("delete from position where pos_id = ?", [2])
     profile_run.port.execute_write(f"alter table position validate constraint {tx}", [])
     profile_run.port.execute_write(f"alter table position validate constraint {valid}", [])
     assert sorted(tuple(row) for row in profile_run.port.execute(_CHECKS, ["position"])) == [

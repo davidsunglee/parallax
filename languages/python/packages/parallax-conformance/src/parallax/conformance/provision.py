@@ -497,7 +497,7 @@ def reset_database(
     for statement in schema_statements(model, dialect):
         session.execute_write(statement, [])
     for sql, binds in fixture_statements(model, fixtures, dialect):
-        session.execute_write(dialect.to_driver_sql(sql), binds)
+        session.execute_write(sql, binds)
     for role in (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values()):
         session.execute_write(f'grant usage on schema public to "{role}"', [])
         session.execute_write(

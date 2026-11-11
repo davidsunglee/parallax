@@ -24,6 +24,12 @@ The port names a
 optional `orderedWriteTransport` → ordered write result /
 `transaction` contract. `execute` and
 `executePipeline` are row/result oriented;
+all four submission operations receive canonical SQL with the dialect's `?`
+placeholders. The concrete adapter converts each submitted statement to its
+driver's form once and adapts its binds before submitting it. A replacement
+connection resubmits that same prepared SQL and binds without repeating either
+conversion or bind preparation.
+
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
 **Row-producing DML** — a statement that answers facts no plan holds, such as
@@ -146,10 +152,7 @@ driver can pipeline; nothing selects it from a dialect.
 
 The operation takes an ordered, nonempty sequence of count-only DML statements
 and presents them to the database in that order in one invocation. Each carries
-its **canonical** SQL, with the dialect's `?` placeholders, and its binds:
-unlike `executeWrite`, which receives driver-ready SQL, the adapter converts
-each statement to its driver's form itself, once, immediately before
-submission, and adapts its binds as it adapts any other. Every statement fits
+its canonical SQL and binds. Every statement fits
 the dialect's bind limit on its own (`m-dialect`); the statements share no
 parameter budget. One invocation is neither a transaction boundary nor a
 promise of one network exchange, and execution lifecycle accounting is one

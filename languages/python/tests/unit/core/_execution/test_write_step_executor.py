@@ -164,7 +164,7 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
         step_executor(port, _ACCOUNT_META).execute((step,), allocates=False, flush=flush)
     assert port.calls == [
         WriteCall(
-            "delete from account where id = any(cast(%s as bigint[]))",
+            "delete from account where id = any(cast(? as bigint[]))",
             (ArrayBind(INT64, [1, 2, 3]),),
         )
     ]

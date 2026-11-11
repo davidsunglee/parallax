@@ -110,7 +110,7 @@ class _Cluster:
             return [] if owner is None else [(owner,)]
         if sql == "select current_setting('statement_timeout')":
             return [(self.timeout,)]
-        if sql == "select set_config('statement_timeout', %s, false)":
+        if sql == "select set_config('statement_timeout', ?, false)":
             self.timeout = str(binds[0])
             return [(self.timeout,)]
         if sql.startswith("select pg_terminate_backend"):
@@ -199,15 +199,15 @@ _ADMIN = f"{_WRITER}/ci_7_2"
 def _drop_steps(database: str) -> list[str]:
     return [
         f"{_CONTROL}: select current_setting('statement_timeout')",
-        f"{_CONTROL}: select set_config('statement_timeout', %s, false)",
+        f"{_CONTROL}: select set_config('statement_timeout', ?, false)",
         f"{_CONTROL}: select datdba = (select oid from pg_roles where rolname = current_user) "
-        "from pg_database where datname = %s",
+        "from pg_database where datname = ?",
         f'{_CONTROL}: alter database "{database}" allow_connections false',
         f"{_CONTROL}: select pg_terminate_backend(pid) from pg_stat_activity "
-        "where datname = %s and usename = current_user and backend_type = 'client backend'",
+        "where datname = ? and usename = current_user and backend_type = 'client backend'",
         f'{_CONTROL}: drop database if exists "{database}"',
-        f"{_CONTROL}: select count(*) from pg_database where datname = %s",
-        f"{_CONTROL}: select set_config('statement_timeout', %s, false)",
+        f"{_CONTROL}: select count(*) from pg_database where datname = ?",
+        f"{_CONTROL}: select set_config('statement_timeout', ?, false)",
     ]
 
 
@@ -218,7 +218,7 @@ def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> N
     assert cluster.log == [
         f"{_CONTROL}: open",
         f"{_CONTROL}: set role none",
-        f"{_CONTROL}: select pg_try_advisory_lock(%s)",
+        f"{_CONTROL}: select pg_try_advisory_lock(?)",
         f"{_CONTROL}: {cluster.log[3].split(': ', 1)[1]}",
         *_drop_steps("ci_1_1"),
         f'{_CONTROL}: create database "ci_7_2"',
@@ -250,7 +250,7 @@ def test_closing_releases_in_ownership_order_and_only_once() -> None:
         f"{_READER_INSTANCE}/ci_7_2: close",
         f"{_ADMIN}: close",
         *_drop_steps("ci_7_2"),
-        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: select pg_advisory_unlock(?)",
         f"{_CONTROL}: close",
         "ports: close",
     ]
@@ -301,7 +301,7 @@ def test_a_host_that_never_answers_fails_the_run_chained_to_its_last_refusal() -
     assert cluster.log[-12:] == [
         f"{_ADMIN}: close",
         *_drop_steps("ci_7_2"),
-        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: select pg_advisory_unlock(?)",
         f"{_CONTROL}: close",
         "ports: close",
     ]
@@ -339,7 +339,7 @@ def test_an_unconfirmed_drop_of_a_stale_database_fails_the_run_and_still_unlocks
         _started(cluster)
 
     assert cluster.log[-3:] == [
-        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: select pg_advisory_unlock(?)",
         f"{_CONTROL}: close",
         "ports: close",
     ]
@@ -356,7 +356,7 @@ def test_an_unconfirmed_drop_at_close_fails_the_run_after_every_other_step() -> 
 
     assert "while dropping ci_7_2" in (unconfirmed.value.__notes__ or [])
     assert cluster.log[-3:] == [
-        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: select pg_advisory_unlock(?)",
         f"{_CONTROL}: close",
         "ports: close",
     ]
@@ -559,7 +559,7 @@ def test_drop_preserves_an_unrelated_sessions_failure() -> None:
         run.close()
     assert refused.value is failure
     assert cluster.log[-3:] == [
-        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: select pg_advisory_unlock(?)",
         f"{_CONTROL}: close",
         "ports: close",
     ]
@@ -602,7 +602,7 @@ def test_blocker_diagnostic_failure_does_not_replace_drop_failure() -> None:
     cluster.failing['drop database if exists "ci_7_2"'] = failure
     cluster.failing[
         "select pid, usename, backend_type, application_name, state from pg_stat_activity "
-        "where datname = %s order by pid"
+        "where datname = ? order by pid"
     ] = ConnectionError("connection lost")
     with pytest.raises(PermissionError) as refused:
         run.close()
@@ -613,7 +613,7 @@ def test_blocker_diagnostic_failure_does_not_replace_drop_failure() -> None:
 def test_failure_restoring_timeout_is_raised_beside_the_drop_failure() -> None:
     cluster = _Cluster(owned=[])
     run, _ = _started(cluster)
-    cluster.failing["select set_config('statement_timeout', %s, false)"] = ConnectionError(
+    cluster.failing["select set_config('statement_timeout', ?, false)"] = ConnectionError(
         "cannot set timeout"
     )
     with pytest.raises(ExceptionGroup) as failures:

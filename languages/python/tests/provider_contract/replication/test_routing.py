@@ -75,7 +75,7 @@ def test_the_standby_refuses_writes_and_serializable_natively(profile_run: Any) 
     try:
         with reader.new_context("reader_only") as connection, pytest.raises(DatabaseError) as write:
             connection.execute_write(
-                "insert into rv_ledger (id, memo) values (%s, %s)", [9, "refused"]
+                "insert into rv_ledger (id, memo) values (?, ?)", [9, "refused"]
             )
         with reader.new_context("reader_only") as connection:
             serializable = connection.transaction(

@@ -37,7 +37,6 @@ from parallax.core.internal.db_port import (
     MappingRow,
     StructuredDocument,
 )
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.core.internal.unit_work import RetainedObservation
 from parallax.snapshot import ScopedDatabase, Snapshot, WireEntity, connect
@@ -107,23 +106,19 @@ def grace() -> mm.Account:
     return mm.Account.model_construct(id=3, owner="Grace", balance=Decimal("10.00"), version=1)
 
 
-# The m-unit-work-001 goldens, rendered to driver SQL as the port receives them.
-INSERT_SQL = POSTGRES.to_driver_sql(
-    "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
-)
+# The m-unit-work-001 goldens in canonical SQL as the port receives them.
+INSERT_SQL = "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
 
 
 # `Account` declares an explicit version, so a participating find of one takes
 # the shared lock only under the `locking` preference; the default `optimistic`
 # preference resolves it to the Optimistic strategy, whose gate is the authority.
-FIND_SQL_LOCKED = POSTGRES.to_driver_sql(
+FIND_SQL_LOCKED = (
     "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0"
 )
 
 
-FIND_SQL_UNLOCKED = POSTGRES.to_driver_sql(
-    "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
-)
+FIND_SQL_UNLOCKED = "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
 
 
 def deadlock() -> DatabaseError:

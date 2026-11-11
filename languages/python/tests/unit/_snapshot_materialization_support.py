@@ -533,7 +533,7 @@ class StressPort(ConnectsAsItself):
         for read, level_rows in zip(reads, rows, strict=True):
             if read is None:
                 continue
-            sql = self.dialect.to_driver_sql(read.statement.sql)
+            sql = read.statement.sql
             if sql in answers:  # pragma: no cover - every level reads a distinct statement
                 raise AssertionError(f"two levels issue one statement: {sql}")
             answers[sql] = tuple(level_rows)

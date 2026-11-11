@@ -5,7 +5,7 @@ Table-driven over the concrete dialects (one row today: postgres), covering the
 row-limit rendering, optimizer fencing, shared-read-lock application, neutral-scalar column-type
 mapping (parametric decimals, bounded strings), the bytes projection shape and
 its projection-introduced bind, the structured-document extraction / typed-cast
-forms, canonical `?` -> `%s` placeholder translation, the infinity sentinel, the
+forms, the infinity sentinel, the
 native error-code classification predicates, and the DDL primitives a schema
 generator composes statements out of. Pure strategy, no driver I/O.
 
@@ -361,42 +361,6 @@ def test_document_path_is_the_dialects_own_mutation_path_spelling(dialect: Diale
     # per segment.
     assert dialect.document_path(("displayName",)) == "{displayName}"
     assert dialect.document_path(("address", "city")) == "{address,city}"
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_placeholder_translation(dialect: Dialect) -> None:
-    assert dialect.to_driver_sql("select t0.id from t where t0.id = ?") == (
-        "select t0.id from t where t0.id = %s"
-    )
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_a_literal_percent_is_escaped_for_the_driver_parameter_style(dialect: Dialect) -> None:
-    # A physical name is any non-empty string, so `rate%` is an admissible column
-    # and renders as a quoted identifier. The `%s` parameter style is applied to
-    # the statement as flat text, so a bare `%` there is a malformed placeholder
-    # the driver refuses outright and a name ending `%s` is a bind that silently
-    # eats one — which is why the escape reaches inside quoted runs the
-    # placeholder translation deliberately leaves alone.
-    assert dialect.to_driver_sql('select t0."rate%" from t t0 where t0.id = ?') == (
-        'select t0."rate%%" from t t0 where t0.id = %s'
-    )
-    assert dialect.to_driver_sql('select t0."rate%s" from t t0') == (
-        'select t0."rate%%s" from t t0'
-    )
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_an_escaped_percent_never_reads_as_a_placeholder(dialect: Dialect) -> None:
-    # The escape and the placeholder overlap from both sides: a literal `%s` —
-    # the modulo operator applied to a column named `s` — escapes to `%%s`, whose
-    # tail spells a placeholder, so each must stay distinguishable from the other.
-    assert dialect.to_driver_sql('update "t%s" t0 set "rate%" = ? where t0.id = ?') == (
-        'update "t%%s" t0 set "rate%%" = %s where t0.id = %s'
-    )
-    assert dialect.to_driver_sql("select t0.rate%s from t t0 where t0.id = ?") == (
-        "select t0.rate%%s from t t0 where t0.id = %s"
-    )
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

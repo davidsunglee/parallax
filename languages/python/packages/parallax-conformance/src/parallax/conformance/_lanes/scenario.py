@@ -1093,9 +1093,7 @@ def _execute_framework_write_unit(
 
     def run(conn: DatabaseConnection) -> None:
         for statement in statements:
-            conn.execute_write(
-                conn.dialect.to_driver_sql(statement.sql), envelope.driver_binds(statement.binds)
-            )
+            conn.execute_write(statement.sql, envelope.driver_binds(statement.binds))
 
     with absorbing_rollback():
         committed(write_connection(port, rollback=rollback).transaction(run))
@@ -1956,7 +1954,7 @@ def read_table_state(
     for layout in storage_layout.storage_layout_facet_of(model).tables:
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
         sql = f"select {columns} from {dialect.quote(layout.table.name)}"
-        rows = port.execute(dialect.to_driver_sql(sql), [])
+        rows = port.execute(sql, [])
         projection = ActualWireProjection(model)
         keys = tuple(slot.column.name for slot in layout.columns)
         state[layout.table.name] = [

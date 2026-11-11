@@ -263,7 +263,7 @@ def _pipelined_rows(
         batches = port.execute_pipeline(
             tuple(
                 PipelineStatement(
-                    port.dialect.to_driver_sql(fetch.compiled.statement.sql),
+                    fetch.compiled.statement.sql,
                     fetch.compiled.statement.binds,
                     fetch.compiled.document_reads,
                 )

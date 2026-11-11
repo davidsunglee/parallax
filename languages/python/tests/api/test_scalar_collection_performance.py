@@ -179,11 +179,11 @@ class _Server:
         self._control = control
 
     def ids(self, statement: _Statement) -> frozenset[int]:
-        rows = self._control.execute(POSTGRES.to_driver_sql(statement.sql), statement.binds)
+        rows = self._control.execute(statement.sql, statement.binds)
         return frozenset(int(row[0]) for row in rows)
 
     def explained(self, statement: _Statement) -> Mapping[str, Any]:
-        sql = POSTGRES.to_driver_sql(f"explain (analyze, buffers, format json) {statement.sql}")
+        sql = f"explain (analyze, buffers, format json) {statement.sql}"
         rows = self._control.execute(sql, statement.binds)
         document = rows[0][0]
         plans = cast(

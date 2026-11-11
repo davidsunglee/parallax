@@ -77,27 +77,27 @@ session finds where a route's backends physically are."""
 _RUN_DATABASE = re.compile(r"ci_[0-9]+_[0-9]+")
 # `reset role` would restore the login's configured default role, not the login.
 AS_LOGIN = "set role none"
-_TRY_LOCK = "select pg_try_advisory_lock(%s)"
-_UNLOCK = "select pg_advisory_unlock(%s)"
+_TRY_LOCK = "select pg_try_advisory_lock(?)"
+_UNLOCK = "select pg_advisory_unlock(?)"
 _OWNED = (
     "select d.datname from pg_database d join pg_roles r on r.oid = d.datdba "
     "where r.rolname = current_user order by d.datname"
 )
-_PRESENT = "select count(*) from pg_database where datname = %s"
+_PRESENT = "select count(*) from pg_database where datname = ?"
 _DROP_OWNER = (
     "select datdba = (select oid from pg_roles where rolname = current_user) "
-    "from pg_database where datname = %s"
+    "from pg_database where datname = ?"
 )
 _DROP_CLIENTS = (
     "select pg_terminate_backend(pid) from pg_stat_activity "
-    "where datname = %s and usename = current_user and backend_type = 'client backend'"
+    "where datname = ? and usename = current_user and backend_type = 'client backend'"
 )
 _DROP_BLOCKERS = (
     "select pid, usename, backend_type, application_name, state from pg_stat_activity "
-    "where datname = %s order by pid"
+    "where datname = ? order by pid"
 )
 _STATEMENT_TIMEOUT = "select current_setting('statement_timeout')"
-_SET_TIMEOUT = "select set_config('statement_timeout', %s, false)"
+_SET_TIMEOUT = "select set_config('statement_timeout', ?, false)"
 _ANSWER = "select 1"
 _RESET_STATE = (
     "select n.oid, n.nspacl::text, c.relname, c.oid, c.relacl::text "

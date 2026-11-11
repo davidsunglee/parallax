@@ -523,13 +523,13 @@ def _current(profile_run: Any, entity: type[Any], key: int = 1) -> list[tuple[ob
     order = "from_z" if entity in _TERMS else "in_z"
     sql = (
         f"select in_z, {valid}{_member(entity, 'label')}, {_member(entity, 'note')} "
-        f"from {_TABLES[entity]} where id = %s and out_z = 'infinity' order by {order}"
+        f"from {_TABLES[entity]} where id = ? and out_z = 'infinity' order by {order}"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [key])]
 
 
 def _closed(profile_run: Any, entity: type[Any], key: int = 1) -> int:
-    sql = f"select count(*) from {_TABLES[entity]} where id = %s and out_z <> 'infinity'"
+    sql = f"select count(*) from {_TABLES[entity]} where id = ? and out_z <> 'infinity'"
     ((count,),) = profile_run.port.execute(sql, [key])
     return int(count)
 

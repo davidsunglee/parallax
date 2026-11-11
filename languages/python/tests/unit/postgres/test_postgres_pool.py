@@ -1045,7 +1045,7 @@ def test_a_broken_first_designated_read_is_submitted_once_more_on_a_replacement(
     resource = _context(pool)
 
     with resource as scoped:
-        rows = scoped.execute("select id from t where id = any(%s)", [[1, 2]], read_only=True)
+        rows = scoped.execute("select id from t where id = any(?)", [[1, 2]], read_only=True)
         assert resource.cleanup_result is None
         assert pool.returned == [broken]
 
@@ -1159,7 +1159,7 @@ def test_a_child_read_after_its_root_has_no_opportunity_to_claim() -> None:
         keys = [row[0] for row in scoped.execute("select id from root", [], read_only=True)]
         connection.lost = _lost()
         with pytest.raises(DatabaseError):
-            scoped.execute("select * from child where root_id = any(%s)", [keys], read_only=True)
+            scoped.execute("select * from child where root_id = any(?)", [keys], read_only=True)
 
     assert connection.binds[-1] == [[3, 4]]
     assert len(pool.checkouts) == 1

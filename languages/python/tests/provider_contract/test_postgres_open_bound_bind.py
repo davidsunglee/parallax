@@ -67,9 +67,9 @@ def test_an_owned_session_binds_the_open_bound_through_the_adapters_dumper(
 @pytest.mark.parametrize(
     ("sql", "expected"),
     [
-        pytest.param("select %s::timestamptz", (INFINITY,), id="cast"),
-        pytest.param("select %s > now()", (True,), id="compared-with-an-instant"),
-        pytest.param("select coalesce(%s, now())", (INFINITY,), id="unified-with-an-instant"),
+        pytest.param("select ?::timestamptz", (INFINITY,), id="cast"),
+        pytest.param("select ? > now()", (True,), id="compared-with-an-instant"),
+        pytest.param("select coalesce(?, now())", (INFINITY,), id="unified-with-an-instant"),
     ],
 )
 def test_the_server_infers_the_open_bound_as_it_infers_its_spelling(
@@ -84,7 +84,7 @@ def test_the_server_receives_the_open_bound_untyped(control: PostgresControl, bi
     # `isfinite` is overloaded across the temporal types, so only an untyped
     # parameter leaves the server unable to choose one.
     with pytest.raises(DatabaseError, match=r"isfinite\(unknown\) is not unique"):
-        control.execute("select isfinite(%s)", [bind])
+        control.execute("select isfinite(?)", [bind])
 
 
 def test_every_bind_route_stores_the_open_bound_as_native_infinity(
@@ -93,9 +93,9 @@ def test_every_bind_route_stores_the_open_bound_as_native_infinity(
     session = control.native
     session.execute(b"drop table if exists open_bound_probe")
     session.execute(b"create temp table open_bound_probe (route text, bound text, at timestamptz)")
-    insert_values = "insert into open_bound_probe values (%s, %s, %s)"
-    insert_select = "insert into open_bound_probe (route, bound, at) select %s, %s, %s"
-    returning = "insert into open_bound_probe values (%s, %s, %s) returning at"
+    insert_values = "insert into open_bound_probe values (?, ?, ?)"
+    insert_select = "insert into open_bound_probe (route, bound, at) select ?, ?, ?"
+    returning = "insert into open_bound_probe values (?, ?, ?) returning at"
     for bound, bind in (("managed", INFINITY), ("spelled", _SPELLING)):
         assert control.execute_write(insert_values, ["values", bound, bind]) == 1
         assert control.execute_write(insert_select, ["select", bound, bind]) == 1

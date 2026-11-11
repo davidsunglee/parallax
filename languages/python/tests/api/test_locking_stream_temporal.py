@@ -108,7 +108,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
         # The first page also locks its lookahead row, id 3.
         assert (
             peer.execute_write(
-                f"update {table} set out_z = %s where id = 4 and out_z = 'infinity'", [_FEB]
+                f"update {table} set out_z = ? where id = 4 and out_z = 'infinity'", [_FEB]
             )
             == 1
         )
@@ -117,7 +117,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
         assert (
             peer.execute_write(
                 f"insert into {table} (id, {payload}, in_z, out_z) "
-                f"values (4, {value}, %s, 'infinity')",
+                f"values (4, {value}, ?, 'infinity')",
                 [_FEB],
             )
             == 1
@@ -144,7 +144,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
     ]
     assert current == [(1, 4), (2, 4), (3, 5), (4, 9 if 4 in observed else 8), (5, 5)]
     history = profile_run.port.execute(
-        f"select in_z, out_z, {member} from {table} where id = 4 and in_z = %s", [_JAN]
+        f"select in_z, out_z, {member} from {table} where id = 4 and in_z = ?", [_JAN]
     )
     assert [tuple(row) for row in history] == [(_JAN, _FEB, 4)]
 
@@ -155,7 +155,7 @@ def _wait_for_peer_lock(observer: Any, peer_pid: object, worker: threading.Threa
         rows = observer.execute(
             "select count(*) from pg_stat_activity "
             "where datname = current_database() and wait_event_type = 'Lock' "
-            "and %s = any(pg_blocking_pids(pid))",
+            "and ? = any(pg_blocking_pids(pid))",
             [peer_pid],
         )
         if rows[0][0]:

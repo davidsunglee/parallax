@@ -390,7 +390,7 @@ def test_an_array_less_dialect_ignores_the_spans() -> None:
     arrayless = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
     port = _Port(dialect=arrayless)
     assert _run(port, _grouped(_wallets(1, 2))) is None
-    assert [sql for sql, _ in port.calls] == ["update wallet set balance = %s where id = %s"] * 2
+    assert [sql for sql, _ in port.calls] == ["update wallet set balance = ? where id = ?"] * 2
 
 
 @pytest.mark.parametrize(("rows", "completes"), [([1, 2], True), ([1], False)])

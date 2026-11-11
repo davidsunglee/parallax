@@ -141,9 +141,8 @@ class PipelineStatement:
 class CanonicalWriteStatement(Protocol):
     """One count-only DML statement presented to ordered write transport.
 
-    ``sql`` is the dialect's CANONICAL text, with `?` placeholders: the adapter
-    converts it to its driver's form once, immediately before submission,
-    unlike ``execute_write``, which receives driver-ready SQL.
+    ``sql`` is the dialect's canonical text, with `?` placeholders, as for
+    every other port submission.
     """
 
     @property

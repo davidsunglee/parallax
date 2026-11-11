@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from parallax.core.internal.base import INFINITY
-from parallax.core.internal.dialect import POSTGRES
+from parallax.postgres._connection import to_driver_sql
 
 MANIFEST_VERSION: Final = 1
 ENVIRONMENT_PREFIX: Final = "PARALLAX_TO_ONE_PERFORMANCE_"
@@ -632,7 +632,7 @@ def validate_inventory(path: Path, manifest: Sequence[Classification]) -> list[s
 
 def _placeholders(sql: str) -> int:
     """The binds ``sql`` takes, counted as the PostgreSQL driver reads it."""
-    return POSTGRES.to_driver_sql(sql).replace("%%", "").count("%s")
+    return to_driver_sql(sql).replace("%%", "").count("%s")
 
 
 def _check_statement(name: str, statement: Mapping[str, Any], check: _Check) -> None:

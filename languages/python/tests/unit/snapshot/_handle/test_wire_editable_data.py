@@ -18,7 +18,6 @@ import pytest
 
 from parallax.core.internal.base import StructuredDocument, UsageError
 from parallax.core.internal.db_port import MappingRow
-from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import (
     BeginCall,
@@ -50,12 +49,8 @@ _CONTACT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Contact",
     "predicate": {"eq": {"path": "parallax.compatibility.Contact.id", "value": 1}},
 }
-_GATED_FULL = POSTGRES.to_driver_sql(
-    "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
-)
-_INSERT = POSTGRES.to_driver_sql(
-    "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
-)
+_GATED_FULL = "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+_INSERT = "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
 
 
 def _calls(port: ScriptedAdapter) -> list[PortCall]:

@@ -19,10 +19,10 @@ def end_backend(profile_run: Any, pid: int) -> None:
     on its way out."""
     control = profile_run.control()
     try:
-        control.execute("select pg_terminate_backend(%s) as ended", [pid])
+        control.execute("select pg_terminate_backend(?) as ended", [pid])
         give_up = time.monotonic() + 10.0
         while control.execute(
-            "select count(*) as listed from pg_stat_activity where pid = %s", [pid]
+            "select count(*) as listed from pg_stat_activity where pid = ?", [pid]
         ) != [(0,)]:
             assert time.monotonic() < give_up, "the ended backend never left"
             time.sleep(0.01)
@@ -37,7 +37,7 @@ def named_backend(profile_run: Any, application_name: str) -> int:
     try:
         ((pid,),) = control.execute(
             "select pid from pg_stat_activity "
-            "where application_name = %s and datname = current_database() and usename = %s",
+            "where application_name = ? and datname = current_database() and usename = ?",
             [application_name, profile_run.login_identity],
         )
     finally:

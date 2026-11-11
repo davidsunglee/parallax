@@ -9,7 +9,6 @@ import pytest
 
 from parallax.core import DomainModel
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
@@ -154,7 +153,7 @@ def test_cold_plan_compiles_literals_and_resets_the_cache(shape: str) -> None:
     assert first_read.statement == second_read.statement
     assert expected_value in first_read.statement.binds
     assert "feature_holder" in first_read.statement.sql
-    assert POSTGRES.to_driver_sql(first_read.statement.sql)
+    assert first_read.statement.sql
 
 
 def test_unknown_case_is_refused_before_a_driver_is_created() -> None:

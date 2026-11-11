@@ -1221,7 +1221,7 @@ class _Server:
         self._control = control
 
     def rows(self, sql: str, binds: Sequence[object] = ()) -> list[Any]:
-        return cast("list[Any]", self._control.execute(POSTGRES.to_driver_sql(sql), binds))
+        return cast("list[Any]", self._control.execute(sql, binds))
 
     def write(self, sql: str) -> None:
         self._control.execute_write(sql, [])
@@ -1232,28 +1232,26 @@ class _Server:
     def affected(self, workload: Workload, statement: LoweredStatement) -> tuple[int, list[int]]:
         """Run a mutation and read back what it changed, then roll both back."""
         with self._control.native.transaction(force_rollback=True):
-            count = self._control.execute_write(
-                POSTGRES.to_driver_sql(statement.sql), statement.binds
-            )
+            count = self._control.execute_write(statement.sql, statement.binds)
             changed = self.ids(_changed_rows(workload))
         self.write("vacuum top_item")
         return int(count), changed
 
     def timed(self, workload: Workload, statement: LoweredStatement) -> int:
-        driver = POSTGRES.to_driver_sql(statement.sql)
+        canonical_sql = statement.sql
         if workload.kind == "read":
             started = time.perf_counter_ns()
-            self._control.execute(driver, statement.binds)
+            self._control.execute(canonical_sql, statement.binds)
             return time.perf_counter_ns() - started
         with self._control.native.transaction(force_rollback=True):
             started = time.perf_counter_ns()
-            self._control.execute_write(driver, statement.binds)
+            self._control.execute_write(canonical_sql, statement.binds)
             elapsed = time.perf_counter_ns() - started
         self.write("vacuum top_item")
         return elapsed
 
     def explained(self, workload: Workload, statement: LoweredStatement) -> Mapping[str, Any]:
-        sql = POSTGRES.to_driver_sql(f"explain (analyze, buffers, format json) {statement.sql}")
+        sql = f"explain (analyze, buffers, format json) {statement.sql}"
         if workload.kind == "read":
             document = self._control.execute(sql, statement.binds)[0][0]
         else:

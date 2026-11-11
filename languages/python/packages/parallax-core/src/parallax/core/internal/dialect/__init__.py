@@ -171,28 +171,6 @@ whole rather than reaching inside it.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
-def _split_quoted_runs(sql: str, quote_char: str) -> list[str]:
-    """``sql`` split so quoted runs land at the odd indices and bare syntax at the even.
-
-    A quoted run is a string literal or a quoted identifier, ending at its first
-    undoubled delimiter. Placeholder rewriting is a rewrite of syntax, so it must
-    not reach text a quote protects: a physical name is any non-empty string
-    (`m-descriptor`), so a column named ``rate%s`` or ``rate?`` renders as a
-    quoted identifier whose body is a name rather than a bind.
-    """
-    quote = re.escape(quote_char)
-    runs = rf"('(?:[^']|'')*'|{quote}(?:[^{quote}]|{quote}{quote})*{quote})"
-    return re.split(runs, sql)
-
-
-def _translate_placeholders(sql: str, quote_char: str, source: str, target: str) -> str:
-    """``sql`` with each ``source`` placeholder outside a quoted run spelled ``target``."""
-    return "".join(
-        run if index % 2 else run.replace(source, target)
-        for index, run in enumerate(_split_quoted_runs(sql, quote_char))
-    )
-
-
 def _document_value_bind(value: object) -> object:
     """One assigned document value as the mutation expression's hole takes it.
 
@@ -622,26 +600,6 @@ class Dialect:
             expression = f"jsonb_set({expression}, ?, {source})"
             binds.append(self.document_path(path))
         return expression, binds
-
-    # -- placeholders ------------------------------------------------------ #
-    def to_driver_sql(self, canonical_sql: str) -> str:
-        """Translate the canonical `?` placeholders to this driver's form (`%s`),
-        doubling every literal `%` the statement already carried.
-
-        A `?` inside a string literal or a quoted identifier is that value's or
-        that name's own text, never a bind, so it crosses unchanged.
-
-        The escape is the opposite: it reaches quoted runs too, because the `%s`
-        parameter style is applied to the statement as flat text with no SQL
-        grammar of its own. A physical name may be any non-empty string
-        (`m-descriptor`), so a column named `rate%` renders as the quoted
-        identifier `"rate%"`, and a driver handed that bare `%` reads it as a
-        malformed placeholder and refuses the statement outright — while a name
-        ending `%s` would be read as a bind and silently consume one. Doubling
-        first is what keeps the placeholders this then writes from being escaped
-        in turn.
-        """
-        return _translate_placeholders(canonical_sql.replace("%", "%%"), self.quote_char, "?", "%s")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:

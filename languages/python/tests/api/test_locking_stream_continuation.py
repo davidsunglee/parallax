@@ -164,7 +164,7 @@ def _behind_updater(
             for _ in range(500):
                 ((blocked,),) = observer.execute(
                     "select count(*) from pg_stat_activity "
-                    "where datname = current_database() and %s = any(pg_blocking_pids(pid)) "
+                    "where datname = current_database() and ? = any(pg_blocking_pids(pid)) "
                     "and position('union all' in query) > 0",
                     [pid],
                 )

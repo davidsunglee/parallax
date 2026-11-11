@@ -334,7 +334,7 @@ def test_a_reset_runs_on_the_primary_and_waits_for_the_standby_to_apply_it() -> 
     assert statements[:2] == ["drop schema if exists public cascade", "create schema public"]
     assert statements[-1] == "select pg_current_wal_lsn()::text"
     assert standby.executed[-1] == (
-        "select coalesce(pg_last_wal_replay_lsn() >= %s::pg_lsn, false)",
+        "select coalesce(pg_last_wal_replay_lsn() >= ?::pg_lsn, false)",
         ["0/3000060"],
     )
     pair.close()

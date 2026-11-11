@@ -330,19 +330,19 @@ def statement(step: PlannedStep) -> LoweredStatement:
 def alone(step: PlannedStep) -> WriteCall:
     """The write the port receives for ``step`` run as a call of its own."""
     lowered_step = statement(step)
-    return WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)
+    return WriteCall(lowered_step.sql, lowered_step.binds)
 
 
 def ordered(*steps: PlannedStep) -> OrderedCall:
     """The invocation an adapter records for ``steps``: each statement in the
-    driver form converted once from its canonical SQL."""
+    canonical form presented to the port."""
     return OrderedCall(tuple(alone(step) for step in steps))
 
 
 def physical(*steps: PlannedStep) -> list[WriteCall]:
     """The writes a dry traversal of ``steps`` answers, as the port receives them."""
     return [
-        WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)
+        WriteCall(lowered_step.sql, lowered_step.binds)
         for lowered_step in stream_physical(
             steps, build_write_planner(POSITION_META).payloads, POSITION_META, POSTGRES
         )

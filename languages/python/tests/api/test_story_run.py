@@ -55,7 +55,7 @@ from parallax.core._execution._options import (
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import IsolationLevel
-from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.entity import UnloadedRelationshipError
 from parallax.core.internal.entity._model import class_index, model_of
 from parallax.core.internal.execution import RetryPolicy
@@ -1653,7 +1653,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
             if isinstance(golden_sql, dict)
             else golden_sql
         )
-        assert sql == POSTGRES.to_driver_sql(cast("str", golden_text)), story.case_id
+        assert sql == cast("str", golden_text), story.case_id
         golden_binds = entry.get("binds", [])
         if isinstance(golden_binds, dict):
             golden_binds = cast("dict[str, object]", golden_binds)["postgres"]

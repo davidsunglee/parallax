@@ -163,7 +163,7 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
     _db(port).transact(fn)
     (coverage,) = _reads(port)
     assert coverage.sql.endswith(
-        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
+        "where t0.id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?"
     )
     assert coverage.binds == (1, _MAR, _SEP, INFINITY_INSTANT)
     start, later_close, opened = _writes(port)
@@ -390,8 +390,8 @@ def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_ca
     if terms > 1:
         (read,) = reads
         assert read.sql.endswith(
-            "where t0.id = %s and ((t0.thru_z > %s and t0.from_z < %s) or "
-            "(t0.thru_z > %s and t0.from_z < %s)) and t0.out_z = %s for share of t0"
+            "where t0.id = ? and ((t0.thru_z > ? and t0.from_z < ?) or "
+            "(t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ? for share of t0"
         )
         assert read.binds == (1, _MAR, may, jul, _AUG, INFINITY_INSTANT)
     else:
@@ -610,7 +610,7 @@ def test_exact_window_target_and_observed_writes_compose_into_one_range(
     _db(port).transact(fn, concurrency=concurrency)
     close, opened = _writes(port)
     gated = concurrency == "optimistic"
-    assert close.sql.endswith("and in_z = %s" if gated else "and out_z = %s")
+    assert close.sql.endswith("and in_z = ?" if gated else "and out_z = ?")
     if gated:
         assert close.binds[-1] == _T0
     windows = [(row[1], row[2], row[3], row[4]) for row in inserted_rows(opened)]
@@ -686,7 +686,7 @@ def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_st
     port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write()))
     _db(port).transact(lambda tx: _patch(tx, value="100.00"))
     (guard,) = _writes(port)
-    assert guard.sql.startswith("update where_position set in_z = in_z where id = %s")
+    assert guard.sql.startswith("update where_position set in_z = in_z where id = ?")
     assert guard.binds[-1] == _T0
     lost = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=0))
@@ -782,7 +782,7 @@ def test_an_optimistic_observation_a_flush_read_row_overlaps_is_left_to_its_gate
     with pytest.raises(WritePreconditionError):
         _db(port).transact(fn)
     (close,) = _writes(port)
-    assert close.sql.endswith("and in_z = %s") and close.binds[-1] == _T0
+    assert close.sql.endswith("and in_z = ?") and close.binds[-1] == _T0
 
 
 def test_a_database_error_at_the_start_is_the_databases_not_the_callers() -> None:
@@ -1127,7 +1127,7 @@ def test_an_observed_write_after_a_predicate_write_continues_from_the_row_the_fi
     ]
     first, second = _writes(port)[-2], _writes(port)[-1]
     for revision, value in ((first, "O"), (second, "again")):
-        assert revision.sql.startswith("update where_position set acct_num = %s where")
+        assert revision.sql.startswith("update where_position set acct_num = ? where")
         assert revision.binds[0] == value
         assert Decimal("100.00") not in revision.binds
 
@@ -1205,7 +1205,7 @@ def test_a_destruction_after_a_predicate_write_removes_what_the_first_opened_unr
     # read for it again.
     assert len(_reads(port)) == 2
     removal = _writes(port)[-1]
-    assert removal.sql.startswith("delete from where_position where id = %s and thru_z = %s")
+    assert removal.sql.startswith("delete from where_position where id = ? and thru_z = ?")
 
 
 def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
@@ -1261,9 +1261,9 @@ def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_c
 
     db_for(BALANCE, port).transact(fn)
     (coverage,) = _reads(port)
-    assert coverage.sql.endswith("from balance t0 where t0.bal_id = %s and t0.out_z = %s")
+    assert coverage.sql.endswith("from balance t0 where t0.bal_id = ? and t0.out_z = ?")
     (close,) = _writes(port)
-    assert close.sql.endswith("where bal_id = %s and out_z = %s and in_z = %s")
+    assert close.sql.endswith("where bal_id = ? and out_z = ? and in_z = ?")
     assert close.binds[1:] == (1, "infinity", _T0)
 
 
@@ -1302,12 +1302,12 @@ def test_a_locking_termination_reads_its_start_at_the_call_and_closes_ungated() 
     def fn(tx: TxnContext) -> None:
         tx.terminate_if(mm.Balance, key=1, tx_start=_T0)
         (acquired,) = _reads(port)
-        assert acquired.sql.endswith("where t0.bal_id = %s and t0.out_z = %s for share of t0")
+        assert acquired.sql.endswith("where t0.bal_id = ? and t0.out_z = ? for share of t0")
 
     db_for(BALANCE, port).transact(fn, concurrency="locking")
     assert len(_reads(port)) == 1
     (close,) = _writes(port)
-    assert close.sql.endswith("where bal_id = %s and out_z = %s")
+    assert close.sql.endswith("where bal_id = ? and out_z = ?")
 
 
 @pytest.mark.parametrize(

@@ -166,7 +166,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │ stream page's cap and seek coordinate are bound
    ▼
  execute_read(connection, CompiledRead, calls)                          _fetch
-   LoweredStatement + document-read ordinals → driver SQL → DatabaseConnection.execute
+   LoweredStatement + document-read ordinals → canonical SQL → DatabaseConnection.execute
    ▼
  driver rows
    ▼

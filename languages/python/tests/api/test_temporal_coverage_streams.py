@@ -135,12 +135,12 @@ def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int
             chunk = rows[start : start + 500]
             binds: list[object] = []
             if layout == "columns":
-                values = "(%s, %s, %s, %s, %s, %s, 'infinity')"
+                values = "(?, ?, ?, ?, ?, ?, 'infinity')"
                 for key, amount, label, begin, end in chunk:
                     binds += [key, amount, label, begin, end, _T0]
                 insert = "insert into tcs_columns(id, amount, label, from_z, thru_z, in_z, out_z)"
             else:
-                values = "(%s, %s, %s, %s, 'infinity', %s::jsonb)"
+                values = "(?, ?, ?, ?, 'infinity', ?::jsonb)"
                 for key, amount, label, begin, end in chunk:
                     payload = json.dumps({"amount": amount, "label": label})
                     binds += [key, begin, end, _T0, payload]

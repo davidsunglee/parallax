@@ -63,7 +63,7 @@ _INDEX_COLUMNS: Final = (
     "array(select a.attname from unnest(x.indkey) with ordinality as k(attnum, n) "
     "join pg_attribute a on a.attrelid = x.indrelid and a.attnum = k.attnum order by k.n) "
     "from pg_index x join pg_class i on i.oid = x.indexrelid "
-    "join pg_class t on t.oid = x.indrelid where t.relname = %s and i.relname = %s"
+    "join pg_class t on t.oid = x.indrelid where t.relname = ? and i.relname = ?"
 )
 
 
@@ -209,7 +209,7 @@ a release hashing only the authored components gave it."""
 
 _HELD_INDICES: Final = (
     "select indexname, indexdef from pg_indexes "
-    "where tablename = %s and left(indexname, 4) = 'pxi_' order by indexname"
+    "where tablename = ? and left(indexname, 4) = 'pxi_' order by indexname"
 )
 
 

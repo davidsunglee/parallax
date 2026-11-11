@@ -200,7 +200,7 @@ def test_single_key_non_temporal_effects_share_an_invocation_and_a_batch_runs_al
 
     def call(step: PlannedStep) -> WriteCall:
         lowered_step = lowered(step, payloads, meta, POSTGRES)
-        return WriteCall(POSTGRES.to_driver_sql(lowered_step.sql), lowered_step.binds)
+        return WriteCall(lowered_step.sql, lowered_step.binds)
 
     assert port.calls == [
         OrderedCall((call(steps[0]), call(steps[1]))),

@@ -254,10 +254,10 @@ def test_run_scenario_case_runs_a_grouped_predicate_write_after_what_its_group_b
     ]
     assert run.step_affected_rows == [{"at": "/scenario/2", "affectedRows": 1}]
     # What is reported is what the port executed, in the order it executed it.
-    assert [e.sql.replace("?", "%s") for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
+    assert [e.sql for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
     assert [sql.split("(")[0] for sql, _ in port.writes] == [
-        "delete from order_item where id = %s",
-        "update order_item set sku = %s where quantity < %s",
+        "delete from order_item where id = ?",
+        "update order_item set sku = ? where quantity < ?",
         "insert into orders",
         "insert into order_item",
     ]
@@ -994,7 +994,7 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     sql, binds = port.writes[0]
     assert sql == (
         "insert into wallet(id, owner, balance) select * from "
-        "unnest(cast(%s as bigint[]), cast(%s as text[]), cast(%s as decimal[]))"
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     )
     columns = [cast("ArrayBind", bind).values for bind in binds]
     assert columns == [
@@ -1403,10 +1403,10 @@ def test_a_conflict_attempt_counts_duplicate_addressed_keys_once() -> None:
     assert port.writes[0][1] == ["Ada", decimal.Decimal("500.00"), 2, 2, 1]
 
 
-# The DRIVER spellings of the golden writes a fake port reports a zero-row
+# The canonical spellings of the golden writes a fake port reports a zero-row
 # shortfall for: a concurrent writer already moved or removed the row.
 _ACCOUNT_WRITE_SHORTFALL: Final[tuple[str, ...]] = (
-    "update account set balance = %s",
+    "update account set balance = ?",
     "delete from account",
 )
 
@@ -1935,7 +1935,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
     )
     scenario.run_scenario_case(case, port)
     assert len(port.reads) == 1
-    assert port.reads[0][0].endswith("where t0.id = any(cast(%s as bigint[])) for share of t0")
+    assert port.reads[0][0].endswith("where t0.id = any(cast(? as bigint[])) for share of t0")
     assert sorted(cast("list[int]", cast("ArrayBind", port.reads[0][1][0]).values)) == [21, 22]
 
 
@@ -1963,7 +1963,7 @@ def test_marker_generation_and_execution_resolve_no_entries(
     run = scenario.run_scenario_case(case, port)
 
     assert compiled == run.emissions
-    assert port.writes == [(item.sql.replace("?", "%s"), list(item.binds)) for item in compiled]
+    assert port.writes == [(item.sql, list(item.binds)) for item in compiled]
     assert compile_calls == run.database_calls == 1
     assert port.reads == []
     assert (port.commits, port.rollbacks) == ((0, 1) if rollback else (1, 0))
@@ -2579,11 +2579,9 @@ def test_an_insertion_pointer_survives_composition_and_production_flushes(
         assert port.writes[1][1] == ["Ada", 2, 90, 1]
         assert len(port.writes) == 2
     if not state_graded:
-        assert [
-            e.sql.replace("?", "%s")
-            for e in run.emissions
-            if e.sql.startswith(("insert", "update"))
-        ] == [sql for sql, _ in port.writes]
+        assert [e.sql for e in run.emissions if e.sql.startswith(("insert", "update"))] == [
+            sql for sql, _ in port.writes
+        ]
 
 
 @pytest.mark.parametrize("state_graded", [False, True])

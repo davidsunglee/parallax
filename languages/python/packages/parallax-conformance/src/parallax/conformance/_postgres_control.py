@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
 
 _BACKEND_PID: Final[str] = "select pg_backend_pid() as pid"
-_TERMINATE_BACKEND: Final[str] = "select pg_terminate_backend(%s) as terminated"
+_TERMINATE_BACKEND: Final[str] = "select pg_terminate_backend(?) as terminated"
 _LOGIN_IDENTITY: Final[str] = "select session_user as login_identity"
 _RELEASED: Final[CleanupResult] = Returned()
 

@@ -80,7 +80,7 @@ def run_error_case(
     for index, (sql, binds) in enumerate(trigger):
         emissions.append(Emission(f"/then/statements/{index}", LoweredStatement(sql, binds)))
         try:
-            port.execute_write(dialect.to_driver_sql(sql), envelope.driver_binds(binds))
+            port.execute_write(sql, envelope.driver_binds(binds))
         except DatabaseError as exc:
             if index != final:
                 raise UnclassifiedEngineError(

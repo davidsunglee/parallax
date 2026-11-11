@@ -185,7 +185,7 @@ _ORDER_ITEM_61_ROW: MappingRow = {
     "shipped_on": None,
 }
 
-_ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (%s, %s, %s, %s)"
+_ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)"
 
 # Policy 2 and its single coverage at the pin the rectangle-split story takes —
 # one rectangle open on both axes, which is what a bounded `updateUntil` splits
@@ -594,7 +594,7 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
     snapshot, loaded_order, _reread = story.run(
         own_root(Database.connect(port, MODELS[story.model])).using_database_login()
     )
-    assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
+    assert [sql for sql, _binds in port.writes] == ["update orders set name = ? where id = ?"]
     assert snapshot.result().order is loaded_order
     assert loaded_order.name == "Ada"
 

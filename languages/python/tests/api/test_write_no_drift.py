@@ -398,14 +398,14 @@ def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[objec
         binds: Any = entry.get("binds", [])
         if isinstance(binds, dict):
             binds = cast("dict[str, list[object]]", binds)["postgres"]
-        out.append((POSTGRES.to_driver_sql(cast("str", text)), list(binds)))
+        out.append((cast("str", text), list(binds)))
     return out
 
 
 def _scenario_goldens(
     case_id: str, *, skip_rollback: bool = False
 ) -> list[tuple[str, list[object]]]:
-    """The case's flattened per-step golden statements in driver form."""
+    """The case's flattened per-step golden statements in canonical form."""
     doc = case_document(corpus_case(case_id))
     if corpus_case(case_id).shape == "writeSequence":
         return _driver_goldens(cast("list[dict[str, Any]]", doc["then"]["statements"]))
@@ -465,7 +465,7 @@ def _assert_statements(
     assert len(observed) == len(goldens), (case_id, observed, goldens)
     case = corpus_case(case_id)
     model = load_case_metamodel(case)
-    canonical = {POSTGRES.to_driver_sql(sql): sql for sql, _binds in write_golden_statements(case)}
+    canonical = {sql: sql for sql, _binds in write_golden_statements(case)}
     for (sql, binds), (golden_sql, golden_binds) in zip(observed, goldens, strict=True):
         assert sql == golden_sql, (case_id, sql, golden_sql)
         # A graduated verb's bind is a REAL typed value (e.g. `Decimal("5.00")`

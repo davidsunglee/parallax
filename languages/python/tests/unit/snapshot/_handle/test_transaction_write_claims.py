@@ -14,7 +14,6 @@ from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.internal.base import INT64, UsageError
 from parallax.core.internal.db_port import ArrayBind
-from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import Database, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
@@ -78,10 +77,7 @@ def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write
     account_db(port).transact(fn)
     assert _writes(port) == [
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set owner = ?, balance = ?, version = ? "
-                "where id = ? and version = ?"
-            ),
+            "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?",
             ("Grace", Decimal("125.00"), 5, 1, 4),
         )
     ]
@@ -115,9 +111,7 @@ def test_a_net_equal_chain_across_two_verbs_writes_its_last_value() -> None:
     account_db(port).transact(fn)
     assert _writes(port) == [
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set balance = ?, version = ? where id = ? and version = ?"
-            ),
+            "update account set balance = ?, version = ? where id = ? and version = ?",
             (Decimal("100.00"), 5, 1, 4),
         )
     ]
@@ -146,9 +140,7 @@ def test_a_net_zero_edit_of_an_unversioned_source_still_writes() -> None:
         tx.amend(node.edit(name="Grace").edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1))
-    ]
+    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Ada", 1))]
 
 
 def test_a_later_edit_restating_one_member_writes_both_it_and_its_new_one() -> None:
@@ -163,10 +155,7 @@ def test_a_later_edit_restating_one_member_writes_both_it_and_its_new_one() -> N
     account_db(port).transact(fn)
     assert _writes(port) == [
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set owner = ?, balance = ?, version = ? "
-                "where id = ? and version = ?"
-            ),
+            "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?",
             ("Grace", Decimal("100.00"), 5, 1, 4),
         )
     ]
@@ -181,11 +170,7 @@ def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
         tx.delete(node)
 
     account_db(port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(
-            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), (1, 4)
-        )
-    ]
+    assert _writes(port) == [WriteCall("delete from account where id = ? and version = ?", (1, 4))]
 
 
 def test_identical_destructive_intents_deduplicate() -> None:
@@ -238,11 +223,7 @@ def test_a_refused_amendment_after_a_deletion_of_its_state_leaves_the_deletion_e
         assert refusal.value.code == "write-evidence-already-claimed"
 
     account_db(port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(
-            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), (1, 4)
-        )
-    ]
+    assert _writes(port) == [WriteCall("delete from account where id = ? and version = ?", (1, 4))]
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
@@ -267,11 +248,7 @@ def test_an_amendment_expressing_nothing_after_a_deletion_of_its_state_buffers_n
             tx.wire.amend(source, {})
 
     account_db(port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(
-            POSTGRES.to_driver_sql("delete from account where id = ? and version = ?"), (1, 4)
-        )
-    ]
+    assert _writes(port) == [WriteCall("delete from account where id = ? and version = ?", (1, 4))]
 
 
 def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> None:
@@ -284,9 +261,7 @@ def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> N
 
     db_for(BALANCE, port).transact(fn)
     assert [op.sql for op in _writes(port)] == [
-        POSTGRES.to_driver_sql(
-            "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-        )
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     ]
 
 
@@ -428,9 +403,7 @@ def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None
         tx.delete(node)
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,))
-    ]
+    assert _writes(port) == [WriteCall("delete from person where id = ?", (1,))]
 
 
 def test_identical_unversioned_destructive_intents_deduplicate() -> None:
@@ -470,9 +443,7 @@ def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:
         tx.amend(node.edit(name="Hopper"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Hopper", 1))
-    ]
+    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Hopper", 1))]
 
 
 def test_a_net_equal_chain_of_an_unversioned_object_writes_its_last_value() -> None:
@@ -488,9 +459,7 @@ def test_a_net_equal_chain_of_an_unversioned_object_writes_its_last_value() -> N
         tx.amend(edited.edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1))
-    ]
+    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Ada", 1))]
 
 
 def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
@@ -511,7 +480,7 @@ def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
         WriteCall(
-            POSTGRES.to_driver_sql("delete from person where id = any(cast(? as bigint[]))"),
+            "delete from person where id = any(cast(? as bigint[]))",
             (ArrayBind(INT64, [1, 2]),),
         )
     ]
@@ -531,9 +500,7 @@ def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing()
         tx.amend(fresh.edit(name="Grace").edit(name="Ada"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("insert into person(id, name) values (?, ?)"), (9, "Ada"))
-    ]
+    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Ada"))]
 
 
 def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:

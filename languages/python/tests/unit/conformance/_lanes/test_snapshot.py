@@ -406,7 +406,7 @@ def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> Non
     )
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
     _run(with_apply, port)
-    assert port.writes == [("update orders set qty = %s", [9])]
+    assert port.writes == [("update orders set qty = ?", [9])]
 
 
 # --------------------------------------------------------------------------- #

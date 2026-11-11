@@ -22,7 +22,6 @@ import pytest
 
 from parallax.core import Attr, Entity, UsageError, attr
 from parallax.core._execution._options import OMITTED
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
@@ -57,20 +56,12 @@ type _Representation = Literal["typed", "wire"]
 
 _REPRESENTATIONS = pytest.mark.parametrize("representation", ["typed", "wire"])
 
-_GATED = POSTGRES.to_driver_sql(
-    "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
-)
-_GATED_BALANCE = POSTGRES.to_driver_sql(
-    "update account set balance = ?, version = ? where id = ? and version = ?"
-)
-_GATED_OWNER = POSTGRES.to_driver_sql(
-    "update account set owner = ?, version = ? where id = ? and version = ?"
-)
-_UNGATED_BALANCE = POSTGRES.to_driver_sql(
-    "update account set balance = ?, version = ? where id = ?"
-)
-_GATED_DELETE = POSTGRES.to_driver_sql("delete from account where id = ? and version = ?")
-_UNGATED_DELETE = POSTGRES.to_driver_sql("delete from account where id = ?")
+_GATED = "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+_GATED_BALANCE = "update account set balance = ?, version = ? where id = ? and version = ?"
+_GATED_OWNER = "update account set owner = ?, version = ? where id = ? and version = ?"
+_UNGATED_BALANCE = "update account set balance = ?, version = ? where id = ?"
+_GATED_DELETE = "delete from account where id = ? and version = ?"
+_UNGATED_DELETE = "delete from account where id = ?"
 
 
 _ACCOUNT_ONE = {
@@ -160,9 +151,7 @@ def test_a_locking_target_write_reads_its_row_under_the_shared_lock_once() -> No
     assert _calls(port) == [
         ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set owner = ?, balance = ?, version = ? where id = ?"
-            ),
+            "update account set owner = ?, balance = ?, version = ? where id = ?",
             ("Bo", Decimal("150.00"), 4, 1),
         ),
     ]
@@ -214,9 +203,7 @@ def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -
     assert _calls(port) == [
         ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set owner = ?, balance = ?, version = ? where id = ?"
-            ),
+            "update account set owner = ?, balance = ?, version = ? where id = ?",
             ("Bo", Decimal("150.00"), 4, 1),
         ),
     ]
@@ -618,9 +605,7 @@ def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwrit
     db_for(DomainModel(entity), port).transact(fn)
     write = _calls(port)[-1]
     assert write == WriteCall(
-        POSTGRES.to_driver_sql(
-            "update ledger set note = ?, version = ? where id = ? and version = ?"
-        ),
+        "update ledger set note = ?, version = ? where id = ? and version = ?",
         ("changed", 4, 1, 3),
     )
 
@@ -645,7 +630,7 @@ def test_a_subtype_target_write_is_guarded_by_its_tag_and_refuses_a_sibling_memb
         for read in reads
     )
     assert isinstance(write, WriteCall)
-    guard = "where id = %s and kind = %s" + (" and version = %s" if not reads else "")
+    guard = "where id = ? and kind = ?" + (" and version = ?" if not reads else "")
     assert write.sql.endswith(guard)
     assert write.binds == ((8, 4, 4, "ferry", 3) if not reads else (8, 4, 4, "ferry"))
 

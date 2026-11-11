@@ -150,7 +150,7 @@ from parallax.core.internal.write_plan.managed_row import managed_row, named_mem
 from parallax.core.internal.write_plan.payload import PatchedDocument
 from parallax.core.internal.write_plan.plan import EffectSpan, WriteGroup, WritePlan
 from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
-from parallax.postgres._connection import adapt_binds, initialize_connection
+from parallax.postgres._connection import adapt_binds, initialize_connection, to_driver_sql
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _scalar_type_support as scalar_support
@@ -1421,7 +1421,7 @@ class OrderedAcceptingPort(AcceptingPort):
 
     def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
         for statement in statements:
-            self.dialect.to_driver_sql(statement.sql).encode()
+            to_driver_sql(statement.sql).encode()
             serialize(statement.binds)
         presented = len(statements)
         self._statements += presented
