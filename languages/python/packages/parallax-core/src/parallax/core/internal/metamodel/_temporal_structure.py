@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from parallax.core.internal.metamodel._identities import EntityIdentity, IndexIdentity
+from parallax.core.internal.metamodel._identities import (
+    AttributeIdentity,
+    EntityIdentity,
+    IndexIdentity,
+)
 from parallax.core.internal.metamodel._naming import default_column_name
 from parallax.core.internal.metamodel._values import (
     AsOfAxisMetadata,
@@ -23,6 +27,7 @@ __all__ = [
     "DerivedAxis",
     "derive_primary_key_index",
     "derive_temporal_structure",
+    "matches_primary_key_index",
     "temporality_profile",
 ]
 
@@ -176,18 +181,48 @@ def derive_primary_key_index(
     The derivation is local and reference-free: it reads one declaration and
     resolves nothing across the model.
     """
-    components = [
+    components = _primary_key_index_components(attributes, as_of_axes)
+    if not components:
+        return None
+    return IndexMetadata(
+        identity=IndexIdentity(entity, primary_key_index_name(entity, container)),
+        attributes=components,
+        unique=True,
+    )
+
+
+def matches_primary_key_index(
+    index: IndexMetadata | None,
+    *,
+    entity: EntityIdentity,
+    container: StorageContainer | None,
+    attributes: Sequence[AttributeMetadata],
+    as_of_axes: Sequence[AsOfAxisMetadata],
+) -> bool:
+    """Validate retained primary Index provenance without replacing the Index."""
+    components = _primary_key_index_components(attributes, as_of_axes)
+    if not components:
+        return index is None
+    return (
+        index is not None
+        and index.identity.entity == entity
+        and index.identity.name == primary_key_index_name(entity, container)
+        and index.attributes == components
+        and index.unique
+    )
+
+
+def _primary_key_index_components(
+    attributes: Sequence[AttributeMetadata], as_of_axes: Sequence[AsOfAxisMetadata]
+) -> tuple[AttributeIdentity, ...]:
+    keys = tuple(
         attribute.identity
         for attribute in attributes
         if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    if not components:
-        return None
-    components.extend(
-        axis.end_attribute for axis in sorted(as_of_axes, key=lambda axis: axis.dimension.value)
     )
-    return IndexMetadata(
-        identity=IndexIdentity(entity, primary_key_index_name(entity, container)),
-        attributes=tuple(components),
-        unique=True,
+    if not keys:
+        return ()
+    return (
+        *keys,
+        *(axis.end_attribute for axis in sorted(as_of_axes, key=lambda axis: axis.dimension.value)),
     )

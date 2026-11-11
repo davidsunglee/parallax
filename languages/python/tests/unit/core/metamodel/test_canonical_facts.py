@@ -15,6 +15,7 @@ from parallax.core import (
     attr,
     index,
 )
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import INT64, UsageError
 from parallax.core.internal.entity._declaration import declaration_of
 from parallax.core.internal.entity._model import model_of
@@ -28,6 +29,7 @@ from parallax.core.internal.metamodel import (
     AttributePrimaryKey,
     Column,
     EntityIdentity,
+    EntityLocation,
     IndexIdentity,
     IndexMetadata,
     PrimaryKey,
@@ -36,7 +38,11 @@ from parallax.core.internal.metamodel import (
     designate_framework_owned,
     judge_assignment,
 )
-from parallax.core.internal.metamodel._resolve import INDEX_ATTRIBUTE_MISSING
+from parallax.core.internal.metamodel._resolve import (
+    INDEX_ATTRIBUTE_MISSING,
+    PRIMARY_KEY_INDEX_NONCANONICAL,
+)
+from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import domain_model_from_document, export_document
 from tests.unit._metamodel_support import Declaration, codes, key, source
 
@@ -261,3 +267,82 @@ def test_custom_combined_view_cannot_hide_an_index_from_validation(derived: bool
         indices: tuple[IndexMetadata, ...] = ()
 
     assert codes(source(InconsistentView())) == (INDEX_ATTRIBUTE_MISSING,)
+
+
+@pytest.mark.parametrize(
+    ("Item", "defect"),
+    [
+        (PlainItem, "missing"),
+        (PlainItem, "ordinary-member"),
+        (TemporalItem, "missing"),
+        (TemporalItem, "ordinary-member"),
+        (TemporalItem, "order"),
+        (TemporalItem, "endpoints"),
+        (TemporalItem, "unique"),
+        (TemporalItem, "name"),
+        (TemporalItem, "owner"),
+    ],
+)
+def test_formation_rejects_noncanonical_primary_index_provenance(
+    Item: type[Entity], defect: str
+) -> None:
+    original = declaration_of(Item)
+    primary = original.declared_primary_key_index
+    assert primary is not None
+    if defect == "missing":
+        malformed = None
+    elif defect == "ordinary-member":
+        malformed = replace(primary, attributes=(original.attributes[1].identity,))
+    elif defect == "order":
+        malformed = replace(primary, attributes=tuple(reversed(primary.attributes)))
+    elif defect == "endpoints":
+        malformed = replace(primary, attributes=primary.attributes[:1])
+    elif defect == "unique":
+        malformed = replace(primary, unique=False)
+    elif defect == "name":
+        malformed = replace(primary, identity=IndexIdentity(original.identity, "wrong_pk"))
+    else:
+        malformed = replace(
+            primary, identity=IndexIdentity(EntityIdentity(None, "Other"), "items_pk")
+        )
+    declaration = Declaration(
+        original.identity,
+        container=original.container,
+        attributes=original.attributes,
+        as_of_axes=original.as_of_axes,
+        declared_primary_key_index=malformed,
+        derive_primary_index=False,
+    )
+    for _ in range(2):
+        with pytest.raises(MetamodelValidationError) as caught:
+            form_metamodel(source(declaration))
+        assert [(issue.code, issue.location) for issue in caught.value.issues] == [
+            (PRIMARY_KEY_INDEX_NONCANONICAL, EntityLocation(original.identity))
+        ]
+
+
+def test_an_inherited_key_cannot_gain_a_fabricated_local_primary_index() -> None:
+    class Holding(Entity, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Equity(Holding, table="equities", inheritance=ConcreteSubtype()):
+        symbol: Attr[str]
+
+    root = declaration_of(Holding)
+    child = declaration_of(Equity)
+    declaration = Declaration(
+        child.identity,
+        container=child.container,
+        attributes=child.attributes,
+        inheritance=child.inheritance,
+        declared_primary_key_index=IndexMetadata(
+            IndexIdentity(child.identity, "equities_pk"),
+            (child.attributes[0].identity,),
+            unique=True,
+        ),
+    )
+    with pytest.raises(MetamodelValidationError) as caught:
+        form_metamodel(source(root, declaration))
+    assert [(issue.code, issue.location) for issue in caught.value.issues] == [
+        (PRIMARY_KEY_INDEX_NONCANONICAL, EntityLocation(child.identity))
+    ]
