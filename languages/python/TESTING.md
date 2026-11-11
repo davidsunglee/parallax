@@ -73,8 +73,9 @@ A test earns its place by going red when the behavior it names breaks:
 - Check what the seam compares before relying on it:
   - the rejected sweep grades the issue code alone, and a case raises exactly
     one issue;
-  - a run-only case is graded only by the run sweep, through the conformance
-    lane, so it says nothing about compilation or the Typed verbs;
+  - a run-only `harness`-lane case is graded only by the run sweep, through the
+    conformance adapter, so it says nothing about compilation or the Typed
+    verbs; an `api-conformance`-lane case runs through the public API instead;
   - when two phases raise the same code for an input, a case at the outer door
     pins neither, so the phase with its own door keeps a test;
   - a real database cannot see a write its rollback erases, or tell apart two
