@@ -18,13 +18,6 @@ explains placement and fixtures without duplicating those inventories.
 | Provider | `tests/provider_contract/` | Database provider contract and shipped adapter |
 | Distribution | `tests/distribution/` | Built wheels and clean installation |
 
-The changed-line gate reads the `db` and `dbfree` classes together, so a line a
-database test reaches needs no second test. A `dbfree` test earns its place by
-covering tricky logic with a large input space, a failure a real database cannot
-provoke, or a check worth having very fast. Grading and comparison logic in
-`parallax-conformance` keeps focused tests although the gate does not measure
-that package, because a bug there makes a check silently stop checking.
-
 The test root holds those surfaces, `_support/`, `__init__.py`, and
 `conftest.py`. The unit surface mirrors the source path:
 `parallax/<pkg>/<sub>/<module>.py` maps to
@@ -37,6 +30,59 @@ Cross-surface support belongs in `tests/_support/`; shared unit-only support
 belongs at the narrowest common unit-test directory. Import helpers by their
 `tests.*` names, never from another test module. Do not maintain a prose list
 of helper modules.
+
+## Where a test goes
+
+Prove a behavior at the most public seam that can observe it:
+
+1. **A compatibility case** for portable behavior: a refusal in the rejected
+   lane, SQL text in compile, rows and stored state in run. The corpus is the
+   binding-neutral oracle.
+2. **`tests/api`** for public behavior, through the public verbs and the shipped
+   adapter against `profile_run`'s database. Provider-specific behavior goes to
+   `tests/provider_contract`.
+3. **`tests/unit`**, `dbfree`, for one of these reasons:
+   - a large input space that cases or API tests would spell row by row;
+   - a failure a real database cannot provoke, such as an injected adapter,
+     pool or driver fault, a race, or a write its rollback erases;
+   - grading and comparison logic in `parallax-conformance`, proved with
+     refusing inputs, because a bug there makes a check silently stop checking.
+
+The changed-line gate reads the `db` and `dbfree` classes together, so a line a
+database test reaches needs no second test.
+
+A unit test reaches production through public verbs or a module's interface; a
+scripted port stands in for the database to inject what a real one cannot
+produce. A call count or memory layout earns a test only when callers rely on
+the count, correctness needs the single run, or losing it changes cost by an
+order of growth, such as entity or model width; the cost class owns the rest of
+performance. Enforce a structural invariant by type, such as a private factory,
+before writing an architecture test.
+
+## What a test proves
+
+A test earns its place by going red when the behavior it names breaks:
+
+- Break the behavior in memory, one condition at a time, and read the assertion
+  that fails. A crash, an unrelated refusal, or a fixture artifact is not that
+  behavior going red.
+- Give each condition its own input, differing from a passing one only in that
+  property.
+- Assert the effect itself. Coverage shows that a line ran, not that anything
+  checked it.
+- Check what the seam compares before relying on it:
+  - the rejected sweep grades the issue code alone, and a case raises exactly
+    one issue;
+  - a run-only case is graded only by the run sweep, through the conformance
+    lane, so it says nothing about compilation or the Typed verbs;
+  - when two phases raise the same code for an input, a case at the outer door
+    pins neither, so the phase with its own door keeps a test;
+  - a real database cannot see a write its rollback erases, or tell apart two
+    plans that store the same row.
+
+To retire a test, land its replacement first, show a remaining test goes red
+under each break the retired one caught, and keep the last `dbfree` test of a
+product function.
 
 ## Fixtures and resources
 
