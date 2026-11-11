@@ -50,7 +50,6 @@ from parallax.core.internal.base import (
 )
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import MappingRow
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.read_delivery._page_reader import (
     EagerPageRequest,
     EagerPageResult,
@@ -257,10 +256,8 @@ def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_loc
     assert port.calls == [
         BeginCall(),
         ReadCall(
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.id = ? for share of t0"
-            ),
+            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "where t0.id = ? for share of t0",
             (1,),
             read_only=True,
         ),
@@ -287,10 +284,8 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, CommitCall]
     root, level = (call for call in port.calls if isinstance(call, ReadCall))
     root_sql, level_sql = root.sql, level.sql
-    assert root_sql == POSTGRES.to_driver_sql(
-        "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
-    )
-    assert level_sql == POSTGRES.to_driver_sql(
+    assert root_sql == "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
+    assert level_sql == (
         "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
         "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
     )
@@ -324,10 +319,7 @@ def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
     db_for(mx.MIXED_STRATEGY_MODEL, port).find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
     assert port.calls == [
         ReadCall(
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.id = ?"
-            ),
+            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 where t0.id = ?",
             (1,),
             read_only=True,
         )
@@ -437,9 +429,7 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 1
     sql = write_ops[0].sql
-    assert sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ?"
-    )
+    assert sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
 
 
 def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields() -> None:
@@ -462,9 +452,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 2  # the close, then the merged chain
     close_sql, close_binds = write_ops[0].sql, write_ops[0].binds
-    assert close_sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    )
+    assert close_sql == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert close_binds == (
         FIXED,
         1,
@@ -472,8 +460,9 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
     chain_sql, chain_binds = write_ops[1].sql, write_ops[1].binds
-    assert chain_sql == POSTGRES.to_driver_sql(
-        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
+    assert (
+        chain_sql
+        == "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
     assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, INFINITY_INSTANT)
 
@@ -890,9 +879,7 @@ def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_r
         db_for(BALANCE, port).transact(_terminate_balance_1, concurrency="locking")
     assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
     (close,) = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert close.sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ?"
-    )
+    assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
 
 
 def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_read_011() -> None:
@@ -909,9 +896,7 @@ def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_
     db_for(BALANCE, port).transact(_terminate_balance_1)
     closes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert {close.sql for close in closes} == {
-        POSTGRES.to_driver_sql(
-            "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-        )
+        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     }
     assert [close.binds[-1] for close in closes] == [observed, reread]
 
@@ -1140,7 +1125,7 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
 
     db_for(POLICY_MODEL, port).transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_ops[0].sql.startswith(POSTGRES.to_driver_sql("update coverage set out_z = "))
+    assert write_ops[0].sql.startswith("update coverage set out_z = ")
     assert any(10 in op.binds for op in write_ops)
 
 
@@ -1163,9 +1148,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
 
     db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_op.sql == POSTGRES.to_driver_sql(
-        "update obs_slip set memo = ?, version = ? where id = ? and version = ?"
-    )
+    assert write_op.sql == "update obs_slip set memo = ?, version = ? where id = ? and version = ?"
     assert write_op.binds == ("after", 5, 10, 4)
 
 
@@ -1213,8 +1196,9 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
 
     db_for(om.FLEET_MODEL, port).transact(fn)
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_op.sql == POSTGRES.to_driver_sql(
-        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+    assert (
+        write_op.sql
+        == "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert write_op.binds[1:3] == (10, "tug")
 
@@ -1251,7 +1235,8 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
 
     db_for(om.FLEET_MODEL, port).transact(fn)
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_op.sql == POSTGRES.to_driver_sql(
-        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+    assert (
+        write_op.sql
+        == "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert write_op.binds[1:3] == (11, "barge")

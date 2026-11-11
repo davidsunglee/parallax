@@ -55,14 +55,14 @@ _REPLICATION_LOGIN: Final[str] = "parallax_replication"
 _REPLICATION_PASSWORD: Final[str] = "parallax-replication-password"
 
 _STREAMING = (
-    "select count(*) from pg_stat_replication where application_name = %s and state = 'streaming'"
+    "select count(*) from pg_stat_replication where application_name = ? and state = 'streaming'"
 )
 _SYNCHRONOUS = (
-    "select count(*) from pg_stat_replication where application_name = %s and sync_state = 'sync'"
+    "select count(*) from pg_stat_replication where application_name = ? and sync_state = 'sync'"
 )
 _PAUSE_STATE = "select pg_get_wal_replay_pause_state()"
 _WRITER_LSN = "select pg_current_wal_lsn()::text"
-_REPLAYED = "select coalesce(pg_last_wal_replay_lsn() >= %s::pg_lsn, false)"
+_REPLAYED = "select coalesce(pg_last_wal_replay_lsn() >= ?::pg_lsn, false)"
 
 
 @dataclass(frozen=True, slots=True)

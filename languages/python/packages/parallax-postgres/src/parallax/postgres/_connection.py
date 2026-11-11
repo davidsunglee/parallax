@@ -480,6 +480,18 @@ context, and nothing is marked.
 """
 
 type _PreparedStatement = tuple[bytes, list[object], Sequence[DocumentReadOrdinals]]
+type _PreparedWriteStatement = tuple[bytes, list[object]]
+
+
+def to_driver_sql(canonical_sql: str) -> str:
+    """Convert canonical placeholders while preserving quoted text and psycopg percent escapes.
+
+    Psycopg scans percent markers even inside literals and quoted identifiers, so
+    existing percent characters are doubled before the unquoted `?` markers
+    become `%s` binds.
+    """
+    runs = re.split(r"""('(?:[^']|'')*'|"(?:[^"]|"")*")""", canonical_sql.replace("%", "%%"))
+    return "".join(run if index % 2 else run.replace("?", "%s") for index, run in enumerate(runs))
 
 
 def _start_first_send(context: PostgresConnectionContext | None) -> None:
@@ -973,7 +985,7 @@ def _write_in_order(
     connection: psycopg.Connection[TupleRow],
     context: PostgresConnectionContext | None,
     dialect: Dialect,
-    statements: Sequence[CanonicalWriteStatement],
+    statements: Sequence[_PreparedWriteStatement],
 ) -> OrderedWriteResult:
     """Present ``statements`` in one pipeline and answer what it established.
 
@@ -992,9 +1004,7 @@ def _write_in_order(
     try:
         with connection.pipeline():
             try:
-                for statement in statements:
-                    query = dialect.to_driver_sql(statement.sql).encode()
-                    binds = adapt_binds(statement.binds)
+                for query, binds in statements:
                     cursor = _CountCursor(connection, intake)
                     cursors.append(cursor)
                     _start_first_send(context)
@@ -1210,7 +1220,7 @@ class PostgresConnection:
         unchanged, on the connection the context replaces it with; an
         undesignated one never is.
         """
-        query = sql.encode()
+        query = to_driver_sql(sql).encode()
         adapted = adapt_binds(binds)
         with translating_driver_errors(self.dialect):
             return self._invoke_native(
@@ -1234,7 +1244,11 @@ class PostgresConnection:
             self._current_native()
             return []
         prepared = tuple(
-            (statement.sql.encode(), adapt_binds(statement.binds), statement.document_reads)
+            (
+                to_driver_sql(statement.sql).encode(),
+                adapt_binds(statement.binds),
+                statement.document_reads,
+            )
             for statement in statements
         )
         with translating_driver_errors(self.dialect):
@@ -1243,7 +1257,7 @@ class PostgresConnection:
             )
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        query = sql.encode()
+        query = to_driver_sql(sql).encode()
         adapted = adapt_binds(binds)
         with translating_driver_errors(self.dialect):
             return self._invoke_native(_execute_write, query, adapted, replay_safe=False)
@@ -1266,10 +1280,12 @@ class PostgresConnection:
         self._current_native()
         if not statements:
             return OrderedWriteResultComplete(())
+        prepared = tuple(
+            (to_driver_sql(statement.sql).encode(), adapt_binds(statement.binds))
+            for statement in statements
+        )
         try:
-            result = self._invoke_native(
-                _write_in_order, self.dialect, statements, replay_safe=False
-            )
+            result = self._invoke_native(_write_in_order, self.dialect, prepared, replay_safe=False)
         except BaseException:
             self._mark_suspect()
             raise

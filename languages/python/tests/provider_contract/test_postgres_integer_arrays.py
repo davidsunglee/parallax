@@ -22,7 +22,6 @@ from parallax.conformance._postgres_control import PostgresControl
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
 from parallax.core.internal.base import INT32, INT64, STRING, NeutralType
 from parallax.core.internal.db_port import ArrayBind
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.postgres import OnDemandOptions, PoolOptions
@@ -165,14 +164,12 @@ def test_every_connection_path_binds_an_integer_array_in_its_declared_binary_typ
         for runtime in runtimes:
             with runtime.login_source().new_context("writer_only") as connection:
                 for statement, array in zip(statements, arrays, strict=True):
-                    assert connection.execute("select pg_typeof(%s)::text", [array]) == [
+                    assert connection.execute("select pg_typeof(?)::text", [array]) == [
                         (array_type,)
                     ]
-                    rows = connection.execute(
-                        POSTGRES.to_driver_sql(statement.sql), list(statement.binds)
-                    )
+                    rows = connection.execute(statement.sql, list(statement.binds))
                     assert rows
-        assert control.execute("select pg_typeof(%s)::text", [arrays[0]]) == [(array_type,)]
+        assert control.execute("select pg_typeof(?)::text", [arrays[0]]) == [(array_type,)]
     finally:
         for runtime in runtimes:
             runtime.close()
@@ -190,6 +187,6 @@ def test_an_array_with_no_value_to_infer_from_keeps_its_declared_type(
 ) -> None:
     bind = ArrayBind(element_type, values)
 
-    assert profile_run.port.execute(
-        "select pg_typeof(%s)::text, cardinality(%s)", [bind, bind]
-    ) == [(server_type, length)]
+    assert profile_run.port.execute("select pg_typeof(?)::text, cardinality(?)", [bind, bind]) == [
+        (server_type, length)
+    ]

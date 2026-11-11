@@ -59,7 +59,7 @@ def test_locking_continuation_binds_document_coordinates_in_projection_order(
     profile_run.reset(metamodel, provision.load_fixtures("models/document-layout.yaml"))
     with closing(profile_run.control(autocommit=False)) as connection:
         rows = connection.execute(
-            POSTGRES.to_driver_sql(compiled.statement.sql),
+            compiled.statement.sql,
             compiled.statement.wire_binds(),
             compiled.document_reads,
         )

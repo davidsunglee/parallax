@@ -224,11 +224,8 @@ def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> NodeOutcome:
     own case contract for this shape), reporting the LAST statement's rows
     and each `write` statement's affected-row count.
 
-    Each canonical `?`-placeholder golden statement is translated to the
-    dialect's own driver form (`Dialect.to_driver_sql`) immediately before
-    execution — the SAME translation site every other run lane uses
-    (`engine.run_error_case`), never baked in at parse time, so
-    :func:`parse_rounds`'s own report stays the canonical golden text.
+    Each canonical `?`-placeholder golden statement reaches the port unchanged,
+    so :func:`parse_rounds`'s own report stays the canonical golden text.
     `kind: "write"` calls `execute_write` (the DML verb, m-db-port); every
     other step (a `kind: "read"` step, or a `kind`-less `error`-shape step —
     a SELECT observing a held lock, or the contention round's own trigger
@@ -250,11 +247,10 @@ def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> NodeOutcome:
     rows: tuple[MappingRow, ...] = ()
     affected: list[int] = []
     for sql, binds in step.statements:
-        driver_sql = session.dialect.to_driver_sql(sql)
         if step.kind == "write":
-            affected.append(session.execute_write(driver_sql, binds))
+            affected.append(session.execute_write(sql, binds))
         else:
-            raw_rows = session.execute(driver_sql, binds)
+            raw_rows = session.execute(sql, binds)
             if step.expect_rows is not None:
                 rows = _named_rows(raw_rows, step.expect_rows)
     return NodeOutcome(rows=rows, affected=tuple(affected))

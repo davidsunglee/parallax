@@ -35,7 +35,6 @@ from parallax.core._execution._unit_work import write_settlement
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ArrayBind, MappingRow
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.execution import (
     RetryPolicy,
     ServingModel,
@@ -72,9 +71,7 @@ from tests.unit._transact_support import (
 )
 from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
-_UPDATE_SQL = POSTGRES.to_driver_sql(
-    "update account set balance = ?, version = ? where id = ? and version = ?"
-)
+_UPDATE_SQL = "update account set balance = ?, version = ? where id = ? and version = ?"
 
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
@@ -395,7 +392,7 @@ def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> N
     assert isinstance(page_two, ReadCall)
     assert page_two.sql.count("for share") == 1
     assert (
-        ")) u join account t0 on u.id = t0.id order by t0.id asc limit %s for share of t0"
+        ")) u join account t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
     ) in page_two.sql
     assert page_two.binds == (1, 1, 1, 2, 1, 2, 2)
 
@@ -420,9 +417,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
 
 type _Representation = Literal["typed", "wire"]
 _REPRESENTATIONS: tuple[_Representation, ...] = ("typed", "wire")
-_LOCKING_UPDATE_SQL = POSTGRES.to_driver_sql(
-    "update account set balance = ?, version = ? where id = ?"
-)
+_LOCKING_UPDATE_SQL = "update account set balance = ?, version = ? where id = ?"
 
 
 def _first_root(scope: TxnContext | ScopedDatabase, representation: _Representation) -> Any:

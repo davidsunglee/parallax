@@ -55,7 +55,7 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(_META, {})
     profile_run.port.execute_write(
         "insert into ckt_purse(id, owner, balance) "
-        "select key, 'o' || key, 1.00 from generate_series(1, %s) key",
+        "select key, 'o' || key, 1.00 from generate_series(1, ?) key",
         [_WIDE],
     )
 
@@ -124,7 +124,7 @@ def _execute(profile_run: Any, step: PlannedStep) -> int:
     dialect = port.dialect
     statement = lowered(step, LayoutPayloadPreparer(_META), _META, dialect)
     assert len(statement.binds) == (3 if isinstance(step, PlannedUpdate) else 2)
-    return port.execute_write(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    return port.execute_write(statement.sql, list(statement.binds))
 
 
 @pytest.mark.parametrize("width", [3, _WIDE])

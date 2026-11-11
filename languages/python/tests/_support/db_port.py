@@ -180,7 +180,7 @@ def _document_bind(element: object) -> Bind:
 @dataclass(frozen=True, slots=True)
 class OrderedCall:
     """One ordered write transport invocation, as the port received it: each
-    presented statement in the driver form the adapter converts it to."""
+    presented statement in canonical form."""
 
     writes: tuple[WriteCall, ...]
 
@@ -686,16 +686,11 @@ class ScriptedAdapter:
         return entry.affected
 
     def execute_ordered(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
-        """One ordered write transport invocation, converting each canonical
-        statement to the driver's form as an adapter does before submission."""
+        """One ordered write transport invocation."""
         entry = self._scopes[-1].take(Ordered, f"{len(statements)} ordered statements")
-        to_driver = self.dialect.to_driver_sql
         self.calls.append(
             OrderedCall(
-                tuple(
-                    WriteCall(to_driver(statement.sql), tuple(statement.binds))
-                    for statement in statements
-                )
+                tuple(WriteCall(statement.sql, tuple(statement.binds)) for statement in statements)
             )
         )
         if entry.raises is not None:

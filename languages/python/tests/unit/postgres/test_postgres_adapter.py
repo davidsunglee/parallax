@@ -940,7 +940,7 @@ def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync()
     connection = _ResultConnection(_Result(1, records), _Result(2, [(False, None), (True, None)]))
     rows = _direct_execution(connection).execute_pipeline(
         (
-            PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
+            PipelineStatement("select unnest(?::bigint[])", ([1, 2],)),
             PipelineStatement("select present, document", document_reads=((0, 1),)),
         )
     )
@@ -996,7 +996,7 @@ def test_a_scope_holds_its_ordered_write_operation_exactly_where_libpq_can_pipel
 def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
     adapter = _direct_execution(_FakeConnection(cursor_error=errors.DeadlockDetected("deadlock")))
     with pytest.raises(DatabaseError) as exc_info:
-        adapter.execute_write("update gauge set v = %s", [1])
+        adapter.execute_write("update gauge set v = ?", [1])
     assert exc_info.value.category == "deadlock"
     assert exc_info.value.native_code == "40P01"
 
@@ -1250,17 +1250,16 @@ class _Unrenderable:
         return ()
 
 
-def test_statements_never_handed_to_the_driver_are_the_unsent_suffix(
+def test_invalid_canonical_statement_is_refused_before_any_native_submission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statements = (_WRITES[0], _Unrenderable(), _WRITES[1])
 
-    result, facade = _written(monkeypatch, Server(), statements)
+    server = Server()
+    with pytest.raises(ValueError, match="no canonical text"):
+        _written(monkeypatch, server, statements)
 
-    assert isinstance(result, OrderedWriteResultInterrupted)
-    assert (result.confirmed, result.unconfirmed_count, result.unsent_count) == ((), 1, 2)
-    assert isinstance(result.error, ValueError)
-    assert facade.suspect
+    assert server.sent == []
 
 
 def test_a_statement_the_driver_refused_to_send_is_unconfirmed_and_the_rest_unsent(
@@ -1532,7 +1531,7 @@ def _document_batch() -> tuple[_Result, _Result]:
 
 
 _DOCUMENT_BATCH = (
-    PipelineStatement("select present, document where id = any(%s)", ([1, 2],), ((0, 1),)),
+    PipelineStatement("select present, document where id = any(?)", ([1, 2],), ((0, 1),)),
     PipelineStatement("select 7"),
 )
 
@@ -1701,7 +1700,7 @@ def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
     invocations: tuple[Callable[[], DatabaseError], ...] = (
         lambda: raised(lambda: adapter.execute("select 1", [])),
         lambda: raised(lambda: adapter.execute_pipeline((PipelineStatement("select 1"),))),
-        lambda: raised(lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1])),
+        lambda: raised(lambda: adapter.execute_write("insert into gauge (v) values (?)", [1])),
         failing_begin,
         failing_commit,
         failing_rollback,

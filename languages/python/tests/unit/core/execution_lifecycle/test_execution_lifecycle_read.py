@@ -111,12 +111,8 @@ def test_a_call_reports_the_statement_the_port_ran() -> None:
     # received.
     assert finished.statement == started.statement
     (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
-    assert POSTGRES_DRIVER_SQL(started.statement.sql) == executed.sql
+    assert started.statement.sql == executed.sql
     assert started.statement.binds == (7,)
-
-
-def POSTGRES_DRIVER_SQL(sql: str) -> str:
-    return sql.replace("?", "%s")
 
 
 def test_a_duration_excludes_the_handler_time_around_it() -> None:

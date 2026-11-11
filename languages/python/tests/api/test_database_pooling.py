@@ -40,7 +40,6 @@ from parallax.core import (
 )
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ArrayBind, ConnectionAcquisitionError
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import (
     ServingModel,
@@ -408,7 +407,7 @@ def _observed_preparation(monkeypatch: pytest.MonkeyPatch) -> _Preparation:
 
     counted(ReadPlanCache, "plan", "plan")
     counted(CompiledTemplate, "render", "render")
-    counted(type(POSTGRES), "to_driver_sql", "to_driver_sql")
+    counted(connection_module, "to_driver_sql", "to_driver_sql")
     counted(connection_module, "adapt_binds", "adapt_binds")
     rows, pipeline = connection_module._execute_rows, connection_module._execute_pipeline  # pyright: ignore[reportPrivateUsage] - the native submissions this proof observes
 

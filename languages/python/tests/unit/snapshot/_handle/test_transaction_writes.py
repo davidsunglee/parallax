@@ -35,7 +35,6 @@ from parallax.core.internal import unit_work
 from parallax.core.internal.base import INT64, DocumentValue, StructuredDocument, UsageError
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import ArrayBind, MappingRow
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.execution import (
     KeyedWriteValueCode,
     RetryPolicy,
@@ -120,9 +119,7 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
     assert port.calls == [
         BeginCall(),
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
-            ),
+            "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)",
             (10, "card", Decimal("200.00"), "Visa"),
         ),
         CommitCall(),
@@ -155,9 +152,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
         BeginCall(),
         ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update account set balance = ?, version = ? where id = ? and version = ?"
-            ),
+            "update account set balance = ?, version = ? where id = ? and version = ?",
             (175.00, 2, 1, 1),
         ),
         CommitCall(),
@@ -222,7 +217,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     assert port.calls == [
         BeginCall(),
         ReadCall(FIND_SQL_LOCKED, (3,), read_only=True),
-        WriteCall(POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
+        WriteCall("delete from account where id = ?", (3,)),
         CommitCall(),
     ]
 
@@ -320,28 +315,22 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
     assert port.calls == [
         BeginCall(),
         ReadCall(
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
-            ),
+            "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?",
             (1,),
             read_only=True,
         ),
         ReadCall(
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
-            ),
+            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "where t0.consignment_id = any(cast(? as bigint[])) for share of t0",
             (ArrayBind(INT64, [1]),),
             read_only=True,
         ),
         WriteCall(
-            POSTGRES.to_driver_sql(
-                "update consignment set total = ?, version = ? where id = ? and version = ?"
-            ),
+            "update consignment set total = ?, version = ? where id = ? and version = ?",
             (20.00, 2, 1, 1),
         ),
         WriteCall(
-            POSTGRES.to_driver_sql("update consignment_leg set carrier = ? where id = ?"),
+            "update consignment_leg set carrier = ? where id = ?",
             ("Baltic", 5),
         ),
         CommitCall(),
@@ -357,26 +346,20 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
     assert [(type(op), op.sql) for op in port.calls if isinstance(op, (ReadCall, WriteCall))] == [
         (
             ReadCall,
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
-            ),
+            "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?",
         ),
         (
             ReadCall,
-            POSTGRES.to_driver_sql(
-                "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
-            ),
+            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "where t0.consignment_id = any(cast(? as bigint[])) for share of t0",
         ),
         (
             WriteCall,
-            POSTGRES.to_driver_sql(
-                "update consignment set total = ?, version = ? where id = ? and version = ?"
-            ),
+            "update consignment set total = ?, version = ? where id = ? and version = ?",
         ),
         (
             WriteCall,
-            POSTGRES.to_driver_sql("update consignment_leg set carrier = ? where id = ?"),
+            "update consignment_leg set carrier = ? where id = ?",
         ),
     ]
 
@@ -395,7 +378,7 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
     assert len(write_ops) == 1
     sql = write_ops[0].sql
     binds = write_ops[0].binds
-    assert sql == POSTGRES.to_driver_sql(
+    assert sql == (
         "insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) "
         "values (?, ?, ?, ?, ?, ?, ?)"
     )
@@ -520,7 +503,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
 
     account_db(port).transact(fn, concurrency="locking")
     expected = WriteCall(
-        POSTGRES.to_driver_sql("update account set balance = ?, version = ? where id = ?"),
+        "update account set balance = ?, version = ? where id = ?",
         (175.00, 2, 1),
     )
     assert expected in port.calls
@@ -738,7 +721,7 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
     coverage = reads[1]
     lock = " for share of t0" if concurrency == "locking" else ""
     assert coverage.sql.endswith(
-        "from where_position t0 where t0.id = %s and t0.thru_z > %s and t0.out_z = %s" + lock
+        "from where_position t0 where t0.id = ? and t0.thru_z > ? and t0.out_z = ?" + lock
     )
     assert coverage.binds == (1, jun, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -766,7 +749,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
 
     coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
     assert coverage.sql.endswith(
-        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s"
+        "where t0.id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?"
     )
     assert coverage.binds == (1, jun, sep, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -1383,7 +1366,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))
     ]
 
 
@@ -1399,7 +1382,7 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))
     ]
 
 
@@ -1418,7 +1401,7 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() ->
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
+        WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))
     ]
 
 
@@ -1460,9 +1443,9 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_executes_after_that_delete
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton")),
-        WriteCall("delete from person where id = %s", (9,)),
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace")),
+        WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton")),
+        WriteCall("delete from person where id = ?", (9,)),
+        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace")),
     ]
 
 
@@ -1658,7 +1641,7 @@ def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key()
 
     db_for(PERSON, port).transact(fn)
     assert port.calls[-2:] == [
-        WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Grace", 1)),
+        WriteCall("update person set name = ? where id = ?", ("Grace", 1)),
         CommitCall(),
     ]
 

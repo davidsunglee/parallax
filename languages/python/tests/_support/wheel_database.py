@@ -32,7 +32,7 @@ class WheelDatabase:
             if str(observed).split()[0] != version:
                 raise RuntimeError(f"PostgreSQL {observed!r} does not match selected {version}")
             ((exists,),) = self._session.execute(
-                "select exists(select from pg_roles where rolname = %s)", [CONFORMANCE_LOGIN]
+                "select exists(select from pg_roles where rolname = ?)", [CONFORMANCE_LOGIN]
             )
             if not exists:
                 install_authority_fixtures(self._session)

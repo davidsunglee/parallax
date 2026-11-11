@@ -123,7 +123,7 @@ def _seeded_db(
 def _log_rows(profile_run: Any, entity: type[Any], key: int = 1) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(entity, 'label')} from {_TABLES[entity]} where id = %s order by in_z, out_z"
+        f"{_member(entity, 'label')} from {_TABLES[entity]} where id = ? order by in_z, out_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [key])]
 

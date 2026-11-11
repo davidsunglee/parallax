@@ -93,9 +93,7 @@ def _corrupt_stored_state(
     dialect = port.dialect
     table = dialect.quote(view.layout.table.name)
     where = f"where {dialect.quote(key_column)} = ?"
-    rows = port.execute(
-        dialect.to_driver_sql(f"select {dialect.quote(column)} from {table} {where}"), [key]
-    )
+    rows = port.execute(f"select {dialect.quote(column)} from {table} {where}", [key])
     if len(rows) != 1:
         raise UnclassifiedEngineError(
             f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
@@ -104,7 +102,7 @@ def _corrupt_stored_state(
         )
     document = _replaced_at(_stored_value(rows[0][0]), path, entry["value"])
     port.execute_write(
-        dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
+        f"update {table} set {dialect.quote(column)} = ? {where}",
         [StructuredDocument(cast("DocumentValue", document)), key],
     )
 
@@ -251,4 +249,4 @@ def apply_given_apply(case: case_format.Case, port: DatabaseConnection) -> None:
             StructuredDocument(cast("DocumentValue", bind)) if isinstance(bind, Mapping) else bind
             for bind in cast("list[object]", entry.get("binds", []))
         ]
-        port.execute_write(port.dialect.to_driver_sql(sql), driver_binds(binds))
+        port.execute_write(sql, driver_binds(binds))

@@ -192,7 +192,7 @@ def _stored_rows(profile_run: Any, cell: Cell, entity: type[Any]) -> list[Histor
         HistoryRow(*cast("tuple[Any, ...]", row))
         for row in profile_run.port.execute(
             f"select id, from_z, thru_z, in_z, out_z, {values} from {table} "
-            "where id between %s and %s",
+            "where id between ? and ?",
             [keys[0], keys[-1]],
         )
     ]
@@ -201,7 +201,7 @@ def _stored_rows(profile_run: Any, cell: Cell, entity: type[Any]) -> list[Histor
 def _document_column(profile_run: Any, table: str) -> str:
     ((document,),) = profile_run.port.execute(
         "select column_name from information_schema.columns "
-        "where table_name = %s and data_type = 'jsonb' and column_name not in ('tags', 'legs')",
+        "where table_name = ? and data_type = 'jsonb' and column_name not in ('tags', 'legs')",
         [table],
     )
     return cast("str", document)
@@ -219,9 +219,9 @@ def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]
         return rows, None
     document = _document_column(profile_run, _TABLES[CollectionSpan])
     ((differing,),) = profile_run.port.execute(
-        f"select count(*) from {_TABLES[CollectionSpan]} where id between %s and %s "
-        f"and (({document}->'tags') is distinct from %s::jsonb "
-        f"or ({document}->'legs') is distinct from %s::jsonb)",
+        f"select count(*) from {_TABLES[CollectionSpan]} where id between ? and ? "
+        f"and (({document}->'tags') is distinct from ?::jsonb "
+        f"or ({document}->'legs') is distinct from ?::jsonb)",
         [object_key(0), object_key(cell.objects - 1), json.dumps(_TAGS), json.dumps(_LEGS)],
     )
     return rows, int(differing)

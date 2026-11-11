@@ -28,7 +28,6 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
 - bytes projection shape and any projection-introduced binds, and the projected
   cell decoding to the same octets in either case
 - temporal infinity bind representation
-- placeholder translation at the adapter boundary
 - paired document-read parsing, including distinct `SqlNull` and
   `StructuredDocument(document: JSON null)` results when the raw driver values use
   the same host-language null sentinel
@@ -45,6 +44,11 @@ database-backed smoke suite. This suite proves the shipped adapter path, not the
 
 For every supported adapter, the smoke suite covers:
 
+- canonical SQL with bind placeholders and literal placeholder characters
+  reaches the driver correctly through `execute`, `executePipeline`,
+  `executeWrite`, and, where present, `orderedWriteTransport`; conversion is
+  applied once per statement at the adapter boundary, including literal
+  percent and `%s` text in string literals and quoted identifiers
 - construction from the language's documented connection configuration
 - a managed scalar read returning adapter-boundary values, not driver defaults
 - precision-sensitive managed values read exactly through the adapter

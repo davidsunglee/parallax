@@ -79,7 +79,7 @@ def _seeded(profile_run: Any, *, fragmented: bool = False) -> None:
         for key, amount, label, start, end in rows:
             control.execute_write(
                 "insert into share_span(id, amount, label, from_z, thru_z, in_z, out_z) "
-                "values (%s, %s, %s, %s, %s, %s, %s)",
+                "values (?, ?, ?, ?, ?, ?, ?)",
                 [key, amount, label, start, end, _T0, INFINITY],
             )
     finally:
@@ -96,7 +96,7 @@ def _rows(profile_run: Any, key: int) -> list[_Row]:
     rows = profile_run.port.execute(
         "select id, in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, amount "
-        "from share_span where id = %s order by in_z, out_z, from_z",
+        "from share_span where id = ? order by in_z, out_z, from_z",
         [key],
     )
     return [tuple(row) for row in rows]

@@ -17,7 +17,6 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
 from parallax.core.internal.base import INT32, INT64, NeutralType
 from parallax.core.internal.db_port import ArrayBind
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import connect
@@ -72,7 +71,7 @@ def _child_level(profile_run: Any, holder: type[Any]) -> LoweredStatement:
 
 
 def _planned_array(profile_run: Any, sql: str, binds: tuple[object, ...]) -> str:
-    rows = profile_run.port.execute(f"explain {POSTGRES.to_driver_sql(sql)}", list(binds))
+    rows = profile_run.port.execute(f"explain {sql}", list(binds))
     plan = " ".join(str(row[0]) for row in rows)
     start = plan.index("ANY (")
     return plan[start : plan.index(")", start) + 1]

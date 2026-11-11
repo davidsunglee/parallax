@@ -317,12 +317,7 @@ _PRESENTED: tuple[LoweredStatement, ...] = (
 
 
 def _presented(*statements: LoweredStatement) -> OrderedCall:
-    return OrderedCall(
-        tuple(
-            WriteCall(POSTGRES.to_driver_sql(statement.sql), statement.binds)
-            for statement in statements
-        )
-    )
+    return OrderedCall(tuple(WriteCall(statement.sql, statement.binds) for statement in statements))
 
 
 def _ordered_port(

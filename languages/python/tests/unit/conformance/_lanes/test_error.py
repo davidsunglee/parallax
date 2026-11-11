@@ -54,7 +54,7 @@ def test_run_error_case_reaches_the_port_with_the_dialects_own_spelling_and_bind
     emissions, error_class, native_code, database_calls = error.run_error_case(case, port)
     assert port.writes == [
         ("delete from widget", []),
-        ("insert into widget(id, label) values (%s, %s)", [1, "dup"]),
+        ("insert into widget(id, label) values (?, ?)", [1, "dup"]),
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
         ("delete from widget", ()),

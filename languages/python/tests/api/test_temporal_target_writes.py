@@ -413,7 +413,7 @@ def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
     try:
         control.execute_write(
             "update ttw_document_span set payload = jsonb_set(payload, '{spec,ledger}', '7') "
-            "where from_z = %s",
+            "where from_z = ?",
             [_JAN],
         )
     finally:
@@ -429,7 +429,7 @@ def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
     )
     specs = profile_run.port.execute(
         "select in_z, from_z, payload->'spec' from ttw_document_span "
-        "where out_z = 'infinity' and from_z < %s order by from_z",
+        "where out_z = 'infinity' and from_z < ? order by from_z",
         [_JUN],
     )
     if kept:
@@ -1484,7 +1484,7 @@ def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
     column = (
         "payload = jsonb_set(payload, '{spec}', '[1]')" if entity in _DOCUMENT else "spec = '[1]'"
     )
-    profile_run.port.execute(f"update {_TABLES[entity]} set {column} where from_z = %s", [_JAN])
+    profile_run.port.execute(f"update {_TABLES[entity]} set {column} where from_z = ?", [_JAN])
     called: list[str] = []
 
     def fn(tx: TxnContext) -> None:

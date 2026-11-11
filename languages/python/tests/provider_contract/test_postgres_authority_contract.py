@@ -80,7 +80,7 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
                 profile_run.login_identity,
                 role_a.name,
             )
-            authorized_a.execute_write("insert into authority_a (value) values (%s)", [1])
+            authorized_a.execute_write("insert into authority_a (value) values (?)", [1])
             assert authorized_a.execute("select value from authority_a", []) == [(1,)]
             with pytest.raises(DatabaseError):
                 authorized_a.execute("select value from authority_b", [])
@@ -92,7 +92,7 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
                 profile_run.login_identity,
                 role_b.name,
             )
-            authorized_b.execute_write("insert into authority_b (value) values (%s)", [2])
+            authorized_b.execute_write("insert into authority_b (value) values (?)", [2])
             assert authorized_b.execute("select value from authority_b", []) == [(2,)]
             with pytest.raises(DatabaseError):
                 authorized_b.execute("select value from authority_a", [])

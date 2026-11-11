@@ -189,9 +189,7 @@ def test_a_draft_derived_before_the_insertion_carries_no_authority() -> None:
         tx.amend(opened.edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
-    ]
+    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
 
 
 def test_an_independently_built_value_of_the_inserted_key_carries_no_authority() -> None:
@@ -202,9 +200,7 @@ def test_an_independently_built_value_of_the_inserted_key_carries_no_authority()
         _refused_as_not_stored(lambda: tx.amend(mm.Person(id=9, name="Newton").edit(name="X")))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
-    ]
+    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))]
 
 
 def test_a_refused_insertion_grants_nothing() -> None:
@@ -255,9 +251,7 @@ def test_converting_a_wire_insertion_node_loses_its_authority() -> None:
         tx.wire.amend(node, {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [
-        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
-    ]
+    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
 
 
 def test_an_inserted_instance_pickles_as_domain_data_without_its_authority() -> None:
@@ -302,13 +296,13 @@ def test_an_insertion_source_edits_its_stored_bitemporal_coverage_after_a_helper
     coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
     lock = " for share of t0" if concurrency == "locking" else ""
     assert coverage.sql.endswith(
-        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s" + lock
+        "where t0.id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?" + lock
     )
     assert coverage.binds == (1, _JAN, _JUN, INFINITY_INSTANT)
     revision, head = _writes(port)[1:]
-    gate = " and in_z = %s" if concurrency == "optimistic" else ""
+    gate = " and in_z = ?" if concurrency == "optimistic" else ""
     assert revision.sql == (
-        "update where_position set from_z = %s where id = %s and thru_z = %s and out_z = %s" + gate
+        "update where_position set from_z = ? where id = ? and thru_z = ? and out_z = ?" + gate
     )
     assert revision.binds[:4] == (_JUN, 1, "infinity", "infinity")
     assert head.binds[2:5] == (Decimal("150.00"), _JAN, _JUN)
@@ -338,8 +332,7 @@ def test_an_insertion_source_and_a_read_of_the_same_version_compose_into_one_upd
     db_for(ACCOUNT, port).transact(fn)
     assert _writes(port)[1:] == [
         WriteCall(
-            "update account set owner = %s, balance = %s, version = %s "
-            "where id = %s and version = %s",
+            "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?",
             ("Hooke", Decimal("6.00"), 2, 7, 1),
         )
     ]
@@ -565,7 +558,7 @@ def test_a_transaction_time_reinsertion_runs_after_the_removal_it_depends_on() -
 
     db_for(BALANCE, port).transact(fn)
     removal, insert = _writes(port)[1:]
-    assert removal.sql == "delete from balance where bal_id = %s and out_z = %s and in_z = %s"
+    assert removal.sql == "delete from balance where bal_id = ? and out_z = ? and in_z = ?"
     assert Decimal("2.00") in insert.binds
 
 
@@ -851,7 +844,7 @@ def test_composition_continues_the_observed_source_beside_the_insertions_authori
     _transact(port, fn)
     first, second = _writes(port)[-2:]
     assert all(
-        revision.sql.startswith("update where_position set value = %s")
+        revision.sql.startswith("update where_position set value = ?")
         for revision in (first, second)
     )
     assert {first.binds[0], second.binds[0]} == {Decimal("125.00"), Decimal("1.00")}
@@ -996,12 +989,12 @@ def test_a_pending_replacement_transforms_the_stored_coverage_it_reaches(
     (coverage,) = [call for call in port.calls if isinstance(call, ReadCall)]
     lock = " for share of t0" if concurrency == "locking" else ""
     assert coverage.sql.endswith(
-        "where t0.id = %s and t0.thru_z > %s and t0.from_z < %s and t0.out_z = %s" + lock
+        "where t0.id = ? and t0.thru_z > ? and t0.from_z < ? and t0.out_z = ?" + lock
     )
     close, opened = _writes(port)
-    gate = " and in_z = %s" if concurrency == "optimistic" else ""
+    gate = " and in_z = ?" if concurrency == "optimistic" else ""
     assert close.sql == (
-        "update where_position set out_z = %s where id = %s and thru_z = %s and out_z = %s" + gate
+        "update where_position set out_z = ? where id = ? and thru_z = ? and out_z = ?" + gate
     )
     # The opening's part, the gap, and the stored row's replaced part hold one
     # state and open as one row; the stored row's tail keeps its own, and one
@@ -1047,7 +1040,7 @@ def test_a_destruction_of_a_pending_replacements_window_removes_what_it_reached(
     assert coverage.binds == (1, _MAR, _JUN, INFINITY_INSTANT)
     if stored:
         close, _opening = _writes(port)
-        assert close.sql.startswith("update where_position set out_z = %s")
+        assert close.sql.startswith("update where_position set out_z = ?")
         assert _opened(port) == [(Decimal("200.00"), _JUN, _AUG)]
     else:
         assert _writes(port) == []

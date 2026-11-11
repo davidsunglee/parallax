@@ -336,8 +336,8 @@ def test_a_document_array_holds_one_document_per_element_none_being_sql_null(
     profile_run.reset(model_of(_MODEL), {})
     documents: list[object] = [None, JSON_NULL, {"kind": "object"}, ["nested", None], []]
     rows = profile_run.port.execute(
-        "select t.v is null, jsonb_typeof(t.v), t.v::text, array_ndims(%s::jsonb[]) "
-        "from unnest(cast(%s as jsonb[])) with ordinality as t(v, n) order by t.n",
+        "select t.v is null, jsonb_typeof(t.v), t.v::text, array_ndims(?::jsonb[]) "
+        "from unnest(cast(? as jsonb[])) with ordinality as t(v, n) order by t.n",
         [ArrayBind(JSON, documents), ArrayBind(JSON, documents)],
     )
     assert [tuple(row) for row in rows] == [
@@ -394,12 +394,12 @@ def test_a_literal_json_null_document_stays_json_null_alone_and_in_a_column_arra
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
     profile_run.port.execute_write(
-        "insert into mri_wide(id, place, tags, counts) values (%s, %s, %s, %s)",
+        "insert into mri_wide(id, place, tags, counts) values (?, ?, ?, ?)",
         [1, StructuredDocument(None), StructuredDocument([]), StructuredDocument([])],
     )
     profile_run.port.execute_write(
         "insert into mri_wide(id, place, tags, counts) select * from unnest("
-        "cast(%s as bigint[]), cast(%s as jsonb[]), cast(%s as jsonb[]), cast(%s as jsonb[]))",
+        "cast(? as bigint[]), cast(? as jsonb[]), cast(? as jsonb[]), cast(? as jsonb[]))",
         [
             ArrayBind(INT64, [2, 3]),
             ArrayBind(JSON, [JSON_NULL, None]),

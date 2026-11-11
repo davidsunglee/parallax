@@ -15,7 +15,7 @@ from tests.provider_contract.aws._aws_support import APPLICATIONS
 _IDENTITY = "select pg_backend_pid(), session_user"
 _ENCRYPTED = (
     "select s.ssl from pg_stat_ssl s join pg_stat_activity a on a.pid = s.pid "
-    "where s.pid = %s and a.application_name = %s"
+    "where s.pid = ? and a.application_name = ?"
 )
 _ROUTE: dict[RoutePolicy, str] = {"writer_only": "writer", "reader_only": "reader"}
 

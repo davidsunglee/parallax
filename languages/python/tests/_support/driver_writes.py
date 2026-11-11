@@ -12,7 +12,7 @@ transaction bodies — and every write in a transaction body the lane runs on it
 directly driven session. A statement the lane executes on that session outside
 a transaction is one the case authors verbatim, such as ``given.apply``, and is
 forwarded unrecorded. A connection with ordered write transport records each
-statement an invocation presents, in the driver form its adapter submits.
+statement an invocation presents, in canonical form.
 """
 
 from __future__ import annotations
@@ -166,10 +166,7 @@ class _RecordingConnection:
         return self._ordered
 
     def _ordered_write(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
-        to_driver = self._inner.dialect.to_driver_sql
-        self._writes.extend(
-            (to_driver(statement.sql), list(statement.binds)) for statement in statements
-        )
+        self._writes.extend((statement.sql, list(statement.binds)) for statement in statements)
         return cast("OrderedWriteTransport", self._inner.ordered_write_transport)(statements)
 
     def transaction[T](
@@ -247,9 +244,9 @@ def _paired_writes(
     golden_writes = [
         (sql, binds) for sql, binds in golden if sql.lstrip().lower().startswith(_WRITE_VERBS)
     ]
-    assert [sql for sql, _binds in writes] == [
-        dialect.to_driver_sql(sql) for sql, _binds in golden_writes
-    ], "the driver writes are not the golden writes"
+    assert [sql for sql, _binds in writes] == [sql for sql, _binds in golden_writes], (
+        "the driver writes are not the golden writes"
+    )
     return [
         (golden_write, driver_binds)
         for golden_write, (_driver_sql, driver_binds) in zip(golden_writes, writes, strict=True)

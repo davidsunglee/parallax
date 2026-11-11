@@ -52,7 +52,7 @@ _OPENED = datetime(2024, 1, 1, tzinfo=UTC)
 _CORRECTED = datetime(2024, 4, 1, tzinfo=UTC)
 _HEAD_END = datetime(2024, 6, 1, tzinfo=UTC)
 _NOW = datetime(2024, 7, 1, tzinfo=UTC)
-_WAITING = "select wait_event_type from pg_stat_activity where pid = %s"
+_WAITING = "select wait_event_type from pg_stat_activity where pid = ?"
 _PID = "select pg_backend_pid() as pid"
 
 
@@ -152,7 +152,7 @@ def _locked_claim(profile_run: Any) -> Generator[None]:
     """Hold claim 1000 under another session's row lock for the block's duration."""
     holder = profile_run.control(autocommit=False)
     try:
-        holder.execute("select id from claim where id = %s for update", [1000])
+        holder.execute("select id from claim where id = ? for update", [1000])
         yield
     finally:
         holder.close()
@@ -199,9 +199,7 @@ def test_each_statement_answers_its_own_count_across_kinds_and_tables(profile_ru
                 result = _ordered(facade)(statements)
                 native = cast("PostgresConnection", facade)._current_native()  # pyright: ignore[reportPrivateUsage] - the session's own pipeline state
                 assert native.pgconn.pipeline_status == psycopg.pq.PipelineStatus.OFF
-                assert port.execute("select count(*) from policy where out_z = %s", [_NOW]) == [
-                    (1,)
-                ]
+                assert port.execute("select count(*) from policy where out_z = ?", [_NOW]) == [(1,)]
                 return result
 
             outcome = facade.transaction(body)
@@ -384,7 +382,7 @@ def test_a_terminated_session_interrupts_with_only_what_it_established(profile_r
                     profile_run,
                     pid,
                     lambda session, target: session.execute(
-                        "select pg_terminate_backend(%s)", [target]
+                        "select pg_terminate_backend(?)", [target]
                     ),
                 )
                 try:
@@ -455,7 +453,7 @@ def test_a_cancelled_statement_fails_as_its_own(profile_run: Any) -> None:
                     profile_run,
                     pid,
                     lambda session, target: session.execute(
-                        "select pg_cancel_backend(%s)", [target]
+                        "select pg_cancel_backend(?)", [target]
                     ),
                 )
                 try:

@@ -14,13 +14,13 @@ if TYPE_CHECKING:
 APPLICATIONS: Final = {"writer": WRITER_APPLICATION, "reader": READER_APPLICATION}
 """The application name each route's sessions carry."""
 
-_HOLDS = "select count(*) from pg_stat_activity where pid = %s and application_name = %s"
-_ACTIVITY = "select pid, query_start from pg_stat_activity where application_name = %s"
+_HOLDS = "select count(*) from pg_stat_activity where pid = ? and application_name = ?"
+_ACTIVITY = "select pid, query_start from pg_stat_activity where application_name = ?"
 # An open transaction rather than an assigned xid: a transaction's writes are
 # buffered until it flushes, so it has written nothing yet while its body runs.
 _IN_TRANSACTION = (
     "select count(*) from pg_stat_activity "
-    "where application_name = %s and xact_start is not null and pid <> pg_backend_pid()"
+    "where application_name = ? and xact_start is not null and pid <> pg_backend_pid()"
 )
 
 

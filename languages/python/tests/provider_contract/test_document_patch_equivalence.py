@@ -162,7 +162,7 @@ def _seed(profile_run: Any, document: str | None) -> None:
     if document is None:
         port.execute_write(f"alter table {_TABLE} alter column payload drop not null", [])
     port.execute_write(
-        f"insert into {_TABLE}(id, in_z, out_z, payload) values (%s, %s, 'infinity', %s::jsonb)",
+        f"insert into {_TABLE}(id, in_z, out_z, payload) values (?, ?, 'infinity', ?::jsonb)",
         [1, _STORED_AT, document],
     )
 
@@ -171,7 +171,7 @@ def _execute(profile_run: Any, step: PlannedTemporalRevision, payload: Assignmen
     port = profile_run.port
     dialect = port.dialect
     statement = compile_write_step(step, payload, _META, dialect)
-    return port.execute_write(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    return port.execute_write(statement.sql, list(statement.binds))
 
 
 def _persisted(profile_run: Any) -> object:
@@ -181,7 +181,7 @@ def _persisted(profile_run: Any) -> object:
     dialect = port.dialect
     presence, document = dialect.render_document_pair("t0.payload")
     ((present, raw),) = port.execute(
-        f"select {presence}, {document} from {_TABLE} t0 where t0.id = %s", [1]
+        f"select {presence}, {document} from {_TABLE} t0 where t0.id = ?", [1]
     )
     return dialect.parse_owned_document_read(present, raw)
 
@@ -279,7 +279,5 @@ def test_a_numeric_path_into_an_array_root_does_what_its_provider_does(
     expression, binds = dialect.document_mutation(
         "cast(? as jsonb)", [DocumentLeafAssignment(path=(segment,), value="new")]
     )
-    ((mutated,),) = port.execute(
-        dialect.to_driver_sql(f"select {expression}"), [json.dumps(["legacy", "old"]), *binds]
-    )
+    ((mutated,),) = port.execute(f"select {expression}", [json.dumps(["legacy", "old"]), *binds])
     assert mutated == expected

@@ -21,6 +21,7 @@ import json
 import threading
 import time
 from contextlib import closing, suppress
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
@@ -44,6 +45,7 @@ from parallax.core.internal.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
+    OrderedWriteResultComplete,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
@@ -61,6 +63,12 @@ def _grade_case() -> Any:
     return load_case(default_cases_dir() / "m-descriptor-001-quoted-reserved-identifier.yaml")
 
 
+@dataclass(frozen=True, slots=True)
+class _Statement:
+    sql: str
+    binds: tuple[object, ...]
+
+
 def test_reset_apply_ddl_load_fixtures_and_query(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
@@ -74,13 +82,9 @@ def test_exec_affected_rows_matched_and_unmatched(profile_run: Any) -> None:
     case = _grade_case()
     meta = engine.load_case_metamodel(case)
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
-    matched = profile_run.port.execute_write(
-        "update grade set label = %s where id = %s", ["top", 3]
-    )
+    matched = profile_run.port.execute_write("update grade set label = ? where id = ?", ["top", 3])
     assert matched == 1
-    unmatched = profile_run.port.execute_write(
-        "update grade set label = %s where id = %s", ["x", 99]
-    )
+    unmatched = profile_run.port.execute_write("update grade set label = ? where id = ?", ["x", 99])
     assert unmatched == 0
 
 
@@ -93,9 +97,9 @@ def test_an_update_leaving_its_row_unchanged_is_counted_as_its_dialect_declares(
     meta = engine.load_case_metamodel(case)
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
     assert profile_run.port.dialect.counts_unchanged_rows
-    unchanged = profile_run.port.execute_write("update grade set label = label where id = %s", [3])
+    unchanged = profile_run.port.execute_write("update grade set label = label where id = ?", [3])
     assert unchanged == 1
-    assert profile_run.port.execute_write("update grade set id = id where id = %s", [99]) == 0
+    assert profile_run.port.execute_write("update grade set id = id where id = ?", [99]) == 0
 
 
 def test_row_producing_dml_answers_its_rows_beside_a_count_only_write(profile_run: Any) -> None:
@@ -106,16 +110,16 @@ def test_row_producing_dml_answers_its_rows_beside_a_count_only_write(profile_ru
     def body(port: Any) -> tuple[object, int]:
         allocated = port.execute(
             'insert into grade(id, "order", label) '
-            "select coalesce(max(t0.id), %s) + %s, %s, %s from grade t0 returning id",
+            "select coalesce(max(t0.id), ?) + ?, ?, ? from grade t0 returning id",
             [0, 1, 40, "new"],
         )
         renamed = port.execute_write(
-            "update grade set label = %s where id = %s", ["renamed", allocated[0][0]]
+            "update grade set label = ? where id = ?", ["renamed", allocated[0][0]]
         )
         return allocated, renamed
 
     assert profile_run.port.transaction(body) == Committed(([(4,)], 1))
-    assert profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [4]) == [
+    assert profile_run.port.execute("select t0.label from grade t0 where t0.id = ?", [4]) == [
         ("renamed",)
     ]
 
@@ -126,7 +130,7 @@ def test_a_failing_row_producing_statement_leaves_the_connection_usable(profile_
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
     with pytest.raises(DatabaseError) as raised:
         profile_run.port.execute(
-            'insert into grade(id, "order", label) values (%s, %s, %s) returning id',
+            'insert into grade(id, "order", label) values (?, ?, ?) returning id',
             [1, 1, "duplicate"],
         )
     assert raised.value.violates_unique_index
@@ -180,8 +184,8 @@ def test_live_malformed_pair_metadata_is_refused_without_losing_the_session(
 
 def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: Any) -> None:
     statements = (
-        PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
-        PipelineStatement("select %s::text", ("second",)),
+        PipelineStatement("select unnest(?::bigint[])", ([1, 2],)),
+        PipelineStatement("select ?::text", ("second",)),
     )
     assert profile_run.port.execute_pipeline(statements) == [
         [(1,), (2,)],
@@ -204,11 +208,43 @@ def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: An
         session.close()
 
 
+def test_all_adapter_submission_paths_accept_canonical_sql_with_literal_placeholders(
+    profile_run: Any,
+) -> None:
+    runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
+    try:
+        with runtime.login_source().new_context("writer_only") as connection:
+            connection.execute_write('create temp table "t%s" ("rate%s" integer, "rate%" text)', [])
+            connection.execute_write(
+                'insert into "t%s" ("rate%s", "rate%") values (?, ?)', [1, "first"]
+            )
+            read = 'select "rate%", \'? %s %\', 7 % 3 from "t%s" where "rate%s" = ?'
+            assert connection.execute(read, [1]) == [("first", "? %s %", 1)]
+            assert connection.execute_pipeline((PipelineStatement(read, (1,)),)) == [
+                [("first", "? %s %", 1)]
+            ]
+            assert (
+                connection.execute_write(
+                    'update "t%s" set "rate%" = ? where "rate%s" = ? and \'? %s %\' = \'? %s %\'',
+                    ["second", 1],
+                )
+                == 1
+            )
+            ordered = connection.ordered_write_transport
+            assert ordered is not None
+            assert ordered(
+                (_Statement('update "t%s" set "rate%" = ? where "rate%s" = ?', ("third", 1)),)
+            ) == OrderedWriteResultComplete((1,))
+            assert connection.execute(read, [1]) == [("third", "? %s %", 1)]
+    finally:
+        runtime.close()
+
+
 def test_designated_reads_answer_exactly_what_undesignated_ones_do(profile_run: Any) -> None:
-    sql = "select unnest(%s::bigint[]), true, '{\"a\": 1}'::jsonb"
+    sql = "select unnest(?::bigint[]), true, '{\"a\": 1}'::jsonb"
     statements = (
         PipelineStatement(sql, ([1, 2],), ((1, 2),)),
-        PipelineStatement("select %s::text", ("second",)),
+        PipelineStatement("select ?::text", ("second",)),
     )
     expected_rows = [(1, StructuredDocument({"a": 1})), (2, StructuredDocument({"a": 1}))]
 
@@ -231,7 +267,7 @@ def test_a_document_bind_stores_every_number_with_its_exact_meaning(profile_run:
         )
     )
     ((text,),) = profile_run.port.execute(
-        "select (%s::jsonb)::text", [StructuredDocument(cast("DocumentValue", stored))]
+        "select (?::jsonb)::text", [StructuredDocument(cast("DocumentValue", stored))]
     )
     meaning = json.loads(cast("str", text), parse_float=decimal.Decimal, parse_int=decimal.Decimal)
 
@@ -254,11 +290,11 @@ def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> Non
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
 
     def body(port: Any) -> str:
-        port.execute_write("update grade set label = %s where id = %s", ["committed", 1])
+        port.execute_write("update grade set label = ? where id = ?", ["committed", 1])
         return "done"
 
     assert profile_run.port.transaction(body) == Committed("done")
-    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [1])
+    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = ?", [1])
     assert row[0] == "committed"
 
 
@@ -433,7 +469,7 @@ def test_a_read_only_boundary_refuses_a_write_natively(profile_run: Any) -> None
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
 
     def body(port: Any) -> None:
-        port.execute_write("update grade set label = %s where id = %s", ["refused", 1])
+        port.execute_write("update grade set label = ? where id = ?", ["refused", 1])
 
     outcome = profile_run.port.transaction(body, access_mode="read_only")
     assert isinstance(outcome, RolledBack)
@@ -451,7 +487,7 @@ def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:
         pass
 
     def body(port: Any) -> None:
-        port.execute_write("update grade set label = %s where id = %s", ["ghost", 2])
+        port.execute_write("update grade set label = ? where id = ?", ["ghost", 2])
         raise _Rollback
 
     outcome = profile_run.port.transaction(body)
@@ -459,7 +495,7 @@ def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
     assert isinstance(trigger.error, _Rollback)
-    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
+    (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = ?", [2])
     assert row[0] == "mid"
 
 
@@ -497,7 +533,7 @@ def test_a_name_at_the_identifier_limit_is_stored_exactly_as_generated(
     assert len(created.physical_index_name.value.encode()) == POSTGRES.max_identifier_bytes
 
     (row,) = profile_run.port.execute(
-        "select t0.indexname from pg_indexes t0 where t0.tablename = %s and t0.indexname = %s",
+        "select t0.indexname from pg_indexes t0 where t0.tablename = ? and t0.indexname = ?",
         [created.physical_table.name, created.physical_index_name.value],
     )
     assert row[0] == created.physical_index_name.value
@@ -518,9 +554,9 @@ def test_a_duplicate_names_the_index_it_violated_by_its_created_name(
     delta = schema_delta(_provision(profile_run, "error-cases.yaml"), POSTGRES)
     (created,) = [entry for entry in delta.created_indices if entry.unique]
 
-    profile_run.port.execute_write("insert into tag (id, name) values (%s, %s)", [1, "first"])
+    profile_run.port.execute_write("insert into tag (id, name) values (?, ?)", [1, "first"])
     with pytest.raises(DatabaseError) as raised:
-        profile_run.port.execute_write("insert into tag (id, name) values (%s, %s)", [2, "first"])
+        profile_run.port.execute_write("insert into tag (id, name) values (?, ?)", [2, "first"])
 
     assert raised.value.violates_unique_index
     assert raised.value.violated_index == created.physical_index_name
@@ -671,7 +707,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
 
     def cross(peer: Any, value: int, row_id: int) -> None:
         try:
-            peer.execute_write("update gauge set v = %s where id = %s", [value, row_id])
+            peer.execute_write("update gauge set v = ? where id = ?", [value, row_id])
         except DatabaseError as exc:
             with record:
                 victims.append(exc)
@@ -683,8 +719,8 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
 
     try:
         # Round 1: A locks row 1, B locks row 2 (no contention yet).
-        a.execute_write("update gauge set v = %s where id = %s", [10, 1])
-        b.execute_write("update gauge set v = %s where id = %s", [20, 2])
+        a.execute_write("update gauge set v = ? where id = ?", [10, 1])
+        b.execute_write("update gauge set v = ? where id = ?", [20, 2])
 
         # Round 2: each wants the row the other holds -> a guaranteed cycle.
         worker_a = threading.Thread(target=cross, args=(a, 11, 2))
@@ -726,11 +762,11 @@ def test_lock_waits_counts_a_session_waiting_on_its_peers_row_lock(profile_run: 
     lock_waits = concurrency_runner.lock_waits_on(observer)
     finished: list[int] = []
     try:
-        holder.execute_write("update gauge set v = %s where id = %s", [1, 1])
+        holder.execute_write("update gauge set v = ? where id = ?", [1, 1])
         waiter.execute("set lock_timeout = '10s'", [])
         statement = threading.Thread(
             target=lambda: finished.append(
-                waiter.execute_write("update gauge set v = %s where id = %s", [2, 1])
+                waiter.execute_write("update gauge set v = ? where id = ?", [2, 1])
             )
         )
         statement.start()

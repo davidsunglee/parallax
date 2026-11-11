@@ -753,7 +753,7 @@ def _undesignated_pipeline(target: Any) -> object:
     return target.execute_pipeline((PipelineStatement(_BACKEND),))
 
 
-_GRADE_WRITE = 'insert into grade (id, "order", label) values (%s, %s, %s)'
+_GRADE_WRITE = 'insert into grade (id, "order", label) values (?, ?, ?)'
 
 
 def _count_only_write(target: Any) -> object:
@@ -894,7 +894,7 @@ def test_two_scopes_hold_isolated_transactions(profile_run: Any) -> None:
 
             def insert(conn: Any) -> None:
                 conn.execute_write(
-                    'insert into grade (id, "order", label) values (%s, %s, %s)',
+                    'insert into grade (id, "order", label) values (?, ?, ?)',
                     [99, 99, "z"],
                 )
                 # The other scope's transaction cannot see uncommitted work.

@@ -34,12 +34,12 @@ _JAN, _FEB, _MAR, _APR, _JUN, _SEP = (
 
 _INSERT_POSITION = (
     "insert into position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
-    "values (%s, %s, %s, %s, %s, %s, %s)"
+    "values (?, ?, ?, ?, ?, ?, ?)"
 )
 _CONSTRAINTS = (
     "select t0.conname, t0.contype, pg_get_constraintdef(t0.oid), t0.condeferrable "
     "from pg_constraint t0 join pg_class t1 on t1.oid = t0.conrelid "
-    "where t1.relname = %s and t0.contype in ('p', 'x') order by t0.contype"
+    "where t1.relname = ? and t0.contype in ('p', 'x') order by t0.contype"
 )
 _OVERLAPS = (
     "select a.pos_id, a.in_z, b.in_z from position a join position b "
@@ -51,7 +51,7 @@ _OVERLAPS = (
 _OLDER_TRANSACTIONS = (
     "select pid from pg_stat_activity "
     "where datname = current_database() and pid <> pg_backend_pid() "
-    "and backend_xmin is not null and xact_start < %s"
+    "and backend_xmin is not null and xact_start < ?"
 )
 
 
@@ -109,7 +109,7 @@ def test_the_catalog_holds_each_named_key_and_immediate_exclusion(
 ) -> None:
     model = _provision(profile_run, model_file)
     assert profile_run.port.execute(
-        "select extname from pg_extension where extname = %s", ["btree_gist"]
+        "select extname from pg_extension where extname = ?", ["btree_gist"]
     ) == [("btree_gist",)]
     for table in tables:
         constraints = _constraints(model, table)
@@ -148,7 +148,7 @@ def test_an_external_update_moving_a_row_into_overlap_is_refused(profile_run: An
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 2, _MAR, INFINITY, _JAN, INFINITY])
     error = _refused(
         profile_run,
-        "update position set from_z = %s where pos_id = %s and thru_z = %s",
+        "update position set from_z = ? where pos_id = ? and thru_z = ?",
         [_FEB, 1, INFINITY],
     )
     assert error.constraint_name == _constraints(model, "position").exclusion_name
@@ -168,7 +168,7 @@ def test_a_shared_table_refuses_overlap_across_subtypes_of_one_key(profile_run: 
     model = _provision(profile_run, "instrument.yaml")
     insert = (
         "insert into instrument (id, kind, price, from_z, thru_z, in_z, out_z) "
-        "values (%s, %s, %s, %s, %s, %s, %s)"
+        "values (?, ?, ?, ?, ?, ?, ?)"
     )
     profile_run.port.execute_write(insert, [1, "bond", 1, _JAN, _JUN, _JAN, INFINITY])
     error = _refused(profile_run, insert, [1, "stock", 1, _MAR, INFINITY, _FEB, INFINITY])
@@ -180,13 +180,12 @@ def test_each_concrete_table_constrains_only_its_own_rows(profile_run: Any) -> N
     for table in ("deposit_rate", "loan_rate"):
         profile_run.port.execute_write(
             f"insert into {table} (id, amount, from_z, thru_z, in_z, out_z) "
-            "values (%s, %s, %s, %s, %s, %s)",
+            "values (?, ?, ?, ?, ?, ?)",
             [1, 1, _JAN, INFINITY, _JAN, INFINITY],
         )
     error = _refused(
         profile_run,
-        "insert into loan_rate (id, amount, from_z, thru_z, in_z, out_z) "
-        "values (%s, %s, %s, %s, %s, %s)",
+        "insert into loan_rate (id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)",
         [1, 2, _MAR, _JUN, _FEB, INFINITY],
     )
     assert error.constraint_name == _constraints(model, "loan_rate").exclusion_name
@@ -231,7 +230,7 @@ def test_every_accepted_key_type_is_excluded_by_equality(
     valid: tuple[list[object], list[object]] = (
         ([_JAN, INFINITY], [_MAR, _JUN]) if bitemporal else ([], [])
     )
-    marks = ", ".join(["%s"] * (len(valid[0]) + 3))
+    marks = ", ".join(["?"] * (len(valid[0]) + 3))
     insert = f"insert into {table} ({columns}) values ({marks})"
     profile_run.port.execute_write(insert, [key, *valid[0], _JAN, _JUN])
     error = _refused(profile_run, insert, [key, *valid[1], _FEB, INFINITY])
@@ -311,9 +310,9 @@ def test_an_exclusion_cannot_be_staged_unvalidated(profile_run: Any) -> None:
 def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any) -> None:
     constraints = _legacy(profile_run)
     assert constraints.valid_axis is not None
-    profile_run.port.execute_write("update position set out_z = %s where pos_id = %s", [_APR, 1])
+    profile_run.port.execute_write("update position set out_z = ? where pos_id = ?", [_APR, 1])
     profile_run.port.execute_write(
-        "update position set thru_z = %s where pos_id = %s and val = %s", [_JUN, 2, 1]
+        "update position set thru_z = ? where pos_id = ? and val = ?", [_JUN, 2, 1]
     )
     ((corrected_at,),) = profile_run.port.execute("select clock_timestamp()", [])
     _await_older_transactions(profile_run, corrected_at)
