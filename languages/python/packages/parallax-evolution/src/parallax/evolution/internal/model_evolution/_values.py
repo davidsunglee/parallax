@@ -6,7 +6,6 @@ from typing import Final
 
 from parallax.core.internal.base import NeutralType
 from parallax.core.internal.metamodel import (
-    ApplicationAssigned,
     AsOfAxisLocation,
     AttributeIdentity,
     AttributeLocation,
@@ -22,7 +21,6 @@ from parallax.core.internal.metamodel import (
     ModelLocationKey,
     Multiplicity,
     PersistenceMode,
-    PrimaryKey,
     RelationshipIdentity,
     RelationshipJoin,
     RelationshipLocation,
@@ -853,17 +851,12 @@ def attribute_write_capability(attribute: AttributeMetadata) -> AttributeWriteCa
     Attribute admit insert input alone. Classification and the write-capability
     impact read the contract here so a raw flag is never mistaken for it.
     """
-    if attribute.framework_owned or _generated(attribute):
+    capability = attribute.write_capability
+    if not capability.caller_insert:
         return AttributeWriteCapability.FRAMEWORK_OWNED
-    if attribute.read_only or isinstance(attribute.primary_key, PrimaryKey):
+    if not capability.caller_update:
         return AttributeWriteCapability.CALLER_INSERT_ONLY
     return AttributeWriteCapability.CALLER_INSERT_AND_UPDATE
-
-
-def _generated(attribute: AttributeMetadata) -> bool:
-    return isinstance(attribute.primary_key, PrimaryKey) and not isinstance(
-        attribute.primary_key.generation, ApplicationAssigned
-    )
 
 
 type WriteScope = EntityIdentity | AttributeIdentity

@@ -172,6 +172,8 @@ class EntityMeta(ModelMetaclass):
     """The temporal axes this Entity itself owns; empty below a family root."""
     inheritance: UnresolvedInheritance | None
     """This Entity's inheritance position, or ``None`` when standalone."""
+    declared_primary_key_index: IndexMetadata | None
+    authored_indices: Sequence[IndexMetadata]
     indices: Sequence[IndexMetadata]
     """This Entity's own local indices; indices are never inherited."""
 

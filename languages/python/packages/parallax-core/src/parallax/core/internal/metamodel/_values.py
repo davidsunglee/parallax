@@ -32,8 +32,10 @@ __all__ = [
     "AbstractSubtype",
     "ApplicationAssigned",
     "AsOfAxisMetadata",
+    "AssignmentRestriction",
     "AttributeMetadata",
     "AttributePrimaryKey",
+    "AttributeWriteCapability",
     "Cardinality",
     "Column",
     "Columns",
@@ -44,6 +46,7 @@ __all__ = [
     "Inheritance",
     "InheritanceMetadata",
     "InheritanceStrategy",
+    "LocalIndices",
     "Max",
     "Multiplicity",
     "NestedValueObjectOccurrenceDeclaration",
@@ -392,6 +395,19 @@ def inheritance_parent[Parent](inheritance: Inheritance[Parent] | None) -> Paren
             return parent
 
 
+class AssignmentRestriction(enum.Enum):
+    PRIMARY_KEY = enum.auto()
+    READ_ONLY = enum.auto()
+    FRAMEWORK_OWNED = enum.auto()
+
+
+@dataclass(frozen=True, slots=True)
+class AttributeWriteCapability:
+    caller_insert: bool
+    caller_update: bool
+    assignment_restriction: AssignmentRestriction | None
+
+
 @dataclass(frozen=True, slots=True)
 class AttributeMetadata:
     """Resolved metadata for one scalar Attribute.
@@ -427,12 +443,36 @@ class AttributeMetadata:
     framework_owned: bool = False
     multiplicity: Multiplicity = Multiplicity.ONE
     definition: ScalarDefinition = field(init=False, repr=False, compare=False)
+    generated_key: bool = field(init=False)
+    write_capability: AttributeWriteCapability = field(init=False)
 
     def __post_init__(self) -> None:
         from parallax.core.internal.metamodel._shape import ScalarDefinition
 
         if self.multiplicity is Multiplicity.MANY:
             _check_collection_attribute(self)
+        generated_key = isinstance(self.primary_key, PrimaryKey) and not isinstance(
+            self.primary_key.generation, ApplicationAssigned
+        )
+        restriction = (
+            AssignmentRestriction.PRIMARY_KEY
+            if isinstance(self.primary_key, PrimaryKey)
+            else AssignmentRestriction.READ_ONLY
+            if self.read_only
+            else AssignmentRestriction.FRAMEWORK_OWNED
+            if self.framework_owned
+            else None
+        )
+        object.__setattr__(self, "generated_key", generated_key)
+        object.__setattr__(
+            self,
+            "write_capability",
+            AttributeWriteCapability(
+                caller_insert=not (self.framework_owned or generated_key),
+                caller_update=restriction is None,
+                assignment_restriction=restriction,
+            ),
+        )
         object.__setattr__(
             self,
             "definition",
@@ -532,6 +572,23 @@ class IndexMetadata:
     identity: IndexIdentity
     attributes: tuple[AttributeIdentity, ...]
     unique: bool = False
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LocalIndices:
+    """Retained declaration-local Index provenance and its derived-first view."""
+
+    declared_primary_key_index: IndexMetadata | None
+    authored_indices: tuple[IndexMetadata, ...]
+    indices: tuple[IndexMetadata, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        primary = self.declared_primary_key_index
+        object.__setattr__(
+            self,
+            "indices",
+            self.authored_indices if primary is None else (primary, *self.authored_indices),
+        )
 
 
 @dataclass(frozen=True, slots=True)

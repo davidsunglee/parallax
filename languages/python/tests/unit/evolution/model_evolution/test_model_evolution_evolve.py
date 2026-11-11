@@ -64,7 +64,7 @@ def _widget() -> Metamodel:
                 identity=_WIDGET,
                 container=Table("widget"),
                 attributes=(key(_WIDGET), label),
-                indices=(
+                authored_indices=(
                     IndexMetadata(
                         identity=IndexIdentity(_WIDGET, "widget_label"),
                         attributes=(label.identity,),

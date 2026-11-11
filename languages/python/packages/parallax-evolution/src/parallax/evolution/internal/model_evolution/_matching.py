@@ -21,7 +21,6 @@ from parallax.core.internal.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
-    derive_primary_key_index,
 )
 from parallax.core.internal.relationship import RelationshipMetadata, relationship_facet_of
 from parallax.evolution.internal.model_evolution._values import (
@@ -246,28 +245,9 @@ def _as_of_axes(model: Metamodel) -> tuple[tuple[AxisKey, AsOfAxisMetadata], ...
     )
 
 
-def _authored_indices(entity: CompiledEntity) -> tuple[IndexMetadata, ...]:
-    """``entity``'s Indices without the derived primary-key one.
-
-    The derived Index is not independently authored, so it never receives an
-    Index operation and never contributes a uniqueness rule of its own: its
-    changes are reported through the causal primary-key Attribute or As-Of Axis
-    operation instead.
-    """
-    derived = derive_primary_key_index(
-        entity=entity.identity,
-        container=entity.declared_container,
-        attributes=entity.declared_attributes,
-        as_of_axes=entity.declared_as_of_axes,
-    )
-    return tuple(
-        index for index in entity.indices if derived is None or index.identity != derived.identity
-    )
-
-
 def _indices(model: Metamodel) -> tuple[tuple[IndexIdentity, IndexMetadata], ...]:
     return tuple(
-        (index.identity, index) for entity in model.entities for index in _authored_indices(entity)
+        (index.identity, index) for entity in model.entities for index in entity.authored_indices
     )
 
 
@@ -321,7 +301,7 @@ def _local_collections(
         )
         yield (
             (DeclarationCollection.ENTITY_INDICES, owner),
-            tuple(index.identity for index in _authored_indices(entity)),
+            tuple(index.identity for index in entity.authored_indices),
         )
         for declared in entity.declared_value_objects:
             for occurrence in _occurrences(declared):

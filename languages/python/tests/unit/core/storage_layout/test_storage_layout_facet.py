@@ -329,7 +329,7 @@ def _ranked_temporal_model(
                 container=Table(table),
                 attributes=attributes,
                 as_of_axes=axes,
-                indices=indices,
+                authored_indices=indices,
             ),
         )
     elif mapping == "tph":
@@ -340,7 +340,7 @@ def _ranked_temporal_model(
                 container=Table(table),
                 attributes=attributes,
                 as_of_axes=axes,
-                indices=indices,
+                authored_indices=indices,
                 inheritance=AbstractRoot(TablePerHierarchy("kind")),
             ),
             Declaration(
@@ -355,7 +355,7 @@ def _ranked_temporal_model(
                 identity=root,
                 attributes=attributes,
                 as_of_axes=axes,
-                indices=indices,
+                authored_indices=indices,
                 inheritance=AbstractRoot(TablePerConcreteSubtype()),
             ),
             Declaration(

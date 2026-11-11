@@ -189,6 +189,8 @@ UnresolvedEntityDeclaration
   value_objects: immutable sequence<ValueObjectOccurrenceDeclaration>
   as_of_axes: immutable sequence<AsOfAxisMetadata>
   inheritance: Inheritance<EntityReference> | absent
+  declared_primary_key_index: IndexMetadata | absent
+  authored_indices: immutable sequence<IndexMetadata>
   indices: immutable sequence<IndexMetadata>
 
 EntityDeclaration
@@ -201,6 +203,8 @@ EntityDeclaration
   value_objects: immutable sequence<ValueObjectOccurrenceDeclaration>
   as_of_axes: immutable sequence<AsOfAxisMetadata>
   inheritance: InheritanceMetadata | absent
+  declared_primary_key_index: IndexMetadata | absent
+  authored_indices: immutable sequence<IndexMetadata>
   indices: immutable sequence<IndexMetadata>
 ```
 
@@ -375,6 +379,8 @@ EntityMetadata
   declared_value_objects: immutable sequence<ValueObjectMetadata>
   declared_as_of_axes: immutable sequence<AsOfAxisMetadata>
   inheritance: InheritanceMetadata | absent
+  declared_primary_key_index: IndexMetadata | absent
+  authored_indices: immutable sequence<IndexMetadata>
   indices: immutable sequence<IndexMetadata>
 ```
 
@@ -584,11 +590,20 @@ preserves declaration order. Indices are not inherited and do not repeat
 physical column names; storage consumers resolve those through Attribute
 Metadata.
 
-Index Identities are distinct within one Entity, so `EntityMetadata.index` has
-exactly one answer for every name. A frontend that derives an Index hands it
-over as an ordinary Index, so it claims its name against the rest: identity
-alone decides the collision, and matching components neither cause nor excuse
-one.
+`declared_primary_key_index` is the derived Index of the Entity that locally
+declares the key, or absent when it declares none. “Declared” means belonging
+to this Entity's declaration, not explicitly authored. A tableless root retains
+its derived Index; a subtype inheriting its key declares no additional one.
+Family-effective keys belong to [Inheritance](m-inheritance.md), and physical
+primary-key Indices belong to [Storage Layout](m-storage-layout.md).
+
+`authored_indices` retains the authored sequence. `indices` combines the derived
+Index first, when present, followed by that sequence. All three views reuse the
+same immutable Index objects through resolution and accepted metadata.
+`EntityMetadata.index` looks up both kinds by name. Index Identities are distinct
+within one Entity: the derived Index claims its name against authored Indices,
+and matching components neither cause nor excuse a collision. Resolution checks
+every Index's structure regardless of its provenance.
 
 ## As-Of Axes
 

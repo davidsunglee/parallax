@@ -33,7 +33,6 @@ from parallax.core.internal.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     default_column_name,
-    derive_primary_key_index,
     temporality_profile,
 )
 from parallax.descriptor._type_spelling import format_type_spelling
@@ -103,7 +102,7 @@ def _entity(entity: CompiledEntity) -> dict[str, object]:
         out["attributes"] = [_attribute(a) for a in attributes]
     if entity.declared_relationships:
         out["relationships"] = [_relationship(r) for r in entity.declared_relationships]
-    indices = _authored_indices(entity)
+    indices = entity.authored_indices
     if indices:
         out["indices"] = [_index(i) for i in indices]
     if entity.declared_value_objects:
@@ -162,24 +161,6 @@ def _authored_attributes(entity: CompiledEntity) -> tuple[AttributeMetadata, ...
     return tuple(
         attribute for attribute in entity.declared_attributes if attribute.identity not in derived
     )
-
-
-def _authored_indices(entity: CompiledEntity) -> tuple[IndexMetadata, ...]:
-    """The Entity's Indices minus the one it derives.
-
-    Canonical form spells what an author writes. The primary-key Index is derived
-    from the declared key and axes, so exporting it would put a member in the
-    document that re-importing would derive a second time.
-    """
-    derived = derive_primary_key_index(
-        entity=entity.identity,
-        container=entity.declared_container,
-        attributes=entity.declared_attributes,
-        as_of_axes=entity.declared_as_of_axes,
-    )
-    if derived is None:
-        return tuple(entity.indices)
-    return tuple(index for index in entity.indices if index.identity != derived.identity)
 
 
 def _attribute(attribute: AttributeMetadata) -> dict[str, object]:

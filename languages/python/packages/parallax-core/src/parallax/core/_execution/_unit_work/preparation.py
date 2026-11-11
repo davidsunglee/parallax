@@ -141,9 +141,12 @@ def _entity_preparation(
             required |= bit
         if attribute is not None and attribute.read_only and position != key:
             read_only |= bit
-        if member.multiplicity is Multiplicity.ONE and position != key:
+        if (
+            member.multiplicity is Multiplicity.ONE
+            and position != key
+            and (attribute is None or attribute.write_capability.caller_update)
+        ):
             replaced |= bit
-    replaced &= ~(framework_owned | read_only)
     return EntityPreparation(
         selection=RowSelection(selection, absent),
         plan=catalog.plan(selection.shape),

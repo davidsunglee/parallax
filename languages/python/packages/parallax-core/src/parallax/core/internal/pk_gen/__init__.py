@@ -3,9 +3,6 @@ from __future__ import annotations
 from parallax.core.internal.metamodel import (
     AttributeMetadata,
     CompiledEntity,
-    Max,
-    PkGeneration,
-    PrimaryKey,
     Sequence,
 )
 
@@ -19,14 +16,6 @@ REGISTRY_KEY_ROLE = "sequenceName"
 REGISTRY_VALUE_ROLE = "nextValue"
 
 
-def generates(generation: PkGeneration) -> bool:
-    """Whether ``generation`` allocates a key the caller does not supply.
-
-    ``max`` and ``sequence`` do; an application-assigned key is the caller's.
-    """
-    return isinstance(generation, (Max, Sequence))
-
-
 def generated_key_attribute(entity: CompiledEntity) -> AttributeMetadata | None:
     """``entity``'s own primary-key Attribute whose value the framework allocates.
 
@@ -36,8 +25,7 @@ def generated_key_attribute(entity: CompiledEntity) -> AttributeMetadata | None:
     the declaring position before asking.
     """
     for attribute in entity.declared_attributes:
-        key = attribute.primary_key
-        if isinstance(key, PrimaryKey) and generates(key.generation):
+        if attribute.generated_key:
             return attribute
     return None
 

@@ -5,11 +5,9 @@ from typing import Final
 
 from parallax.core.internal import concurrency, inheritance, temporal_read
 from parallax.core.internal.metamodel import (
-    ApplicationAssigned,
     AttributeMetadata,
     CompiledEntity,
     Metamodel,
-    PrimaryKey,
 )
 
 __all__ = [
@@ -52,10 +50,7 @@ def _is_pk_gen_managed(model: Metamodel, entity: CompiledEntity) -> bool:
     """Whether ``entity``'s family primary key is framework-allocated
     (`m-pk-gen`) — each row's own key allocation is independent, so a shared
     multi-row statement cannot express it."""
-    primary_key = _primary_key(model, entity).primary_key
-    return isinstance(primary_key, PrimaryKey) and not isinstance(
-        primary_key.generation, ApplicationAssigned
-    )
+    return _primary_key(model, entity).generated_key
 
 
 def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:

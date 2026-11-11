@@ -50,8 +50,8 @@ from parallax.core.internal.metamodel._values import (
     Column,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
-    IndexMetadata,
     InheritanceMetadata,
+    LocalIndices,
     Multiplicity,
     PersistenceMode,
     PrimaryKey,
@@ -198,7 +198,7 @@ declares it. No other module may emit a ``metamodel-*`` code."""
 
 
 @dataclass(frozen=True, slots=True)
-class _EntityDeclaration:
+class _EntityDeclaration(LocalIndices):
     identity: EntityIdentity
     container: StorageContainer | None
     persistence: PersistenceMode | None
@@ -208,7 +208,6 @@ class _EntityDeclaration:
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
     as_of_axes: tuple[AsOfAxisMetadata, ...]
     inheritance: InheritanceMetadata | None
-    indices: tuple[IndexMetadata, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,7 +330,8 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                 value_objects=tuple(declaration.value_objects),
                 as_of_axes=tuple(declaration.as_of_axes),
                 inheritance=inheritance,
-                indices=tuple(declaration.indices),
+                declared_primary_key_index=declaration.declared_primary_key_index,
+                authored_indices=tuple(declaration.authored_indices),
             )
         )
 
@@ -553,7 +553,11 @@ def _index_issues(
     issues: list[MetamodelIssue] = []
     names: Counter[IndexIdentity] = Counter()
     reached: dict[IndexIdentity, set[MetamodelIssue]] = {}
-    for declared_index in declaration.indices:
+    primary = declaration.declared_primary_key_index
+    indices = declaration.authored_indices
+    if primary is not None:
+        indices = (primary, *indices)
+    for declared_index in indices:
         identity = declared_index.identity
         location = IndexLocation(identity)
         names[identity] += 1

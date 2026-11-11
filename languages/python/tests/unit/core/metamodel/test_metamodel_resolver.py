@@ -134,11 +134,6 @@ def _item() -> Declaration:
                 order_by=(UnresolvedRelationshipOrder("sku"),),
             ),
         ),
-        indices=(
-            IndexMetadata(
-                IndexIdentity(_ITEM, "item_pk"), (AttributeIdentity(_ITEM, "id"),), unique=True
-            ),
-        ),
     )
 
 
@@ -417,7 +412,7 @@ def test_a_component_repeated_three_times_reports_one_duplicate_identity() -> No
     declaration = Declaration(
         identity=_ORDER,
         attributes=(key(_ORDER),),
-        indices=(
+        authored_indices=(
             IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component, component, component)),
         ),
     )
@@ -458,7 +453,9 @@ def test_every_repetition_a_legal_model_allows_still_reports_each_defect_once() 
             ),
         ),
         as_of_axes=(axis, axis),
-        indices=(IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (component, component)),),
+        authored_indices=(
+            IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (component, component)),
+        ),
     )
     peer = Declaration(identity=_ITEM, attributes=(key(_ITEM),))
     issues = rejection(source(declaration, declaration, peer))
@@ -914,7 +911,7 @@ def test_index_components_are_local_distinct_and_nonempty(
     declaration = Declaration(
         identity=_ORDER,
         attributes=(key(_ORDER),),
-        indices=(IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), components),),
+        authored_indices=(IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), components),),
     )
     assert expected in codes(source(declaration))
 
@@ -929,7 +926,7 @@ def test_two_indices_of_one_entity_may_not_bear_one_name() -> None:
     declaration = Declaration(
         identity=_ORDER,
         attributes=(key(_ORDER), attribute(_ORDER, "sku")),
-        indices=(
+        authored_indices=(
             IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
             IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (AttributeIdentity(_ORDER, "sku"),)),
         ),
@@ -939,7 +936,7 @@ def test_two_indices_of_one_entity_may_not_bear_one_name() -> None:
     twinned = Declaration(
         identity=_ORDER,
         attributes=(key(_ORDER),),
-        indices=(
+        authored_indices=(
             IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
             IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
         ),
@@ -952,7 +949,7 @@ def test_a_defect_two_indices_of_one_name_share_is_reported_once() -> None:
     declaration = Declaration(
         identity=_ORDER,
         attributes=(key(_ORDER),),
-        indices=(
+        authored_indices=(
             IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (absent,)),
             IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (absent,)),
         ),
@@ -968,7 +965,9 @@ def test_an_inherited_index_component_is_reported_as_not_local() -> None:
         identity=leaf.identity,
         attributes=leaf.attributes,
         inheritance=leaf.inheritance,
-        indices=(IndexMetadata(IndexIdentity(_DOG, "dog_pk"), (AttributeIdentity(_DOG, "id"),)),),
+        authored_indices=(
+            IndexMetadata(IndexIdentity(_DOG, "dog_pk"), (AttributeIdentity(_DOG, "id"),)),
+        ),
     )
     assert codes(source(root, middle, indexed)) == (INDEX_ATTRIBUTE_NOT_LOCAL,)
 
@@ -977,6 +976,7 @@ def test_as_of_axes_are_distinct_typed_and_locally_owned() -> None:
     entity = identity("Policy")
     declaration = Declaration(
         identity=entity,
+        derive_primary_index=False,
         attributes=(
             key(entity),
             instant(entity, "validStart"),

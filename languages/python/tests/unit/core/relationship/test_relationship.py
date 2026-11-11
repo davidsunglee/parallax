@@ -248,6 +248,8 @@ class _Declared:
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     inheritance: InheritanceMetadata | None = None
     indices: tuple[IndexMetadata, ...] = ()
+    declared_primary_key_index: IndexMetadata | None = None
+    authored_indices: tuple[IndexMetadata, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

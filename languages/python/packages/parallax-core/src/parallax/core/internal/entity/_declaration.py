@@ -93,6 +93,7 @@ from parallax.core.internal.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
+    LocalIndices,
     MemberDefinition,
     MemberShape,
     Multiplicity,
@@ -253,6 +254,8 @@ DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
         "as_of_axes",
         "inheritance",
         "indices",
+        "declared_primary_key_index",
+        "authored_indices",
     }
 )
 """The ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on
@@ -419,7 +422,7 @@ class EntityHeader:
 
 
 @dataclass(frozen=True, slots=True)
-class EntityDeclaration:
+class EntityDeclaration(LocalIndices):
     """One Entity Class's complete local declaration.
 
     The exact ``UnresolvedEntityDeclaration`` shape: reference-free facts are
@@ -436,7 +439,6 @@ class EntityDeclaration:
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
     as_of_axes: tuple[AsOfAxisMetadata, ...]
     inheritance: UnresolvedInheritance | None
-    indices: tuple[IndexMetadata, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1281,9 +1283,13 @@ def _build_entity(
         value_objects=tuple(occurrences),
         as_of_axes=axis_members,
         inheritance=_accepted_inheritance(role, parent),
-        indices=_indices(
-            identity, container, declared_attributes, axis_members, header.indices, py_to_name
+        declared_primary_key_index=derive_primary_key_index(
+            entity=identity,
+            container=container,
+            attributes=declared_attributes,
+            as_of_axes=axis_members,
         ),
+        authored_indices=_declared_indices(identity, header.indices, py_to_name),
     )
     ns[_MEMBERS] = MemberNames(
         column_to_py=MappingProxyType(column_to_py),
@@ -1728,27 +1734,6 @@ def _parent_reference(parent: type | None) -> EntityReference:
     if parent is None:  # pragma: no cover - a subtype role without a parent is rejected earlier
         raise UsageError(ENTITY_BASE_INVALID, "a subtype role needs a domain Entity parent")
     return ExactEntityReference(declaration_of(parent).identity)
-
-
-def _indices(
-    identity: EntityIdentity,
-    container: StorageContainer | None,
-    attributes: tuple[AttributeMetadata, ...],
-    as_of_axes: tuple[AsOfAxisMetadata, ...],
-    declared: object,
-    py_to_name: dict[str, str],
-) -> tuple[IndexMetadata, ...]:
-    """The derived primary-key Index followed by the declared ones.
-
-    A declared component names a Python member; an unknown name lowers through
-    the deterministic conversion so foundational resolution can locate and report
-    it. The primary-key Index is never declared, so the two sets are disjoint.
-    """
-    derived = derive_primary_key_index(
-        entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
-    )
-    authored = _declared_indices(identity, declared, py_to_name)
-    return authored if derived is None else (derived, *authored)
 
 
 def _declared_indices(

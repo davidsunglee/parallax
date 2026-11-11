@@ -1,4 +1,4 @@
-"""m-pk-gen: strategy classification and simulated-sequence block arithmetic."""
+"""m-pk-gen: generated-key lookup and simulated-sequence block arithmetic."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import pytest
 
 from parallax.core.internal import pk_gen
 from parallax.core.internal.metamodel import (
-    APPLICATION_ASSIGNED,
-    MAX,
     EntityIdentity,
     Metamodel,
     PrimaryKey,
@@ -20,18 +18,13 @@ def _model(stem: str) -> Metamodel:
     return corpus_model(stem)
 
 
-def test_generates_distinguishes_supplied_from_allocated_keys() -> None:
-    assert pk_gen.generates(APPLICATION_ASSIGNED) is False
-    assert pk_gen.generates(MAX) is True
-    assert pk_gen.generates(Sequence(name="s")) is True
-
-
 def test_generated_key_attribute_finds_the_max_pk() -> None:
     attendee = _model("pk-max").entity(EntityIdentity("parallax.compatibility", "Attendee"))
     assert attendee is not None
     attribute = pk_gen.generated_key_attribute(attendee)
     assert attribute is not None
-    assert attribute.identity.name == "id"
+    assert attribute is attendee.attribute("id")
+    assert attribute.generated_key is True
 
 
 def test_generated_key_attribute_is_none_for_supplied_keys() -> None:
@@ -47,6 +40,8 @@ def test_a_sequence_reaches_this_scope_with_every_default_resolved() -> None:
     assert badge is not None
     generated = pk_gen.generated_key_attribute(badge)
     assert generated is not None
+    assert generated is badge.attribute("id")
+    assert generated.generated_key is True
     key = generated.primary_key
     assert isinstance(key, PrimaryKey)
     assert key.generation == Sequence(

@@ -5,7 +5,11 @@ from typing import Final, Literal
 from parallax.core.internal.base import UsageError, coerce_neutral_input, matches_neutral_type
 from parallax.core.internal.metamodel._authoring_violation import AuthoringViolation
 from parallax.core.internal.metamodel._states import ValueObjectMetadata
-from parallax.core.internal.metamodel._values import AttributeMetadata, Multiplicity, PrimaryKey
+from parallax.core.internal.metamodel._values import (
+    AssignmentRestriction,
+    AttributeMetadata,
+    Multiplicity,
+)
 
 __all__ = [
     "WRITE_ASSIGNMENT_CODES",
@@ -84,15 +88,16 @@ def _judge_attribute(
     known_violation: AuthoringViolation | object | None,
 ) -> None:
     name = attribute.identity.name
-    if isinstance(attribute.primary_key, PrimaryKey):
+    restriction = attribute.write_capability.assignment_restriction
+    if restriction is AssignmentRestriction.PRIMARY_KEY:
         raise UsageError(
             WRITE_ASSIGNMENT_PRIMARY_KEY, f"{name}: primary-key fields may not be assigned"
         )
-    if attribute.read_only:
+    if restriction is AssignmentRestriction.READ_ONLY:
         raise UsageError(
             WRITE_ASSIGNMENT_READ_ONLY, f"{name}: read-only fields may not be assigned"
         )
-    if attribute.framework_owned:
+    if restriction is AssignmentRestriction.FRAMEWORK_OWNED:
         raise UsageError(
             WRITE_ASSIGNMENT_FRAMEWORK_OWNED, f"{name}: framework-owned fields may not be assigned"
         )

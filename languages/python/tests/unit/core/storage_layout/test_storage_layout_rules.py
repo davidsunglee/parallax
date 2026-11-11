@@ -688,7 +688,9 @@ def test_an_index_over_a_document_resident_attribute_is_located_at_the_index() -
         container=Table("note"),
         layout=Document("payload"),
         attributes=(key(_SIBLING), display_name),
-        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
+        authored_indices=(
+            IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),
+        ),
     )
     (issue,) = _rule_issues(owner)
     assert issue.code == INDEX_OVER_DOCUMENT_MEMBER
@@ -705,7 +707,9 @@ def test_an_index_over_a_direct_role_attribute_still_resolves_to_a_column() -> N
         container=Table("note"),
         layout=Document("payload"),
         attributes=(key_attribute,),
-        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byKey"), (key_attribute.identity,)),),
+        authored_indices=(
+            IndexMetadata(IndexIdentity(_SIBLING, "byKey"), (key_attribute.identity,)),
+        ),
     )
     assert _rule_issues(owner) == ()
 
@@ -739,7 +743,9 @@ def _note_owning_a_holder(
                     ),
                 ),
             ),
-            indices=(IndexMetadata(IndexIdentity(_SIBLING, "byOwner"), (note_owner.identity,)),),
+            authored_indices=(
+                IndexMetadata(IndexIdentity(_SIBLING, "byOwner"), (note_owner.identity,)),
+            ),
         ),
         Declaration(identity=_HOLDER, container=Table("holder"), attributes=(key(_HOLDER),)),
     )
@@ -842,6 +848,8 @@ def test_a_conventional_layout_reports_neither_new_code() -> None:
         identity=_SIBLING,
         container=Table("note"),
         attributes=(key(_SIBLING), display_name),
-        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
+        authored_indices=(
+            IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),
+        ),
     )
     assert _rule_issues(owner) == ()
