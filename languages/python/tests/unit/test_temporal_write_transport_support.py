@@ -85,15 +85,15 @@ def test_the_tally_counts_each_call_and_the_rows_each_insert_carried() -> None:
     connection = _counting(inner, tally)
     connection.execute("select 1", [])
     connection.execute(
-        "update t set a = v.c2 from unnest(cast(%s as bigint[]), cast(%s as bigint[])) "
+        "update t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
         "with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord",
         [ArrayBind(INT64, [1, 2]), ArrayBind(INT64, [3, 4])],
     )
     connection.execute_pipeline(cast("Any", ("a", "b")))
-    connection.execute_write("update t set a = %s", [1])
-    connection.execute_write("insert into t(a) values (%s)", [1])
+    connection.execute_write("update t set a = ?", [1])
+    connection.execute_write("insert into t(a) values (?)", [1])
     connection.execute_write(
-        "insert into t(a) select * from unnest(cast(%s as bigint[]))",
+        "insert into t(a) select * from unnest(cast(? as bigint[]))",
         [ArrayBind(INT64, [1, 2, 3])],
     )
     transport_call = cast(
