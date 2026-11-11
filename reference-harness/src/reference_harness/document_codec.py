@@ -48,12 +48,12 @@ __all__ = [
 ]
 
 # The declared types whose document form is a JSON string AND whose SQL comparison is
-# of the extracted text (m-dialect). `decimal(p, s)` is a JSON string too and is
+# of the extracted text (m-dialect). `numeric(p, s)` is a JSON string too and is
 # deliberately absent: it casts with the numeric family, because its integer part has
 # no fixed width, so `10.00` sorts below `9.00` as text.
 _TEXT_COMPARED = frozenset({"string", "bytes", "date", "time", "timestamp", "uuid"})
 
-_DECIMAL_TYPE = re.compile(r"^decimal\((\d+),\s*(\d+)\)$")
+_NUMERIC_TYPE = re.compile(r"^numeric\((\d+),\s*(\d+)\)$")
 
 
 class DocumentEncodingError(Exception):
@@ -158,7 +158,7 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     Eight of the twelve rows are the identity, because the document spelling IS what
     the corpus authors and what a Column of that type reads back as here. Four are
     not. Two of those were spelled for the document rather than for the wire: a
-    ``decimal(p, s)`` is stored as its exact digit string and read back from a Column
+    ``numeric(p, s)`` is stored as its exact digit string and read back from a Column
     as a number, and a ``timestamp`` is stored at UTC with a ``Z`` terminator and
     read back from a Column with an explicit ``+00:00`` offset. The other two are
     ``float32`` and ``float64``, whose document number is the shortest one that
@@ -172,7 +172,7 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
         return None
     try:
         managed = portable_literal.decode_canonical(value, type_spelling)
-        if _DECIMAL_TYPE.match(type_spelling) is not None or type_spelling in (
+        if _NUMERIC_TYPE.match(type_spelling) is not None or type_spelling in (
             "int32",
             "int64",
             "float32",
@@ -200,7 +200,7 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
                 "uuid",
                 "json",
             }
-            and _DECIMAL_TYPE.match(type_spelling) is None
+            and _NUMERIC_TYPE.match(type_spelling) is None
         ):
             raise DocumentEncodingError(
                 f"{type_spelling!r} names no neutral type this table covers"

@@ -29,7 +29,7 @@ entity:
       type: float64
       multiplicity: many
     - name: amounts
-      type: decimal(12,2)
+      type: numeric(12,2)
       multiplicity: many
     - name: tags
       type: string

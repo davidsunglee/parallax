@@ -2062,12 +2062,12 @@ follows `m-dialect`'s two typed-cast tables. An attribute in the **cast** table 
 the numeric family and `boolean` — casts the extraction to its declared neutral
 type before comparing (the fragments in the table above show the uncast form; the
 `greaterThan` rows show the cast one) and binds the **managed value** in that type: a
-`decimal(p, s)` field binds the exact decimal rather than a JSON number, and a
+`numeric(p, s)` field binds the exact decimal rather than a JSON number, and a
 `boolean` field binds the boolean. Each of the six **text-compared** types —
 `string` included — compares the extraction directly against that type's
 **comparison text** (`m-document-codec`): the characters the extraction itself
 returns, which is the stored text as above. That set is fixed by comparison
-behavior rather than by document form, so `decimal(p, s)` — a JSON string in the
+behavior rather than by document form, so `numeric(p, s)` — a JSON string in the
 document — is not in it. A `boolean` field cannot join them either, because the
 two extractions disagree on its characters —
 `jsonb_extract_path_text` returns `true` / `false` where `json_value` returns `1` /
@@ -2220,7 +2220,7 @@ constrained path placed where the stored element would place it — nesting thro
 neither fails loudly: `json_contains` compares **JSON values**, so a `boolean`
 element bound as the managed value its cast comparison takes gives the candidate
 `{"flag": 1}`, which matches no element storing a JSON boolean, and a
-`decimal(p, s)` bound the same way gives `{"amt": 1.50}`, which matches no element
+`numeric(p, s)` bound the same way gives `{"amt": 1.50}`, which matches no element
 storing the exact digit string `"1.50"`. A `date`, `uuid`, or `bytes` candidate a
 host serializer produced would miss for the same reason — the stored element
 carries the codec's canonical spelling and containment is exact. So the candidate
@@ -2414,13 +2414,13 @@ been `t0.display_name = ?` under Columns layout becomes an extraction over
 **Whether the extraction casts is fixed by the declared Neutral Type.** The
 extraction yields text, and `m-dialect`'s two typed-cast tables say which types do
 what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float64`,
-`decimal(p,s)` — and a `boolean` member cast through the typed-cast form before
+`numeric(p,s)` — and a `boolean` member cast through the typed-cast form before
 comparing, exactly as a numeric value-object field does; each of the six
 **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, `uuid` —
 compares the extracted text directly, with no cast, because the canonical Wire
 spelling `m-wire` defines and `m-document-codec` stores already equates and
 orders correctly as text. Which family a type falls in is a comparison-behavior
-question, not a document-form one: `decimal(p, s)` encodes as a JSON string and
+question, not a document-form one: `numeric(p, s)` encodes as a JSON string and
 casts with the numeric family regardless. Those two tables are closed over the
 declarable types, so no document-resident member is left without a comparison
 form.
@@ -2433,7 +2433,7 @@ those six spellings is the stored text unquoted. A cast comparison binds the
 the comparison into the engine's own type system. Neither side may substitute the member's document
 encoding for the other's answer:
 
-- a `decimal(p, s)` member encodes as an exact digit string, so there is no
+- a `numeric(p, s)` member encodes as an exact digit string, so there is no
   encoded JSON number to bind; producing one would compare
   `cast(<extraction> as decimal(p, s))` against a binary float and match every
   stored decimal that rounds to the same float, not the one that equals the

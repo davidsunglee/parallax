@@ -34,4 +34,4 @@ entities:
       tagValue: versioned-cash
     attributes:
       - name: detail
-        type: decimal(18,2)
+        type: numeric(18,2)

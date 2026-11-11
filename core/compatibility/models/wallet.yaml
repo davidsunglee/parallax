@@ -23,7 +23,7 @@ entity:
       type: string
       maxLength: 64
     - name: balance
-      type: decimal(18,2)
+      type: numeric(18,2)
   indices:
     - name: wallet_owner
       attributes: [owner]

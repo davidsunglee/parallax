@@ -9,7 +9,7 @@ entities:
     namespace: parallax.compatibility
     inheritance: {role: abstract-subtype, parent: parallax.compatibility.Folio}
     attributes:
-      - {name: strokes, type: "decimal(12,2)", multiplicity: many}
+      - {name: strokes, type: "numeric(12,2)", multiplicity: many}
   - name: Page
     namespace: parallax.compatibility
     inheritance: {role: concrete-subtype, parent: parallax.compatibility.Folio, tagValue: page}

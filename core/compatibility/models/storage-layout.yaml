@@ -81,7 +81,7 @@ entities:
         type: int64
         primaryKey: true
       - name: amount
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: LayoutCardPayment
     namespace: parallax.compatibility
     inheritance:
@@ -100,7 +100,7 @@ entities:
       tagValue: cash
     attributes:
       - name: tendered
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: LayoutReport
     namespace: parallax.compatibility
     inheritance:
@@ -164,4 +164,4 @@ entities:
       tagValue: meter
     attributes:
       - name: celsius
-        type: decimal(18,2)
+        type: numeric(18,2)

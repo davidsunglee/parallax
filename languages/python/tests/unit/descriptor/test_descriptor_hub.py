@@ -139,6 +139,45 @@ def test_every_door_yields_the_same_sealed_model() -> None:
         ]
 
 
+def test_numeric_descriptor_ingests_and_round_trips_through_every_export() -> None:
+    document = {
+        "entity": {
+            "name": "Price",
+            "table": "price",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "amount", "type": "numeric(12,2)"},
+            ],
+        }
+    }
+    from_document = domain_model_from_document(document)
+    from_json = domain_model_from_json(json.dumps(document))
+    from_yaml = domain_model_from_yaml(yaml.safe_dump(document))
+    canonical = export_document(from_document)
+    assert export_document(from_json) == canonical
+    assert export_document(from_yaml) == canonical
+    entity = cast("dict[str, object]", canonical["entity"])
+    attributes = cast("list[dict[str, object]]", entity["attributes"])
+    assert attributes[1]["type"] == "numeric(12,2)"
+    assert export_document(domain_model_from_json(export_json(from_document))) == canonical
+    assert export_document(domain_model_from_yaml(export_yaml(from_document))) == canonical
+
+
+def test_retired_decimal_descriptor_spelling_fails_schema_validation() -> None:
+    document = {
+        "entity": {
+            "name": "Price",
+            "table": "price",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "amount", "type": "decimal(12,2)"},
+            ],
+        }
+    }
+    with raises_code(DescriptorError, "descriptor-schema-invalid"):
+        domain_model_from_document(document)
+
+
 def test_a_descriptor_backed_model_composes_no_class() -> None:
     # A descriptor-backed model composes no Entity Class, so a class key names
     # no Entity of it at all — the identity spelling is what it answers.
@@ -225,7 +264,7 @@ def test_the_document_door_has_no_syntax_phase() -> None:
 
 
 def test_a_schema_valid_but_unconstructible_value_fails_in_the_value_phase() -> None:
-    text = _YAML.replace("type: string\n        maxLength: 200", "type: decimal(0,9)")
+    text = _YAML.replace("type: string\n        maxLength: 200", "type: numeric(0,9)")
     with raises_code(DescriptorError, "descriptor-value-invalid") as caught:
         domain_model_from_yaml(text)
     assert [v.rule for v in caught.value.violations] == ["type-spelling-invalid"]
@@ -243,7 +282,7 @@ def test_a_nested_value_object_spelling_fails_in_the_value_phase_at_its_own_path
                     "valueObjects": [
                         {
                             "name": "phone",
-                            "attributes": [{"name": "number", "type": "decimal(2,5)"}],
+                            "attributes": [{"name": "number", "type": "numeric(2,5)"}],
                         }
                     ],
                 }

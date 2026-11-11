@@ -21,9 +21,9 @@
   },
   "$defs": {
     "neutralType": {
-      "description": "Canonical m-descriptor spelling of an m-core NeutralType variant (m-descriptor \"Type spellings\"). The decimal spelling carries precision/scale, e.g. decimal(18,2). This is the whole variant vocabulary, not the set an attribute may declare: `json` is the embedded-value type core maps a whole valueObject element to (m-dialect maps it to each dialect's structured-document column type), so it is reachable only as that derived storage type. A declarable attribute type is a `scalarType`.",
+      "description": "Canonical m-descriptor spelling of an m-core NeutralType variant (m-descriptor \"Type spellings\"). The numeric spelling carries precision/scale, e.g. numeric(18,2). This is the whole variant vocabulary, not the set an attribute may declare: `json` is the embedded-value type core maps a whole valueObject element to (m-dialect maps it to each dialect's structured-document column type), so it is reachable only as that derived storage type. A declarable attribute type is a `scalarType`.",
       "type": "string",
-      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|decimal\\([0-9]+,[0-9]+\\))$"
+      "pattern": "^(boolean|int32|int64|float32|float64|string|bytes|date|time|timestamp|uuid|json|numeric\\([0-9]+,[0-9]+\\))$"
     },
     "scalarType": {
       "description": "A declarable attribute type: any `neutralType` variant EXCEPT `json`. `Json` names no declarable member — it is the storage type core maps a whole valueObject element to (m-core \"The `Json` embedded-value type\"), never a type a member declares — so both an entity `attribute` and a `valueObjectAttribute` inner field reject `json`. Free-form structured content is not modelable; a composite is declared as a `valueObject` with typed inner fields, and core derives the one structured-document column from it.",
@@ -305,7 +305,7 @@
           }
         },
         {
-          "$comment": "`maxLength` bounds text width and lowers to `varchar(n)` (m-core `String`; m-descriptor `attribute`), so it is meaningful only on a `string` Attribute. Every other variant has a fixed width or its own parameters, and `decimal` carries precision/scale in its own spelling.",
+          "$comment": "`maxLength` bounds text width and lowers to `varchar(n)` (m-core `String`; m-descriptor `attribute`), so it is meaningful only on a `string` Attribute. Every other variant has a fixed width or its own parameters, and `numeric` carries precision/scale in its own spelling.",
           "if": { "required": ["maxLength"] },
           "then": {
             "properties": { "type": { "const": "string" } }

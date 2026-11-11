@@ -6,8 +6,8 @@
 # corpus. This model is deliberately `transactional` so a writeSequence can insert
 # each of those types and read the row back, asserting the value survives the
 # encode-at-bind / decode-at-read boundary on BOTH dialects (the dialect IS the
-# assertion — m-core-005/006). It also carries a `decimal(18,4)` column (a
-# precision/scale beyond the corpus's ubiquitous decimal(18,2) money column) and a
+# assertion — m-core-005/006). It also carries a `numeric(18,4)` column (a
+# precision/scale beyond the corpus's ubiquitous numeric(18,2) money column) and a
 # max-length `string` so the decimal-precision and string-max-length write
 # boundaries are witnessed too (m-core-007/008).
 #
@@ -38,7 +38,7 @@ entity:
       type: uuid
       nullable: true
     - name: amount
-      type: decimal(18,4)
+      type: numeric(18,4)
       nullable: true
     - name: label
       type: string

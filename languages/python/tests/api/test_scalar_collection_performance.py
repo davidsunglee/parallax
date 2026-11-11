@@ -98,14 +98,14 @@ class Holder(Entity, table="scp_holder", namespace=_NS):
 _MODEL: Final = DomainModel(Team, Person, Vehicle, Car, Bike, Holder)
 _HOLDER: Final = Holder.identity.canonical
 
-type ElementType = Literal["integer", "string", "decimal"]
+type ElementType = Literal["integer", "string", "numeric"]
 type Workload = Literal["existential-early-match", "universal-full-scan"]
-_TYPES: Final[tuple[ElementType, ...]] = ("integer", "string", "decimal")
+_TYPES: Final[tuple[ElementType, ...]] = ("integer", "string", "numeric")
 _WORKLOADS: Final[tuple[Workload, ...]] = ("existential-early-match", "universal-full-scan")
 _MEMBERS: Final[Mapping[ElementType, str]] = {
     "integer": "ints",
     "string": "texts",
-    "decimal": "amounts",
+    "numeric": "amounts",
 }
 
 
@@ -113,21 +113,21 @@ def _elements(size: int) -> dict[ElementType, tuple[object, ...]]:
     return {
         "integer": tuple(range(1, size + 1)),
         "string": tuple(f"v{position:04d}" for position in range(1, size + 1)),
-        "decimal": tuple(Decimal(f"{position}.00") for position in range(1, size + 1)),
+        "numeric": tuple(Decimal(f"{position}.00") for position in range(1, size + 1)),
     }
 
 
 _FIRST: Final[Mapping[ElementType, tuple[object, object]]] = {
     "integer": (1, 1),
     "string": ("v0001", "v0001"),
-    "decimal": ("1.00", Decimal("1.00")),
+    "numeric": ("1.00", Decimal("1.00")),
 }
 """Each type's first stored element, as a Wire literal and as a Typed operand."""
 
 _BELOW: Final[Mapping[ElementType, tuple[object, object]]] = {
     "integer": (0, 0),
     "string": ("v", "v"),
-    "decimal": ("0.00", Decimal("0.00")),
+    "numeric": ("0.00", Decimal("0.00")),
 }
 """A bound every stored element of each type exceeds."""
 
@@ -307,7 +307,7 @@ def _seed(db: ScopedDatabase, size: int) -> None:
                     vehicle_id=key % 8 + 1,
                     ints=cast("tuple[int, ...]", elements["integer"]),
                     texts=cast("tuple[str, ...]", elements["string"]),
-                    amounts=cast("tuple[Decimal, ...]", elements["decimal"]),
+                    amounts=cast("tuple[Decimal, ...]", elements["numeric"]),
                 )
             )
 

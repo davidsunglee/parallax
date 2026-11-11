@@ -2083,7 +2083,7 @@ _VO_QUANTIFIED_SINGLE_REASON: Final[str] = (
 # above. This case is a sanctioned exception because its invalid input is
 # unrepresentable through the typed surface.
 _VO_PORTABLE_LITERAL_UNREACHABLE_REASON: Final[str] = (
-    'the case authors a WIRE literal — the string `"-0.00"` at a `decimal(12,2)` — and the '
+    'the case authors a WIRE literal — the string `"-0.00"` at a `numeric(12,2)` — and the '
     "typed surface has no position for one: `SampleProfile.amount` is a `decimal.Decimal` "
     "field, so a developer hands over a native `Decimal` the input policy never parses "
     "(`coerce_neutral_input` admits no string for a `Decimal`), and Pydantic refuses the "

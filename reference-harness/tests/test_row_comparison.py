@@ -30,7 +30,7 @@ def test_untyped_carrier_differences_are_not_repaired() -> None:
 
 
 def test_declared_type_projection_is_the_only_cross_carrier_equivalence() -> None:
-    assert values_equal(Decimal("10.50"), "10.50", "decimal(12,2)", None)
+    assert values_equal(Decimal("10.50"), "10.50", "numeric(12,2)", None)
     assert not scalars_equal(Decimal("10.50"), "10.50", None)
 
 

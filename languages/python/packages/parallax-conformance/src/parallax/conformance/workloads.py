@@ -159,7 +159,7 @@ SCALAR_TYPE_IDS: Final[tuple[str, ...]] = (
     "int64",
     "float32",
     "float64",
-    "decimal",
+    "numeric",
     "bytes",
     "date",
     "time",

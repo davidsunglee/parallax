@@ -41,7 +41,7 @@ _WIDE = Model(
                 _nullable("big", "int64"),
                 _nullable("ratio", "float32"),
                 _nullable("measure", "float64"),
-                _nullable("amount", "decimal(18,2)"),
+                _nullable("amount", "numeric(18,2)"),
                 _nullable("label", "string", maxLength=16),
                 _nullable("payload", "bytes"),
                 _nullable("day", "date"),

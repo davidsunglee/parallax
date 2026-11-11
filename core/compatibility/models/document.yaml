@@ -97,7 +97,7 @@ entities:
       parent: parallax.compatibility.FinancialDocument
     attributes:
       - name: amountDue
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: Receipt
     namespace: parallax.compatibility
     table: receipt
@@ -106,7 +106,7 @@ entities:
       parent: parallax.compatibility.FinancialDocument
     attributes:
       - name: paidAmount
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: Memo
     namespace: parallax.compatibility
     table: memo

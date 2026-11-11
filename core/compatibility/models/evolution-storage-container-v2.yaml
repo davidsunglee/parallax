@@ -11,4 +11,4 @@ entity:
       type: int64
       primaryKey: true
     - name: holding
-      type: decimal(18,2)
+      type: numeric(18,2)

@@ -1,4 +1,4 @@
-# between — inclusive bounded range over a decimal(18,2) column. Two ordered
+# between — inclusive bounded range over a numeric(18,2) column. Two ordered
 # binds (lower, upper). `between` is a convenience over `>= lower and <= upper`,
 # which is exactly what the naive referenceSql spells out.
 model: models/orders.yaml

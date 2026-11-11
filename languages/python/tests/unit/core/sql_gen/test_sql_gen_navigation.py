@@ -1318,7 +1318,7 @@ def test_a_conversion_past_proven_hops_shares_all_but_its_last_hop() -> None:
         _entity(
             "Crate",
             layout={"document": {"column": "payload"}},
-            members=[{"name": "weight", "type": "decimal(18,2)"}],
+            members=[{"name": "weight", "type": "numeric(18,2)"}],
         ),
     )
     op = oa.Comparison(
@@ -1545,7 +1545,7 @@ def test_a_partition_of_a_table_per_hierarchy_read_joins_its_proven_hops() -> No
         },
         {
             **_concrete("Cash", "Payment", tagValue="cash"),
-            "attributes": [{"name": "detail", "type": "decimal(18,2)"}],
+            "attributes": [{"name": "detail", "type": "numeric(18,2)"}],
         },
     )
     detail = oa.Or(

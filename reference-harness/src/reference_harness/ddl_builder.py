@@ -83,7 +83,7 @@ _MARIADB_BASE_TYPES = {
     "json": "json",
 }
 
-_DECIMAL_RE = re.compile(r"^decimal\((\d+),(\d+)\)$")
+_NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)$")
 
 # A "simple" identifier needs no quoting; anything else (a reserved word, or a
 # name with uppercase / special characters / a leading digit) MUST be quoted.
@@ -118,7 +118,7 @@ def quote_identifier(name: str, dialect: str) -> str:
 
 
 def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
-    decimal = _DECIMAL_RE.match(neutral_type)
+    decimal = _NUMERIC_RE.match(neutral_type)
     if decimal:
         precision, scale = decimal.group(1), decimal.group(2)
         return f"numeric({precision},{scale})"
@@ -131,7 +131,7 @@ def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
 
 
 def _mariadb_column_type(neutral_type: str, max_length: int | None) -> str:
-    decimal = _DECIMAL_RE.match(neutral_type)
+    decimal = _NUMERIC_RE.match(neutral_type)
     if decimal:
         precision, scale = decimal.group(1), decimal.group(2)
         return f"decimal({precision},{scale})"
@@ -160,7 +160,7 @@ def placeholder_cast_type(neutral_type: str, max_length: int | None, dialect: st
     m-dialect's placeholder cast form owns each spelling. This exists apart from
     :func:`_column_type` because CAST targets and column types are different grammars.
     """
-    decimal = _DECIMAL_RE.match(neutral_type)
+    decimal = _NUMERIC_RE.match(neutral_type)
     if decimal:
         return f"decimal({decimal.group(1)},{decimal.group(2)})"
     if dialect == "mariadb":

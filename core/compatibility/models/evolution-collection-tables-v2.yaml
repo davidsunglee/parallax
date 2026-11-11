@@ -10,7 +10,7 @@ entities:
     attributes:
       - {name: id, type: int64, primaryKey: true}
       - {name: label, type: string, maxLength: 16}
-      - {name: weights, type: "decimal(12,2)", multiplicity: many}
+      - {name: weights, type: "numeric(12,2)", multiplicity: many}
       - {name: codes, type: bytes, multiplicity: many}
     valueObjects:
       - name: seal

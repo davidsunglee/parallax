@@ -602,7 +602,7 @@ def comparison_text(neutral_type: NeutralType, value: object) -> str:
     ``time``, ``timestamp``, and ``uuid`` — and for each it is that string's own
     characters, unquoted and unescaped, so a consumer binds ``0a1b`` rather than the
     JSON text ``"0a1b"`` that carries it. The domain is fixed by how a type
-    **compares**, not by its document form: ``decimal(p, s)``'s document form is a JSON
+    **compares**, not by its document form: ``numeric(p, s)``'s document form is a JSON
     string too and is deliberately not here, because it casts.
     """
     if not is_text_compared(neutral_type):

@@ -40,7 +40,7 @@ WireDecodingReason = TypeMismatch | Noncanonical | OutOfSpace
   text.
 - **Noncanonical** means the literal denotes an in-space value but violates an
   admitted representation rule, such as uppercase bytes, a Timestamp offset,
-  or the wrong Decimal scale.
+  or the wrong Numeric scale.
 - **OutOfSpace** means the literal has the declared type's shape but denotes no
   managed member, such as integer overflow, an impossible date, float overflow,
   or a recursive Json number outside the finite host JSON space.
@@ -127,7 +127,7 @@ together. It is never a presentation preference.
 
 **Each spelling has one JSON kind.** Every canonical spelling of a type is a JSON
 boolean (`boolean`), a JSON number (the integer and float types), or a JSON string
-(`decimal(p,s)` and the text-encoded types); only `json` has no single kind. That
+(`numeric(p,s)` and the text-encoded types); only `json` has no single kind. That
 kind is part of this module's matrix rather than a second table, and a scalar
 collection element is compared only when its stored kind is the one its declared
 type encodes as (`m-predicate`, `m-dialect`).
@@ -146,7 +146,7 @@ for that type under this grammar.
 | `int64` | finite JSON number with an exact integral value | exact integer, signed 64-bit range | integral JSON number | none distinguishable under JSON-value equality | `"1"` or `1.5` | — | `9223372036854775808` |
 | `float32` | finite JSON number | nearest binary32, ties even, widened to host float; zero is positive | shortest binary32 round trip | any other spelling rounding to the same value | `"1.0"` | `-0.0` | `1e39` |
 | `float64` | finite JSON number | nearest binary64, ties even; zero is positive | shortest binary64 round trip | any other spelling rounding to the same value | `"1.0"` | `0.10000000000000001` | `1e309` |
-| `decimal(p,s)` | plain JSON string with exactly `s` fractional digits; no exponent, plus, unnecessary leading zero, or negative zero | exact fixed-scale Decimal, with no rounding or binary intermediate | same declared-scale string | none | JSON number `10.25` | `"10.2"`, `"-0.00"` | coefficient exceeds precision `p` |
+| `numeric(p,s)` | plain JSON string with exactly `s` fractional digits; no exponent, plus, unnecessary leading zero, or negative zero | exact fixed-scale Numeric, with no rounding or binary intermediate | same declared-scale string | none | JSON number `10.25` | `"10.2"`, `"-0.00"` | coefficient exceeds precision `p` |
 | `string` | JSON string of Unicode scalar text | same text | same JSON string | none | `42` | — | unpaired surrogate |
 | `bytes` | JSON string of lowercase hexadecimal, two digits per byte | octet sequence | same lowercase hex | none | `42` or odd digit count | `"0A1B"` | — |
 | `date` | JSON string `YYYY-MM-DD` | proleptic-Gregorian date | same fixed-width string | none | `20260101` | `"2026-1-1"` | `"2026-02-30"` |
@@ -155,12 +155,12 @@ for that type under this grammar.
 | `uuid` | lowercase hyphenated 8-4-4-4-12 JSON string | 128-bit UUID | same lowercase hyphenated string | none | `42` or malformed hex groups | uppercase or hyphenless text | — |
 | `json` | recursively valid JSON except bare top-level null; numbers fit the finite host JSON space | fresh ordinary recursive JSON structure; numeric provenance erased | recursively ordinary JSON | none distinguishable under JSON-value equality | top-level `null` or non-JSON host object | — | nested number outside finite host JSON space |
 
-Well-formed but disallowed Bytes case, UUID case/hyphenation, Decimal spelling,
+Well-formed but disallowed Bytes case, UUID case/hyphenation, Numeric spelling,
 and Timestamp offset representations are deliberately not broad aliases. They
 denote in-space values but fail public decoding as `Noncanonical`; they are not
 repaired. Malformed hex or UUID text denotes no value and is `TypeMismatch` as
 the matrix states. For Timestamp, a numeric offset including `+00:00` is
-noncanonical rather than an admitted alternative. Decimal never admits a JSON
+noncanonical rather than an admitted alternative. Numeric never admits a JSON
 number.
 
 Every public decoder dispatches explicitly over all thirteen variants with no
@@ -179,7 +179,7 @@ algebra: `Json` is the storage type a whole occurrence maps to, and where such a
 value is what is being written, its Wire Value is that value itself, whose
 object-member order is the value's own and is not observable state.
 
-**Exactness over convenience.** `decimal` and `timestamp` are strings precisely
+**Exactness over convenience.** `numeric` and `timestamp` are strings precisely
 because JSON numbers cannot carry their contracts: a JSON number has no declared
 scale and no guaranteed precision, and a naive round trip through a binary float
 silently changes a value the database would have preserved. `float32`/`float64`

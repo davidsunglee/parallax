@@ -1,6 +1,6 @@
 # Columns half of the every-type element proof: one `any` per declared
 # element type, each comparing the bound element by its type's own rule — a cast for
-# the numeric, Decimal, and Boolean types, the canonical text for the rest.
+# the numeric, Numeric, and Boolean types, the canonical text for the rest.
 model: models/scalar-collection-layout-twin-columns.yaml
 tags: [m-predicate, m-value-object, m-sql, read, quantifier, scalar-collection, graph, layout-twin, columns, slice-snapshot-1]
 shape: read
