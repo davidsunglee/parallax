@@ -865,10 +865,6 @@ class TpcsUnionReadPlan:
         return "tpcs-union"
 
     @property
-    def is_union(self) -> bool:
-        return True
-
-    @property
     def may_repeat_row_keys(self) -> bool:
         return True
 
