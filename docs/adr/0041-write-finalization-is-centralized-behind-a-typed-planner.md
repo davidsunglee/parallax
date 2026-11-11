@@ -312,3 +312,26 @@ locking no longer enters write finalization through an injected strategy port;
 the planner reads each Entity's strategy and version from the model's
 Concurrency Facet. Batching, temporal, and audit behavior still enter through
 injected strategy ports, and the rest of this decision stands.
+
+## Amendment (2026-11): collapse batching belongs to the planner
+
+**Superseding decision:** buffered collapse batching no longer enters through
+an injected strategy port. Unit Work's planner owns eligibility, statement and
+member-presence shape, whole-run uniformity, and the resulting logical-step
+membership together. The implementation consumes admitted writes and their
+positional rows directly; it introduces neither a replacement strategy nor a
+parallel row representation.
+
+`m-unit-work` owns these buffered-collapse requirements. `m-batch-write` retains
+readless predicate policy, including target admission, and depends only on model
+facts and preparation refusals. The former `m-batch-write -> m-unit-work` edge is
+replaced by `m-unit-work -> m-batch-write`; execution's direct batching edge and
+composition-root injection disappear. Independent language topology declarations
+and their generated import contracts continue to enforce this direction.
+
+This supersedes only batching ownership: eligibility, whole-run uniformity,
+logical-step membership, ordering, retained source evidence, SQL, affected-row
+expectations, and failure behavior stay unchanged. Execution grouping, array
+lowering, admission-time composition, and readless predicate behavior do not
+change. One planner module owns the decision so a batching rule need not be
+coordinated across a strategy, adapter, shape helper, and planner.

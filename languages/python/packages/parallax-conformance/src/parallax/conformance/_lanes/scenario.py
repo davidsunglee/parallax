@@ -69,7 +69,7 @@ from parallax.core.execution_lifecycle import (
     FlushFinished,
     TransactionAttemptStarted,
 )
-from parallax.core.internal import batch_write, inheritance, storage_layout, temporal_read
+from parallax.core.internal import inheritance, storage_layout, temporal_read
 from parallax.core.internal.base import (
     ConflictError,
     InternalError,
@@ -302,59 +302,6 @@ def write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
     return cast("Sequence[Mapping[str, object]]", raw_write)
 
 
-def _binds_row_observations(
-    model: AcceptedMetamodel,
-    entity_name: str,
-    mutation: str,
-    raw_rows: Sequence[Mapping[str, object]],
-) -> bool:
-    """Whether a non-temporal write entry's rows each carry their OWN object key
-    and observation, mirroring what that many separate
-    `TxnContext.insert`/`.update`/`.delete` calls would buffer — rather than
-    arriving as anonymous rows free to be merged back together.
-
-    This decides OBSERVATION BINDING only, never statement count:
-    :func:`_build_instructions` buffers one single-row instruction per row
-    regardless, and leaves every merge to the planner's own collapse stage
-    (a simulated unit of work's flush, an Attempt's flush execution).
-    What a bound observation changes is that the planner refuses to merge that
-    row at all, which is exactly the point — a merged multi-row instruction has
-    nowhere to carry a per-row observed version. The question is answered with
-    :func:`~parallax.core.internal.batch_write.collapses`, the same injected
-    `m-batch-write` collapse-eligibility vocabulary the planner consults, so
-    binding an observation never contradicts the planner's own eligibility
-    answer.
-
-    Derived SEMANTICALLY from the instruction and model — mutation kind,
-    versioned-ness, computed/allocated primary keys, and (for update) per-key
-    value uniformity — never from the case's own authored ``statements`` count,
-    which is a count-consistency ASSERTION only (`compatibility-case.schema.
-    json`) verified separately by
-    :func:`_check_statement_count_consistency`, never a semantics
-    discriminator:
-
-    - a single row always binds its own observation (nothing to merge it with,
-      so nothing is given up);
-    - `batch_write.insert_collapses` — an INSERT decomposes only when the
-      target's primary key is pk-gen MANAGED (`m-pk-gen`'s `sequence`/`max`
-      strategies, ``m-pk-gen-001``..`-012``); a VERSIONED insert still
-      collapses (the initial version is a derived constant, never observed);
-    - `batch_write.update_collapses` — a VERSIONED target's update always
-      decomposes (the gate/advance binds a per-row observed version,
-      `m-batch-write`, ADR 0014); an unversioned target decomposes per distinct
-      key only when its rows assign NON-uniform values (``m-batch-write-002``),
-      collapsing into one key-membership statement when uniform
-      (``m-batch-write-001``'s own update entry);
-    - `batch_write.delete_collapses` — a VERSIONED target's delete always
-      decomposes (``m-batch-write-004``'s versioned per-key delete
-      materialize); an unversioned one collapses to one key-membership statement.
-    """
-    if len(raw_rows) == 1:
-        return True
-    entity = case_entity(model, entity_name)
-    return not batch_write.collapses(model, entity, mutation, raw_rows)
-
-
 def _check_statement_count_consistency(
     entries: Sequence[Mapping[str, object]], emitted_count: int
 ) -> None:
@@ -418,8 +365,6 @@ def _build_instructions(
     if _is_temporal_entity(model, entity_name):
         return [_build_temporal_instruction(parsed[0], prepare)]
     mutation = cast("str", entry["mutation"])
-    raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    binds_observations = _binds_row_observations(model, entity_name, mutation, raw_rows)
     result: list[_ResolvedWrite] = []
     for submission in parsed:
         instruction = submission.instruction
@@ -427,12 +372,7 @@ def _build_instructions(
         row = _seed_insert_version(model, entity_name, mutation, instruction.rows[0])
         prepared = prepare(replace(instruction, rows=(row,)))
         assert isinstance(prepared, PreparedKeyedInstruction)
-        observation = (
-            submission.declared_observation
-            if binds_observations and mutation not in INSERT_MUTATIONS
-            else None
-        )
-        result.append(_ResolvedWrite(prepared, observation))
+        result.append(_ResolvedWrite(prepared, submission.declared_observation))
     return result
 
 

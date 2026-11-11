@@ -14,10 +14,8 @@ read it executes; `m-write-plan` for the Planned Steps it runs;
 Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-read-planning` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
 the attempt loop's bound and classification; `m-execution-lifecycle` for the
-activities it opens;
-`m-db-port` for the runtime, connections, and boundaries it drives; and
-`m-batch-write`, whose collapse eligibility model preparation wires into the
-Write Planner.
+activities it opens; and
+`m-db-port` for the runtime, connections, and boundaries it drives.
 
 Execution decides the conditions an operation runs under — the authority, the
 adopted model, the resolved options, the activity, the connection, and the
@@ -358,8 +356,9 @@ step that cannot join, or where the steps run out. A step the run ended before
 is neither prepared nor lowered until the statement has run. A run never crosses
 a Write Group or a non-insert step, so no insert moves ahead of a
 non-insert step before it. A logical multi-entry insert, which batching formed
-by membership (`m-batch-write`), runs alone and is never joined; where the
-dialect has the array parameter cast form it is never split either, and
+by membership (`m-unit-work` *Collapse is a membership decision*), runs alone
+and is never joined; where the dialect has the array parameter cast form it is
+never split either, and
 elsewhere it spans as many statements as its dialect's bind limit requires
 (`m-dialect` *Bind parameter limit*). Any other insert runs alone as before.
 

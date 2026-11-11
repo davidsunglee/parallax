@@ -1,139 +1,50 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core.internal import concurrency, inheritance, temporal_read
-from parallax.core.internal.metamodel import (
-    AttributeMetadata,
-    CompiledEntity,
-    Metamodel,
-)
+from parallax.core.internal import inheritance, temporal_read
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 
-__all__ = [
-    "collapses",
-]
+__all__ = ["SET_BASED_WRITE_TARGET_UNSUPPORTED", "judge_readless_target"]
 
-_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
-_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset(
-    {"amend", "amendUntil", "replace", "replaceUntil"}
-)
-
-# The ONE reserved observation control key a flush-time authored row may carry
-# (`m-concurrency`; ADR 0013) — never legitimate batch-collapse input: a row
-# explicitly carrying its own observed version is an explicit
-# per-row-observation signal, so a run containing one never collapses. A
-# Transaction-Time gate is authored beside the write rather than in a row, so no
-# row key names one.
-_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
+SET_BASED_WRITE_TARGET_UNSUPPORTED: Final = "set-based-write-target-unsupported"
 
 
-def _primary_key(model: Metamodel, entity: CompiledEntity) -> AttributeMetadata:
-    position = inheritance.inheritance_facet_of(model).entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise RuntimeError(f"{entity.identity.canonical}: no compiled inheritance position")
-    return position.primary_key
-
-
-def _is_versioned(model: Metamodel, entity: CompiledEntity) -> bool:
-    return concurrency.concurrency_facet_of(model).settles_against(entity.identity) == "observation"
-
-
-def _is_temporal(model: Metamodel, entity: CompiledEntity) -> bool:
-    return isinstance(
-        temporal_read.temporal_facet_of(model).shape(entity.identity),
-        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
-    )
-
-
-def _is_pk_gen_managed(model: Metamodel, entity: CompiledEntity) -> bool:
-    """Whether ``entity``'s family primary key is framework-allocated
-    (`m-pk-gen`) — each row's own key allocation is independent, so a shared
-    multi-row statement cannot express it."""
-    return _primary_key(model, entity).generated_key
-
-
-def _rows_carry_observation_keys(rows: Sequence[Mapping[str, object]]) -> bool:
-    return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in rows)
-
-
-def insert_collapses(model: Metamodel, entity: CompiledEntity) -> bool:
-    """Whether same-entity ``insert`` rows collapse into one multi-row ``INSERT``
-    (`m-batch-write.md` "Batching is a membership decision"). ``False`` for a
-    temporal entity (its keyed
-    writes are `m-temporal-write` territory, never this
-    module's decision) or a pk-gen-**managed** entity; ``True`` otherwise,
-    versioned or not (the initial version is a derived constant, never an
-    observation, `m-concurrency` `INITIAL_VERSION`)."""
-    if _is_temporal(model, entity):
-        return False
-    return not _is_pk_gen_managed(model, entity)
-
-
-def update_collapses(
-    model: Metamodel, entity: CompiledEntity, rows: Sequence[Mapping[str, object]]
-) -> bool:
-    """Whether a run of same-entity ``update`` rows collapses into ONE
-    ``UPDATE`` over a membership of their keys (`m-batch-write.md` "Batching is a
-    membership decision"): only
-    when the target is UNVERSIONED, non-temporal, no row carries an explicit
-    observation control key, and every row assigns the IDENTICAL non-key
-    values (the uniform-value case; a non-uniform run stays decomposed to one
-    keyed statement per distinct key, never this module's concern). A
-    **versioned** entity's update NEVER collapses,
-    uniform or not — the gate/advance binds a PER-ROW observed version no
-    shared statement can carry."""
-    if _is_temporal(model, entity):
-        return False
-    if _is_versioned(model, entity):
-        return False
-    if _rows_carry_observation_keys(rows):
-        return False
-    if len(rows) < 2:
-        return False
-    key_name = _primary_key(model, entity).identity.name
-    assigned = [
-        {k: v for k, v in row.items() if k != key_name and k not in _OBSERVATION_CONTROL_KEYS}
-        for row in rows
-    ]
-    first = assigned[0]
-    return all(candidate == first for candidate in assigned[1:])
-
-
-def delete_collapses(model: Metamodel, entity: CompiledEntity) -> bool:
-    """Whether same-entity ``delete`` rows collapse into one
-    ``DELETE`` over a membership of their keys (`m-batch-write.md` "Batching is a
-    membership decision" — the delete analogue of the multi-row INSERT). ``False``
-    for a temporal entity (`terminate`/`terminateUntil` are `m-temporal-write`
-    territory) or a VERSIONED one — a versioned entity's set-based delete NEVER
-    collapses: each row is removed under its own
-    prior observation and its own exactly-one affected-row expectation, in
-    either concurrency mode, and optimistic mode binds that row's version as its
-    own gate on top (`m-batch-write-004` is the ungated locking form)."""
-    if _is_temporal(model, entity):
-        return False
-    return not _is_versioned(model, entity)
-
-
-def collapses(
+def judge_readless_target(
     model: Metamodel,
     entity: CompiledEntity,
+    position: inheritance.InheritanceEntityView,
     mutation: str,
-    rows: Sequence[Mapping[str, object]],
-) -> bool:
-    """The single ``(model, entity, mutation, rows) -> bool`` entry point
-    (``BatchingStrategy.collapses``'s own shape) — the function
-    execution's model preparation wires into the
-    :class:`~parallax.core.internal.unit_work.WritePlanner` and the conformance engine
-    reaches through the SAME ``build_write_planner`` factory, dispatching to
-    :func:`insert_collapses` / :func:`update_collapses` / :func:`delete_collapses`
-    by ``mutation``.
+) -> None:
+    """Refuse a predicate write whose target cannot be written by one readless
+    statement (`m-batch-write`).
 
-    Insert and delete eligibility is a property of the TARGET alone, so only the
-    update branch consults ``rows``: whether the rows are shaped alike is the
-    injected grouping key's question, already settled before this is called."""
-    if mutation in _INSERT_MUTATIONS:
-        return insert_collapses(model, entity)
-    if mutation in _UPDATE_MUTATIONS:
-        return update_collapses(model, entity, rows)
-    return delete_collapses(model, entity)
+    Each selected object of a versioned or temporal family needs its own
+    observation before it is written, so the write needs its caller to read
+    first; the refusal names the verbs that write through such a read or a
+    revision the caller holds."""
+    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
+    versioned = any(attribute.optimistic_locking for attribute in position.applicable_attributes)
+    temporal = isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+    if versioned or temporal:
+        raise UsageError(
+            SET_BASED_WRITE_TARGET_UNSUPPORTED,
+            _readless_target_advice(entity, versioned, temporal, mutation),
+        )
+
+
+def _readless_target_advice(
+    entity: CompiledEntity,
+    versioned: bool,
+    temporal: bool,
+    mutation: str,
+) -> str:
+    # A deletion's keyed sibling is the destructive verb the target's kind admits.
+    sibling = mutation if mutation != "delete" else "terminate" if temporal else "delete"
+    revision = "version" if versioned else "tx_start"
+    return (
+        f"{entity.identity.name} is {'temporal' if temporal else 'versioned'}, so "
+        f"{mutation}_where cannot change it without reading it. Read it (find / stream) and "
+        f"{sibling} each object, or use {sibling}_if with the {revision} you hold."
+    )

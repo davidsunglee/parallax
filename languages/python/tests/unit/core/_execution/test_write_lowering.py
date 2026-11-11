@@ -578,7 +578,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
 
 def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
     # Batch grouping compares filtered slot selections
-    # (`handle.collapse_group_key`), so no PLANNED instruction is ever
+    # (`collapse_writes`), so no PLANNED instruction is ever
     # mixed-shape — a hand-built one is a caller wiring defect, and a silent
     # one: the emitted INSERT names the FIRST row's columns, so every later
     # row would bind positionally against a column list it does not match

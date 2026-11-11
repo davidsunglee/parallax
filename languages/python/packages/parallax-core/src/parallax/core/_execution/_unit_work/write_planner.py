@@ -6,30 +6,23 @@ from operator import itemgetter
 from typing import Never, final
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
-from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ExpectedVersion,
-    PreparedKeyedInstruction,
     PreparedPredicateInstruction,
-    derive_keyed_instruction,
 )
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
     AuditStrategy,
-    BatchingStrategy,
     UndecoratedAudit,
 )
+from parallax.core._execution._unit_work.write_collapse import collapse_writes
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     ComposedWrite,
-    InsertBatch,
-    KeyedInsert,
     MutationPhase,
-    ObjectLockedBatch,
-    ObjectLockedWrite,
     OrderedWrite,
     PostRemovalInsert,
     TargetWrite,
@@ -39,8 +32,6 @@ from parallax.core.internal import concurrency, inheritance, relationship, tempo
 from parallax.core.internal.concurrency import ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity, Metamodel
 from parallax.core.internal.temporal_write.coverage import CoverageTransform
-from parallax.core.internal.write_plan.keys import ObjectKey
-from parallax.core.internal.write_plan.managed_row import ManagedRow
 from parallax.core.internal.write_plan.payload import WritePayloadPreparer
 from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -97,8 +88,8 @@ class WritePlanner:
 
     Obtained only from
     :func:`~parallax.core._execution._planning.build_write_planner`, once per
-    accepted Metamodel with its batching and audit strategies already wired, so
-    every planner plans under production's one set of strategies;
+    accepted Metamodel with its audit strategy already wired, so
+    every planner plans under production's audit policy;
     :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
     the audit a deferred range of its plans binds under once that range's
     coverage is read, and :meth:`predicate_step` plans a predicate-selected
@@ -115,7 +106,6 @@ class WritePlanner:
 
     __slots__ = (
         "_audit",
-        "_batching",
         "_compiler",
         "_families",
         "_model",
@@ -134,19 +124,17 @@ class WritePlanner:
         cls,
         model: Metamodel,
         *,
-        batching: BatchingStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> WritePlanner:
         planner = cls.__new__(cls)
-        planner._wire(model, batching=batching, audit=audit, payloads=payloads)
+        planner._wire(model, audit=audit, payloads=payloads)
         return planner
 
     def _wire(
         self,
         model: Metamodel,
         *,
-        batching: BatchingStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> None:
@@ -155,7 +143,6 @@ class WritePlanner:
         self._temporal_facet = temporal_read.temporal_facet_of(model)
         self._relationships = relationship.relationship_facet_of(model)
         self._versioning = concurrency.concurrency_facet_of(model)
-        self._batching = batching
         self._audit = audit
         self._payloads = payloads
         self._settled = (
@@ -209,7 +196,7 @@ class WritePlanner:
             )
             if item is not None
         ]
-        batched = self._form_batches(survivors)
+        batched = collapse_writes(self._model, survivors)
         return self._compiler.compile(
             self._order(batched),
             preference=request.preference,
@@ -247,99 +234,6 @@ class WritePlanner:
             self.audit_decoration(
                 actor_identity=actor_identity, transaction_instant=transaction_instant
             ),
-        )
-
-    def _form_batches(
-        self, buffer: Sequence[ComposedWrite]
-    ) -> list[OrderedWrite | PostRemovalInsert]:
-        result: list[OrderedWrite | PostRemovalInsert] = []
-        candidates: list[KeyedInsert | ObjectLockedWrite] = []
-        batch: object = None
-
-        def batch_key(item: PreparedKeyedInstruction) -> object:
-            return self._batching.batch_key(self._model, item.target, item.mutation, item.rows[0])
-
-        def close_batch() -> None:
-            collapsed = self._collapsed(candidates) if len(candidates) > 1 else None
-            if collapsed is None:
-                result.extend(candidates)
-            else:
-                result.append(collapsed)
-            candidates.clear()
-
-        # Inserts and object-locked writes batch; an object-locked batch keeps
-        # every source evidence its writes held. A write carrying an
-        # observation is never merged into a multi-row batch: a merged
-        # statement shares ONE address, ONE assignment shape, and ONE
-        # affected-row total, while every fact an observation licenses is
-        # per-row — the milestone a close addresses, the version it advances
-        # from, the gate it binds under optimistic mode, and the single row each
-        # of those expects to affect. The exclusion therefore holds in locking
-        # mode too, where the settled write is Ungated and only the address, the
-        # advance, and the attribution are at stake. Neither does a write an
-        # insertion or a caller's condition licenses batch, and every write
-        # that does not batch reaches the `else` branch below as its own
-        # singleton. An admitted write is single-row by construction, so the
-        # batch this skips is the only way its row could have joined a
-        # multi-row statement. An insert that must follow a removal is a
-        # barrier no batch spans.
-        for item in buffer:
-            if isinstance(item, PostRemovalInsert):
-                close_batch()
-                result.append(item)
-            elif isinstance(item, KeyedInsert | ObjectLockedWrite):
-                instruction = item.instruction
-                item_batch = batch_key(instruction)
-                if (
-                    candidates
-                    and item_batch == batch
-                    and _shares_statement(candidates[-1].instruction, instruction)
-                ):
-                    candidates.append(item)
-                    continue
-                close_batch()
-                candidates.append(item)
-                batch = item_batch
-            else:
-                close_batch()
-                result.append(item)
-        close_batch()
-        return result
-
-    def _collapsed(
-        self, run: Sequence[KeyedInsert | ObjectLockedWrite]
-    ) -> InsertBatch | ObjectLockedBatch | None:
-        """``run`` as one multi-row instruction over every row of its
-        single-row instructions in run (buffer) order, with the entity,
-        mutation, and Valid-Time window its members already share, keeping the
-        object each row names and, for object-locked writes, every distinct
-        source evidence they retained; ``None`` where batching declines to
-        collapse it. A run shares one mutation, so it never mixes the two."""
-        rows: list[ManagedRow] = []
-        assigns = False
-        insert_keys: list[ObjectKey | None] = []
-        locked_keys: list[ObjectKey] = []
-        retained: dict[int, ReadEvidence] = {}
-        for item in run:
-            rows.extend(item.instruction.rows)
-            assigns = assigns or item.instruction.assigns
-            if isinstance(item, KeyedInsert):
-                insert_keys.append(item.object_key)
-                continue
-            locked_keys.append(item.object_key)
-            for held in item.source_evidence:
-                retained.setdefault(id(held), held)
-        first = run[0].instruction
-        if not self._batching.collapses(self._model, first.target, first.mutation, rows):
-            return None
-        merged = derive_keyed_instruction(first, tuple(rows), assigns=assigns)
-        if not locked_keys:
-            return InsertBatch(instruction=merged, object_keys=tuple(insert_keys))
-        assert not insert_keys  # a run shares one mutation
-        return ObjectLockedBatch(
-            instruction=merged,
-            object_keys=tuple(locked_keys),
-            source_evidence=tuple(retained.values()),
         )
 
     def _order(self, items: Sequence[OrderedWrite | PostRemovalInsert]) -> list[MutationPhase]:
@@ -425,14 +319,6 @@ def _key_attribute(
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
     return position.primary_key.identity
-
-
-def _shares_statement(last: PreparedKeyedInstruction, arriving: PreparedKeyedInstruction) -> bool:
-    return (
-        last.target == arriving.target
-        and last.mutation == arriving.mutation
-        and last.valid_time_window == arriving.valid_time_window
-    )
 
 
 def _without_noop_rows(

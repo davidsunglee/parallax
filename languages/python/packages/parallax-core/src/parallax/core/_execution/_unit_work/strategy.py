@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Collection, Container, Sequence
+from collections.abc import Collection, Container
 from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core.internal.base import InternalError
-from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.write_plan.managed_row import ManagedRow
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
@@ -21,7 +20,6 @@ __all__ = [
     "ActorIdentity",
     "AuditDecoration",
     "AuditStrategy",
-    "BatchingStrategy",
     "DatabaseLoginActor",
     "SubjectActor",
 ]
@@ -52,32 +50,6 @@ class DatabaseLoginActor:
 
 
 type ActorIdentity = SubjectActor | DatabaseLoginActor
-
-
-@runtime_checkable
-class BatchingStrategy(Protocol):
-    """Which buffered rows may share one statement (`m-batch-write`).
-
-    Eligibility and physical grouping are separate questions: the first is a
-    write-shape decision the batching policy owns, the second compares the
-    layout selections two rows make and belongs to model preparation.
-    """
-
-    def collapses(
-        self,
-        model: Metamodel,
-        entity: CompiledEntity,
-        mutation: str,
-        rows: Sequence[ManagedRow],
-    ) -> bool: ...
-
-    def batch_key(
-        self,
-        model: Metamodel,
-        entity: CompiledEntity,
-        mutation: str,
-        row: ManagedRow,
-    ) -> object: ...
 
 
 @runtime_checkable

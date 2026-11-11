@@ -163,7 +163,7 @@ A case is one of **ten shapes**, named by the required top-level `shape`:
   member makes the same read a **streamed** one (see *Streamed reads*, below).
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (`m-temporal-write` temporal writes and
-  `m-batch-write` set-based writes).
+  `m-unit-work` buffered collapse).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
   object-lifecycle modules — see *Lifecycle action steps*), or, under
@@ -2613,8 +2613,8 @@ against any row's contents):
   carries more than one row. Each row of a milestone chain closes its own current
   milestone, settles against its own Temporal Observation, and opens its own
   successors, and a temporal target never collapses into a set-based statement
-  (`m-batch-write`), so several rows under one instruction denote several
-  independent chains rather than one wider write (`m-unit-work` "A temporal keyed
+  (`m-unit-work` *Collapse is a membership decision*), so several rows under one
+  instruction denote several independent chains rather than one wider write (`m-unit-work` "A temporal keyed
   instruction carries exactly one row"). Refusing is the rule: settling the first
   row would silently discard the rest and invent an observation-to-row mapping the
   instruction cannot express. The row count a keyed instruction may carry depends

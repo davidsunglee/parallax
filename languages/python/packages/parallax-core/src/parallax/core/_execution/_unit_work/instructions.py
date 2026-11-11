@@ -25,6 +25,10 @@ from parallax.core.internal.base import (
     coerce_neutral_input,
     normalize_instant,
 )
+from parallax.core.internal.batch_write import (
+    SET_BASED_WRITE_TARGET_UNSUPPORTED,
+    judge_readless_target,
+)
 from parallax.core.internal.document_codec._plan import AuthoringRefusal, RootPolicy
 from parallax.core.internal.metamodel import (
     WRITE_ASSIGNMENT_CODES,
@@ -227,10 +231,6 @@ WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
 
 TEMPORAL_KEYED_WRITE_MULTI_ROW: Final = "temporal-keyed-write-multi-row"
 """A plural keyed instruction on a temporal target."""
-
-SET_BASED_WRITE_TARGET_UNSUPPORTED: Final = "set-based-write-target-unsupported"
-"""A predicate-selected write whose target needs an observation: a versioned or
-temporal Entity, which one readless statement cannot write (`m-batch-write`)."""
 
 READ_ONLY_WRITE_TARGET: Final = "read-only-write-target"
 """Any write whose target family's effective Persistence Mode is ReadOnly
@@ -972,7 +972,7 @@ def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruc
 
     Each row of a milestone chain closes its own current milestone, settles
     against its own Temporal Observation, and opens its own successors, and a
-    temporal entity never collapses into a set-based statement (`m-batch-write`),
+    temporal entity never collapses into a set-based statement (`m-unit-work`),
     so several rows under one keyed instruction denote several independent chains
     rather than one wider write (`m-unit-work` "A temporal keyed instruction
     carries exactly one row").
@@ -1817,46 +1817,8 @@ def _prepare_predicate_write(
 ) -> PreparedPredicateInstruction:
     """Judge a predicate write: whether its target can be written without
     being read at all, then its selecting predicate, family, and payload."""
-    _judge_readless_target(model, entity, position, instruction.mutation)
+    judge_readless_target(model, entity, position, instruction.mutation)
     return _prepare_predicate_payload(instruction, model, entity, position, entry, lane=lane)
-
-
-def _judge_readless_target(
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    mutation: PredicateMutation,
-) -> None:
-    """Refuse a predicate write whose target cannot be written by one readless
-    statement (`m-batch-write`).
-
-    Each selected object of a versioned or temporal family needs its own
-    observation before it is written, so the write needs its caller to read
-    first; the refusal names the verbs that write through such a read or a
-    revision the caller holds."""
-    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
-    if _requires_observation(position, shape):
-        raise UsageError(
-            SET_BASED_WRITE_TARGET_UNSUPPORTED,
-            _readless_target_advice(entity, position, shape, mutation),
-        )
-
-
-def _readless_target_advice(
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    shape: temporal_read.TemporalShape | None,
-    mutation: PredicateMutation,
-) -> str:
-    temporal = _is_temporal(shape)
-    # A deletion's keyed sibling is the destructive verb the target's kind admits.
-    sibling = mutation if mutation != "delete" else "terminate" if temporal else "delete"
-    revision = "version" if _is_versioned(position) else "tx_start"
-    return (
-        f"{entity.identity.name} is {'temporal' if temporal else 'versioned'}, so "
-        f"{mutation}_where cannot change it without reading it. Read it (find / stream) and "
-        f"{sibling} each object, or use {sibling}_if with the {revision} you hold."
-    )
 
 
 def _requires_observation(

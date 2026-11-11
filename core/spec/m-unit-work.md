@@ -20,9 +20,10 @@ Bounded automatic retry (`m-auto-retry`) coordinates replay of attempts.
 `m-unit-work` also owns **write finalization**: the Write Planner and its planning
 order, which settle buffered writes into `m-write-plan`'s Planned Steps;
 the authoritative affected-row enforcer; and the Write Effect Error family that
-enforcer raises (ADR 0041, ADR 0048). `m-batch-write` keeps its own batching
-policy and reaches planning only through the strategy port this module declares,
-which model preparation (`m-execution`) wires in once per accepted model.
+enforcer raises (ADR 0041, ADR 0048). Its planner owns collapse batching over
+admitted writes and prepared rows, without an injected batching strategy.
+`m-batch-write` owns only readless predicate policy, which this module consults
+when preparing a predicate write.
 Concurrency policy is a fact of the accepted model, which this module reads from
 the model's Concurrency Facet and applies to its own attempt state.
 
@@ -218,8 +219,8 @@ Three structural rules keep the instruction framework-honest:
   single row. Each row of a milestone chain closes its own current milestone,
   settles against its own Temporal Observation, and
   opens its own successors, and a temporal entity never collapses into a set-based
-  statement (`m-batch-write`), so several rows under one instruction denote several
-  independent chains rather than one wider write. An implementation **MUST** refuse
+  statement (*Collapse is a membership decision*), so several rows under one
+  instruction denote several independent chains rather than one wider write. An implementation **MUST** refuse
   such an instruction rather than settle its first row: reducing it would silently
   discard the rows the author wrote and invent an observation-to-row mapping the
   instruction cannot express. The row count a keyed instruction may carry therefore
@@ -1259,8 +1260,7 @@ wherever possible:
 
 - Multiple inserts or same-column updates of one entity become **one** Planned
   Step with several rows or keys, lowered as a single multi-row `INSERT` or a
-  batched `UPDATE`. The canonical golden forms and their proof are
-  `m-batch-write`.
+  batched `UPDATE`. The canonical golden forms belong to `m-sql`.
 - Operations are **ordered** so that a parent row is inserted before a child
   that references it (and deleted after), honoring foreign-key constraints.
 
@@ -1271,6 +1271,74 @@ after every write buffered before it, in a flush of its own (`m-batch-write`
 after it reaches a later flush. Each write is admitted as it always is, against
 what the earlier flushes completed (*Observation ownership and lifetime*,
 *Insertion authority*).
+
+### Collapse is a membership decision
+
+Batching is expressed by **membership in one Planned Step**, not by a marker on
+several. Compatible inserts become one Planned Insert with several entries;
+compatible uniform keyed updates or deletes become one Planned Update or Planned
+Delete whose Key Target holds several key tuples.
+
+- Two writes either share a step or they do not, and that is the whole of the
+  decision.
+- Execution grouping is a separate fact. A Write Group (`m-unit-work` *Write
+  Group formation*) decides which settled writes execute and complete together,
+  and execution may present their steps in shared calls (`m-execution`), but two
+  writes of one group never share a step: membership in one step stays the
+  planner's decision alone.
+- Incompatible writes remain **separate logical steps**. In particular a
+  **per-row gated** write (`m-concurrency`) can never join another: its gate binds
+  one row's observed version, so each stays its own step even where a driver
+  later transmits several in one batch.
+- Membership does not change semantics. One multi-key Key Target owns **one
+  aggregate** affected-row expectation for the rows it names (`m-unit-work`);
+  collapsing writes together never weakens or discards that expectation.
+
+### Set-based flush
+
+- Multiple inserts of the same entity stating the same member set and
+  generated-value shape collapse into a **single multi-row `INSERT`** rather than
+  one statement per row, spelled in the dialect's multi-row insert form (`m-sql`
+  *Batched insert / update*, `m-dialect`). Inserts differing in either stay
+  separate steps.
+- Multiple updates of the same entity that set the same columns collapse into a
+  single statement over a membership of their keys when the new value is
+  uniform across the keys. Otherwise each key stays its own step, and a dialect
+  with array parameters applies the steps setting one member set as one grouped
+  effect (`m-sql` *Grouped effects*), where a dialect without them runs one
+  statement per key.
+- Multiple deletes of the same **non-versioned** entity collapse into a **single
+  `DELETE`** over a membership of their keys rather than one statement per row —
+  the delete analogue of the multi-row `INSERT`. A **versioned** entity's
+  deletes cannot collapse: each key stays its own step, under its own
+  observation and exactly-one expectation, however its steps are then
+  presented. A dialect with array parameters applies them as one grouped effect
+  (`m-sql` *Grouped effects*), and a dialect without them runs one statement per
+  key.
+- A collapsed update or delete stays one step and one statement however many
+  keys it holds. A dialect with array parameters binds its membership as one
+  array per key Column, so its bind count follows its key Columns rather than
+  its keys; a dialect without them binds one placeholder per key value (`m-sql`
+  *Batched insert / update*).
+
+The suite proves the batched forms against real data by applying the golden DML
+and asserting the resulting table state (`m-case-format`).
+
+The planner decides eligibility, statement identity, member-presence shape,
+and whole-run value uniformity together, using the admitted writes and their
+prepared rows. It removes known no-op writes first. Only adjacent compatible
+single-row inserts and object-locked writes may collapse; observed-state writes,
+insertion-authorized writes, caller-conditioned writes, and inserts dependent
+on a prior removal are barriers. A same-shape update run with differing values
+stays decomposed as a whole, without smaller uniform sub-batches. A collapsed
+write retains row order, each addressed object, and every distinct source
+evidence in first-occurrence order.
+
+Temporal inserts and inserts with framework-generated primary keys remain
+separate. Insert rows state their applicable member set before collapse;
+updates compare present assigned values excluding the addressing key. Deletes
+compare no non-key payload shape. Document presence remains a member-level
+shape even when several members share one physical document column.
 
 ### Readless writes identify no target
 

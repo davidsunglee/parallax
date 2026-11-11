@@ -591,12 +591,11 @@ def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
     assert declared["parallax.snapshot"] == frozenset({"parallax.core.internal.entity"})
 
 
-def test_the_write_lowering_group_row_names_its_three_scopes() -> None:
-    # One row, three scopes in its scope cell, one shared grant.
+def test_the_write_lowering_group_row_names_its_two_scopes() -> None:
+    # One row, two scopes in its scope cell, one shared grant.
     declared = _spec_first_party_grants()
     group = [
         "parallax.core._execution._family",
-        "parallax.core._execution._keyed_sql",
         "parallax.core._execution._write_lowering",
     ]
     assert set(group) <= set(declared)
@@ -873,17 +872,14 @@ def test_no_runtime_scope_reaches_primary_key_generation() -> None:
         assert "parallax.core.internal.pk_gen" in forbidden[scope], scope
 
 
-def test_the_read_pipeline_row_forbids_the_write_policy_the_parent_reaches() -> None:
-    # The exclusion the read policy scope exists for: a read ladder composes over
-    # read delivery and reaches no write policy, which only a row narrower than
-    # the parent's can state — model preparation gives the parent that edge.
+def test_readless_policy_is_below_unit_work_and_reaches_no_planner() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.core._execution._read_pipeline"
     policy = "parallax.core.internal.batch_write"
-    assert policy in adjacency["parallax.core._execution"]
-    assert policy not in forbidden["parallax.core._execution"]
-    assert policy in forbidden[scope]
+    unit_work = "parallax.core._execution._unit_work"
+    assert policy in adjacency[unit_work]
+    assert unit_work not in dag.transitive_closure(adjacency, policy)
+    assert "parallax.core._execution" in dag.compute_forbidden(adjacency)[policy]
+    assert policy not in adjacency["parallax.core._execution"]
 
 
 def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_reaches() -> None:
@@ -1116,7 +1112,6 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
             "parallax.core._execution._read_pipeline",
             "parallax.core._execution._keyed_writes",
             "parallax.core._execution._family",
-            "parallax.core._execution._keyed_sql",
             "parallax.core._execution._write_lowering",
             "parallax.core._execution._retention",
             "parallax.core._execution._publication",
@@ -1133,12 +1128,13 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
 def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
     # A scope with grants has a closure to complement; widening every child row
     # to name its siblings would forbid intra-package edges §7 permits — the
-    # write-execution cluster's three modules import one another.
+    # write-execution cluster's two modules import one another.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     assert adjacency["parallax.core._execution._family"]
     assert (
-        "parallax.core._execution._keyed_sql" not in forbidden["parallax.core._execution._family"]
+        "parallax.core._execution._write_lowering"
+        not in forbidden["parallax.core._execution._family"]
     )
 
 
@@ -1167,7 +1163,7 @@ def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
             if declared.parent == parent:
                 assert broad < set(forbidden[child]), child
     # The read policy owns lowering, the port, and the lifecycle activities but
-    # still cannot reach batch writes; the lowering cluster may not reach the
+    # still cannot reach write payload preparation; the lowering cluster may not reach the
     # read side; and value publication reaches the Page child alone, so read
     # planning's SQL generation and lifecycle stay outside it.
     assert (
@@ -1178,10 +1174,12 @@ def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
         not in forbidden["parallax.core._execution._read_pipeline"]
     )
     assert (
-        "parallax.core.internal.batch_write" in forbidden["parallax.core._execution._read_pipeline"]
+        "parallax.core.internal.write_payload"
+        in forbidden["parallax.core._execution._read_pipeline"]
     )
     assert (
-        "parallax.core.internal.read_delivery" in forbidden["parallax.core._execution._keyed_sql"]
+        "parallax.core.internal.read_delivery"
+        in forbidden["parallax.core._execution._write_lowering"]
     )
     assert "parallax.core.internal.sql_gen" in forbidden["parallax.snapshot._publication"]
     assert "parallax.core.execution_lifecycle" in forbidden["parallax.snapshot._publication"]
@@ -1196,7 +1194,6 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.core._execution._read_pipeline",
             "parallax.core._execution._keyed_writes",
             "parallax.core._execution._family",
-            "parallax.core._execution._keyed_sql",
             "parallax.core._execution._write_lowering",
             "parallax.core._execution._retention",
             "parallax.core._execution._publication",
@@ -1666,19 +1663,20 @@ def test_a_scope_doing_no_database_work_reaches_no_database_port(scope: str) -> 
 # Canary 3: a child contract blocks what the parent contract permits.
 # --------------------------------------------------------------------------
 def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: Path) -> None:
-    # `m-batch-write` IS an edge of the parent execution scope, so the broad
+    # `m-write-payload` IS an edge of the parent execution scope, so the broad
     # contract permits this import; only the read policy's child contract can
     # reject it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    assert "parallax.core.internal.batch_write" in adjacency["parallax.core._execution"]
+    assert "parallax.core.internal.write_payload" in adjacency["parallax.core._execution"]
     reported = broken_by(
         linted_copy,
         "parallax.core._execution._read_pipeline",
-        "import parallax.core.internal.batch_write  # deliberate child-scope violation",
+        "import parallax.core.internal.write_payload  # deliberate child-scope violation",
     )
 
     assert (
-        "parallax.core._execution._read_pipeline -> parallax.core.internal.batch_write" in reported
+        "parallax.core._execution._read_pipeline -> parallax.core.internal.write_payload"
+        in reported
     )
 
 

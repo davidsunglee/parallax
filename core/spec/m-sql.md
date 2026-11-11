@@ -1365,7 +1365,7 @@ half of the contract.
 
 ### Batched insert / update
 
-The unit of work flushes buffered writes as set-based SQL (`m-batch-write`). A
+The unit of work flushes buffered writes as set-based SQL (`m-unit-work`). A
 batched **insert** of N rows of one entity is a **single multi-row `INSERT`**,
 not N statements. Its spelling is the dialect's multi-row insert form
 (`m-dialect` **array parameter cast form**). On Postgres it binds **one array
@@ -1438,7 +1438,7 @@ table-per-hierarchy tag guard follows the membership as it follows a single key:
     mariadb: [<new-balance>, <key1>, <key2>]
 ```
 
-Otherwise each key stays its own keyed `UPDATE` (`m-batch-write`), which a dialect
+Otherwise each key stays its own keyed `UPDATE` (`m-unit-work`), which a dialect
 with array parameters applies together as a grouped effect (*Grouped effects*,
 below) and a dialect without them runs one statement per key.
 

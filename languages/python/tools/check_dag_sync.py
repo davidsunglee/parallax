@@ -140,12 +140,12 @@ MODULE_SCOPE: Mapping[str, str] = {
 # this table spells it.
 PYTEST_BOUNDED_SCOPES: Mapping[str, str] = {"m-api-conformance": "tests.api"}
 
-# The write-execution child cluster (`_family`, `_keyed_sql`, `_write_lowering`)
-# is enforced as ONE group: the three modules share one §7 row, which names all
-# three, rather than each declaring its own. Grouping is deliberate — helpers
+# The write-execution child cluster (`_family`, `_write_lowering`)
+# is enforced as ONE group: the two modules share one §7 row, which names both,
+# rather than each declaring its own. Grouping is deliberate — helpers
 # move between the cluster's modules as the lowering pipeline evolves, and a
 # per-module row would turn every such internal move into a spec edit. The
-# group boundary is what carries the enforcement value: none of the three may
+# group boundary is what carries the enforcement value: neither may
 # reach the read side (`m-read-delivery`, `m-snapshot-read`, `m-read-planning`,
 # `m-navigate`, `parallax.core.internal.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
@@ -478,7 +478,6 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         }
     ),
     "parallax.core._execution._family": _LOWERING_GROUP_DEPS,
-    "parallax.core._execution._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.core._execution._write_lowering": _LOWERING_GROUP_DEPS,
     # A prepared Model Selection is process-local and holds no transaction,
     # connection, Clock, or Execution Lifecycle Provider. Granting the scope the
@@ -690,9 +689,6 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
         parent="parallax.core.internal.entity", policy="sealed"
     ),
     "parallax.core._execution._family": ChildScope(
-        parent="parallax.core._execution", policy="ordinary"
-    ),
-    "parallax.core._execution._keyed_sql": ChildScope(
         parent="parallax.core._execution", policy="ordinary"
     ),
     "parallax.core._execution._keyed_writes": ChildScope(

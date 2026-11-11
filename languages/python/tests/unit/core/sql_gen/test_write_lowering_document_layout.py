@@ -23,7 +23,6 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._unit_work.instructions import (
     PredicateSelection,
     PredicateWriteInstruction,
@@ -50,7 +49,7 @@ from parallax.core.internal.sql_gen._write import InsertStatementBuilder
 from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.core.internal.write_plan import PredecessorRow
-from parallax.core.internal.write_plan.managed_row import ManagedRow, predecessor_state
+from parallax.core.internal.write_plan.managed_row import predecessor_state
 from parallax.core.internal.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
 )
@@ -66,7 +65,7 @@ from parallax.core.internal.write_plan.steps import (
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.managed_rows import managed_row_of, row_selection_of
-from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
+from tests.unit._document_layout_support import PERSON, columns_model, document_model
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -320,14 +319,6 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
     # separates them. The Document Path is what does, and it must: every entry of
     # one Planned Insert has the same canonical member set (m-unit-work), so a run
     # answered same-shaped here would be one the Planned Insert refuses.
-    person = entity(DOCUMENT, "Person")
-    display_name = collapse_group_key(
-        DOCUMENT, person, "insert", _person_row(id=1, displayName="Ada")
-    )
-    score = collapse_group_key(DOCUMENT, person, "insert", _person_row(id=2, score=7))
-    same = collapse_group_key(DOCUMENT, person, "insert", _person_row(id=3, displayName="Bo"))
-    assert display_name != score
-    assert display_name == same
     first, second = _lower(
         KeyedWriteInstruction(
             "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7})
@@ -374,21 +365,6 @@ def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
     assert _documents(statement) == [(), ()]
-
-
-def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
-    # A delete renders its identity predicate alone, so its selection is the key
-    # columns and the document members it happens to carry are invisible.
-    person = entity(DOCUMENT, "Person")
-    assert collapse_group_key(
-        DOCUMENT, person, "delete", _person_row(id=1, displayName="Ada")
-    ) == collapse_group_key(DOCUMENT, person, "delete", _person_row(id=2, score=7))
-
-
-def _person_row(**members: object) -> ManagedRow:
-    return managed_row_of(
-        DOCUMENT, {AttributeIdentity(PERSON, name): value for name, value in members.items()}
-    )
 
 
 # --------------------------------------------------------------------------- #

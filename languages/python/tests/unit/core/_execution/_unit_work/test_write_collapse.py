@@ -1,17 +1,3 @@
-"""Unit pins for ``parallax.core.internal.batch_write`` (m-batch-write's injected
-collapse-eligibility vocabulary) and for the composition layer's own batch
-grouping.
-
-Direct, focused tests over the pure decision functions — independent of the
-Write Planner's own batching-stage adjacency logic (pinned in
-``test_write_planner.py``) and the rendered SQL (pinned in
-``test_write_lowering.py``). The final section composes
-the two: it plans through the SAME production wiring
-(``parallax.core._execution._planning.build_write_planner``) and lowers the resulting
-plan, pinning that a run only ever collapses rows whose filtered Table Layout
-slot selections match (`m-sql` "Physical DML ordering").
-"""
-
 from __future__ import annotations
 
 from decimal import Decimal
@@ -20,15 +6,19 @@ from typing import Literal
 import pytest
 
 from parallax.conformance import models
-from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._planning import build_write_planner
-from parallax.core.internal import batch_write
+from parallax.core._execution._unit_work.write_collapse import collapse_writes
+from parallax.core._execution._unit_work.write_items import (
+    InsertBatch,
+    ObjectLockedBatch,
+    ObjectLockedWrite,
+)
+from parallax.core.internal import inheritance
 from parallax.core.internal.base import INT64, UsageError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     CompiledEntity,
     EntityIdentity,
     Metamodel,
@@ -38,8 +28,10 @@ from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     WritePlanningRequest,
+    object_key,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_plan import ObjectKey, StateObservation, VersionObservation
 from parallax.core.internal.write_plan.payload import AssignmentPayload, WritePayloadPreparer
 from parallax.core.internal.write_plan.steps import (
     MISSING_TARGET,
@@ -53,9 +45,9 @@ from parallax.core.internal.write_plan.steps import (
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lowered_steps
-from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_model_support import formed
+from tests.unit._document_layout_support import PERSON, columns_model, document_model
 
 _MODELS = models.load_models()
 
@@ -153,141 +145,6 @@ def _flush_and_lower_steps(
     return list(lowered_steps(plan_steps(plan), payloads, model, POSTGRES))
 
 
-def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:
-    assert batch_write.insert_collapses(*WALLET) is True
-
-
-def test_insert_collapses_for_a_versioned_entity_too() -> None:
-    # The initial version is a derived constant, never observed — a
-    # versioned entity's insert collapses exactly like an unversioned one.
-    assert batch_write.insert_collapses(*ACCOUNT) is True
-
-
-def test_insert_never_collapses_for_a_temporal_entity() -> None:
-    assert batch_write.insert_collapses(*BALANCE) is False
-    assert batch_write.insert_collapses(*POSITION) is False
-
-
-def test_update_collapses_when_uniform_and_unversioned() -> None:
-    rows = [{"id": 1, "balance": Decimal("500.00")}, {"id": 2, "balance": Decimal("500.00")}]
-    assert batch_write.update_collapses(*WALLET, rows) is True
-
-
-def test_update_does_not_collapse_when_non_uniform() -> None:
-    rows = [{"id": 1, "balance": Decimal("111.00")}, {"id": 2, "balance": Decimal("222.00")}]
-    assert batch_write.update_collapses(*WALLET, rows) is False
-
-
-def test_update_never_collapses_for_a_versioned_entity_even_when_uniform() -> None:
-    rows = [{"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}]
-    assert batch_write.update_collapses(*ACCOUNT, rows) is False
-
-
-def test_update_never_collapses_for_a_temporal_entity() -> None:
-    rows = [{"id": 1, "value": Decimal("1.00")}, {"id": 2, "value": Decimal("1.00")}]
-    assert batch_write.update_collapses(*BALANCE, rows) is False
-
-
-def test_update_does_not_collapse_when_a_row_carries_an_observation_key() -> None:
-    # An explicit observedVersion control key is a per-row-observation signal
-    # REGARDLESS of the target's own versioned-ness.
-    rows = [
-        {"id": 1, "balance": Decimal("500.00"), "observedVersion": 1},
-        {"id": 2, "balance": Decimal("500.00"), "observedVersion": 1},
-    ]
-    assert batch_write.update_collapses(*WALLET, rows) is False
-
-
-def test_update_does_not_collapse_a_single_row() -> None:
-    assert batch_write.update_collapses(*WALLET, [{"id": 1, "balance": Decimal("1.00")}]) is False
-
-
-def test_delete_collapses_for_an_unversioned_entity() -> None:
-    assert batch_write.delete_collapses(*WALLET) is True
-
-
-def test_delete_never_collapses_for_a_versioned_entity() -> None:
-    assert batch_write.delete_collapses(*ACCOUNT) is False
-
-
-def test_delete_never_collapses_for_a_temporal_entity() -> None:
-    assert batch_write.delete_collapses(*BALANCE) is False
-
-
-@pytest.mark.parametrize(
-    ("target", "rows", "insert", "update", "delete"),
-    [
-        (
-            DOG,
-            [{"id": 1, "name": "Rex"}, {"id": 2, "name": "Rex"}],
-            True,
-            True,
-            True,
-        ),
-        (
-            FRIDGE,
-            [{"id": 1, "name": "Chill"}, {"id": 2, "name": "Chill"}],
-            True,
-            False,
-            False,
-        ),
-        (
-            DEPOSIT_RATE,
-            [{"id": 1, "amount": Decimal("1.00")}, {"id": 2, "amount": Decimal("1.00")}],
-            False,
-            False,
-            False,
-        ),
-        (
-            GENERATED_KEY_LEAF,
-            [{"id": 1, "title": "Crash"}, {"id": 2, "title": "Crash"}],
-            False,
-            True,
-            True,
-        ),
-    ],
-    ids=["unversioned-family", "versioned-family", "bitemporal-family", "generated-key-family"],
-)
-def test_a_descendant_collapses_as_its_family_root_decides(
-    monkeypatch: pytest.MonkeyPatch,
-    target: tuple[Metamodel, CompiledEntity],
-    rows: list[dict[str, object]],
-    insert: bool,
-    update: bool,
-    delete: bool,
-) -> None:
-    # Version, temporality, and the key are root-owned, so a descendant reads
-    # the answers its family formed rather than consulting any declaration: the
-    # uniform update runs differ only in the inherited key, which they address.
-    model, entity = target
-
-    def undeclared(member: object) -> object:
-        raise AssertionError(f"collapse eligibility consulted a declaration of {member}")
-
-    monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undeclared))
-    monkeypatch.setattr(type(entity), "declared_as_of_axes", property(undeclared))
-    monkeypatch.setattr(type(entity), "as_of_axis", undeclared)
-    assert batch_write.insert_collapses(model, entity) is insert
-    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undeclared))
-    assert batch_write.update_collapses(model, entity, rows) is update
-    assert batch_write.delete_collapses(model, entity) is delete
-
-
-def test_collapses_dispatches_by_mutation() -> None:
-    rows = [{"id": 1, "balance": Decimal("5.00")}, {"id": 2, "balance": Decimal("5.00")}]
-    assert batch_write.collapses(*WALLET, "insert", rows) is True
-    assert batch_write.collapses(*WALLET, "amend", rows) is True
-    assert batch_write.collapses(*WALLET, "delete", rows) is True
-    assert batch_write.collapses(*ACCOUNT, "delete", rows) is False
-
-
-# --------------------------------------------------------------------------- #
-# Batch grouping (m-sql "Physical DML ordering"): the planner's collapse stage  #
-# composed with the write lowering it feeds, under the composition layer's own  #
-# injected vocabulary.                                                          #
-# --------------------------------------------------------------------------- #
-
-
 def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() -> None:
     model, _ = WALLET
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
@@ -298,26 +155,6 @@ def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() ->
     ]
     with pytest.raises(UsageError, match=r"Wallet\.balance: required attribute"):
         _flush_and_lower(buffer, model)
-
-
-def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None:
-    # The grouping key is asked of every collapse candidate, before any lowering
-    # decides the row is renderable — so it stays TOTAL where a physical shape
-    # does not exist: an abstract family position owns no table, and a delete
-    # omitting its key addresses nothing. Both answer the same absent key,
-    # leaving the loud refusal to the builder.
-    payment_model, payment = _target("payment", "Payment")
-    payment_row = managed_row_of(
-        payment_model, {AttributeIdentity(payment.identity, "id"): 1}, entity=payment.identity
-    )
-    assert collapse_group_key(payment_model, payment, "insert", payment_row) is None
-    wallet_model, wallet = WALLET
-    keyless = managed_row_of(
-        wallet_model,
-        {AttributeIdentity(wallet.identity, "balance"): Decimal("5.00")},
-        entity=wallet.identity,
-    )
-    assert collapse_group_key(wallet_model, wallet, "delete", keyless) is None
 
 
 def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
@@ -404,3 +241,153 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
         "insert into wallet(id, owner, balance) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     ]
+
+
+@pytest.mark.parametrize(
+    ("target", "values", "collapses"),
+    [
+        (WALLET, {"owner": "Ada", "balance": Decimal("5.00")}, True),
+        (ACCOUNT, {"owner": "Ada", "balance": Decimal("5.00"), "version": 1}, True),
+        (BALANCE, {"acctNum": "A", "value": Decimal("5.00")}, False),
+        (DOG, {"name": "Rex"}, True),
+        (FRIDGE, {"name": "Chill"}, True),
+        (GENERATED_KEY_LEAF, {"title": "Crash", "severity": 1}, False),
+    ],
+    ids=["plain", "versioned", "temporal", "inherited", "inherited-version", "generated-key"],
+)
+def test_insert_runs_use_the_admitted_target_and_preserve_row_order(
+    target: tuple[Metamodel, CompiledEntity], values: dict[str, object], collapses: bool
+) -> None:
+    model, entity = target
+    writes = [
+        KeyedWriteInstruction("insert", entity.identity.canonical, ({"id": key, **values},))
+        for key in (3, 1, 2)
+    ]
+    admitted = observed_buffer(writes, model, None)
+    result = collapse_writes(model, admitted)
+    assert len(result) == (1 if collapses else 3)
+    if collapses:
+        (batch,) = result
+        assert isinstance(batch, InsertBatch)
+        position = inheritance.inheritance_facet_of(model).entity(entity.identity)
+        assert position is not None
+        assert tuple(row.cell(position.primary_key.identity) for row in batch.instruction.rows) == (
+            3,
+            1,
+            2,
+        )
+    else:
+        assert all(actual is expected for actual, expected in zip(result, admitted, strict=True))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "rows", "sizes"),
+    [
+        ("amend", ({"id": 3, "balance": Decimal("5")},), (1,)),
+        ("amend", ({"id": 3, "balance": Decimal("5")}, {"id": 1, "balance": Decimal("5")}), (2,)),
+        (
+            "amend",
+            (
+                {"id": 3, "balance": Decimal("5")},
+                {"id": 1, "balance": Decimal("5")},
+                {"id": 2, "balance": Decimal("6")},
+            ),
+            (1, 1, 1),
+        ),
+        ("amend", ({"id": 3, "balance": Decimal("5")}, {"id": 1, "owner": "Ada"}), (1, 1)),
+        ("delete", ({"id": 3, "balance": Decimal("5")}, {"id": 1}), (2,)),
+    ],
+    ids=["singleton", "uniform", "whole-run-nonuniform", "presence", "delete-payload"],
+)
+def test_object_locked_runs_preserve_whole_run_membership(
+    mutation: Literal["amend", "delete"],
+    rows: tuple[dict[str, object], ...],
+    sizes: tuple[int, ...],
+) -> None:
+    model, entity = WALLET
+    admitted = observed_buffer(
+        [KeyedWriteInstruction(mutation, entity.identity.canonical, (row,)) for row in rows],
+        model,
+        None,
+    )
+    result = collapse_writes(model, admitted)
+    assert (
+        tuple(
+            len(item.instruction.rows)
+            for item in result
+            if isinstance(item, ObjectLockedWrite | ObjectLockedBatch)
+        )
+        == sizes
+    )
+    assert tuple(
+        row.cell(AttributeIdentity(entity.identity, "id"))
+        for item in result
+        if isinstance(item, ObjectLockedWrite | ObjectLockedBatch)
+        for row in item.instruction.rows
+    ) == tuple(row["id"] for row in rows)
+
+
+@pytest.mark.parametrize("layout", ["columns", "document"])
+def test_presence_shapes_split_even_when_members_share_one_document(layout: str) -> None:
+    model = document_model() if layout == "document" else columns_model()
+    rows = ({"id": 3, "score": None}, {"id": 1, "displayName": None}, {"id": 2, "score": None})
+    admitted = observed_buffer(
+        [KeyedWriteInstruction("amend", PERSON.canonical, (row,)) for row in rows], model, None
+    )
+    result = collapse_writes(model, admitted)
+    assert len(result) == 3
+    assert all(actual is expected for actual, expected in zip(result, admitted, strict=True))
+
+
+@pytest.mark.parametrize("model", [columns_model(), document_model()], ids=["columns", "document"])
+def test_delete_runs_ignore_nonkey_presence(model: Metamodel) -> None:
+    rows = ({"id": 3, "score": 5}, {"id": 1, "displayName": "Ada"}, {"id": 2})
+    admitted = observed_buffer(
+        [KeyedWriteInstruction("delete", PERSON.canonical, (row,)) for row in rows], model, None
+    )
+    result = collapse_writes(model, admitted)
+    assert len(result) == 1
+    (batch,) = result
+    assert isinstance(batch, ObjectLockedBatch)
+    assert tuple(row.cell(AttributeIdentity(PERSON, "id")) for row in batch.instruction.rows) == (
+        3,
+        1,
+        2,
+    )
+
+
+@pytest.mark.parametrize("target", [DOG, GENERATED_KEY_LEAF], ids=["inherited", "generated-key"])
+def test_uniform_updates_exclude_the_inherited_addressing_key(
+    target: tuple[Metamodel, CompiledEntity],
+) -> None:
+    model, entity = target
+    member = "name" if entity.identity.name == "Dog" else "title"
+    writes = [
+        KeyedWriteInstruction("amend", entity.identity.canonical, ({"id": key, member: "same"},))
+        for key in (3, 1)
+    ]
+    (batch,) = collapse_writes(model, observed_buffer(writes, model, None))
+    assert isinstance(batch, ObjectLockedBatch)
+    assert tuple(key.primary_key for key in batch.object_keys) == ((("id", 3),), (("id", 1),))
+
+
+@pytest.mark.parametrize("target", [ACCOUNT, FRIDGE], ids=["versioned", "inherited-version"])
+@pytest.mark.parametrize("mutation", ["amend", "delete"])
+def test_observed_writes_remain_separate_despite_uniform_values(
+    target: tuple[Metamodel, CompiledEntity], mutation: Literal["amend", "delete"]
+) -> None:
+    model, entity = target
+    member = "owner" if entity.identity.name == "Account" else "name"
+    writes = [
+        KeyedWriteInstruction(mutation, entity.identity.canonical, ({"id": key, member: "same"},))
+        for key in (3, 1)
+    ]
+    observations: dict[ObjectKey, StateObservation] = {}
+    for write in writes:
+        key = object_key(write, model)
+        assert key is not None
+        observations[key] = VersionObservation(observed_version=1)
+    admitted = observed_buffer(writes, model, observations)
+    result = collapse_writes(model, admitted)
+    assert len(result) == 2
+    assert all(actual is expected for actual, expected in zip(result, admitted, strict=True))
