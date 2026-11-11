@@ -106,7 +106,7 @@ entities:
       tagValue: boar
     attributes:
       - name: tuskLength
-        type: decimal(18,2)
+        type: numeric(18,2)
         nullable: true
   # The polymorphic OWNER (Phase 6): a plain non-inheritance entity whose
   # relationships target the abstract root and the abstract subtype, so navigation

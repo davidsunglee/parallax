@@ -1,4 +1,4 @@
-# Portable document encoding: a `decimal(p, s)` equality binds the EXACT decimal, not
+# Portable document encoding: a `numeric(p, s)` equality binds the EXACT decimal, not
 # the JSON number that carried the literal (m-document-codec, m-dialect, m-sql), on
 # Postgres AND MariaDB.
 model: models/document-codec.yaml

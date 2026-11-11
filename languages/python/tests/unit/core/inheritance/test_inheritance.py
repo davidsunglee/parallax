@@ -326,7 +326,7 @@ def test_judge_assignment_rejects_a_top_level_many_element_type_mismatch() -> No
 # The predicate-write assignment check and the keyed-write-row check enforce   #
 # ONE scalar value contract: exact `m-core` logical membership, not a          #
 # category guess. A `Decimal` carrying more fractional digits than a           #
-# `decimal(p,s)` position can represent is a non-member both entry points      #
+# `numeric(p,s)` position can represent is a non-member both entry points      #
 # reject, and a representable one both accept.                                  #
 # --------------------------------------------------------------------------- #
 _INVOICE = identity("Invoice")
@@ -335,7 +335,7 @@ _INVOICE_ENTITY = Entity(
     table="invoice",
     attributes=(
         Attribute(name="id", type="int64", column="id", primary_key=True),
-        Attribute(name="amount", type="decimal(18,2)", column="amount"),
+        Attribute(name="amount", type="numeric(18,2)", column="amount"),
     ),
 )
 _INVOICE_DESCRIPTOR = Metamodel(entities=(_INVOICE_ENTITY,))

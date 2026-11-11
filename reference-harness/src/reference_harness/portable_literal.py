@@ -61,7 +61,7 @@ _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 # number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
 _BINARY32_MAX_BITS = 0x7F7FFFFF
 _BINARY32_OVERFLOW = Fraction(2) ** 128 - Fraction(2) ** 103
-_DECIMAL_TYPE = re.compile(r"^decimal\(([0-9]+),\s*([0-9]+)\)$")
+_NUMERIC_TYPE = re.compile(r"^numeric\(([0-9]+),\s*([0-9]+)\)$")
 
 
 type PortableLiteralReason = Literal["type-mismatch", "noncanonical", "out-of-space"]
@@ -131,7 +131,7 @@ def encode(value: Any, neutral_type: str) -> Any:
 
 
 def _codec(neutral_type: str) -> _Codec | None:
-    if _DECIMAL_TYPE.fullmatch(neutral_type) is not None:
+    if _NUMERIC_TYPE.fullmatch(neutral_type) is not None:
         return _DECIMAL_CODEC
     return _CODECS.get(neutral_type)
 
@@ -143,7 +143,7 @@ def _unknown_neutral_type(neutral_type: str) -> Never:
 
 
 def _decode_decimal(value: Any, neutral_type: str) -> decimal.Decimal:
-    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    decimal_type = _NUMERIC_TYPE.fullmatch(neutral_type)
     assert decimal_type is not None
     precision, scale = (int(part) for part in decimal_type.groups())
     if not isinstance(value, str):
@@ -160,7 +160,7 @@ def _decode_decimal(value: Any, neutral_type: str) -> decimal.Decimal:
 
 
 def _encode_decimal(value: Any, neutral_type: str) -> str:
-    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    decimal_type = _NUMERIC_TYPE.fullmatch(neutral_type)
     assert decimal_type is not None
     precision, scale = (int(part) for part in decimal_type.groups())
     if isinstance(value, decimal.Decimal) and _decimal_in_space(value, precision, scale):
@@ -337,7 +337,7 @@ def values_equal(
         return neutral_type == "json" and _same_json(left, right)
     if type(left) is type(right) and left == right:
         return True
-    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    decimal_type = _NUMERIC_TYPE.fullmatch(neutral_type)
     if tolerance is not None and decimal_type is not None:
         try:
             one = left if isinstance(left, decimal.Decimal) else decode(left, neutral_type)

@@ -17,7 +17,7 @@ Two contract facts are asserted, both Docker-free:
    (``oneOf`` / ``anyOf`` / ``not``) collapsed to one violation at the branching
    path, and equal ``(path, rule)`` violations collapsed to one. The value
    phase judges only schema-valid documents and realizes the m-descriptor
-   named rejections: a ``type-spelling-invalid`` violation for a decimal
+   named rejections: a ``type-spelling-invalid`` violation for a numeric
    spelling whose parameters break the m-core bounds or carry non-canonical
    digits, a ``temporal-attribute-declared`` violation for an authored Attribute
    bearing an as-of axis endpoint's canonical name, and an
@@ -117,17 +117,17 @@ def canonical_violations(document: Any, schema: dict[str, Any]) -> list[Violatio
     return sorted(identities, key=violation_sort_key)
 
 
-_DECIMAL_SPELLING = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
+_NUMERIC_SPELLING = re.compile(r"^numeric\(([0-9]+),([0-9]+)\)$")
 _CANONICAL_DIGITS = re.compile(r"^(?:0|[1-9][0-9]*)$")
 
 
-def _decimal_spelling_invalid(spelling: str) -> bool:
-    """True when a schema-valid decimal ``type`` spelling denotes an
+def _numeric_spelling_invalid(spelling: str) -> bool:
+    """True when a schema-valid numeric ``type`` spelling denotes an
     unconstructible core value: a parameter with non-canonical digits (a
     superfluous leading zero), a zero precision, or a scale exceeding the
-    precision. A non-decimal spelling is never judged here — the schema owns
+    precision. A non-numeric spelling is never judged here — the schema owns
     its validity."""
-    match = _DECIMAL_SPELLING.match(spelling)
+    match = _NUMERIC_SPELLING.match(spelling)
     if match is None:
         return False
     precision_text, scale_text = match.groups()
@@ -206,7 +206,7 @@ def canonical_value_violations(document: Any) -> list[Violation]:
 
     Meaningful only for a schema-valid document. The named rejection set is
     exactly the rules m-descriptor names for phase 3: every ``type`` member
-    holding a decimal spelling whose parameters break the m-core bounds or
+    holding a numeric spelling whose parameters break the m-core bounds or
     carry non-canonical digits is one ``type-spelling-invalid`` violation at
     that member's document path, every authored Attribute bearing an as-of axis
     endpoint's canonical name is one ``temporal-attribute-declared`` violation at
@@ -218,7 +218,7 @@ def canonical_value_violations(document: Any) -> list[Violation]:
     def walk(node: Any, path: tuple[str | int, ...]) -> None:
         if isinstance(node, dict):
             spelling = node.get("type")
-            if isinstance(spelling, str) and _decimal_spelling_invalid(spelling):
+            if isinstance(spelling, str) and _numeric_spelling_invalid(spelling):
                 identities.add(Violation((*path, "type"), "type-spelling-invalid"))
             for key, child in node.items():
                 walk(child, (*path, key))

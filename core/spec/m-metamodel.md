@@ -485,7 +485,7 @@ roles are refused by their owners: an As-Of Axis endpoint below, a relationship
 join endpoint by `m-relationship`, and an Index component by `m-storage-layout`.
 `column` and `read_only` keep their ordinary meaning for it.
 
-An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Decimal, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. Max and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
+An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Numeric, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. Max and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
 
 These reference-free key invariants hold at normalized Attribute construction, before the Unresolved Metamodel seam. This policy does not add a primary-key nullability restriction or change the single-attribute key model.
 

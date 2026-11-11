@@ -75,16 +75,16 @@ these variants; no module defines a parallel type vocabulary.
 ```text
 NeutralType =
     Boolean | Int32 | Int64 | Float32 | Float64
-  | Decimal(precision: int, scale: int)   # both REQUIRED
+  | Numeric(precision: int, scale: int)   # both REQUIRED
   | String | Bytes | Date | Time | Timestamp | Uuid | Json
 ```
 
-`Decimal(precision, scale)` is the sole parametric variant: precision and scale
-are REQUIRED integer parameters with no defaults, so an unparameterized decimal
+`Numeric(precision, scale)` is the sole parametric variant: precision and scale
+are REQUIRED integer parameters with no defaults, so an unparameterized Numeric
 type is unconstructible. The parameters satisfy `precision >= 1` and
-`0 <= scale <= precision`; a `Decimal` outside these bounds — a negative
-parameter, a zero precision (e.g. `Decimal(0, 9)`), or a scale exceeding the
-precision — is unconstructible, so every structured `Decimal` value has a
+`0 <= scale <= precision`; a `Numeric` outside these bounds — a negative
+parameter, a zero precision (e.g. `Numeric(0, 9)`), or a scale exceeding the
+precision — is unconstructible, so every structured `Numeric` value has a
 serializable descriptor spelling (`m-descriptor` "Type spellings").
 
 Descriptor type spellings belong to `m-descriptor` alone (`m-descriptor`
@@ -103,7 +103,7 @@ variant to an equivalent concrete column type through the dialect seam
 | `Int64` | 64-bit signed integer | `bigint` | |
 | `Float32` | 32-bit IEEE-754 | `real` | |
 | `Float64` | 64-bit IEEE-754 | `double precision` | |
-| `Decimal(precision, scale)` | exact fixed-point | `numeric(p,s)` | money / exact math |
+| `Numeric(precision, scale)` | exact fixed-point | `numeric(p,s)` | money / exact math |
 | `String` | variable-length text | `text` / `varchar(n)` | optional `maxLength` ⇒ `varchar(n)`; UTF-8 |
 | `Bytes` | binary blob | `bytea` | |
 | `Date` | calendar date, no time | `date` | timezone-naive (wall-clock) |
@@ -123,7 +123,7 @@ for that value; `ManagedValue` is the implementation vocabulary for its carrier.
 Neither is a tagged wrapper. Every position carrying one is already typed by its
 declaration, so a stored tag could carry no additional information. Runtime
 membership against the accompanying `NeutralType` remains authoritative because
-a host-language union alone cannot express integer width, float width, Decimal
+a host-language union alone cannot express integer width, float width, Numeric
 precision/scale, top-level `Json` null exclusion, or temporal bounds.
 
 How a managed value is written, and which serialized literals decode to one,
@@ -135,7 +135,7 @@ type from a carrier or implement a parallel string/number conversion table.
 | `Boolean` | the two truth values | — |
 | `Int32` / `Int64` | signed integers in the 32-/64-bit two's-complement range | numeric equality |
 | `Float32` / `Float64` | **finite** IEEE-754 binary32 / binary64 values — NaNs and the infinities are not members (see below) | IEEE numeric equality on finite values; the two IEEE zeros are one logical value: `-0.0` normalizes to `+0.0` at the framework boundary, so the sign of a zero carries no information |
-| `Decimal(precision, scale)` | exact decimal values `unscaled × 10^-scale` with at most `precision` total digits | exact numeric equality at the declared scale; no rounding and no floating-point intermediate |
+| `Numeric(precision, scale)` | exact decimal values `unscaled × 10^-scale` with at most `precision` total digits | exact numeric equality at the declared scale; no rounding and no floating-point intermediate |
 | `String` | Unicode text (UTF-8 encodable) | codepoint equality; no Unicode normalization is applied |
 | `Bytes` | finite octet sequences | byte equality |
 | `Date` | timezone-naive proleptic-Gregorian calendar dates | wall-clock; no timezone normalization (see below) |
@@ -181,7 +181,7 @@ decoding:
 
 - exact managed carriers are retained, with valid offset-aware timestamps
   normalized to UTC and float negative zero normalized to positive zero;
-- an integer may widen to Decimal exactly;
+- an integer may widen to Numeric exactly;
 - an integer may widen to Float32 or Float64 only when the target width carries
   it losslessly;
 - a host float is projected immediately to the declared float width, rejecting
@@ -189,7 +189,7 @@ decoding:
   the actual binary32 result;
 - a canonical UUID string may widen to a UUID carrier where a language's
   developer surface documents that convenience; and
-- serialized spellings such as timestamp strings, byte hex, Decimal strings,
+- serialized spellings such as timestamp strings, byte hex, Numeric strings,
   and arbitrary Wire number alternatives are not developer-input coercions.
 
 Which number a host float denotes, when the host language's float type is wider

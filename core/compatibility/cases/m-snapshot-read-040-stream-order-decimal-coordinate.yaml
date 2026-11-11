@@ -1,4 +1,4 @@
-# A streamed page ordered by a document-resident `decimal(12,2)` compares under
+# A streamed page ordered by a document-resident `numeric(12,2)` compares under
 # the declared type's cast, so the captured carrier is what that cast evaluated
 # and the seek binds it back at the declared scale. Both the caller predicate and
 # the generated seek carry `10.25` while every comparison casts the extracted

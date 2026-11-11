@@ -21,8 +21,8 @@ A variant added, removed, or renamed in one home but not the others would let
 the algebra, the wire grammar, and the schema silently diverge — a model could
 then pass schema validation with a type the algebra does not define, or the
 spec could promise a variant no descriptor can spell. This module parses all
-four homes, normalizes each to the lowercase variant-token set (``Decimal`` /
-``decimal(<p>,<s>)`` / ``decimal\\(...\\)`` all normalize to ``decimal``), and
+four homes, normalizes each to the lowercase variant-token set (``Numeric`` /
+``numeric(<p>,<s>)`` / ``numeric\\(...\\)`` all normalize to ``numeric``), and
 fails when any home lacks a variant another declares — so a future variant
 lands in all four homes or not at all.
 """
@@ -61,10 +61,10 @@ _TEXT_FENCE = re.compile(r"```text\n(.*?)```", re.DOTALL)
 _ALGEBRA_VARIANT = re.compile(r"[A-Z][A-Za-z0-9]*")
 
 # A spelling cell: one backticked lowercase token, optionally parameterized
-# (``decimal(<precision>,<scale>)``).
+# (``numeric(<precision>,<scale>)``).
 _SPELLING_CELL = re.compile(r"`([a-z][a-z0-9]*)(?:\(.*\))?`")
 
-# The leading token of one schema-pattern alternative (``decimal\(...`` -> ``decimal``).
+# The leading token of one schema-pattern alternative (``numeric\(...`` -> ``numeric``).
 _PATTERN_TOKEN = re.compile(r"^[a-z][a-z0-9]*")
 
 _ALGEBRA_SECTION_MARKER = "`NeutralType` algebra"

@@ -20,7 +20,7 @@ specified in those modules.
 
 - Element-type and property **names** are `camelCase`.
 - Neutral data-type **names** are lowercase (e.g. `int64`, `string`,
-  `decimal(p,s)`).
+  `numeric(p,s)`).
 - Enumerated string **values** are `kebab-case`, lowercase (e.g.
   `read-only`, `table-per-hierarchy`).
 - Booleans are `true` / `false`.
@@ -88,7 +88,7 @@ type string.
 | `Int64` | `int64` |
 | `Float32` | `float32` |
 | `Float64` | `float64` |
-| `Decimal(precision, scale)` | `decimal(<precision>,<scale>)` |
+| `Numeric(precision, scale)` | `numeric(<precision>,<scale>)` |
 | `String` | `string` |
 | `Bytes` | `bytes` |
 | `Date` | `date` |
@@ -97,16 +97,16 @@ type string.
 | `Uuid` | `uuid` |
 | `Json` | `json` |
 
-Every spelling is a single lowercase token. `decimal` is the sole parameterized
-spelling: `decimal(` + precision + `,` + scale + `)` with both decimal-integer
-parameters REQUIRED and no interior whitespace — e.g. `decimal(18,2)`. Each
+Every spelling is a single lowercase token. `numeric` is the sole parameterized
+spelling: `numeric(` + precision + `,` + scale + `)` with both decimal-integer
+parameters REQUIRED and no interior whitespace — e.g. `numeric(18,2)`. Each
 parameter is spelled as unsigned canonical decimal digits (no sign, no leading
 zeros), and the pair MUST satisfy the `m-core` bounds (`precision >= 1`,
 `0 <= scale <= precision`). The schema admits any digit string, so a spelling
 whose parameters break the bounds or carry non-canonical digits — e.g.
-`decimal(0,9)`, `decimal(2,5)`, or `decimal(09,2)` — is schema-valid text the
+`numeric(0,9)`, `numeric(2,5)`, or `numeric(09,2)` — is schema-valid text the
 adapter rejects in the semantic phase; every in-bounds spelling round-trips to
-and from the structured `Decimal(precision, scale)` variant.
+and from the structured `Numeric(precision, scale)` variant.
 Reladomo's per-attribute `timezoneConversion` is intentionally absent
 (timestamps are UTC-normalized globally, per `m-core`).
 
@@ -209,7 +209,7 @@ entity's **effective inherited classification** within its family.
 | Property | Values / meaning |
 |---|---|
 | `name` | attribute name (REQUIRED) |
-| `type` | neutral **scalar** type spelling (REQUIRED; see "Type spellings" — every spelling except `json`); `decimal(p,s)` carries precision/scale |
+| `type` | neutral **scalar** type spelling (REQUIRED; see "Type spellings" — every spelling except `json`); `numeric(p,s)` carries precision/scale |
 | `column` | optional DB column override; omission means `defaultColumn(name)` |
 | `primaryKey` | bool, default `false` |
 | `nullable` | bool, default `false` |
@@ -636,7 +636,7 @@ JSON-Schema keywords:
 
 | Rule | Meaning |
 |---|---|
-| `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `decimal(0,9)`, `decimal(2,5)`, `decimal(09,2)` |
+| `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `numeric(0,9)`, `numeric(2,5)`, `numeric(09,2)` |
 | `temporal-attribute-declared` | an authored `attribute` bearing the canonical name of an endpoint its Entity's `temporality` derives |
 | `index-temporal-attribute` | an authored `index` component naming an As-Of Axis endpoint its Entity's `temporality` derives |
 

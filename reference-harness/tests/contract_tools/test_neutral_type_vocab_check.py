@@ -38,7 +38,7 @@ _EXPECTED_VARIANTS = {
     "int64",
     "float32",
     "float64",
-    "decimal",
+    "numeric",
     "string",
     "bytes",
     "date",

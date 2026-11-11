@@ -21,7 +21,7 @@ entity:
       type: string
       maxLength: 32
     - name: value
-      type: decimal(18,2)
+      type: numeric(18,2)
       column: val
   indices:
     - name: ledger_acct

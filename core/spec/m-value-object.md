@@ -154,13 +154,13 @@ An extracted leaf is decoded by its **declared** Neutral Type through
 compared literal follows the same split the extraction does (`m-dialect`): where
 the extraction compares as text, the bind is that type's **comparison text** from
 the same module; where the extraction is cast — the numeric family and `boolean` —
-the bind is the managed value in its declared type, so a `decimal` leaf binds the
+the bind is the managed value in its declared type, so a `numeric` leaf binds the
 exact decimal and a `boolean` leaf the boolean. A to-many equality a dialect
 expresses by document **containment** rather than by extraction (`m-dialect`)
 binds a third form from the same module — the containment candidate, carrying
 each constrained leaf's **document encoding** — because what it must match is the
 element as stored. That is what makes a `date`,
-`decimal`, `bytes`, `time`, `timestamp`, `uuid`, or `boolean` leaf comparable at
+`numeric`, `bytes`, `time`, `timestamp`, `uuid`, or `boolean` leaf comparable at
 all: both sides of the comparison are the one form the codec and the dialect agree
 on, rather than whatever a host language would have rendered.
 
@@ -186,7 +186,7 @@ the two representations cannot diverge. This module keeps the column count, the
 bind count, and the whole-document replace semantics; the codec keeps the bytes.
 Every leaf of a written document carries the storage form `m-document-codec`
 defines, whatever builds it; a host-language JSON serializer defines no such form
-for a `decimal`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf.
+for a `numeric`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf.
 
 Typed and serialized ingress are one rule: the same authored document meets the
 same containment, required-member, and `many` normalization rules, stores the same

@@ -45,7 +45,7 @@ entities:
       - name: qty
         type: int32
       - name: price
-        type: decimal(18,2)
+        type: numeric(18,2)
       - name: active
         type: boolean
       - name: orderedOn

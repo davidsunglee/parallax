@@ -38,7 +38,7 @@ entities:
         type: int64
         primaryKey: true
       - name: celsius
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: MeterReading
     namespace: parallax.compatibility
     inheritance:

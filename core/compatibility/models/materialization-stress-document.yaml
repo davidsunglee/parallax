@@ -18,7 +18,7 @@ entities:
       - { name: big, type: int64, nullable: true }
       - { name: ratio, type: float32, nullable: true }
       - { name: measure, type: float64, nullable: true }
-      - { name: amount, type: "decimal(12,2)", nullable: true }
+      - { name: amount, type: "numeric(12,2)", nullable: true }
       - { name: blob, type: bytes, nullable: true }
       - { name: day, type: date, nullable: true }
       - { name: clock, type: time, nullable: true }
@@ -34,7 +34,7 @@ entities:
           - { name: big, type: int64, nullable: true }
           - { name: ratio, type: float32, nullable: true }
           - { name: measure, type: float64, nullable: true }
-          - { name: amount, type: "decimal(12,2)", nullable: true }
+          - { name: amount, type: "numeric(12,2)", nullable: true }
           - { name: blob, type: bytes, nullable: true }
           - { name: day, type: date, nullable: true }
           - { name: clock, type: time, nullable: true }
@@ -62,7 +62,7 @@ entities:
           - { name: big, type: int64, nullable: true }
           - { name: ratio, type: float32, nullable: true }
           - { name: measure, type: float64, nullable: true }
-          - { name: amount, type: "decimal(12,2)", nullable: true }
+          - { name: amount, type: "numeric(12,2)", nullable: true }
           - { name: blob, type: bytes, nullable: true }
           - { name: day, type: date, nullable: true }
           - { name: clock, type: time, nullable: true }

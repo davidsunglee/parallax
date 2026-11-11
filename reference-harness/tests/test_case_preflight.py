@@ -32,7 +32,7 @@ def _case(
                 "table": "reading",
                 "attributes": [
                     {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                    {"name": "amount", "type": "decimal(12,2)", "column": "amount"},
+                    {"name": "amount", "type": "numeric(12,2)", "column": "amount"},
                     {"name": "day", "type": "date", "column": "day"},
                 ],
                 "valueObjects": [
@@ -665,7 +665,7 @@ def _polymorphic_case(*, scenario: bool) -> Case:
                         "parent": "example.Payment",
                         "tagValue": "cash",
                     },
-                    "attributes": [{"name": "detail", "type": "decimal(18,2)", "column": "detail"}],
+                    "attributes": [{"name": "detail", "type": "numeric(18,2)", "column": "detail"}],
                 },
             ]
         },
@@ -686,12 +686,12 @@ def _polymorphic_case(*, scenario: bool) -> Case:
 
 
 def test_preflight_checks_top_level_expected_rows_against_their_type() -> None:
-    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*type-mismatch for decimal"):
+    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*type-mismatch for numeric"):
         preflight_case_literals(_polymorphic_case(scenario=False))
 
 
 def test_preflight_checks_scenario_expected_rows_against_their_type() -> None:
-    with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*type-mismatch for decimal"):
+    with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*type-mismatch for numeric"):
         preflight_case_literals(_polymorphic_case(scenario=True))
 
 
@@ -946,7 +946,7 @@ def _locking_session_statement(case: Case) -> Any:
             _read_statement,
             {"postgres": 5, "mariadb": 7},
             10,
-            r"decimal\(18,2\)",
+            r"numeric\(18,2\)",
         ),
         (
             "m-inheritance-127-document-layout-tpcs-nested-narrow-predicate",
@@ -960,14 +960,14 @@ def _locking_session_statement(case: Case) -> Any:
             _read_statement,
             {"postgres": 5, "mariadb": 7},
             10,
-            r"decimal\(18,2\)",
+            r"numeric\(18,2\)",
         ),
         (
             "m-concurrency-055-document-layout-tph-partitioned-blocks-writer",
             _locking_session_statement,
             {"postgres": 2, "mariadb": 3},
             10,
-            r"decimal\(18,2\)",
+            r"numeric\(18,2\)",
         ),
     ],
 )
@@ -1066,7 +1066,7 @@ def _payment_document_update(dialect: str, kind: str, value: object) -> Case:
 @pytest.mark.parametrize(
     ("kind", "canonical", "damaged", "declared"),
     [
-        ("cash", "12.50", -0.0, r"decimal\(18,2\)"),
+        ("cash", "12.50", -0.0, r"numeric\(18,2\)"),
         ("card", "visa-4242", 12.5, "string"),
     ],
 )
@@ -1110,7 +1110,7 @@ def test_preflight_types_a_shared_document_by_the_tag_its_own_scope_pins(dialect
     preflight_case_literals(
         _payment_detail_read(dialect, where, ["cash", "<path>", "12.50", "card"])
     )
-    with pytest.raises(CaseFailure, match=rf"binds\.{dialect}\[2\]: .* for decimal\(18,2\)"):
+    with pytest.raises(CaseFailure, match=rf"binds\.{dialect}\[2\]: .* for numeric\(18,2\)"):
         preflight_case_literals(
             _payment_detail_read(dialect, where, ["cash", "<path>", -0.0, "card"])
         )
@@ -1163,9 +1163,9 @@ def test_preflight_types_each_document_of_a_column_array_by_its_own_rows_tag(
 @pytest.mark.parametrize(
     ("kinds", "details", "location", "declared"),
     [
-        (["cash", "card"], [-0.0, "visa-4242"], r"\[2\]\[0\]", r"decimal\(18,2\)"),
+        (["cash", "card"], [-0.0, "visa-4242"], r"\[2\]\[0\]", r"numeric\(18,2\)"),
         (["cash", "card"], ["12.50", 12.5], r"\[2\]\[1\]", "string"),
-        (["card", "cash"], ["visa-4242", -0.0], r"\[2\]\[1\]", r"decimal\(18,2\)"),
+        (["card", "cash"], ["visa-4242", -0.0], r"\[2\]\[1\]", r"numeric\(18,2\)"),
     ],
 )
 def test_preflight_refuses_a_column_array_document_its_own_rows_tag_declares_otherwise(
@@ -1192,7 +1192,7 @@ def test_preflight_reads_a_column_array_spelled_through_casts_and_parentheses(
     )
 
     documents = [{"detail": -0.0}, {"detail": "visa-4242"}]
-    with pytest.raises(CaseFailure, match=r"\[2\]\[0\]\.detail: .* for decimal\(18,2\)"):
+    with pytest.raises(CaseFailure, match=r"\[2\]\[0\]\.detail: .* for numeric\(18,2\)"):
         preflight_case_literals(
             _payment_write("postgres", statement, [[2, 3], ["cash", "card"], documents])
         )

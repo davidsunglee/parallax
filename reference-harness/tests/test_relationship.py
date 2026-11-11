@@ -55,7 +55,7 @@ def _definitions(
     ]
 
 
-@pytest.mark.parametrize("type", ["int32", "int64", "string", "uuid", "decimal(18,2)"])
+@pytest.mark.parametrize("type", ["int32", "int64", "string", "uuid", "numeric(18,2)"])
 @pytest.mark.parametrize("qualified", [False, True])
 def test_matching_declared_types(type: str, qualified: bool) -> None:
     validate_relationship_types(_definitions(type, type, qualified=qualified))
@@ -63,7 +63,7 @@ def test_matching_declared_types(type: str, qualified: bool) -> None:
 
 @pytest.mark.parametrize(
     ("source", "target"),
-    [("int32", "int64"), ("string", "uuid"), ("uuid", "bytes"), ("decimal(18,2)", "decimal(18,4)")],
+    [("int32", "int64"), ("string", "uuid"), ("uuid", "bytes"), ("numeric(18,2)", "numeric(18,4)")],
 )
 def test_mismatch_is_owned_by_the_defining_declaration(source: str, target: str) -> None:
     with pytest.raises(RejectionError) as failure:

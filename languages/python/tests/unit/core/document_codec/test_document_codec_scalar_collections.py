@@ -222,7 +222,7 @@ _ADMITTED_COLLECTIONS: Mapping[str, tuple[NeutralType, tuple[object, ...], tuple
     "int64": (INT64, (2**40, -1, 2**40), (2**40, -1, 2**40)),
     "float32": (FLOAT32, (1.2000000476837158, 0.5, 1.2000000476837158), (1.2, 0.5, 1.2)),
     "float64": (FLOAT64, (0.1, 2.5, 0.1), (0.1, 2.5, 0.1)),
-    "decimal": (
+    "numeric": (
         Numeric(6, 2),
         (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50")),
         ("1.50", "7.00", "1.50"),

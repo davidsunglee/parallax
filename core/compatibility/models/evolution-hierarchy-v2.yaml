@@ -17,7 +17,7 @@ entities:
         type: int64
         primaryKey: true
       - name: notional
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: Swap
     namespace: parallax.compatibility
     inheritance:

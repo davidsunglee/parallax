@@ -27,7 +27,7 @@ entities:
         type: int64
         multiplicity: many
       - name: prices
-        type: decimal(8,2)
+        type: numeric(8,2)
         multiplicity: many
       - name: flags
         type: boolean

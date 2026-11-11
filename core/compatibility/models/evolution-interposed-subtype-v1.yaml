@@ -24,4 +24,4 @@ entities:
       tagValue: entry
     attributes:
       - name: amount
-        type: decimal(18,2)
+        type: numeric(18,2)

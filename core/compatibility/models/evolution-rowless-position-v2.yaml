@@ -34,4 +34,4 @@ entities:
       tagValue: listing
     attributes:
       - name: price
-        type: decimal(18,2)
+        type: numeric(18,2)

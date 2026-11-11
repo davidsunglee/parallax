@@ -388,7 +388,7 @@ def _ticket_family() -> Metamodel:
                     inheritance=Inheritance(
                         role="concrete-subtype", parent="Ticket", tag_value="cash"
                     ),
-                    attributes=(Attribute(name="detail", type="decimal(18,2)", column="detail"),),
+                    attributes=(Attribute(name="detail", type="numeric(18,2)", column="detail"),),
                 ),
             )
         )
