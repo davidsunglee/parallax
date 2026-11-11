@@ -1271,17 +1271,17 @@ def test_the_span_port_answers_each_read_with_the_milestones_it_names_once() -> 
         ],
     )
     coverage = (
-        "select t0.id, t0.from_z from t t0 where ((t0.id = %s and ((t0.thru_z > %s and "
-        "t0.from_z < %s) or (t0.thru_z > %s and t0.from_z < %s))) or (t0.id = %s and "
-        "t0.thru_z > %s and t0.from_z < %s)) and t0.out_z = %s"
+        "select t0.id, t0.from_z from t t0 where ((t0.id = ? and ((t0.thru_z > ? and "
+        "t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?))) or (t0.id = ? and "
+        "t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ?"
     )
     # The milestone of day 2 reaches into both of key 1's windows: it is one row.
     windows = [1, _START + _DAY, _START + _DAY * 2.5, _START + _DAY * 2, _START + _DAY * 3]
     answered = port.execute(coverage, [*windows, 2, _START, _START + _DAY, INFINITY])
     assert answered == [(1, _START + _DAY), (1, _START + _DAY * 2), (2, _START)]
     as_of = (
-        "select t0.id, t0.from_z from t t0 where t0.id between %s and %s and "
-        "t0.from_z <= %s and t0.thru_z > %s and t0.out_z = %s"
+        "select t0.id, t0.from_z from t t0 where t0.id between ? and ? and "
+        "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     )
     middle = _START + _DAY / 2
     assert port.execute(as_of, [1, 9, middle, middle, INFINITY]) == [(1, _START)]
@@ -1311,12 +1311,12 @@ def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_const
     assert transport is not None
     assert port.work() == lowering_support.FlushWork(0, 0, 0, 0, 0)
     assert port.execute_write(
-        "insert into t(a, b) select * from unnest(cast(%s as bigint[]), cast(%s as bigint[]))",
+        "insert into t(a, b) select * from unnest(cast(? as bigint[]), cast(? as bigint[]))",
         [ArrayBind(INT64, [1, 1, 1]), ArrayBind(INT64, [2, 2, 2])],
     )
-    assert port.execute_write("update t set a = %s where b = %s", [1, 2])
+    assert port.execute_write("update t set a = ? where b = ?", [1, 2])
     assert port.execute(
-        "update t t set a = v.c2 from unnest(cast(%s as bigint[]), cast(%s as bigint[])) "
+        "update t t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
         "with ordinality v(c1, c2, ord) where t.b = v.c1 returning v.ord",
         [ArrayBind(INT64, [7, 8]), ArrayBind(INT64, [1, 2])],
     ) == [(1,), (2,)]
