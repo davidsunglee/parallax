@@ -786,13 +786,15 @@ class TxnAttempt(_TxnAttemptBase):
         return self._row_read(query, shared_lock=request.shared_lock)
 
     def _row_read(self, query: PlannedEntityQuery, *, shared_lock: bool) -> CompiledRead:
-        return compile_read(
+        compiled = compile_read(
             query,
             self._write.model.meta,
             self._connection.dialect,
             result_form="row",
             shared_lock=shared_lock,
         )
+        assert isinstance(compiled, CompiledRead)
+        return compiled
 
     # Flush execution.
 

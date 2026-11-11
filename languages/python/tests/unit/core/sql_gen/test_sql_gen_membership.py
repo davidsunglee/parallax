@@ -28,13 +28,13 @@ from parallax.core.internal.object_query._resolved import (
 from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
-    compile_read,
-    compile_template,
 )
 from parallax.core.internal.sql_gen._context import (
     MembershipForm,
     _TypedBindSpan,
 )
+from tests._support.sql import compile_nonempty_read as compile_read
+from tests._support.sql import compile_nonempty_template as compile_template
 from tests.unit._corpus_model_support import model
 
 ORDERS: Final = model("orders")

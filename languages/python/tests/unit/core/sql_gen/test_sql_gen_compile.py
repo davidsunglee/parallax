@@ -70,7 +70,6 @@ from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
 )
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.internal.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     SQL_GENERATION_FAILED,
@@ -88,7 +87,14 @@ from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metadata
 from tests._support.binary32 import narrowed
 from tests._support.errors import raises_code
-from tests._support.sql import compile_read, read_position, resolved_as_stated
+from tests._support.sql import (
+    compile_nonempty_read,
+    compile_nonempty_template,
+    compile_read,
+    read_position,
+    resolved_as_stated,
+)
+from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests.unit._corpus_model_support import formed, model, records, target
 from tests.unit.core.sql_gen._delivery_support import deliver
 from tests.unit.core.sql_gen._plan_reuse_support import (
@@ -399,7 +405,9 @@ def test_an_encoded_result_key_an_authored_column_also_spells_refuses_the_read(
         compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"), result_form=result_form)
 
 
-_MARIADB = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
+_MARIADB = dataclasses.replace(
+    POSTGRES, name="mariadb", binds_arrays=False, seek_null_tail_lock_placement="branches"
+)
 
 
 def _child_template(
@@ -415,7 +423,7 @@ def _child_template(
         predicate=resolved_as_stated(deferred_membership(member=member), meta, entity),
         projection=read_planning.ResolvedReadProjection((), False),
     )
-    return sql_compile.compile_template(query, meta, dialect)
+    return compile_nonempty_template(query, meta, dialect)
 
 
 def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> None:
@@ -526,9 +534,9 @@ def test_a_template_deferring_nothing_renders_its_compiled_read_without_inputs(
         projection=read_planning.ResolvedReadProjection((), False),
     )
 
-    template = sql_compile.compile_template(query, ACCOUNT, dialect)
+    template = compile_nonempty_template(query, ACCOUNT, dialect)
 
-    assert template.compiled == sql_compile.compile_read(query, ACCOUNT, dialect)
+    assert template.compiled == compile_nonempty_read(query, ACCOUNT, dialect)
     assert template.render() is template.compiled
     assert template.render([1]) is template.compiled
 
@@ -561,10 +569,10 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
         projection=read_planning.ResolvedReadProjection((), False),
     )
 
-    root_template = sql_compile.compile_template(root, meta, dialect)
+    root_template = compile_nonempty_template(root, meta, dialect)
     child = _child_template(dialect, meta).render([1, 42]).statement
 
-    assert root_template.render() == sql_compile.compile_read(root, meta, dialect)
+    assert root_template.render() == compile_nonempty_read(root, meta, dialect)
     assert f"from {table} t0" in child.sql
     membership = "= any(cast(? as bigint[]))" if dialect.name == "postgres" else "in (?, ?)"
     assert child.sql.endswith(f"where t0.order_id {membership}")
@@ -585,7 +593,7 @@ def test_a_template_refuses_a_table_name_carrying_the_expanding_placeholder(
     )
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
-        sql_compile.compile_template(root, meta, dialect)
+        compile_nonempty_template(root, meta, dialect)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
         _child_template(dialect, meta)
 
@@ -611,7 +619,7 @@ def _two_key_sets(members: tuple[str, str]) -> read_planning.PlannedEntityQuery:
 def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_set(
     dialect: Dialect,
 ) -> None:
-    rendered = sql_compile.compile_template(_two_key_sets(("orderId", "id")), ORDERS, dialect)
+    rendered = compile_nonempty_template(_two_key_sets(("orderId", "id")), ORDERS, dialect)
     keys: list[ManagedValue] = [1, 2]
 
     statement = rendered.render(keys).statement
@@ -656,7 +664,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         projection=read_planning.ResolvedReadProjection((), False),
     )
     reuse = record_plan_reuse(monkeypatch)
-    template = sql_compile.compile_template(query, meta, dialect, result_form="instance")
+    template = compile_nonempty_template(query, meta, dialect, result_form="instance")
     original = template.compiled.statement
     branches = 1 if narrow else 3
     (plan,) = reuse.plans
@@ -958,7 +966,7 @@ def _sourced_root(query: ResolvedObjectQuery) -> read_planning.PlannedEntityQuer
 
 def test_a_deferred_root_binds_each_authored_operand_under_the_form_its_subject_selects() -> None:
     cold = _traveler_query(_traveler_predicate("Ada", 1, "x_Y"))
-    template = sql_compile.compile_template(_sourced_root(cold), _TRAVELERS, POSTGRES)
+    template = compile_nonempty_template(_sourced_root(cold), _TRAVELERS, POSTGRES)
 
     positions = template.compiled.statement.execution_value_positions()
 
@@ -985,7 +993,7 @@ def test_deferred_operands_of_one_classification_share_one_form_across_templates
         return _sourced_root(_traveler_query(predicate))
 
     templates = [
-        sql_compile.compile_template(operands(low, low + 3), _TRAVELERS, POSTGRES) for low in (1, 5)
+        compile_nonempty_template(operands(low, low + 3), _TRAVELERS, POSTGRES) for low in (1, 5)
     ]
 
     forms = [
@@ -1001,14 +1009,14 @@ def test_deferred_operands_of_one_classification_share_one_form_across_templates
 
 
 def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_binds_them() -> None:
-    template = sql_compile.compile_template(
+    template = compile_nonempty_template(
         _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "x_Y"))), _TRAVELERS, POSTGRES
     )
     current = _traveler_query(_traveler_predicate("Bo", 7, "P%q"))
 
     rendered = template.render(query=current)
 
-    concrete = sql_compile.compile_read(
+    concrete = compile_nonempty_read(
         read_planning.plan_root(
             current, _TRAVELERS, projection=read_planning.ReadProjectionRequest("none", False)
         ),
@@ -1026,14 +1034,14 @@ def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_bind
 def test_direct_compilation_of_a_sourced_query_binds_its_operands_concretely() -> None:
     sourced = _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "ab")))
 
-    statement = sql_compile.compile_read(sourced, _TRAVELERS, POSTGRES).statement
+    statement = compile_nonempty_read(sourced, _TRAVELERS, POSTGRES).statement
 
     assert statement.binds == ("displayName", "Ada", "score", 1, "note", "ab%")
     assert statement.execution_value_positions() == ()
 
 
 def test_a_template_of_authored_operands_requires_its_query() -> None:
-    template = sql_compile.compile_template(
+    template = compile_nonempty_template(
         _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "ab"))), _TRAVELERS, POSTGRES
     )
 

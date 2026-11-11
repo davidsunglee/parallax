@@ -24,7 +24,6 @@ from parallax.core.internal.object_query import AsOf, object_query, validate_obj
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.sql_gen._compile import CompiledRead
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.sql_gen._inheritance import (
     ProjectedColumn,
@@ -34,6 +33,7 @@ from parallax.core.internal.sql_gen._inheritance import (
 from parallax.core.internal.sql_gen._select_list import SelectListBuilder
 from parallax.core.internal.storage_layout import RelationalDocument
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._plan_reuse_support import reaches_compilation_state

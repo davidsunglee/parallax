@@ -632,6 +632,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   parallax.core.internal.sql_gen._compile | CompiledRead | parallax.core.internal.read_delivery._fetch; parallax.core.internal.read_delivery._page_reader
   parallax.core.internal.sql_gen._context | SQL_GENERATION_FAILED | parallax.core._execution._write_lowering; parallax.core.internal.read_delivery._page_reader; parallax.core.internal.read_delivery._row_decoding
   parallax.core.internal.sql_gen._inheritance | ReadResultContract | parallax.core.internal.read_delivery._row_converter
+  parallax.core.internal.sql_gen._inheritance | EMPTY_READ, EmptyRead | parallax.core.internal.read_delivery._read_plan
   parallax.core.internal.sql_gen._inheritance | FixedRowIdentity, LiteralRowIdentity, ReadResultContract, TaggedRowIdentity | parallax.core.internal.read_delivery._row_decoding
   parallax.core.internal.sql_gen._predicate | affix_needs_escape | parallax.core.internal.read_delivery._read_plan
   parallax.core.internal.sql_gen._seek | continuation_pattern | parallax.core.internal.read_delivery._read_plan

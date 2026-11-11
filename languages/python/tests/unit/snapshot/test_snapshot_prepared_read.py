@@ -81,7 +81,6 @@ from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.read_delivery._row_decoding import row_identity
 from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.sql_gen._compile import CompiledRead
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.internal.temporal_read import (
     Bitemporal,
     Pin,
@@ -105,6 +104,7 @@ from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.document_reads import folded_names
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_read
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit import _read_projection_support as projection_support

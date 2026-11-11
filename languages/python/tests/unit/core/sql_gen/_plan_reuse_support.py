@@ -24,6 +24,7 @@ from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._context import StatementBuilder
 from parallax.core.internal.sql_gen._inheritance import (
     DirectDocumentMappings,
+    EmptyReadShape,
     ReadResultContract,
     SharedDocumentMapping,
     SingleTableReadPlan,
@@ -42,7 +43,7 @@ class RenderedRoot:
     row: EntityRowScope
 
 
-type ReadShape = SingleTableReadPlan | TpcsUnionReadPlan
+type ReadShape = SingleTableReadPlan | TpcsUnionReadPlan | EmptyReadShape
 type DocumentReads = tuple[SharedDocumentMapping | None, DirectDocumentMappings | None]
 
 
@@ -112,6 +113,7 @@ def assert_planned_once(reuse: PlanReuse) -> ReadShape:
     finished one result contract and one compiled read, each retaining those
     answers rather than copies of them."""
     (shape,) = reuse.read_shapes
+    assert isinstance(shape, (SingleTableReadPlan, TpcsUnionReadPlan))
     (layout,) = reuse.position_layouts
     ((shared, direct),) = reuse.document_reads
     (contract,) = reuse.result_contracts

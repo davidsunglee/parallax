@@ -36,8 +36,6 @@ from parallax.core.internal.object_query._resolved import (
 )
 from parallax.core.internal.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
 from parallax.core.internal.read_delivery._row_decoding import row_coordinates
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.internal.sql_gen._compile import compile_template
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED, LoweredStatement
 from parallax.core.internal.sql_gen._inheritance import (
     INHERITANCE_LOCKING_READ_UNSUPPORTED,
@@ -47,6 +45,8 @@ from parallax.core.internal.sql_gen._inheritance import (
 from parallax.core.internal.sql_gen._planning import SharedSourceRef
 from parallax.descriptor import _records
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_entity_query
+from tests._support.sql import compile_nonempty_template as compile_template
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
@@ -91,12 +91,16 @@ def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.Con
 
 
 def _lowered(
-    model: Metamodel, node: ResolvedObjectQuery, *, shared_lock: bool = False
+    model: Metamodel,
+    node: ResolvedObjectQuery,
+    *,
+    shared_lock: bool = False,
+    dialect: Dialect = POSTGRES,
 ) -> LoweredStatement:
     return compile_entity_query(
         read_planning.plan(node, model, projection=_PROJECTION).root,
         model,
-        POSTGRES,
+        dialect,
         shared_lock=shared_lock,
     ).statement
 
@@ -298,6 +302,18 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
         ")) u join orders t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (1, 1, 2, 2, 2)
+
+
+def test_seek_null_tail_shared_lock_uses_the_dialects_placement() -> None:
+    node = _planned(ORDERS, "Order").after(ContinuationCoordinate((1,)), limit=2)
+    postgres = _lowered(ORDERS, node, shared_lock=True)
+    mariadb = _lowered(ORDERS, node, shared_lock=True, dialect=_MARIADB)
+
+    assert postgres.sql.count("for share of t0") == 1
+    assert ")) u join orders t0" in postgres.sql
+    assert mariadb.sql.count("for share of t0") == 2
+    assert ")) u join orders t0" not in mariadb.sql
+    assert mariadb.sql.endswith("order by u.parallax_seek_0 asc limit ?")
 
 
 def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity() -> None:
@@ -808,7 +824,9 @@ def test_both_continuing_branches_of_a_union_render_its_branch_roots_through_fre
         assert builder.source_binding(SharedSourceRef(root.scope_id, 0)).origin is root.row
 
 
-_MARIADB: Final = replace(POSTGRES, name="mariadb", binds_arrays=False)
+_MARIADB: Final = replace(
+    POSTGRES, name="mariadb", binds_arrays=False, seek_null_tail_lock_placement="branches"
+)
 _ORDER_SHIPPED = "parallax.compatibility.OrderItem.shippedOn"
 _ORDER_ORDERED_ON = "parallax.compatibility.Order.orderedOn"
 _POSITION_VALUE = "parallax.compatibility.Position.value"

@@ -376,6 +376,8 @@ class PageReader:
         model = request.model
         compiled = request.compiled
         repeating = repeating_levels(model, (compiled.result_contract.resolvable,), ())
+        if compiled.result_contract.may_repeat_row_keys:
+            repeating |= frozenset((ROOT_LEVEL,))
         converter = request.converter or bind(
             model,
             compiled.result_contract,

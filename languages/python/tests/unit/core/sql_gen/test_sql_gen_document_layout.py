@@ -39,12 +39,13 @@ from parallax.core.internal.navigate import (
 )
 from parallax.core.internal.object_query._nodes import IncludePathNode, TemporalDimension
 from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._compile import CompiledRead, compile_template
-from parallax.core.internal.sql_gen._compile import compile_read as production_compile_read
+from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
 from parallax.descriptor._ingest import ingest_document
+from tests._support.sql import compile_nonempty_read as production_compile_read
+from tests._support.sql import compile_nonempty_template as compile_template
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit._corpus_model_support import formed
 from tests.unit._document_layout_support import columns_model, document_model, entity

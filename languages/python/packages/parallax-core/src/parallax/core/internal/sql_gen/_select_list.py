@@ -314,6 +314,7 @@ class SelectListBuilder:
             identity_ordinal,
             shared_ordinal,
             tuple(coordinate_ordinals),
+            shape.may_repeat_row_keys,
         )
 
     def _emit_scalar(

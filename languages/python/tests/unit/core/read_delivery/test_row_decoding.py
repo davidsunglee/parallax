@@ -26,7 +26,7 @@ from parallax.core.internal.read_delivery._page import ROOT_LEVEL, PageBuilder, 
 from parallax.core.internal.read_delivery._row_converter import bind
 from parallax.core.internal.read_delivery._row_decoding import row_coordinates, row_identity
 from parallax.core.internal.sql_gen._compile import CompiledRead
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
 from tests.unit._document_layout_support import document_model, entity

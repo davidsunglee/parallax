@@ -96,7 +96,6 @@ from parallax.core.internal.predicate._resolved import (
     managed_comparison,
 )
 from parallax.core.internal.read_planning._include_tree import EMPTY_RENDER, IncludePosition
-from parallax.core.internal.sql_gen._compile import compile_read, compile_template
 from parallax.core.internal.temporal_read import (
     Bitemporal,
     TimeInterval,
@@ -104,6 +103,12 @@ from parallax.core.internal.temporal_read import (
     temporal_facet_of,
 )
 from tests._support.errors import raises_code
+from tests._support.sql import (
+    compile_nonempty_read as compile_read,
+)
+from tests._support.sql import (
+    compile_nonempty_template as compile_template,
+)
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of

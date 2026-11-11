@@ -59,7 +59,6 @@ from parallax.core.internal.predicate._resolved import (
     ResolvedConstant,
     ResolvedGroup,
 )
-from parallax.core.internal.sql_gen._compile import compile_read
 from parallax.core.internal.temporal_read import (
     Bitemporal,
     TemporalShape,
@@ -79,6 +78,7 @@ from parallax.core.internal.temporal_read import (
 )
 from parallax.core.internal.write_plan import PredecessorRow
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
 

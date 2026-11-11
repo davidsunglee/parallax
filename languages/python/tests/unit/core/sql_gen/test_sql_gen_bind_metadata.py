@@ -37,7 +37,7 @@ from parallax.core.internal.predicate._resolved import (
 )
 from parallax.core.internal.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.internal.sql_gen import _compile as sql_compile
-from parallax.core.internal.sql_gen._compile import CompiledTemplate, compile_read
+from parallax.core.internal.sql_gen._compile import CompiledTemplate
 from parallax.core.internal.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
@@ -69,6 +69,7 @@ from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.core.internal.wire import loads
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
+from tests._support.sql import compile_nonempty_read as compile_read
 from tests._support.sql import read_position, resolved_as_stated
 from tests.unit._corpus_model_support import model as corpus_model
 

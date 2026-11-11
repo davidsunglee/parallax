@@ -53,7 +53,6 @@ from parallax.core.internal.sql_gen import _compile as _compile_module
 from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
-    compile_read,
     compile_write_predicate,
 )
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
@@ -63,6 +62,7 @@ from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_read
 from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -1619,6 +1619,24 @@ def test_a_dormant_root_prepares_no_statement_converter_or_child_work() -> None:
     ]
     assert isinstance(plan.fetch_step(1), read_planning.BackReferenceFetchStep)
     assert plan._correlations == ((), (), ())
+
+
+def test_direct_and_template_compilation_share_the_empty_read_outcome() -> None:
+    query = _dormant_query(_TO_EMPTY_ANCESTRY)
+    root = read_planning.plan_root(
+        query,
+        _DORMANT_META,
+        projection=read_planning.ReadProjectionRequest("all", True),
+    )
+
+    direct = _compile_module.compile_read(root, _DORMANT_META, POSTGRES)
+    template = _compile_module.compile_template(root, _DORMANT_META, POSTGRES)
+
+    assert direct is template is EMPTY_READ
+    assert direct.read_shape.variant == "empty"
+    assert direct.read_shape.roots == ()
+    assert direct.result_contract.resolvable == ()
+    assert not direct.result_contract.may_repeat_row_keys
 
 
 def test_an_empty_include_target_prepares_no_child_work_or_routing_demand() -> None:
