@@ -29,6 +29,7 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     MemberIdentity,
     Multiplicity,
+    Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     ValueObjectIdentity,
@@ -672,6 +673,35 @@ def select_projection(
 class ReadRoot:
     table: TableLayout
     concrete: EntityIdentity | None
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalReadRoot:
+    table: Table
+    concrete: EntityIdentity | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReadShapeFacts:
+    """The finalized physical facts a compiled read retains after rendering."""
+
+    roots: tuple[PhysicalReadRoot, ...]
+    variant: Literal["single-table", "tph-partitioned", "tpcs-union"]
+
+    @property
+    def is_union(self) -> bool:
+        return self.variant == "tpcs-union"
+
+    @property
+    def may_repeat_row_keys(self) -> bool:
+        return self.is_union
+
+
+def read_shape_facts(shape: SingleTableReadPlan | TpcsUnionReadPlan) -> ReadShapeFacts:
+    return ReadShapeFacts(
+        tuple(PhysicalReadRoot(root.table.table, root.concrete) for root in shape.roots),
+        shape.variant,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -51,11 +51,13 @@ from parallax.core.internal.sql_gen._inheritance import EmptyReadShape as _Empty
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
 from parallax.core.internal.sql_gen._inheritance import ReadResultContract as _ReadResultContract
+from parallax.core.internal.sql_gen._inheritance import ReadShapeFacts as _ReadShapeFacts
 from parallax.core.internal.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.internal.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.internal.sql_gen._inheritance import TpcsUnionReadPlan as _TpcsUnionReadPlan
 from parallax.core.internal.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.internal.sql_gen._inheritance import plan_read_shape as _plan_read_shape
+from parallax.core.internal.sql_gen._inheritance import read_shape_facts as _read_shape_facts
 from parallax.core.internal.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.internal.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -169,7 +171,7 @@ class CompiledRead:
     projection: ResolvedReadProjection
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_contract: _ReadResultContract
-    read_shape: _SingleTableReadPlan | _TpcsUnionReadPlan
+    read_shape: _ReadShapeFacts
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,7 +474,7 @@ def _compile_read(
         select_list.result_contract(
             read_shape, facet, query.projection, terms if query.paging is not None else ()
         ),
-        read_shape,
+        _read_shape_facts(read_shape),
     )
 
 

@@ -294,7 +294,7 @@ def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
     concretes = _narrow(DOCUMENT_LAYOUT, "CardPayment", "CashPayment")
     assert compiled.read_shape.variant == "tph-partitioned"
     assert tuple(root.concrete for root in compiled.read_shape.roots) == concretes
-    assert {root.table.table.name for root in compiled.read_shape.roots} == {"payment_document"}
+    assert {root.table.name for root in compiled.read_shape.roots} == {"payment_document"}
     assert not compiled.read_shape.is_union
     assert not compiled.result_contract.may_repeat_row_keys
     assert [(partitions, keys) for partitions, keys, _root in rendered_roots] == [
@@ -1252,7 +1252,8 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     )
     assert "family_variant" not in compiled.statement.sql
     assert compiled.read_shape.variant == "single-table"
-    assert tuple(root.table.table.name for root in compiled.read_shape.roots) == ("invoice",)
+    assert tuple(root.table.name for root in compiled.read_shape.roots) == ("invoice",)
+    assert not compiled.read_shape.may_repeat_row_keys
     assert not compiled.result_contract.may_repeat_row_keys
     # Nothing discriminates, so every row of this read names the one concrete and
     # `resolvable` collapses to it — the fixed identity is the whole set.
@@ -1382,6 +1383,7 @@ def test_tpcs_union_refuses_only_a_requested_shared_lock() -> None:
     assert compiled.read_shape.variant == "tpcs-union"
     assert compiled.read_shape.is_union
     assert len(compiled.read_shape.roots) > 1
+    assert compiled.read_shape.may_repeat_row_keys
     assert compiled.result_contract.may_repeat_row_keys
     assert "for share" not in compiled.statement.sql
     with raises_code(UnsupportedError, INHERITANCE_LOCKING_READ_UNSUPPORTED) as refused:
