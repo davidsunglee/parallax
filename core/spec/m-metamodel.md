@@ -603,7 +603,12 @@ same immutable Index objects through resolution and accepted metadata.
 `EntityMetadata.index` looks up both kinds by name. Index Identities are distinct
 within one Entity: the derived Index claims its name against authored Indices,
 and matching components neither cause nor excuse a collision. Resolution checks
-every Index's structure regardless of its provenance.
+every Index's structure regardless of its provenance. When local key, axis, and
+Index structure is valid, it also independently verifies that the retained
+primary-key Index has the canonical presence, identity, uniqueness, and ordered
+components for the declaration. A mismatch produces
+`metamodel-primary-key-index-noncanonical` at the Entity Location; invalid
+underlying structure retains its own diagnostics.
 
 ## As-Of Axes
 
@@ -695,6 +700,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-temporal-member-reserved` | A top-level member other than an As-Of Axis endpoint bears a reserved temporal endpoint name, whatever the Entity's declared dimensions. |
 | `metamodel-primary-key-missing` | A standalone Entity has no local primary-key Attribute. |
 | `metamodel-primary-key-multiple` | A standalone Entity has more than one local primary-key Attribute. |
+| `metamodel-primary-key-index-noncanonical` | The retained primary-key Index has noncanonical presence, identity, uniqueness, or ordered components for the local key and axes. |
 | `metamodel-index-identity-duplicate` | Two Indices of one Entity bear the same name. |
 | `metamodel-index-empty` | Index Metadata has no Attribute component. |
 | `metamodel-index-attribute-missing` | An index component names no declared Attribute. |

@@ -41,6 +41,7 @@ from parallax.core.internal.metamodel._temporal_structure import (
     CONVENTIONAL_TEMPORAL_NAMES,
     TEMPORAL_MEMBERS,
     TemporalEndpoint,
+    matches_primary_key_index,
 )
 from parallax.core.internal.metamodel._values import (
     AbstractRoot,
@@ -128,6 +129,8 @@ PRIMARY_KEY_MULTIPLE: Final[IssueCode] = "metamodel-primary-key-multiple"
 """A standalone Entity declares more than one primary-key Attribute. Composite
 keys are not part of the contract, so this is a defect rather than a shape."""
 
+PRIMARY_KEY_INDEX_NONCANONICAL: Final[IssueCode] = "metamodel-primary-key-index-noncanonical"
+
 INDEX_IDENTITY_DUPLICATE: Final[IssueCode] = "metamodel-index-identity-duplicate"
 """Two Indices of one Entity bear one name, so ``CompiledEntity.index`` has no
 single answer for it. Identity alone decides: a frontend hands a derived Index
@@ -180,6 +183,7 @@ RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         TEMPORAL_MEMBER_RESERVED,
         PRIMARY_KEY_MISSING,
         PRIMARY_KEY_MULTIPLE,
+        PRIMARY_KEY_INDEX_NONCANONICAL,
         INDEX_IDENTITY_DUPLICATE,
         INDEX_EMPTY,
         INDEX_ATTRIBUTE_MISSING,
@@ -309,9 +313,14 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
         declared: list[MetamodelIssue] = []
         declared.extend(_collision_issues(declaration))
         declared.extend(_temporal_reservation_issues(declaration))
-        declared.extend(_primary_key_issues(declaration))
-        declared.extend(_index_issues(declaration, index))
-        declared.extend(_axis_issues(declaration))
+        key_issues = _primary_key_issues(declaration)
+        index_issues = _index_issues(declaration, index)
+        axis_issues = _axis_issues(declaration)
+        declared.extend(key_issues)
+        declared.extend(index_issues)
+        declared.extend(axis_issues)
+        if not (key_issues or index_issues or axis_issues):
+            declared.extend(_primary_key_index_issues(declaration))
         relationships, relationship_issues = _resolve_relationships(declaration, index)
         inheritance, inheritance_issues = _resolve_inheritance(declaration, index)
         declared.extend(relationship_issues)
@@ -533,6 +542,26 @@ def _primary_key_issues(declaration: UnresolvedEntityDeclaration) -> list[Metamo
             )
         ]
     return []
+
+
+def _primary_key_index_issues(
+    declaration: UnresolvedEntityDeclaration,
+) -> list[MetamodelIssue]:
+    if matches_primary_key_index(
+        declaration.declared_primary_key_index,
+        entity=declaration.identity,
+        container=declaration.container,
+        attributes=declaration.attributes,
+        as_of_axes=declaration.as_of_axes,
+    ):
+        return []
+    return [
+        MetamodelIssue(
+            PRIMARY_KEY_INDEX_NONCANONICAL,
+            EntityLocation(declaration.identity),
+            message="the declared primary-key Index does not match the local key and axes",
+        )
+    ]
 
 
 def _index_issues(
