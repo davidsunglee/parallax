@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
 
-from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.internal import batch_write
 from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
 from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.internal.entity._model import class_index, model_of
 from parallax.core.internal.metamodel import (
-    CompiledEntity,
     EntityIdentity,
     MemberShape,
     Metamodel,
@@ -30,7 +26,6 @@ from parallax.core.internal.wire._facts import (
     scalar_encoding,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 __all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "wire_model_facts"]
 
@@ -138,31 +133,6 @@ def _proven_classes(
     }
 
 
-@dataclass(frozen=True, slots=True)
-class _BatchingAdapter:
-    """``m-batch-write``'s collapse-eligibility policy plus the layout-derived
-    batch key, structurally satisfying ``BatchingStrategy``."""
-
-    def collapses(
-        self,
-        model: Metamodel,
-        entity: CompiledEntity,
-        mutation: str,
-        rows: Sequence[ManagedRow],
-    ) -> bool:
-        return batch_write.collapses(model, entity, mutation, [_by_name(row) for row in rows])
-
-    def batch_key(
-        self, model: Metamodel, entity: CompiledEntity, mutation: str, row: ManagedRow
-    ) -> object:
-        return collapse_group_key(model, entity, mutation, row)
-
-
-def _by_name(row: ManagedRow) -> dict[str, object]:
-    members = row.selection.members.shape.members
-    return {members[position].name: cell for position, cell in row.stated_cells()}
-
-
 def build_write_preparation(
     model: Metamodel, *, positional: Mapping[EntityIdentity, type] | None = None
 ) -> WritePreparation:
@@ -191,7 +161,6 @@ def build_write_planner(model: Metamodel) -> WritePlanner:
     """
     return WritePlanner._wired(  # pyright: ignore[reportPrivateUsage] - the composition root calls the planner's own private constructor
         model,
-        batching=_BatchingAdapter(),
         audit=NO_AUDIT,
         payloads=LayoutPayloadPreparer(model),
     )

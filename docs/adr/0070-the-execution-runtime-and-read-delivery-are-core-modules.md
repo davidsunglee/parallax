@@ -69,3 +69,10 @@ Alternatives rejected:
 The contracts live in [`m-read-delivery`](../../core/spec/m-read-delivery.md)
 and [`m-execution`](../../core/spec/m-execution.md); Snapshot publication
 remains in [`m-snapshot-read`](../../core/spec/m-snapshot-read.md).
+
+## Amendment (2026-11): buffered collapse is planner-owned
+
+The batching-edge decision above is superseded by
+[ADR 0041’s collapse-batching amendment](0041-write-finalization-is-centralized-behind-a-typed-planner.md#amendment-2026-11-collapse-batching-belongs-to-the-planner).
+Unit Work owns buffered collapse, and execution no longer injects batching
+eligibility. The rest of this decision stands.

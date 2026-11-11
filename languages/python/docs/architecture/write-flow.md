@@ -363,7 +363,7 @@ removed and reinserted this way.
    WritePlanner.finalize(WritePlanningRequest(actor_identity, transaction_instant,   write_planner
                          concurrency, composed_writes, ownership, ...))
      _without_noop_rows   drop known no-op work
-     _form_batches        KeyedInsert runs → InsertBatch, ObjectLockedWrite runs
+     collapse_writes      KeyedInsert runs → InsertBatch, ObjectLockedWrite runs
                           → ObjectLockedBatch; a PostRemovalInsert closes any batch
      _order               per region: inserts by referential rank, updates in authored
                           order, deletes by reverse rank; a PostRemovalInsert starts a
@@ -447,10 +447,10 @@ nothing its writes leave, since no later write follows it. A failure while execu
 binding or completing dooms the attempt; a refusal while planning precedes execution
 and leaves the attempt usable.
 
-The Storage Layout decides no write's meaning: instructions, admitted writes and
-Planned Steps are Attribute-keyed. It is consulted only for physical work. Batching asks
-`collapse_group_key` whether neighbouring rows select the same physical slots, Columns
-and document paths, and so can share one statement. Settlement asks the model's
+The Storage Layout decides no write’s meaning: instructions, admitted writes and
+Planned Steps describe members. The planner’s `collapse_writes` compares neighbouring
+writes and positional row presence, preserving distinct document-member shapes even
+when those members share one physical column. Settlement asks the model’s
 `LayoutPayloadPreparer` whether adjacent produced temporal rows store identical state,
 which decides whether they merge. And at each step's turn the preparer places every
 member in its Column or at its path in the shared Structured Column, and
@@ -481,7 +481,7 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.write_planner:WritePlanner`
 - `parallax.core._execution._unit_work.write_planner:WritePlanner.finalize`
 - `parallax.core._execution._unit_work.write_planner:WritePlanner.predicate_step`
-- `parallax.core._execution._unit_work.write_planner:WritePlanner._form_batches`
+- `parallax.core._execution._unit_work.write_collapse:collapse_writes`
 - `parallax.core._execution._unit_work.write_planner:WritePlanner._order`
 - `parallax.core._execution._unit_work.write_planner:WritePlanningRequest`
 - `parallax.core._execution._unit_work.write_planner:_without_noop_rows`
@@ -511,7 +511,6 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._write_step_executor:WriteStepExecutor.execute`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor.execute_with_count`
 - `parallax.core.internal.write_payload._preparer:LayoutPayloadPreparer`
-- `parallax.core._execution._keyed_sql:collapse_group_key`
 - `parallax.core.internal.sql_gen._write:compile_write_step`
 - `parallax.core._execution._unit_work.effects:enforce_affected_rows`
 
@@ -598,7 +597,7 @@ owns it and so revises or removes it in place, and the successors it opens.
 | Provenance, licences, insertion authority, target writes | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-value-provenance), [ADR 0072](../../../../docs/adr/0072-source-writes-are-admitted-only-by-a-read-of-the-current-attempt.md) |
 | Gates and versions | [`m-concurrency`](../../../../core/spec/m-concurrency.md) |
 | Coalescing and composition | [`m-unit-work`](../../../../core/spec/m-unit-work.md#same-transaction-write-coalescing), [ADR 0023](../../../../docs/adr/0023-same-transaction-writes-coalesce-in-the-unit-of-work.md) |
-| Batching and predicate writes | [`m-batch-write`](../../../../core/spec/m-batch-write.md), [ADR 0075](../../../../docs/adr/0075-predicate-writes-are-readless-only.md), [ADR 0077](../../../../docs/adr/0077-predicate-writes-execute-at-the-call-and-sources-continue-across-flushes.md) |
+| Readless predicate writes | [`m-batch-write`](../../../../core/spec/m-batch-write.md), [ADR 0075](../../../../docs/adr/0075-predicate-writes-are-readless-only.md), [ADR 0077](../../../../docs/adr/0077-predicate-writes-execute-at-the-call-and-sources-continue-across-flushes.md) |
 | Write Planner, planning order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md), [ADR 0080](../../../../docs/adr/0080-write-groups-hold-up-to-1024-settled-writes.md) |
 | Planned Steps and State Observations | [`m-write-plan`](../../../../core/spec/m-write-plan.md), [ADR 0068](../../../../docs/adr/0068-the-planned-write-algebra-is-its-own-module.md) |
 | Temporal expansion | [`m-temporal-write`](../../../../core/spec/m-temporal-write.md#temporal-expansion), [ADR 0042](../../../../docs/adr/0042-temporal-plans-retain-complete-predecessor-state-and-close-cause.md), [ADR 0045](../../../../docs/adr/0045-temporal-mutations-expand-in-place-after-ordering.md), [ADR 0069](../../../../docs/adr/0069-temporal-writes-settle-through-one-coverage-transform-and-predecessor-expansion.md) |

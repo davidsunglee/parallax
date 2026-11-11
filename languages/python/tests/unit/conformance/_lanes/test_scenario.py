@@ -870,17 +870,6 @@ def test_scenario_compile_wraps_a_lowering_failure_as_engine_error() -> None:
         scenario.compile_scenario_case(bad, "postgres")
 
 
-# --------------------------------------------------------------------------- #
-# The observation-binding discriminator (`scenario._binds_row_observations`) is #
-# derived SEMANTICALLY — mutation kind, versioned-ness, pk-gen management,    #
-# and (for update) per-key value uniformity                                   #
-# — never from the case's own authored `statements` count, which is a         #
-# count-consistency ASSERTION the real plan verifies independently            #
-# (`_check_statement_count_consistency`). A structured predicate-write        #
-# instruction reaching this seam refuses loudly, never a bare `KeyError`.     #
-# --------------------------------------------------------------------------- #
-
-
 def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
     # `m-unit-work`: inserts have no observation. The case schema's `writeRow`
     # says so in prose ("absent on a versioned insert") but shares one definition

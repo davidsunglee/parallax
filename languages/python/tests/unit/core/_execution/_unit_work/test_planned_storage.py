@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
-    BatchingStrategy,
 )
 from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core._execution._unit_work.write_settlement import (
@@ -76,7 +75,6 @@ _PRODUCER_CLASSES = (
     WritePlanner,
     WritePlanCompiler,
     PredecessorExpander,
-    BatchingStrategy,
     AuditStrategy,
     type(_BALANCE),
 )

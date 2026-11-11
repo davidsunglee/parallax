@@ -31,6 +31,12 @@ requires updating and validating these contracts together with implementation.
 
 ## 7. Source-enforcement topology
 
+Buffered collapse belongs to `m-unit-work` and is implemented inside its existing
+sealed scope by `write_collapse.py`. `m-batch-write` maps independently to
+`parallax.core.internal.batch_write`, which judges readless predicate targets
+without reaching Unit Work. The core graph grants that policy to Unit Work;
+model preparation injects no batching strategy.
+
 A claim about observable behavior is graded by behavior at the API boundary,
 never by inspecting source structure. This specification constrains structure
 only where a decision is itself about the source: which scope owns a module and
@@ -150,8 +156,7 @@ and streamed read runs through, scoped apart from its package so its row
 states what a read ladder reaches and what it does not: the query and temporal
 vocabulary it lowers through, the read delivery it hands an adopted read to, the
 Database Port, the unit of work, the authority a scope captured, and the
-lifecycle activities it opens — and not batch writes, which only model
-preparation wires in. Bounded automatic retry is deliberately NOT among the
+lifecycle activities it opens. Bounded automatic retry is deliberately NOT among the
 exclusions, and the row does not claim it: `modules.md` declares
 `m-execution-lifecycle --> m-auto-retry`, and a forbidden row is the complement
 of a closure, so a scope granted the lifecycle module it needs for the re-entry
@@ -168,7 +173,7 @@ its row states what a keyed write reaches and what it does not. A keyed write
 addresses a row its caller already holds, so it resolves nothing from the store,
 and the read half of the parent's reach falls outside this closure — read
 delivery and the continuation are each forbidden here and each reached by the
-parent. So is batch writing, which model preparation alone wires in. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
+parent. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
 those exclusions, and the row does not claim them: `modules.md` routes all three
 through `m-execution-lifecycle`, which the re-entry gate requires. A forbidden row is the complement of a closure, so each rides in
 whatever the ingress itself imports, and what the row says about them is that
@@ -416,7 +421,7 @@ evolution distribution's sole Python-only edge.
 | `parallax.aws` | `m-db-port` |
 | `parallax.aws.postgres` | `m-db-port`, `parallax.postgres` |
 | `parallax.core._execution` | `parallax.core.internal.entity` |
-| `parallax.core._execution._family`, `parallax.core._execution._keyed_sql`, `parallax.core._execution._write_lowering` | `parallax.core._stored_data`, `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan` |
+| `parallax.core._execution._family`, `parallax.core._execution._write_lowering` | `parallax.core._stored_data`, `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan` |
 | `parallax.core._execution._keyed_writes` | `parallax.core.internal.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
 | `parallax.core._execution._publication` | `parallax.core.internal.entity`, `m-read-planning`, `m-unit-work` |
 | `parallax.core._execution._read_pipeline` | `parallax.core.internal.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
@@ -538,7 +543,6 @@ for the scopes each policy governs.
 |---|---|---|
 | `parallax.aws.postgres` | `parallax.aws` | isolated |
 | `parallax.core._execution._family` | `parallax.core._execution` | ordinary |
-| `parallax.core._execution._keyed_sql` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._keyed_writes` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._publication` | `parallax.core._execution` | sealed |
 | `parallax.core._execution._read_pipeline` | `parallax.core._execution` | ordinary |

@@ -1,75 +1,16 @@
-# m-batch-write — Buffered Batching / Readless Predicate Writes
+# m-batch-write — Readless Predicate Writes
 
-`m-batch-write` distinguishes two related but non-interchangeable write families:
+`m-batch-write` owns predicate-selected readless writes: which targets they may
+write, when their statement runs, and the affected-row count their verb returns.
+Their canonical instruction belongs to `m-unit-work`; their bare predicate
+belongs to `m-predicate`. Versioning and locking belong to `m-concurrency`,
+conflict abort to `m-unit-work`, and temporal chaining to `m-temporal-write`.
+The canonical golden SQL is fixed by `m-sql`.
 
-1. **buffered tracked-row batching** at an `m-unit-work` boundary, where the unit
-   of work already holds an enumerated set of objects; and
-2. **predicate-selected writes** over a bare `m-predicate` predicate, whose
-   canonical instruction is `write-instruction.schema.json`'s (`m-unit-work`).
-
-It owns only the set-based/readless vocabulary for the second family, including
-which targets that family can write at all, when its statement runs, and the count
-its verb returns. Versioning and locking belong to `m-concurrency`, conflict abort
-to `m-unit-work`, and temporal chaining to `m-temporal-write`. The canonical golden
-SQL is fixed by `m-sql`.
-
-`m-batch-write` decides only **compatibility**: whether two buffered writes may
-share one step. What a Planned Step means and the affected-row policy that step
-then carries are `m-write-plan`'s, and the flush's planning order is
-`m-unit-work`'s; this module reaches planning through the strategy port that
-module declares.
-
-## Batching is a membership decision
-
-Batching is expressed by **membership in one Planned Step**, not by a marker on
-several. Compatible inserts become one Planned Insert with several entries;
-compatible uniform keyed updates or deletes become one Planned Update or Planned
-Delete whose Key Target holds several key tuples.
-
-- Two writes either share a step or they do not, and that is the whole of the
-  decision.
-- Execution grouping is a separate fact. A Write Group (`m-unit-work` *Write
-  Group formation*) decides which settled writes execute and complete together,
-  and execution may present their steps in shared calls (`m-execution`), but two
-  writes of one group never share a step: membership in one step stays this
-  module's decision alone.
-- Incompatible writes remain **separate logical steps**. In particular a
-  **per-row gated** write (`m-concurrency`) can never join another: its gate binds
-  one row's observed version, so each stays its own step even where a driver
-  later transmits several in one batch.
-- Membership does not change semantics. One multi-key Key Target owns **one
-  aggregate** affected-row expectation for the rows it names (`m-unit-work`);
-  collapsing writes together never weakens or discards that expectation.
-
-## Set-based flush
-
-- Multiple inserts of the same entity stating the same member set and
-  generated-value shape collapse into a **single multi-row `INSERT`** rather than
-  one statement per row, spelled in the dialect's multi-row insert form (`m-sql`
-  *Batched insert / update*, `m-dialect`). Inserts differing in either stay
-  separate steps.
-- Multiple updates of the same entity that set the same columns collapse into a
-  single statement over a membership of their keys when the new value is
-  uniform across the keys. Otherwise each key stays its own step, and a dialect
-  with array parameters applies the steps setting one member set as one grouped
-  effect (`m-sql` *Grouped effects*), where a dialect without them runs one
-  statement per key.
-- Multiple deletes of the same **non-versioned** entity collapse into a **single
-  `DELETE`** over a membership of their keys rather than one statement per row —
-  the delete analogue of the multi-row `INSERT`. A **versioned** entity's
-  deletes cannot collapse: each key stays its own step, under its own
-  observation and exactly-one expectation, however its steps are then
-  presented. A dialect with array parameters applies them as one grouped effect
-  (`m-sql` *Grouped effects*), and a dialect without them runs one statement per
-  key.
-- A collapsed update or delete stays one step and one statement however many
-  keys it holds. A dialect with array parameters binds its membership as one
-  array per key Column, so its bind count follows its key Columns rather than
-  its keys; a dialect without them binds one placeholder per key value (`m-sql`
-  *Batched insert / update*).
-
-The suite proves the batched forms against real data by applying the golden DML
-and asserting the resulting table state (`m-case-format`).
+Buffered collapse batching belongs to `m-unit-work`'s *Buffered, batched, ordered
+writes*. It is a planner decision over admitted writes, without an injected
+batching strategy. This module's readless-target policy depends only on model
+facts and preparation refusals, never on Unit Work or its instruction types.
 
 ## A predicate-selected write is readless, or refused
 
@@ -227,7 +168,6 @@ buffer, while a failure lowering, executing, or enforcing it dooms the attempt
 (`m-unit-work` *Abort*). A statement error therefore surfaces at the verb; a
 constraint the database defers still fails at commit.
 
-The two families share SQL terminology but not an observation contract: a key
-membership can collapse an already tracked set, whereas a predicate write starts from an
-operation, observes nothing, and so writes only a target that needs no per-row
-observation.
+A predicate write starts from an operation, observes nothing, and so writes
+only a target that needs no per-row observation. Buffered collapse instead
+combines already admitted writes under Unit Work’s evidence rules.

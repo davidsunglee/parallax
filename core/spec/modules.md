@@ -119,7 +119,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-read-planning` | Flat and write-acquisition read planning, include graphs, and N+1 elimination | active | cases |
 | `m-read-delivery` | Execution-plan preparation and caching, Page assembly, stored-data judgement, and delivery | active | cases |
 | `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
-| `m-batch-write` | Set-based / batched writes | active | cases |
+| `m-batch-write` | Readless predicate writes | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-write-plan` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
@@ -234,8 +234,11 @@ m-execution-lifecycle --> m-db-port
 m-execution-lifecycle --> m-db-error
 m-execution-lifecycle --> m-unit-work
 m-execution-lifecycle --> m-auto-retry
-m-batch-write --> m-unit-work
-m-batch-write --> m-concurrency
+m-unit-work --> m-batch-write
+m-batch-write --> m-core
+m-batch-write --> m-metamodel
+m-batch-write --> m-inheritance
+m-batch-write --> m-temporal-read
 m-navigate --> m-predicate
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
@@ -274,7 +277,6 @@ m-execution --> m-execution-authority
 m-execution --> m-auto-retry
 m-execution --> m-execution-lifecycle
 m-execution --> m-db-port
-m-execution --> m-batch-write
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
@@ -576,11 +578,12 @@ construction it may reference any behavioral module it harnesses.
   the roots and attempts the lifecycle observes. `m-unit-work` takes no edge to
   any of these, so its admission, evidence, and finalization remain SQL-free and
   testable without a database.
-- **`m-execution --> m-batch-write`.** Preparing a model fixes which writes
-  collapse into a set-based statement, which is `m-batch-write`'s rule. The edge
-  is the preparation's, not a write path's: `m-batch-write --> m-unit-work`
-  already runs the other way, so the unit of work cannot take it, and placing
-  preparation in a lifecycle would make each lifecycle prepare models.
+- **`m-unit-work --> m-batch-write`.** Unit Work owns buffered collapse
+  batching and asks the readless-write module to judge predicate targets before
+  preparing their predicates or payloads. `m-batch-write` names only accepted
+  model facts and preparation refusals; it imports no instruction, transaction,
+  or planner. Its former edge to Unit Work and execution's composition-root
+  batching edge are retired.
 - **`m-unit-work --> m-concurrency`.** The strategy, version source, and
   evidence kind of each Entity are facts of the accepted model, so Unit of Work
   reads them from the model's Concurrency Facet beside the Temporal Facet and
