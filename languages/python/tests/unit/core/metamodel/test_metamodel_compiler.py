@@ -18,8 +18,6 @@ from parallax.core.internal.metamodel import (
     Column,
     ConcreteSubtype,
     EntityIdentity,
-    IndexIdentity,
-    IndexMetadata,
     MemberShape,
     Multiplicity,
     NestedValueObjectMetadata,
@@ -115,11 +113,6 @@ def _model() -> Declaration:
                 TemporalDimension.TRANSACTION_TIME,
                 AttributeIdentity(_ORDER, "txStart"),
                 AttributeIdentity(_ORDER, "txEnd"),
-            ),
-        ),
-        indices=(
-            IndexMetadata(
-                IndexIdentity(_ORDER, "orders_pk"), (AttributeIdentity(_ORDER, "id"),), unique=True
             ),
         ),
     )

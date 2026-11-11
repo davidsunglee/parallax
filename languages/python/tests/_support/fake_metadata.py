@@ -186,6 +186,7 @@ class FakeCompiledEntity:
         declared_as_of_axes: Sequence[AsOfAxisMetadata] = (),
         inheritance: InheritanceMetadata | None = None,
         indices: Sequence[IndexMetadata] = (),
+        declared_primary_key_index: IndexMetadata | None = None,
     ) -> None:
         self.identity = identity
         self.declared_container = declared_container
@@ -196,7 +197,15 @@ class FakeCompiledEntity:
         self.declared_value_objects = tuple(declared_value_objects)
         self.declared_as_of_axes = tuple(declared_as_of_axes)
         self.inheritance = inheritance
-        self.indices = tuple(indices)
+        self.declared_primary_key_index = declared_primary_key_index
+        self.authored_indices = tuple(
+            index for index in indices if index is not declared_primary_key_index
+        )
+        self.indices = (
+            self.authored_indices
+            if declared_primary_key_index is None
+            else (declared_primary_key_index, *self.authored_indices)
+        )
         self._attributes = {member.identity.name: member for member in self.declared_attributes}
         self._relationships = {
             member.identity.name: member for member in self.declared_relationships
@@ -471,7 +480,7 @@ def _account() -> CompiledEntity:
                 ),
             ),
         ),
-        indices=(_primary_key_index(ACCOUNT, "account"),),
+        declared_primary_key_index=_primary_key_index(ACCOUNT, "account"),
     )
 
 
@@ -492,7 +501,7 @@ def parity_metadata() -> FakeCompiledMetadata:
                     _attribute(LEDGER, "id", INT64, key=True),
                     _attribute(LEDGER, "label", STRING, max_length=40),
                 ),
-                indices=(_primary_key_index(LEDGER, "ledger"),),
+                declared_primary_key_index=_primary_key_index(LEDGER, "ledger"),
             ),
             FakeCompiledEntity(
                 ENTRY,
@@ -508,7 +517,7 @@ def parity_metadata() -> FakeCompiledMetadata:
                         reverse_of=RelationshipIdentity(ACCOUNT, "entries"),
                     ),
                 ),
-                indices=(_primary_key_index(ENTRY, "entry"),),
+                declared_primary_key_index=_primary_key_index(ENTRY, "entry"),
             ),
             FakeCompiledEntity(
                 AUDIT,
@@ -526,7 +535,7 @@ def parity_metadata() -> FakeCompiledMetadata:
                         end_attribute=AttributeIdentity(AUDIT, "txEnd"),
                     ),
                 ),
-                indices=(_primary_key_index(AUDIT, "audit", "txEnd"),),
+                declared_primary_key_index=_primary_key_index(AUDIT, "audit", "txEnd"),
             ),
         ),
     )

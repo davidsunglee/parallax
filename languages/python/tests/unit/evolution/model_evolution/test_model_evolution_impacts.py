@@ -391,7 +391,7 @@ def _keyed_index(*, temporal: bool) -> Metamodel:
                     ),
                 ),
                 as_of_axes=(axis,) if temporal else (),
-                indices=(
+                authored_indices=(
                     IndexMetadata(
                         IndexIdentity(_ARRIVAL, "arrival_serial"), (serial.identity,), unique=True
                     ),
@@ -440,7 +440,7 @@ def _paired_indices(*names: tuple[str, tuple[str, ...]]) -> Metamodel:
                 identity=_PAIRED,
                 container=Table("reconciliation"),
                 attributes=(key(_PAIRED), *members),
-                indices=tuple(
+                authored_indices=tuple(
                     IndexMetadata(
                         IndexIdentity(_PAIRED, name),
                         tuple(AttributeIdentity(_PAIRED, component) for component in components),

@@ -32,6 +32,7 @@ from parallax.core.internal.metamodel._values import (
     AttributeMetadata,
     IndexMetadata,
     InheritanceMetadata,
+    LocalIndices,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     PersistenceMode,
@@ -129,7 +130,7 @@ class _ValueObjectMetadata(_OccurrenceMetadata):
 
 
 @dataclass(frozen=True, slots=True)
-class _CompiledEntity:
+class _CompiledEntity(LocalIndices):
     identity: EntityIdentity
     declared_container: StorageContainer | None
     declared_persistence: PersistenceMode | None
@@ -139,7 +140,6 @@ class _CompiledEntity:
     declared_value_objects: tuple[ValueObjectMetadata, ...]
     declared_as_of_axes: tuple[AsOfAxisMetadata, ...]
     inheritance: InheritanceMetadata | None
-    indices: tuple[IndexMetadata, ...]
     _attribute_index: Mapping[str, AttributeMetadata] = field(init=False, repr=False, compare=False)
     _relationship_index: Mapping[str, RelationshipDeclaration] = field(
         init=False, repr=False, compare=False
@@ -153,6 +153,7 @@ class _CompiledEntity:
     _index_index: Mapping[str, IndexMetadata] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        LocalIndices.__post_init__(self)
         object.__setattr__(
             self,
             "_attribute_index",
@@ -251,7 +252,8 @@ def _compiled_entity(declaration: EntityDeclaration) -> CompiledEntity:
         ),
         declared_as_of_axes=tuple(declaration.as_of_axes),
         inheritance=declaration.inheritance,
-        indices=tuple(declaration.indices),
+        declared_primary_key_index=declaration.declared_primary_key_index,
+        authored_indices=tuple(declaration.authored_indices),
     )
 
 

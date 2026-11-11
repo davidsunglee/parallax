@@ -13,7 +13,7 @@ code.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from parallax.core.internal.base import INT64, TIMESTAMP, NeutralType
@@ -42,6 +42,7 @@ from parallax.core.internal.metamodel import (
     UnresolvedRelationshipDeclaration,
     ValueObjectOccurrenceDeclaration,
     default_column_name,
+    derive_primary_key_index,
     designate_framework_owned,
     resolve,
 )
@@ -67,11 +68,28 @@ class Declaration:
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = ()
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     inheritance: UnresolvedInheritance | None = None
-    indices: tuple[IndexMetadata, ...] = ()
+    authored_indices: tuple[IndexMetadata, ...] = ()
+    declared_primary_key_index: IndexMetadata | None = None
+    derive_primary_index: bool = True
+    indices: tuple[IndexMetadata, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "attributes", designate_framework_owned(self.attributes, self.as_of_axes)
+        )
+        primary = self.declared_primary_key_index
+        if primary is None and self.derive_primary_index:
+            primary = derive_primary_key_index(
+                entity=self.identity,
+                container=self.container,
+                attributes=self.attributes,
+                as_of_axes=self.as_of_axes,
+            )
+            object.__setattr__(self, "declared_primary_key_index", primary)
+        object.__setattr__(
+            self,
+            "indices",
+            self.authored_indices if primary is None else (primary, *self.authored_indices),
         )
 
 

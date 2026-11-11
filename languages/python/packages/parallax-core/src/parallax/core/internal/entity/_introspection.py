@@ -85,6 +85,10 @@ class EntityMetadata(Protocol):
     @property
     def parent(self) -> EntityIdentity | None: ...
     @property
+    def declared_primary_key_index(self) -> IndexMetadata | None: ...
+    @property
+    def authored_indices(self) -> Sequence[IndexMetadata]: ...
+    @property
     def indices(self) -> Sequence[IndexMetadata]: ...
     @property
     def declared(self) -> EntityProfile: ...
@@ -136,6 +140,8 @@ class _EntityMetadata:
     identity: EntityIdentity
     inheritance: AbstractRoot | AbstractSubtype | ConcreteSubtype | None
     parent: EntityIdentity | None
+    declared_primary_key_index: IndexMetadata | None
+    authored_indices: Sequence[IndexMetadata]
     indices: Sequence[IndexMetadata]
     declared: _EntityProfile
     effective: _EntityProfile
@@ -169,6 +175,8 @@ def describe_entities(model: Metamodel) -> tuple[EntityMetadata, ...]:
                 identity=identity,
                 inheritance=_authored_role(compiled.inheritance),
                 parent=inheritance_parent(compiled.inheritance),
+                declared_primary_key_index=compiled.declared_primary_key_index,
+                authored_indices=compiled.authored_indices,
                 indices=compiled.indices,
                 declared=declared,
                 effective=_effective(

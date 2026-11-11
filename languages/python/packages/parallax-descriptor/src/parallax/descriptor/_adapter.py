@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -27,6 +27,7 @@ from parallax.core.internal.metamodel import (
     IndexIdentity,
     IndexMetadata,
     InheritanceStrategy,
+    LocalIndices,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NullPlacement,
@@ -92,7 +93,7 @@ _DIMENSIONS: Final[Mapping[_records.TemporalDimension, TemporalDimension]] = {
 
 
 @dataclass(frozen=True, slots=True)
-class _EntityDeclaration:
+class _EntityDeclaration(LocalIndices):
     """One parsed Entity record seen through the Unresolved seam.
 
     Every member is the descriptor's own local declaration in authoring order.
@@ -109,7 +110,6 @@ class _EntityDeclaration:
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
     as_of_axes: tuple[AsOfAxisMetadata, ...]
     inheritance: UnresolvedInheritance | None
-    indices: tuple[IndexMetadata, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,28 +172,11 @@ def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
         value_objects=tuple(_value_object(member, where) for member in entity.value_objects),
         as_of_axes=as_of_axes,
         inheritance=None if entity.inheritance is None else _inheritance(entity.inheritance, where),
-        indices=_indices(identity, container, attributes, as_of_axes, entity.indices),
+        declared_primary_key_index=derive_primary_key_index(
+            entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
+        ),
+        authored_indices=tuple(_index(identity, member) for member in entity.indices),
     )
-
-
-def _indices(
-    identity: EntityIdentity,
-    container: StorageContainer | None,
-    attributes: tuple[AttributeMetadata, ...],
-    as_of_axes: tuple[AsOfAxisMetadata, ...],
-    declared: Sequence[_records.Index],
-) -> tuple[IndexMetadata, ...]:
-    """The Entity's derived primary-key Index followed by its authored Indices.
-
-    The primary-key Index is never authored, so the two sets are disjoint and a
-    storage consumer emitting the key constraint from the derived one never
-    emits a second, redundant constraint for an authored twin.
-    """
-    derived = derive_primary_key_index(
-        entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
-    )
-    authored = tuple(_index(identity, member) for member in declared)
-    return authored if derived is None else (derived, *authored)
 
 
 def _persistence(entity: _records.Entity) -> PersistenceMode | None:

@@ -74,14 +74,24 @@ CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] 
 of them in its top-level member namespace, whatever dimensions it declares; only
 an As-Of Axis's own start and end Attributes may bear them."""
 
-TEMPORALITY_PROFILES: Final[Mapping[str, tuple[TemporalDimension, ...]]] = MappingProxyType(
+_DERIVED_AXES: Final[Mapping[TemporalDimension, DerivedAxis]] = MappingProxyType(
     {
-        NONTEMPORAL: (),
-        "transaction-time": (TemporalDimension.TRANSACTION_TIME,),
-        "bitemporal": (TemporalDimension.VALID_TIME, TemporalDimension.TRANSACTION_TIME),
+        dimension: DerivedAxis(dimension, *endpoints)
+        for dimension, endpoints in TEMPORAL_MEMBERS.items()
     }
 )
-"""Each Temporality Profile's Temporal Dimensions in canonical axis order.
+
+TEMPORALITY_PROFILES: Final[Mapping[str, tuple[DerivedAxis, ...]]] = MappingProxyType(
+    {
+        NONTEMPORAL: (),
+        "transaction-time": (_DERIVED_AXES[TemporalDimension.TRANSACTION_TIME],),
+        "bitemporal": (
+            _DERIVED_AXES[TemporalDimension.VALID_TIME],
+            _DERIVED_AXES[TemporalDimension.TRANSACTION_TIME],
+        ),
+    }
+)
+"""Each Temporality Profile's immutable axis definitions in canonical order.
 
 The members are exactly the composed profiles, so a dimension set no member
 names — a lone Valid Time above all — is unspellable rather than rejected.
@@ -101,10 +111,10 @@ def derive_temporal_structure(temporality: str | None) -> tuple[DerivedAxis, ...
     projection order a Bitemporal Entity carries.
     """
     profile = NONTEMPORAL if temporality is None else temporality
-    dimensions = TEMPORALITY_PROFILES.get(profile)
-    if dimensions is None:
+    axes = TEMPORALITY_PROFILES.get(profile)
+    if axes is None:
         raise ValueError(f"{profile!r} is not a temporality profile")
-    return tuple(DerivedAxis(dimension, *TEMPORAL_MEMBERS[dimension]) for dimension in dimensions)
+    return axes
 
 
 def temporality_profile(dimensions: Iterable[TemporalDimension]) -> str:
@@ -117,7 +127,7 @@ def temporality_profile(dimensions: Iterable[TemporalDimension]) -> str:
     """
     declared = frozenset(dimensions)
     for profile, derived in TEMPORALITY_PROFILES.items():
-        if frozenset(derived) == declared:
+        if frozenset(axis.dimension for axis in derived) == declared:
             return profile
     spelled = ", ".join(sorted(dimension.name for dimension in declared))
     raise ValueError(f"no temporality profile derives {{{spelled}}}")

@@ -29,7 +29,6 @@ from parallax.core.internal.metamodel import (
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    derive_primary_key_index,
 )
 from parallax.core.internal.metamodel._accepted import FacetKey
 from parallax.core.internal.model_formation import ModuleIdentity
@@ -191,19 +190,11 @@ def _compilation_index(
             roots.append(entity.identity)
         for direction in relationship.relationships(entity.identity) or ():
             addressed.extend((direction.join.source, direction.join.target))
-        derived = derive_primary_key_index(
-            entity=entity.identity,
-            container=entity.declared_container,
-            attributes=entity.declared_attributes,
-            as_of_axes=entity.declared_as_of_axes,
-        )
+        derived = entity.declared_primary_key_index
         if derived is not None:
             primary_keys[entity.identity] = derived
-        family_indices.setdefault(root, []).extend(
-            declared
-            for declared in entity.indices
-            if derived is None or declared.identity != derived.identity
-        )
+        family_indices.setdefault(root, []).extend(entity.authored_indices)
+
     joined = {_declared_endpoint(endpoint, inheritance) for endpoint in addressed}
     return _CompilationIndex(
         metadata=metadata,
