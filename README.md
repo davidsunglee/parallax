@@ -240,7 +240,3 @@ docker context inspect --format '{{ .Endpoints.docker.Host }}'
 Set that endpoint as `docker.host` in your per-machine, untracked
 `~/.testcontainers.properties`, for example
 `docker.host=unix:///Users/you/.orbstack/run/docker.sock`.
-
-## License
-
-Licensed under the [Apache License, Version 2.0](LICENSE).
