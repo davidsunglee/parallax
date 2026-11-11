@@ -25,10 +25,11 @@ from parallax.core.internal.read_delivery._page import (
     page_cadence,
 )
 from parallax.core.internal.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.internal.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
+from tests._support.sql import compile_nonempty_read as compile_read
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import PageFixture, RecordingObserver

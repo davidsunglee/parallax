@@ -32,7 +32,12 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.internal import inheritance, read_planning
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel
-from parallax.core.internal.sql_gen._compile import compile_read, compile_template
+from tests._support.sql import (
+    compile_nonempty_read as compile_read,
+)
+from tests._support.sql import (
+    compile_nonempty_template as compile_template,
+)
 
 
 def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> None:

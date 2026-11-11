@@ -14,7 +14,6 @@ from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
-    TablePerConcreteSubtype,
 )
 from parallax.core.internal.object_query._resolved import (
     ResolvedAsOfSelection,
@@ -59,6 +58,7 @@ from parallax.core.internal.sql_gen._compile import (
     compile_read,
     compile_template,
 )
+from parallax.core.internal.sql_gen._inheritance import EMPTY_READ, EmptyRead
 from parallax.core.internal.sql_gen._predicate import affix_needs_escape
 from parallax.core.internal.sql_gen._seek import continuation_pattern
 from parallax.core.internal.temporal_read import scans_resolved_axis
@@ -94,14 +94,6 @@ class _ReadPlanCacheStatistics:
     misses: int
     evictions: int
 
-
-@dataclass(frozen=True, slots=True)
-class EmptyRead:
-    """A read position no stored row can occupy: its effective concrete set is
-    empty, so it has no statement to execute and no rows to convert."""
-
-
-EMPTY_READ: Final = EmptyRead()
 
 type _FetchWork = CompiledTemplate | EmptyRead | None
 
@@ -433,22 +425,16 @@ def repeating_levels(
     (none for a level that executes nothing) and the families ``referenced`` by
     a back-reference.
 
-    One statement returns each row key at most once, except where it unions the
-    tables of several concretes of one table-per-concrete-subtype family, whose
-    keys may collide. Beyond that, a row key recurs on a Page only through a
-    family a second level also fetches or a back-reference names, which then
-    needs every fetched row of that family merged by key.
+    A row key recurs across levels when a second level fetches the same family
+    or a back-reference names it. Within-statement repetition comes from the
+    compiled result contract.
     """
     facet = inheritance.inheritance_facet_of(model.meta)
     families_by_level: list[frozenset[EntityIdentity]] = []
     repeating: set[SourceLevel] = set()
-    for level, entities in enumerate(resolvable):
+    for entities in resolvable:
         views = tuple(_entity_view(facet, entity) for entity in entities)
         families_by_level.append(frozenset(view.root for view in views))
-        if len(views) > 1 and any(
-            isinstance(view.strategy, TablePerConcreteSubtype) for view in views
-        ):
-            repeating.add(level)
     shared = set(referenced)
     seen: set[EntityIdentity] = set()
     for families in families_by_level:
@@ -479,7 +465,6 @@ def _plan_uncached(
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
     versioning = concurrency.concurrency_facet_of(model.meta)
-    empty_root = _empty_root(model, query)
     projection = read_planning.ReadProjectionRequest("all", True)
     planned = (
         read_planning.plan(
@@ -494,23 +479,23 @@ def _plan_uncached(
         )
     )
     root_template: CompiledTemplate | None = None
-    root: CompiledRead | EmptyRead
-    if empty_root:
-        root = EMPTY_READ
-    else:
-        shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
-        if templated:
-            root_template = compile_template(
-                planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
-            )
-            root = root_template.compiled
+    shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
+    if templated:
+        compiled_root = compile_template(
+            planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
+        )
+        if isinstance(compiled_root, EmptyRead):
+            root = compiled_root
         else:
-            root = compile_read(
-                planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
-            )
+            root_template = compiled_root
+            root = compiled_root.compiled
+    else:
+        root = compile_read(
+            planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
+        )
     if reusable is None:
         fetches = _fetch_work(
-            planned, model, dialect, versioning, preference, empty_root=empty_root
+            planned, model, dialect, versioning, preference, empty_root=isinstance(root, EmptyRead)
         )
         correlations = correlation_table(
             planned,
@@ -533,6 +518,19 @@ def _plan_uncached(
                 for step, work in zip(planned.fetch_steps, fetches, strict=True)
                 if isinstance(step, read_planning.BackReferenceFetchStep) and work is None
             ),
+        )
+        repeating |= frozenset(
+            index
+            for index, compiled in enumerate(
+                (
+                    root,
+                    *(
+                        work.compiled if isinstance(work, CompiledTemplate) else work
+                        for work in fetches
+                    ),
+                )
+            )
+            if isinstance(compiled, CompiledRead) and compiled.result_contract.may_repeat_row_keys
         )
         fetch_rows = tuple(
             bind(
@@ -593,19 +591,6 @@ def _takes_shared_lock(
     return preference is not None and versioning.effective_strategy(entity, preference) == "locking"
 
 
-def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
-    """Whether ``query``'s result position has no concrete inhabitant.
-
-    Validation refuses an authored narrowing to the empty set, so only an
-    unnarrowed dormant abstract target qualifies; a standalone Entity's view is
-    its own concrete.
-    """
-    if query.narrow_to is not None:
-        return False
-    view = inheritance.inheritance_facet_of(model.meta).entity(query.root.identity)
-    return view is not None and not view.concrete_subtypes
-
-
 def _fetch_work(
     planned: read_planning.ObjectQueryPlan,
     model: CatalogedModel,
@@ -625,10 +610,10 @@ def _fetch_work(
             if isinstance(step.parent, read_planning.RootRef)
             else isinstance(work[step.parent.index], EmptyRead)
         )
-        if parent_empty or not planned.includes.position(step.position).target:
+        if parent_empty:
             work.append(EMPTY_READ)
         elif isinstance(step, read_planning.BackReferenceFetchStep):
-            work.append(None)
+            work.append(None if planned.includes.position(step.position).target else EMPTY_READ)
         else:
             work.append(
                 compile_template(

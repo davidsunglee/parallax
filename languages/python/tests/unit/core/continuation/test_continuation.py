@@ -69,10 +69,10 @@ from parallax.core.internal.predicate import (
     validate_predicate,
 )
 from parallax.core.internal.predicate._resolved import ResolvedConstant
-from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.internal.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
 from tests._support.errors import raises_code
+from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of

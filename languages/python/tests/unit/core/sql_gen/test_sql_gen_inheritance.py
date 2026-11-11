@@ -35,7 +35,7 @@ from parallax.core.internal.sql_gen._inheritance import (
 )
 from parallax.core.internal.sql_gen._predicate import render_predicate
 from tests._support.errors import raises_code
-from tests._support.sql import compile_projected_read, compile_read
+from tests._support.sql import compile_nonempty_read, compile_projected_read, compile_read
 from tests.unit import _family_predecessor_support as family
 from tests.unit import _read_projection_support as support
 from tests.unit._corpus_model_support import formed, model, target
@@ -285,13 +285,18 @@ def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reuse = record_plan_reuse(monkeypatch)
-    compile_read(
+    compiled = compile_read(
         _heterogeneous_payment_predicate(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
     )
     concretes = _narrow(DOCUMENT_LAYOUT, "CardPayment", "CashPayment")
+    assert compiled.read_shape.variant == "tph-partitioned"
+    assert tuple(root.concrete for root in compiled.read_shape.roots) == concretes
+    assert {root.table.table.name for root in compiled.read_shape.roots} == {"payment_document"}
+    assert not compiled.read_shape.is_union
+    assert not compiled.result_contract.may_repeat_row_keys
     assert [(partitions, keys) for partitions, keys, _root in rendered_roots] == [
         (True, concretes)
     ] * 2
@@ -329,6 +334,7 @@ def test_a_tph_ordering_term_alone_decides_partitioning_before_rendering(
     assert keys == (_narrow(DOCUMENT_LAYOUT, "CashPayment") if partitions else (None,))
     assert len(rendered_roots) == 1
     assert ("offset 0) p1" in compiled.statement.sql) is partitions
+    assert compiled.read_shape.variant == ("tph-partitioned" if partitions else "single-table")
 
 
 def _ticket_family() -> Metamodel:
@@ -1245,6 +1251,9 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
         narrow_to=_narrow(DOCUMENT, "Invoice"),
     )
     assert "family_variant" not in compiled.statement.sql
+    assert compiled.read_shape.variant == "single-table"
+    assert tuple(root.table.table.name for root in compiled.read_shape.roots) == ("invoice",)
+    assert not compiled.result_contract.may_repeat_row_keys
     # Nothing discriminates, so every row of this read names the one concrete and
     # `resolvable` collapses to it — the fixed identity is the whole set.
     assert compiled.result_contract.resolvable == (target(DOCUMENT, "Invoice").identity,)
@@ -1370,6 +1379,10 @@ def test_tpcs_union_refuses_only_a_requested_shared_lock() -> None:
         oa.TrueNode(), APPLIANCE, POSTGRES, target(APPLIANCE, "Appliance"), preference="optimistic"
     )
     assert " union all " in compiled.statement.sql
+    assert compiled.read_shape.variant == "tpcs-union"
+    assert compiled.read_shape.is_union
+    assert len(compiled.read_shape.roots) > 1
+    assert compiled.result_contract.may_repeat_row_keys
     assert "for share" not in compiled.statement.sql
     with raises_code(UnsupportedError, INHERITANCE_LOCKING_READ_UNSUPPORTED) as refused:
         compile_read(
@@ -1734,7 +1747,7 @@ def test_a_fixed_identity_refuses_an_identity_carrier() -> None:
         oq.validate_object_query(entity, oq.object_query(entity.identity, oa.TrueNode()), ANIMAL),
         ANIMAL,
     )
-    paged = sql_compile.compile_read(
+    paged = compile_nonempty_read(
         read_planning.plan(
             plan.first(limit=2),
             ANIMAL,

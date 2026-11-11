@@ -15,7 +15,12 @@ from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.predicate import TrueNode
-from parallax.core.internal.sql_gen._compile import compile_read, compile_template
+from tests._support.sql import (
+    compile_nonempty_read as compile_read,
+)
+from tests._support.sql import (
+    compile_nonempty_template as compile_template,
+)
 
 
 def _model(stem: str) -> Metamodel:

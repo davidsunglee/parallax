@@ -323,6 +323,7 @@ class Dialect:
     # The native codes reporting an exclusion constraint's violation, one kind
     # of the `constraintViolation` category (`m-db-error`).
     exclusion_violation_codes: frozenset[str] = frozenset()
+    seek_null_tail_lock_placement: Literal["outer", "branches"] = "outer"
 
     def __post_init__(self) -> None:
         limit = self.max_bind_parameters
@@ -439,6 +440,10 @@ class Dialect:
         return f"{column_sql} {direction} nulls {placement}"
 
     # -- shared lock ------------------------------------------------------- #
+    def shared_lock_on_outer_seek_read(self) -> bool:
+        """Whether a two-branch seek read takes its shared lock on the outer read."""
+        return self.seek_null_tail_lock_placement == "outer"
+
     def shared_lock_suffix(self, root_alias: str) -> str:
         """The shared-row-lock suffix for an object find required to take the lock."""
         return f"for share of {root_alias}"

@@ -49,6 +49,7 @@ from parallax.core.internal.predicate._resolved import (
 )
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.sql_gen._context import table_layout as _table_layout
+from parallax.core.internal.sql_gen._inheritance import EmptyReadShape as _EmptyReadShape
 from parallax.core.internal.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.internal.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.internal.sql_gen._inheritance import TpcsUnionReadPlan as _TpcsUnionReadPlan
@@ -429,19 +430,24 @@ class StatementPlan:
 
     ``root_scopes`` names the lexical plan of each physical root: ``None`` for
     a root no concrete branch fixes, else that branch's concrete Entity.
-    ``requires_tph_partition`` is whether a table-per-hierarchy read renders
-    one partition per concrete; ``write_filter_form`` is present exactly for a
-    write filter.
+    ``read_shape`` is the finalized physical read, absent for a write filter.
     """
 
     predicate: TemporallyResolvedPredicate
     lexical_scopes: tuple[LexicalScopePlan, ...]
     root_scopes: Mapping[EntityIdentity | None, LexicalScopeId]
-    requires_tph_partition: bool
+    read_shape: _ReadShape | None
     write_filter_form: WriteFilterForm | None
 
+    @property
+    def requires_tph_partition(self) -> bool:
+        return (
+            isinstance(self.read_shape, _SingleTableReadPlan)
+            and self.read_shape.variant == "tph-partitioned"
+        )
 
-type _ReadShape = _SingleTableReadPlan | _TpcsUnionReadPlan
+
+type _ReadShape = _SingleTableReadPlan | _TpcsUnionReadPlan | _EmptyReadShape
 
 
 def plan_statement(
@@ -473,21 +479,22 @@ def plan_statement(
     if evaluation_context is EvaluationContext.WRITE_FILTER:
         row = _Row(entity, _table_layout(storage, facet, entity.identity), None)
         scope_id, form = planner.write_filter(root, row)
-        return planner.sealed(predicate, {None: scope_id}, False, form)
+        return planner.sealed(predicate, {None: scope_id}, None, form)
     sharing = evaluation_context is EvaluationContext.SHARING_ALLOWED
     tph = isinstance(_entity_view(facet, entity.identity).strategy, TablePerHierarchy)
-    partition = (
+    if (
         tph
         and isinstance(read_shape, _SingleTableReadPlan)
         and planner.partitions(predicate, entity, order_terms)
-    )
+    ):
+        read_shape = read_shape.partitioned()
     roots = {
         concrete: planner.scope(
             root, row, shares=sharing, sharing=sharing, sources=execution_value_sources
         )
-        for concrete, row in _root_rows(entity, read_shape, tph, partition, facet, storage)
+        for concrete, row in _root_rows(entity, read_shape, facet, storage)
     }
-    return planner.sealed(predicate, roots, partition, None)
+    return planner.sealed(predicate, roots, read_shape, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,27 +510,14 @@ class _Row:
 def _root_rows(
     entity: CompiledEntity,
     read_shape: _ReadShape | None,
-    tph: bool,
-    partition: bool,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
 ) -> Iterator[tuple[EntityIdentity | None, _Row]]:
-    match read_shape:
-        case None:
-            yield None, _Row(entity, _table_layout(storage, facet, entity.identity), None)
-        case _SingleTableReadPlan(concrete_types=concretes):
-            # A table-per-hierarchy position reads the root's shared Table; any
-            # other single-table position reads its one concrete's own.
-            layout = _table_layout(storage, facet, entity.identity if tph else concretes[0])
-            if not partition:
-                yield None, _Row(entity, layout, None)
-                return
-            for concrete in concretes:
-                yield concrete, _Row(entity, layout, concrete)
-        case _TpcsUnionReadPlan(branches=branches):
-            for branch in branches:
-                layout = _table_layout(storage, facet, branch.identity)
-                yield branch.identity, _Row(entity, layout, branch.identity)
+    if read_shape is None:
+        yield None, _Row(entity, _table_layout(storage, facet, entity.identity), None)
+    else:
+        for physical in read_shape.roots:
+            yield physical.concrete, _Row(entity, physical.table, physical.concrete)
 
 
 class _StatementPlanner:
@@ -618,7 +612,7 @@ class _StatementPlanner:
         self,
         predicate: TemporallyResolvedPredicate,
         roots: dict[EntityIdentity | None, LexicalScopeId],
-        requires_tph_partition: bool,
+        read_shape: _ReadShape | None,
         write_filter_form: WriteFilterForm | None,
     ) -> StatementPlan:
         scopes: list[LexicalScopePlan] = []
@@ -632,7 +626,7 @@ class _StatementPlanner:
             predicate,
             tuple(scopes),
             MappingProxyType(roots),
-            requires_tph_partition,
+            read_shape,
             write_filter_form,
         )
 

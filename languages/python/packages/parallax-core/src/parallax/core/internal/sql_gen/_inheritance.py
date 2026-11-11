@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, Literal
 
@@ -334,6 +334,7 @@ class ReadResultContract:
     identity_ordinal: int | None
     shared_document_ordinal: int | None
     coordinate_ordinals: tuple[int, ...]
+    may_repeat_row_keys: bool = False
     resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
     _by_entity: Mapping[EntityIdentity, EntitySources] = field(
         init=False, repr=False, compare=False
@@ -668,6 +669,38 @@ def select_projection(
 
 
 @dataclass(frozen=True, slots=True)
+class ReadRoot:
+    table: TableLayout
+    concrete: EntityIdentity | None
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyReadShape:
+    concrete_types: tuple[EntityIdentity, ...] = ()
+    roots: tuple[ReadRoot, ...] = ()
+    variant: Literal["empty"] = "empty"
+    is_union: bool = False
+    may_repeat_row_keys: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyReadResultContract:
+    resolvable: tuple[EntityIdentity, ...] = ()
+    may_repeat_row_keys: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyRead:
+    """A read position no stored row can occupy, with no statement or rows to bind."""
+
+    result_contract: EmptyReadResultContract = field(default_factory=EmptyReadResultContract)
+    read_shape: EmptyReadShape = field(default_factory=EmptyReadShape)
+
+
+EMPTY_READ: Final = EmptyRead()
+
+
+@dataclass(frozen=True, slots=True)
 class SingleTableReadPlan:
     """A read of one Table: a standalone Entity, a table-per-hierarchy position,
     or a table-per-concrete-subtype position resolving to exactly one concrete
@@ -694,6 +727,8 @@ class SingleTableReadPlan:
     """
 
     table: str
+    root_table: TableLayout
+    roots: tuple[ReadRoot, ...]
     position: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
@@ -701,10 +736,20 @@ class SingleTableReadPlan:
     row_identity: RowIdentity
     shared_document: SharedDocumentMapping | None
     direct_documents: DirectDocumentMappings | None
+    variant: Literal["single-table", "tph-partitioned"] = "single-table"
+    is_union: bool = False
+    may_repeat_row_keys: bool = False
 
     @property
     def concrete_types(self) -> Sequence[EntityIdentity]:
         return self.position.concrete_subtypes
+
+    def partitioned(self) -> SingleTableReadPlan:
+        return replace(
+            self,
+            roots=tuple(ReadRoot(self.root_table, concrete) for concrete in self.concrete_types),
+            variant="tph-partitioned",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -779,6 +824,25 @@ class TpcsUnionReadPlan:
     direct_documents: DirectDocumentMappings | None
 
     @property
+    def roots(self) -> tuple[ReadRoot, ...]:
+        return tuple(
+            ReadRoot(physical.layout, branch.identity)
+            for branch, physical in zip(self.branches, self.layout.branches, strict=True)
+        )
+
+    @property
+    def variant(self) -> Literal["tpcs-union"]:
+        return "tpcs-union"
+
+    @property
+    def is_union(self) -> bool:
+        return True
+
+    @property
+    def may_repeat_row_keys(self) -> bool:
+        return True
+
+    @property
     def concrete_types(self) -> Sequence[EntityIdentity]:
         return self.position.concrete_subtypes
 
@@ -818,7 +882,7 @@ def plan_read_shape(
     storage: StorageLayoutFacet,
     instance_form: bool,
     shared_lock: bool,
-) -> SingleTableReadPlan | TpcsUnionReadPlan:
+) -> SingleTableReadPlan | TpcsUnionReadPlan | EmptyReadShape:
     """Plan the physical read of ``query``'s position, whatever its Entity's
     inheritance shape.
 
@@ -840,6 +904,8 @@ def plan_read_shape(
     entity = query.entity
     view = entity_view(facet, entity.identity)
     position = query.position
+    if not position.concrete_subtypes:
+        return EmptyReadShape()
     layout = position_layout(storage, position.concrete_subtypes)
     if isinstance(view.strategy, TablePerConcreteSubtype) and len(position.concrete_subtypes) != 1:
         return _plan_tpcs_union_read(
@@ -931,6 +997,8 @@ def _plan_single_table_read(
             )
     return SingleTableReadPlan(
         table=table.table.name,
+        root_table=table,
+        roots=(ReadRoot(table, None),),
         position=position,
         layout=layout,
         columns=columns,

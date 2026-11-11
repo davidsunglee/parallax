@@ -82,6 +82,10 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.internal.sql_gen._inheritance",
     ): frozenset({"ReadResultContract"}),
     (
+        "parallax.core.internal.read_delivery._read_plan",
+        "parallax.core.internal.sql_gen._inheritance",
+    ): frozenset({"EMPTY_READ", "EmptyRead"}),
+    (
         "parallax.core.internal.read_delivery._row_decoding",
         "parallax.core.internal.sql_gen._inheritance",
     ): frozenset(

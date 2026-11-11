@@ -43,6 +43,8 @@ from parallax.core.internal.sql_gen._context import (
     StatementBuilder,
 )
 from parallax.core.internal.sql_gen._context import table_layout as _table_layout
+from parallax.core.internal.sql_gen._inheritance import EMPTY_READ, EmptyRead
+from parallax.core.internal.sql_gen._inheritance import EmptyReadShape as _EmptyReadShape
 
 # The family LANE of this compiler — distinct from `parallax.core.internal.inheritance`
 # above, which is the metamodel module. Each name is aliased down to the
@@ -167,6 +169,7 @@ class CompiledRead:
     projection: ResolvedReadProjection
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_contract: _ReadResultContract
+    read_shape: _SingleTableReadPlan | _TpcsUnionReadPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,15 +328,14 @@ def compile_template(
     *,
     result_form: _ResultForm = "row",
     shared_lock: bool = False,
-) -> CompiledTemplate:
+) -> CompiledTemplate | EmptyRead:
     """Compile a read once, deferring to rendering its page's cap and seek
     carriers, its gathered parent keys, and the predicate operands and finite
     temporal bounds its planned query's execution-value sources name."""
-    return _template(
-        _compile_read(
-            query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=True
-        )
+    compiled = _compile_read(
+        query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=True
     )
+    return compiled if isinstance(compiled, EmptyRead) else _template(compiled)
 
 
 def _template(compiled: CompiledRead) -> CompiledTemplate:
@@ -368,7 +370,7 @@ def compile_read(
     *,
     result_form: _ResultForm = "row",
     shared_lock: bool = False,
-) -> CompiledRead:
+) -> CompiledRead | EmptyRead:
     """Compile one planned Entity Query into a self-contained read.
 
     ``result_form`` chooses only the materialization contract. Projection membership is
@@ -388,7 +390,7 @@ def _compile_read(
     result_form: _ResultForm,
     shared_lock: bool,
     deferred: bool,
-) -> CompiledRead:
+) -> CompiledRead | EmptyRead:
     """Lower ``query`` once; a ``deferred`` read binds its page's and its
     predicate's execution values as markers."""
     page_deferred = deferred and query.paging is not None
@@ -399,9 +401,11 @@ def _compile_read(
     two_branches = (
         seek is not None and query.limit is not None and _needs_null_tail(seek, storage, dialect)
     )
-    outer_lock = two_branches and shared_lock and dialect.name == "postgres"
+    outer_lock = two_branches and shared_lock and dialect.shared_lock_on_outer_seek_read()
     branch_lock = shared_lock and not outer_lock
     read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", shared_lock)
+    if isinstance(read_shape, _EmptyReadShape):
+        return EMPTY_READ
     statement_plan = _plan_statement(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
@@ -413,6 +417,8 @@ def _compile_read(
         order_terms=query.order_by,
         execution_value_sources=query.execution_value_sources if deferred else None,
     )
+    read_shape = statement_plan.read_shape
+    assert isinstance(read_shape, (_SingleTableReadPlan, _TpcsUnionReadPlan))
     position = tuple(read_shape.concrete_types)
     statement, select_list = _render_read_branch(
         query,
@@ -466,6 +472,7 @@ def _compile_read(
         select_list.result_contract(
             read_shape, facet, query.projection, terms if query.paging is not None else ()
         ),
+        read_shape,
     )
 
 
@@ -804,8 +811,7 @@ def _render_read_branch(
     plan and one statement plan, through builders of this branch's own: its
     statement and its outermost select list.
 
-    The physical plan decides whether a read is one Table or a union, and the
-    statement plan whether a table-per-hierarchy read partitions by variant.
+    The finalized physical shape decides the renderer.
     """
     entity = query.entity
     paging = query.paging
@@ -826,7 +832,7 @@ def _render_read_branch(
                 null_tail,
                 deferred=deferred,
             )
-        case _SingleTableReadPlan() if statement_plan.requires_tph_partition:
+        case _SingleTableReadPlan(variant="tph-partitioned"):
             return _render_tph_partitioned_read(
                 plan,
                 statement_plan,

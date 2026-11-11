@@ -29,7 +29,6 @@ from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.navigate import _closed  # pyright: ignore[reportPrivateUsage]
 from parallax.core.internal.object_query import AsOf
 from parallax.core.internal.predicate._resolved import ResolvedAnd
-from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED, StatementBuilder
 from parallax.core.internal.sql_gen._planning import (
     EvaluationContext,
@@ -43,6 +42,7 @@ from parallax.core.internal.sql_gen._predicate import (
 )
 from tests._support.errors import raises_code
 from tests._support.sql import (
+    compile_nonempty_read,
     compile_read,
     compile_write_predicate,
     read_position,
@@ -1744,7 +1744,7 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
     quantifier = resolved_as_stated(
         oa.validate_predicate(basket, authored, family), family, basket
     ).predicate
-    compiled = sql_compile.compile_read(
+    compiled = compile_nonempty_read(
         read_planning.PlannedEntityQuery(
             target=basket.identity,
             entity=basket,

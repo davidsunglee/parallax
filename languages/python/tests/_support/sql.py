@@ -27,11 +27,46 @@ from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.predicate import PredicateNode, validate_predicate
 from parallax.core.internal.predicate._resolved import ResolvedPredicate
 from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
-from parallax.core.internal.sql_gen._compile import CompiledPredicate, CompiledRead
+from parallax.core.internal.sql_gen._compile import (
+    CompiledPredicate,
+    CompiledRead,
+    CompiledTemplate,
+)
 from parallax.core.internal.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.internal.sql_gen._compile import compile_template as compile_entity_template
 from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
+
+
+def compile_nonempty_read(
+    query: read_planning.PlannedEntityQuery,
+    model: Metamodel,
+    dialect: Dialect,
+    *,
+    result_form: Literal["row", "instance"] = "row",
+    shared_lock: bool = False,
+) -> CompiledRead:
+    compiled = compile_entity_query(
+        query, model, dialect, result_form=result_form, shared_lock=shared_lock
+    )
+    assert isinstance(compiled, CompiledRead)
+    return compiled
+
+
+def compile_nonempty_template(
+    query: read_planning.PlannedEntityQuery,
+    model: Metamodel,
+    dialect: Dialect,
+    *,
+    result_form: Literal["row", "instance"] = "row",
+    shared_lock: bool = False,
+) -> CompiledTemplate:
+    compiled = compile_entity_template(
+        query, model, dialect, result_form=result_form, shared_lock=shared_lock
+    )
+    assert isinstance(compiled, CompiledTemplate)
+    return compiled
 
 
 def compile_read(
@@ -60,7 +95,7 @@ def compile_read(
         temporal=temporal,
     )
     if result_form == "row":
-        return compile_entity_query(
+        return compile_nonempty_read(
             read_planning.plan_root(
                 query, model, projection=read_planning.ReadProjectionRequest("none", False)
             ),
@@ -101,7 +136,7 @@ def compile_projected_read(
     neither of which widens the other: every declared member, as a predecessor
     read takes it, a named subset, or none."""
     projection = read_planning.ReadProjectionRequest(value_objects, observe_structured_document)
-    return compile_entity_query(
+    return compile_nonempty_read(
         read_planning.plan_root(
             _validated(predicate, model, target, narrow_to=narrow_to, temporal=temporal),
             model,
