@@ -8,6 +8,7 @@ Hold every change to these principles:
 - **Canonical data.** Work from the canonical structures the data owner already builds at the right point in the framework lifecycle. When access must be faster, the owner presents a view and manages its lifetime there, rather than a caller building a structure for one piece of work.
 - **End-to-end processing.** Each step runs once, close to the data owner, at a point with a coherent reason, across every flow: keyed, target, and predicate writes; eager and streamed reads; Typed and Wire APIs; `Columns` and `Document` Storage Layouts. Optimize the whole flow: a step convenient locally but reversed downstream, such as encoding that a later stage decodes, is duplicate processing.
 - **Production-only code.** Tests and conformance reach production through existing seams. When no seam exists and no other approach can test the behavior, escalate to the maintainer to choose between a minimal seam and a different testing approach.
+- **Tests at real seams.** Prove a behavior at the most public seam that can observe it, and keep a test only when it fails under a break of the behavior it names. [The Python testing map](languages/python/TESTING.md#where-a-test-goes) ranks the seams.
 - **Least surprise.** The API surface behaves as its intended user expects, both per operation and as a set whose operations work harmoniously together.
 
 ## Review
