@@ -23,4 +23,4 @@ entities:
         primaryKey: true
         pkGeneration: max
       - name: face
-        type: decimal(18,2)
+        type: numeric(18,2)

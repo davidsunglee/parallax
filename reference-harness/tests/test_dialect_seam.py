@@ -104,7 +104,7 @@ def test_mariadb_type_mappings() -> None:
     assert _column_type("timestamp", None, "mariadb") == "datetime(6)"
     assert _column_type("boolean", None, "mariadb") == "tinyint(1)"
     assert _column_type("int64", None, "mariadb") == "bigint"
-    assert _column_type("decimal(18,2)", None, "mariadb") == "decimal(18,2)"
+    assert _column_type("numeric(18,2)", None, "mariadb") == "decimal(18,2)"
     assert _column_type("string", 32, "mariadb") == "varchar(32)"
     assert _column_type("string", None, "mariadb") == "text"
 
@@ -115,7 +115,7 @@ _PLACEHOLDER_CASTS = [
     ("int64", None, "bigint", "signed"),
     ("float32", None, "real", "float"),
     ("float64", None, "double precision", "double"),
-    ("decimal(18,2)", None, "decimal(18,2)", "decimal(18,2)"),
+    ("numeric(18,2)", None, "decimal(18,2)", "decimal(18,2)"),
     ("string", 64, "varchar(64)", "char(64)"),
     ("string", None, "text", "char"),
     ("bytes", None, "bytea", "binary"),

@@ -299,7 +299,7 @@ entities:
         column: ledger_label
         maxLength: 40
       - name: balance
-        type: decimal(18,2)
+        type: numeric(18,2)
       - name: openedOn
         type: date
         column: opened_on

@@ -28,9 +28,9 @@ from parallax.core.internal.base import (
     STRING,
     DocumentValue,
     NeutralType,
+    Numeric,
     StructuredDocument,
 )
-from parallax.core.internal.base import Numeric as DecimalType
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.document_codec import (
     MemberDecodePlan,
@@ -96,12 +96,12 @@ _SHAPES: Final = (
     "quantifier-through-to-one",
     "subtype-narrowing",
 )
-_TYPES: Final = ("integer", "string", "decimal")
+_TYPES: Final = ("integer", "string", "numeric")
 _SIZES: Final = (0, 8, 128)
 _NEUTRAL_TYPES: Final[Mapping[str, NeutralType]] = {
     "integer": INT64,
     "string": STRING,
-    "decimal": DecimalType(12, 2),
+    "numeric": Numeric(12, 2),
 }
 
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
@@ -225,7 +225,7 @@ class _ScalarDriver:
             case "string":
                 self._managed = tuple(f"value-{index % 4}" for index in range(size))
                 raw = [f"value-{index % 4}" for index in range(size)]
-            case "decimal":
+            case "numeric":
                 self._managed = tuple(Decimal(f"{index % 4}.25") for index in range(size))
                 raw = [f"{index % 4}.25" for index in range(size)]
             case _:

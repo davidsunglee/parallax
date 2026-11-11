@@ -151,7 +151,7 @@ gates:
       columns.retainedKiB: { unit: KiB, maxBytes: 211522 }
       document.peakKiB: { unit: KiB, maxBytes: 849559 }
       document.retainedKiB: { unit: KiB, maxBytes: 211522 }
-    scalar-decimal:
+    scalar-numeric:
       columns.peakKiB: { unit: KiB, maxBytes: 1434572 }
       columns.retainedKiB: { unit: KiB, maxBytes: 300318 }
       document.peakKiB: { unit: KiB, maxBytes: 1438849 }
@@ -419,16 +419,16 @@ gates:
     scalar.date.document.wire:
       retainedBytes: { unit: B/row, maxBytes: 9592 }
       transientBytes: { unit: B/row, maxBytes: 42627 }
-    scalar.decimal.columns.typed:
+    scalar.numeric.columns.typed:
       retainedBytes: { unit: B/row, maxBytes: 2605 }
       transientBytes: { unit: B/row, maxBytes: 36852 }
-    scalar.decimal.columns.wire:
+    scalar.numeric.columns.wire:
       retainedBytes: { unit: B/row, maxBytes: 28178 }
       transientBytes: { unit: B/row, maxBytes: 62759 }
-    scalar.decimal.document.typed:
+    scalar.numeric.document.typed:
       retainedBytes: { unit: B/row, maxBytes: 2605 }
       transientBytes: { unit: B/row, maxBytes: 38621 }
-    scalar.decimal.document.wire:
+    scalar.numeric.document.wire:
       retainedBytes: { unit: B/row, maxBytes: 28178 }
       transientBytes: { unit: B/row, maxBytes: 64608 }
     scalar.float32.columns.typed:

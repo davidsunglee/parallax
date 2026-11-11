@@ -36,8 +36,8 @@ _TABLE: list[tuple[str, Any, Any]] = [
     ("float32", 1.5, 1.5),
     ("float64", 2.25, 2.25),
     ("string", "alpha", "alpha"),
-    ("decimal(12,2)", "10.25", "10.25"),
-    ("decimal(12,2)", "5.00", "5.00"),
+    ("numeric(12,2)", "10.25", "10.25"),
+    ("numeric(12,2)", "5.00", "5.00"),
     ("bytes", "0a1b", "0a1b"),
     ("bytes", b"\x0a\x1b", "0a1b"),
     ("date", "2026-01-15", "2026-01-15"),
@@ -59,14 +59,14 @@ def test_every_neutral_type_has_exactly_one_document_spelling(
 
 
 def test_a_decimal_preserves_its_declared_scale_and_signs_only_below_zero() -> None:
-    assert encode_leaf("decimal(12,2)", "-0.50") == "-0.50"
-    assert encode_leaf("decimal(12,0)", "7") == "7"
-    assert encode_leaf("decimal(38,20)", "0.12345678901234567890") == "0.12345678901234567890"
+    assert encode_leaf("numeric(12,2)", "-0.50") == "-0.50"
+    assert encode_leaf("numeric(12,0)", "7") == "7"
+    assert encode_leaf("numeric(38,20)", "0.12345678901234567890") == "0.12345678901234567890"
 
 
 def test_a_value_the_table_cannot_spell_is_refused_rather_than_passed_through() -> None:
     with pytest.raises(DocumentEncodingError):
-        encode_leaf("decimal(12,2)", 1.005)
+        encode_leaf("numeric(12,2)", 1.005)
     with pytest.raises(DocumentEncodingError):
         encode_leaf("bytes", "zz")
     with pytest.raises(DocumentEncodingError):
@@ -112,9 +112,9 @@ def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     assert comparison_text("uuid", "123e4567-e89b-12d3-a456-426614174000") == (
         "123e4567-e89b-12d3-a456-426614174000"
     )
-    # `decimal(p, s)`'s document form is a JSON string too and is deliberately absent:
+    # `numeric(p, s)`'s document form is a JSON string too and is deliberately absent:
     # the domain is fixed by how a type COMPARES, and a decimal casts.
-    for cast_compared in ("boolean", "int32", "float64", "decimal(12,2)"):
+    for cast_compared in ("boolean", "int32", "float64", "numeric(12,2)"):
         assert not is_text_compared(cast_compared)
         with pytest.raises(DocumentEncodingError, match="no comparison text"):
             comparison_text(cast_compared, 1)
@@ -126,7 +126,7 @@ _ENTRIES: dict[str, Any] = {
     "attributes": [
         {"name": "kind", "type": "string"},
         {"name": "active", "type": "boolean"},
-        {"name": "price", "type": "decimal(12,2)"},
+        {"name": "price", "type": "numeric(12,2)"},
     ],
 }
 _PROFILE: dict[str, Any] = {
@@ -235,7 +235,7 @@ def test_two_numbers_naming_one_float_remain_two_spellings_through_the_parse() -
 def test_negative_zero_is_normalized_when_written_and_refused_when_stored() -> None:
     assert encode_leaf("float32", -0.0) == 0.0
     assert encode_leaf("float64", -0.0) == 0.0
-    assert encode_leaf("decimal(12,2)", Decimal("-0.00")) == "0.00"
+    assert encode_leaf("numeric(12,2)", Decimal("-0.00")) == "0.00"
 
     stored = decode_stored(
         '{"float32": -0, "float64": -0, "fractional32": -0.0, "fractional64": -0.0}'
@@ -287,7 +287,7 @@ def test_decode_leaf_converts_the_three_rows_whose_spellings_differ_by_layout() 
     # A `decimal` is stored as its exact digit STRING and read back from a Column as
     # a number; a `timestamp` is stored at UTC with a `Z` terminator and read back
     # from a Column with an explicit offset.
-    assert decode_leaf("decimal(12,2)", "10.25") == Decimal("10.25")
+    assert decode_leaf("numeric(12,2)", "10.25") == Decimal("10.25")
     assert decode_leaf("timestamp", "2026-01-15T09:30:00.000000Z") == "2026-01-15T09:30:00+00:00"
 
 
@@ -341,9 +341,9 @@ def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused() -> None:
     # text-compared spellings are the characters SQL compares and orders by, so
     # reading one back would answer with a row no predicate over that member finds.
     for spelling, stored in (
-        ("decimal(12,2)", "1.5"),  # short of the declared scale
-        ("decimal(12,2)", 1.5),  # a JSON number, not the exact digit string
-        ("decimal(12,2)", "01.50"),  # a leading zero
+        ("numeric(12,2)", "1.5"),  # short of the declared scale
+        ("numeric(12,2)", 1.5),  # a JSON number, not the exact digit string
+        ("numeric(12,2)", "01.50"),  # a leading zero
         ("bytes", "0A1B"),  # uppercase hexadecimal
         ("bytes", "0a 1b"),  # separated octets
         ("date", "20260115"),  # ISO basic format
@@ -369,7 +369,7 @@ def test_every_admitted_leaf_is_exactly_what_the_encoder_produces() -> None:
         ("float32", 1.5),
         ("float64", 2.25),
         ("string", "alpha"),
-        ("decimal(12,2)", "10.25"),
+        ("numeric(12,2)", "10.25"),
         ("bytes", "0a1b"),
         ("date", "2026-01-15"),
         ("time", "09:30:00"),
@@ -401,8 +401,8 @@ def test_a_stored_leaf_outside_its_declared_type_is_refused_rather_than_read() -
     # invalid stored data (m-document-codec) rather than a value to hand back. Each
     # row below is a leaf the JSON kind, the declared width, or the spelling refuses.
     for spelling, stored in (
-        ("decimal(12,2)", "bogus"),
-        ("decimal(12,2)", "1.005"),
+        ("numeric(12,2)", "bogus"),
+        ("numeric(12,2)", "1.005"),
         ("boolean", 1),
         ("int32", "5"),
         ("int32", 2**31),

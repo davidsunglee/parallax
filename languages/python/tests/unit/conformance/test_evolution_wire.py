@@ -661,7 +661,7 @@ _JOIN_SPELLING = {"source": f"{_ORDER_SPELLING}.id", "target": f"{_ORDER_SPELLIN
             {"writes": "Enabled", "shape": "Bitemporal"},
         ),
         (AttributeWriteCapability.CALLER_INSERT_ONLY, "CallerInsertOnly"),
-        (DECIMAL_18_2, "decimal(18,2)"),
+        (DECIMAL_18_2, "numeric(18,2)"),
     ],
     ids=lambda value: repr(value)[:40],
 )

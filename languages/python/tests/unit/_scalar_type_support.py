@@ -131,13 +131,13 @@ def _int64(index: int, key: int) -> int:
     return _alternating(index, 5_000_000_000 + index * 1_000_000_007 + key * 104_729)
 
 
-_DECIMAL_SCALE: Final = 2
-_DECIMAL_PRECISION: Final = 18
-_DECIMAL_DIGIT_COUNTS: Final = _DECIMAL_PRECISION - _DECIMAL_SCALE
+_NUMERIC_SCALE: Final = 2
+_NUMERIC_PRECISION: Final = 18
+_DECIMAL_DIGIT_COUNTS: Final = _NUMERIC_PRECISION - _NUMERIC_SCALE
 _POWERS: Final = tuple(10**digits for digits in range(_DECIMAL_DIGIT_COUNTS))
 
 
-def _decimal_wire(index: int, key: int) -> str:
+def _numeric_wire(index: int, key: int) -> str:
     """A declared-scale decimal whose integer part has ``1 + index % 16``
     digits, so a row spans every digit count the precision admits."""
     floor = _POWERS[index % _DECIMAL_DIGIT_COUNTS]
@@ -146,8 +146,8 @@ def _decimal_wire(index: int, key: int) -> str:
     return f"{'-' if index % 2 else ''}{whole}.{cents:02d}"
 
 
-def _decimal(index: int, key: int) -> Decimal:
-    return Decimal(_decimal_wire(index, key))
+def _numeric(index: int, key: int) -> Decimal:
+    return Decimal(_numeric_wire(index, key))
 
 
 _OCTETS: Final = 16
@@ -252,11 +252,11 @@ _SCALAR_TYPES: Final[Mapping[str, ScalarType]] = {
         ScalarType("float32", float, lambda: attr(type=Float32), _decimal_tenths, _decimal_tenths),
         ScalarType("float64", float, None, _decimal_tenths, _decimal_tenths),
         ScalarType(
-            "decimal",
+            "numeric",
             Decimal,
-            lambda: attr(precision=_DECIMAL_PRECISION, scale=_DECIMAL_SCALE),
-            _decimal,
-            _decimal_wire,
+            lambda: attr(precision=_NUMERIC_PRECISION, scale=_NUMERIC_SCALE),
+            _numeric,
+            _numeric_wire,
         ),
         ScalarType("bytes", bytes, None, _bytes, _bytes_wire),
         ScalarType("date", dt.date, None, _date, _date_wire),

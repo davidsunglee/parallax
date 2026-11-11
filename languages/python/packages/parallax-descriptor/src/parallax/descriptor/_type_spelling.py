@@ -46,16 +46,16 @@ _NULLARY_FORMATS: Final[dict[NeutralType, str]] = {
 }
 
 # A canonical unsigned parameter pair: no sign, no interior space, and no
-# leading zero, so one bounded Decimal has exactly one spelling.
-_DECIMAL_SPELLING: Final[re.Pattern[str]] = re.compile(
-    r"^decimal\((0|[1-9][0-9]*),(0|[1-9][0-9]*)\)$"
+# leading zero, so one bounded Numeric has exactly one spelling.
+_NUMERIC_SPELLING: Final[re.Pattern[str]] = re.compile(
+    r"^numeric\((0|[1-9][0-9]*),(0|[1-9][0-9]*)\)$"
 )
 
 
 def parse_type_spelling(spelling: str) -> NeutralType | None:
     """The Neutral Type ``spelling`` denotes, or absence when it denotes none.
 
-    Absence covers an unknown token, a non-canonical ``decimal`` parameter pair,
+    Absence covers an unknown token, a non-canonical ``numeric`` parameter pair,
     and parameters outside the ``m-core`` bounds — all of which the canonical
     schema admits as text, so the type algebra is the only place they are
     rejected. ``m-core`` places no upper bound on precision, so this is total
@@ -64,7 +64,7 @@ def parse_type_spelling(spelling: str) -> NeutralType | None:
     nullary = _NULLARY_SPELLINGS.get(spelling)
     if nullary is not None:
         return nullary
-    parameters = _DECIMAL_SPELLING.match(spelling)
+    parameters = _NUMERIC_SPELLING.match(spelling)
     if parameters is None:
         return None
     precision = _int_from_digits(parameters.group(1))
@@ -78,14 +78,14 @@ def format_type_spelling(neutral: NeutralType) -> str:
     """The canonical spelling ``neutral`` is written as — the inverse of
     :func:`parse_type_spelling`.
 
-    ``decimal`` is the sole parameterized spelling: its precision and scale are
+    ``numeric`` is the sole parameterized spelling: its precision and scale are
     written as unsigned canonical digits with no interior whitespace, so the
     result round-trips back to the same bounded :class:`~parallax.core.internal.base.Numeric`.
     Every other variant has a single lowercase token. Total over a precision of
     any digit count, matching the unbounded ``m-core`` domain.
     """
     if isinstance(neutral, Numeric):
-        return f"decimal({_digits_from_int(neutral.precision)},{_digits_from_int(neutral.scale)})"
+        return f"numeric({_digits_from_int(neutral.precision)},{_digits_from_int(neutral.scale)})"
     return _NULLARY_FORMATS[neutral]
 
 
@@ -94,7 +94,7 @@ def _conversion_chunk_width() -> int:
 
     ``sys.set_int_max_str_digits`` bounds a single ``int(str)``/``str(int)``
     conversion (0 means the guard is disabled); a many-thousand-digit
-    ``decimal`` parameter would otherwise trip it even though ``m-core`` places
+    ``numeric`` parameter would otherwise trip it even though ``m-core`` places
     no upper bound on precision. Reading the currently configured limit keeps
     the chunking below whatever guard is in force, including one lowered or
     raised from the default, without touching that process-global setting.

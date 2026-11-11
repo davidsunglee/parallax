@@ -96,7 +96,7 @@ Each operation consuming a Typed predicate binds it to the model that operation
 adopted: an eager read or a predicate-selected write once, a stream once at
 entry for all of its pages, and a Typed query handed to a Wire read or a Wire
 predicate-selected write under the same Typed operand policy. A literal prepared at authoring is adopted only where
-that model declares the member with the identical neutral type — Decimal
+that model declares the member with the identical neutral type — Numeric
 precision and scale and float width included — and is otherwise refused with
 `UsageError(query-expression-invalid)` before I/O.
 

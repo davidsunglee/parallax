@@ -36,7 +36,7 @@ entities:
         type: int64
         primaryKey: true
       - name: amount
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: CardPayment
     namespace: parallax.compatibility
     inheritance:
@@ -56,5 +56,5 @@ entities:
       tagValue: cash
     attributes:
       - name: tendered
-        type: decimal(18,2)
+        type: numeric(18,2)
         nullable: true

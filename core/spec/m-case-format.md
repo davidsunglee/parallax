@@ -1014,7 +1014,7 @@ the harness asserts:
    then.rows` (the `then.referenceSql` term is included only when present). Row
    comparison is
    order-insensitive, and **numerics compare exactly in decimal space** (never
-   through binary `float`), so a `decimal(p,s)` money column matches to the cent
+   through binary `float`), so a `numeric(p,s)` money column matches to the cent
    and a value's type never depends on whether it is whole. A case whose result
    uses an inexact numeric representation — and so
    cannot be authored exactly and differs in scale across dialects — MAY declare

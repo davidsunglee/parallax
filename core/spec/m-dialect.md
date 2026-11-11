@@ -101,7 +101,7 @@ mappings that **differ** from Postgres:
 | `uuid` | `uuid` | `char(36)` | no native UUID type |
 | `json` | `jsonb` | `json` | structured-document storage; MariaDB `JSON` is a `longtext` alias |
 
-`int32`/`int64`/`date`/`time`/`decimal(p,s)`/`string` map the same in spirit
+`int32`/`int64`/`date`/`time`/`numeric(p,s)`/`string` map the same in spirit
 (`int`/`bigint`/`date`/`time`/`decimal(p,s)`/`varchar(n)|text`).
 
 Future dialects with a different document type, such as Snowflake `VARIANT`,
@@ -172,13 +172,13 @@ Either way the cast spelling is a dialect decision:
 | `int32` / `int64` | `cast(<extraction> as bigint)` | `cast(<extraction> as signed)` |
 | `float32` | `cast(<extraction> as real)` | `cast(<extraction> as float)` |
 | `float64` | `cast(<extraction> as double precision)` | `cast(<extraction> as double)` |
-| `decimal(p,s)` | `cast(<extraction> as decimal(p, s))` | `cast(<extraction> as decimal(p, s))` |
+| `numeric(p,s)` | `cast(<extraction> as decimal(p, s))` | `cast(<extraction> as decimal(p, s))` |
 | `boolean` | `cast(<extraction> as boolean)` | `cast(<extraction> as signed)` — MariaDB's `CAST` grammar admits no `boolean` target, and the extracted `1` / `0` is already the value in that dialect's boolean representation |
 
 **A cast comparison binds the value, never the document encoding.** The cast moves
 the comparison into the engine's own type system, so the bound operand is the
 managed `m-core` value in the member's declared Neutral Type, exactly what an
-ordinary Column comparison of that type binds. A `decimal(p, s)` therefore binds the **exact decimal**: its document form
+ordinary Column comparison of that type binds. A `numeric(p, s)` therefore binds the **exact decimal**: its document form
 is a digit string precisely because no JSON number carries the type's contract
 (`m-wire`), and binding a JSON number instead compares a binary float,
 which matches stored decimals that are merely near the literal. A `boolean` binds
@@ -189,7 +189,7 @@ because the canonical Wire spelling `m-wire` defines and `m-document-codec`
 stores already equates and orders correctly as text. `m-document-codec` owns the
 comparison-text projection from those stored leaves, not their spelling.
 Membership is fixed by comparison behavior, not by document form:
-`decimal(p, s)`'s document form is a JSON string as well and it casts with the
+`numeric(p, s)`'s document form is a JSON string as well and it casts with the
 rest of the numeric family, because its integer part has no fixed width, so
 `10.00` sorts below `9.00` as text.
 
@@ -238,7 +238,7 @@ type:
 | `int64` | `cast(null as bigint)` | `cast(null as signed)` |
 | `float32` | `cast(null as real)` | `cast(null as float)` |
 | `float64` | `cast(null as double precision)` | `cast(null as double)` |
-| `decimal(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` |
+| `numeric(p, s)` | `cast(null as decimal(p, s))` | `cast(null as decimal(p, s))` |
 | bounded `string` (`maxLength n`) | `cast(null as varchar(n))` | `cast(null as char(n))` |
 | unbounded `string` | `cast(null as text)` | `cast(null as char)` |
 | `bytes` | `cast(null as bytea)` | `cast(null as binary)` |
@@ -297,7 +297,7 @@ comparing against the unmodified type uses the subject's own equality and index.
 | `int64` | `cast(? as bigint[])` | `cast(? as bigint[])` |
 | `float32` | `cast(? as real[])` | `cast(? as real[])` |
 | `float64` | `cast(? as double precision[])` | `cast(? as double precision[])` |
-| `decimal(p, s)` | `cast(? as decimal[])` | `cast(? as decimal[])` |
+| `numeric(p, s)` | `cast(? as decimal[])` | `cast(? as decimal[])` |
 | `string` (bounded or not) | `cast(? as text[])` | `cast(? as text[])` |
 | `bytes` | `cast(? as bytea[])` | `cast(? as text[])` |
 | `date` | `cast(? as date[])` | `cast(? as text[])` |

@@ -12,4 +12,4 @@ entities:
         type: int64
         primaryKey: true
       - name: ratio
-        type: decimal(0,9)
+        type: numeric(0,9)

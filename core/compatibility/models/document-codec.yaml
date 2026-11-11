@@ -12,7 +12,7 @@
 #   ratio    float32          JSON number, shortest that round-trips at binary32
 #   measure  float64          JSON number, shortest that round-trips at binary64
 #   text     string           JSON string
-#   amount   decimal(12,2)    JSON STRING, the exact decimal spelling — and it CASTS
+#   amount   numeric(12,2)    JSON STRING, the exact decimal spelling — and it CASTS
 #   blob     bytes            JSON string, lowercase hexadecimal
 #   day      date             JSON string, ISO-8601 YYYY-MM-DD
 #   clock    time             JSON string, ISO-8601 hh:mm:ss[.ffffff]
@@ -66,7 +66,7 @@ entity:
           type: string
           nullable: true
         - name: amount
-          type: decimal(12,2)
+          type: numeric(12,2)
           nullable: true
         - name: blob
           type: bytes
@@ -103,7 +103,7 @@ entity:
               type: boolean
               nullable: true
             - name: price
-              type: decimal(12,2)
+              type: numeric(12,2)
               nullable: true
             - name: issued
               type: date

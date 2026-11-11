@@ -67,11 +67,10 @@ override.
 slot may contain `attr(...)`, never a bare default value. Nullability comes only
 from the annotation (`T | None`); there is no `nullable=` option. `int` means
 Int64 and `float` means Float64; `type=Int32` and `type=Float32` narrow those
-families. Decimal requires both `precision=` and `scale=`. `parallax.core`
+families. Numeric requires both `precision=` and `scale=`. `parallax.core`
 publishes each Neutral Type as the class an attribute's metadata reads back, named
-as the core names it except Decimal, which Python names `Numeric` so that it never
-shadows the `decimal.Decimal` carrier. `primary_key=True`
-means application-assigned; `MAX` and `Sequence(...)` imply an integer primary
+as the core names it. `primary_key=True` means application-assigned; `MAX` and
+`Sequence(...)` imply an integer primary
 key. No free-form JSON member annotation exists.
 
 Ineligible key types and incompatible generation fail at class creation with `UsageError` and code `entity-option-context-invalid`, before a `DomainModel` can be constructed. Eligibility belongs to the [Metamodel](../../../core/spec/m-metamodel.md#attributes-and-primary-keys). Public descriptor inputs reject serialized key-policy violations in the schema phase instead.
@@ -118,7 +117,7 @@ These are developer-input choices; serialized literals follow core Wire rules.
 | Integer | `int` within the declared width; `bool` is rejected |
 | Float | finite `float`; integral input only when exactly representable at the declared width |
 | String / bytes | `str` / `bytes` |
-| Decimal | `decimal.Decimal` or `int`, never `float`; declared precision and scale apply |
+| Numeric | `decimal.Decimal` or `int`, never `float`; declared precision and scale apply |
 | Date / time | `datetime.date` / timezone-free `datetime.time` |
 | Timestamp | timezone-aware `datetime`, normalized to UTC at microsecond precision; the UTC instant must be representable |
 | UUID | `uuid.UUID` or canonical UUID string |
@@ -140,14 +139,14 @@ Constructing a scalar collection checks that each element has a carrier this
 table admits for the element type, then validates each element as Pydantic
 validates an ordinary scalar of that type. The carrier check refuses input
 Pydantic would otherwise convert: a `bool` for an Integer, a `float` or a string
-for a Decimal, an integer the declared float width does not represent exactly,
+for a Numeric, an integer the declared float width does not represent exactly,
 or a non-canonical UUID string. The element's value space — the declared width,
 precision and scale, finiteness, Float32 exactness, UTF-8 encodability, a time
 zone, and a representable UTC instant — is judged where an ordinary scalar's is:
 by the write, which refuses an element outside it with
 `write-value-type-mismatch` at its position, and by an `edit(...)` or
 `.set(...)` that assigns the collection. Construction still refuses what
-Pydantic refuses for that ordinary scalar, such as a non-finite `Decimal`. An
+Pydantic refuses for that ordinary scalar, such as a non-finite `decimal.Decimal`. An
 edit carrying an unchanged collection checks only its carriers.
 
 ## Editing, presence, and serialization

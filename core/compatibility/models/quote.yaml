@@ -30,7 +30,7 @@ entities:
         type: int64
         primaryKey: true
       - name: price
-        type: decimal(18,2)
+        type: numeric(18,2)
   - name: SpotQuote
     namespace: parallax.compatibility
     table: spot_quote

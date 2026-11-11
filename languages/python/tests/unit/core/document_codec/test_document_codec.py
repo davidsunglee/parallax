@@ -596,7 +596,7 @@ def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     assert comparison_text(TIMESTAMP, _INSTANT) == "2026-01-15T09:30:00.000000Z"
     for text_compared in (STRING, BYTES, DATE, TIME, TIMESTAMP, UUID):
         assert is_text_compared(text_compared)
-    # `decimal(p, s)`'s document form is a JSON string too and it is deliberately
+    # `numeric(p, s)`'s document form is a JSON string too and it is deliberately
     # absent: the domain is fixed by how a type COMPARES, and a decimal casts.
     for cast_compared in (BOOLEAN, INT32, INT64, FLOAT32, FLOAT64, Numeric(12, 2)):
         assert not is_text_compared(cast_compared)

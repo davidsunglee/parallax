@@ -24,4 +24,4 @@ entities:
         type: int64
         primaryKey: true
       - name: face
-        type: decimal(18,2)
+        type: numeric(18,2)

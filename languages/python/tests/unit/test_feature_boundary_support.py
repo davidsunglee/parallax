@@ -74,7 +74,7 @@ def test_digest_moves_with_every_retained_statement(edited: str) -> None:
             ("value-0", "value-1", "value-2", "value-3"),
         ),
         (
-            "decimal",
+            "numeric",
             (Decimal("0.25"), Decimal("1.25"), Decimal("2.25"), Decimal("3.25")),
             ("0.25", "1.25", "2.25", "3.25"),
         ),

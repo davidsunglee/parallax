@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 # The declared types whose document form is a JSON string AND whose SQL comparison is
-# of the extracted text rather than of a cast (`m-dialect`). `decimal(p, s)` is a JSON
+# of the extracted text rather than of a cast (`m-dialect`). `numeric(p, s)` is a JSON
 # string too and is deliberately absent: it casts with the numeric family, because its
 # integer part has no fixed width, so `10.00` sorts below `9.00` as text.
 _TEXT_COMPARED: tuple[type, ...] = (String, Bytes, Date, Time, Timestamp, Uuid)

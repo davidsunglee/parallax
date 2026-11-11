@@ -28,7 +28,7 @@ leaf types. Null is an enclosing member-presence value, not a typed literal.
 
 An adapter MUST fail conformance production rather than stringify, coerce, or
 otherwise repair a non-member carrier. The runner validates observations with
-canonical Wire decoding, so a noncanonical Decimal, bytes, UUID, temporal,
+canonical Wire decoding, so a noncanonical Numeric, bytes, UUID, temporal,
 integer, or float observation is an adapter failure even when it denotes the
 expected managed value. Dialect-native control binds that are not modeled values
 retain their owning SQL or dialect representation.

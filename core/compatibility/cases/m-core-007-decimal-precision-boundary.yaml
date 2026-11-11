@@ -1,4 +1,4 @@
-# Decimal precision/scale WRITE boundary (m-core): a decimal(18,4) value round-trips
+# Numeric precision/scale WRITE boundary (m-core): a numeric(18,4) value round-trips
 # all four fractional digits exactly.
 model: models/writable-scalars.yaml
 tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-snapshot-1]
@@ -8,7 +8,7 @@ when:
     - mutation: insert
       entity: parallax.compatibility.WritableScalar
       statements: 1
-      note: write a decimal(18,4) value using all four fractional digits
+      note: write a numeric(18,4) value using all four fractional digits
       rows:
         - { id: 3, amount: "9999.9999" }
 then:

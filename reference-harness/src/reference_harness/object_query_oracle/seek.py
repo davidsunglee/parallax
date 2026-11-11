@@ -168,16 +168,16 @@ def _document_cast_target(type_spelling: str | None, dialect: str) -> str | None
     `boolean` casts because the two dialects' extractions do not spell it alike.
     Every other declarable type compares as the extracted text, the canonical
     document spelling already ordering correctly. Which target each casts TO is a
-    dialect decision, and a `decimal(p, s)` casts to its own declared precision on
+    dialect decision, and a `numeric(p, s)` casts to its own declared precision on
     both (m-dialect). Spelled here rather than taken from any implementation: the
     ①↔② cross-check is an independent derivation, so it must know the table
     itself.
     """
     if type_spelling is None:
         return None
-    if type_spelling.startswith("decimal("):
+    if type_spelling.startswith("numeric("):
         precision, _, scale = (
-            type_spelling.removeprefix("decimal(").removesuffix(")").partition(",")
+            type_spelling.removeprefix("numeric(").removesuffix(")").partition(",")
         )
         return f"decimal({precision.strip()}, {scale.strip()})"
     return _DOCUMENT_CAST_TARGETS.get(dialect, {}).get(type_spelling)

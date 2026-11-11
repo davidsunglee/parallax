@@ -143,7 +143,7 @@ def test_value_object_members_do_not_use_container_equality_shortcuts(
 @pytest.mark.parametrize(
     ("managed", "canonical", "neutral_type"),
     [
-        (Decimal("10.50"), "10.50", "decimal(12,2)"),
+        (Decimal("10.50"), "10.50", "numeric(12,2)"),
         (b"\x0a\x1b", "0a1b", "bytes"),
         (
             dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC),
@@ -164,7 +164,7 @@ def test_bind_comparison_projects_each_valid_side_under_its_declared_type(
 @pytest.mark.parametrize(
     ("left", "right", "neutral_type"),
     [
-        (Decimal("2.0"), 2.0, "decimal(12,1)"),
+        (Decimal("2.0"), 2.0, "numeric(12,1)"),
         (b"\x0a\x1b", "0A1B", "bytes"),
         (
             "2026-01-15T09:30:00+00:00",

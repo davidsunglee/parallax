@@ -101,9 +101,9 @@ class RejectionError(Exception):
 #
 # The neutral type vocabulary is CLOSED (`metamodel.schema.json` `$defs/attribute`
 # `type`): boolean, int32, int64, float32, float64, string, bytes, date, time,
-# timestamp, uuid, json, and decimal(precision,scale). Membership is decided per
+# timestamp, uuid, json, and numeric(precision,scale). Membership is decided per
 # type against the portable literal's own DECODE, never against a loose category: a
-# category guess leaves the vocabulary open, so a `decimal(12,2)` position admits a
+# category guess leaves the vocabulary open, so a `numeric(12,2)` position admits a
 # truth value and a `bytes` position an array — spellings the space holds no value
 # for.
 

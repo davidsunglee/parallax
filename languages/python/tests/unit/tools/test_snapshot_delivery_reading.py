@@ -338,7 +338,7 @@ _GENERAL_PATHS: Final[Mapping[str, Callable[[object], bool]]] = {
     "int64": lambda value: isinstance(value, int) and 2**31 < abs(value) < 2**63,
     "float32": lambda value: _inexact_short_float(value, narrowed=True),
     "float64": lambda value: _inexact_short_float(value, narrowed=False),
-    "decimal": lambda value: 1 <= _decimal_integer_digits(value) <= 16,
+    "numeric": lambda value: 1 <= _decimal_integer_digits(value) <= 16,
     "bytes": lambda value: isinstance(value, bytes) and len(value) == 16,
     "date": lambda value: type(value) is dt.date,
     "time": lambda value: isinstance(value, dt.time) and value.microsecond != 0,
@@ -365,7 +365,7 @@ def test_every_scalar_type_is_valued_on_its_general_path(
     )
     assert len({tuple(row) for row in rows}) == len(rows)
     assert len(set(rows[1])) == (2 if scalar_type.id == "boolean" else len(rows[1]))
-    if scalar_type.id == "decimal":
+    if scalar_type.id == "numeric":
         assert {_decimal_integer_digits(value) for value in rows[1]} == set(range(1, 17))
 
 

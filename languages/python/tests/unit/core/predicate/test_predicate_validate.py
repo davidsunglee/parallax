@@ -164,7 +164,7 @@ _SIBLING_REUSE = Metamodel(
         Entity(
             name="CashPayment",
             inheritance=Inheritance(role="concrete-subtype", parent="Payment", tag_value="cash"),
-            attributes=(Attribute(name="detail", type="decimal(18,2)", column="cash_detail"),),
+            attributes=(Attribute(name="detail", type="numeric(18,2)", column="cash_detail"),),
         ),
         Entity(
             name="Holder",
@@ -1436,7 +1436,7 @@ _MULTI_TYPE_MODEL = Metamodel(
                         ValueObjectAttribute(name="flag", type="boolean"),
                         ValueObjectAttribute(name="count", type="int32"),
                         ValueObjectAttribute(name="ratio", type="float64"),
-                        ValueObjectAttribute(name="amount", type="decimal(10,2)"),
+                        ValueObjectAttribute(name="amount", type="numeric(10,2)"),
                         ValueObjectAttribute(name="label", type="string"),
                         ValueObjectAttribute(name="whenMade", type="date"),
                     ),

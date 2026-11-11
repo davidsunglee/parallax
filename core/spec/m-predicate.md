@@ -422,7 +422,7 @@ keeps every position.
 **Scalar elements keep their declared encoding kind.** Before a scalar element is
 compared, its JSON kind is checked against the kind its declared type encodes as
 (`m-wire`): a Boolean collection expects JSON booleans, the integer and float types
-JSON numbers, and Decimal and the text-encoded types JSON strings. An element of
+JSON numbers, and Numeric and the text-encoded types JSON strings. An element of
 another kind, and a JSON `null` element, remain candidates but supply no value, so
 every operation over them is **unknown** — an integer collection holding the JSON
 string `"42"` does not satisfy `eq 42`, and that element fails `all`. A
@@ -657,7 +657,7 @@ occupies. A `narrow` whose operand is the constant `true` is a bare subtype test
 A language frontend may hand elaboration its own authored predicate rather than a
 canonical node. The same subject, operator, quantifier, and narrowing rules apply at
 the same stage. An operand the frontend prepared under a declared neutral type is
-adopted only where the resolved member declares that identical type, Decimal
+adopted only where the resolved member declares that identical type, Numeric
 precision and scale and float width included, and is never normalized for another
 type. Programmatic predicates keep their language-owned type mismatch behavior and
 expose no Wire failure names.

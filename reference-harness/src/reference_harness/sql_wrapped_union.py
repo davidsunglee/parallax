@@ -464,14 +464,15 @@ class _OrderTerm:
 def _extraction_cast(neutral_type: str | None, seam: _DialectSeam) -> str | None:
     """The target a document extraction of *neutral_type* is read under, else ``None``.
 
-    ``decimal(p,s)`` casts to itself on both dialects; the rest of the numeric family
-    and ``boolean`` take the dialect's own target; the text-compared types are read as
-    the extracted text with no cast at all (``m-dialect`` *Typed cast form*).
+    ``numeric(p,s)`` casts to the dialect decimal type on both dialects; the rest
+    of the numeric family and ``boolean`` take the dialect's own target. The
+    text-compared types are read as the extracted text with no cast at all
+    (``m-dialect`` *Typed cast form*).
     """
     if neutral_type is None:
         return None
-    if neutral_type.startswith("decimal("):
-        return neutral_type
+    if neutral_type.startswith("numeric("):
+        return "decimal(" + neutral_type.removeprefix("numeric(")
     return seam.casts.get(neutral_type)
 
 

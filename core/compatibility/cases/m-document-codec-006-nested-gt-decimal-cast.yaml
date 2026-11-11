@@ -1,4 +1,4 @@
-# Portable document encoding: a `decimal(p, s)` leaf is a JSON STRING and still
+# Portable document encoding: a `numeric(p, s)` leaf is a JSON STRING and still
 # CASTS — the one row where document form and comparison behavior part company
 # (m-document-codec, m-dialect typed cast form, m-sql), on Postgres AND MariaDB.
 model: models/document-codec.yaml

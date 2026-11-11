@@ -145,7 +145,7 @@ _SHIPMENT = models.accepted_model(
             "temporality": "bitemporal",
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
-                {"name": "amount", "type": "decimal(18,2)", "nullable": True},
+                {"name": "amount", "type": "numeric(18,2)", "nullable": True},
                 {"name": "shippedAt", "type": "timestamp", "nullable": True},
             ],
             "valueObjects": [
@@ -879,7 +879,7 @@ _LEDGER = models.accepted_model(
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
                 {"name": "tags", "type": "string", "multiplicity": "many"},
-                {"name": "amounts", "type": "decimal(18,2)", "multiplicity": "many"},
+                {"name": "amounts", "type": "numeric(18,2)", "multiplicity": "many"},
             ],
             "valueObjects": [
                 {
@@ -887,7 +887,7 @@ _LEDGER = models.accepted_model(
                     "multiplicity": "many",
                     "attributes": [
                         {"name": "sku", "type": "string"},
-                        {"name": "price", "type": "decimal(18,2)", "nullable": True},
+                        {"name": "price", "type": "numeric(18,2)", "nullable": True},
                     ],
                 }
             ],

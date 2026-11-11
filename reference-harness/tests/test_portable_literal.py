@@ -20,7 +20,7 @@ from reference_harness import portable_literal as literal
         ("int64", 2**40, 2**40, 2**40),
         ("float32", 1.5, 1.5, 1.5),
         ("float64", 2.25, 2.25, 2.25),
-        ("decimal(12,2)", "10.50", decimal.Decimal("10.50"), "10.50"),
+        ("numeric(12,2)", "10.50", decimal.Decimal("10.50"), "10.50"),
         ("string", "Ada", "Ada", "Ada"),
         ("bytes", "0a0b", b"\x0a\x0b", "0a0b"),
         ("date", "2026-01-15", dt.date(2026, 1, 15), "2026-01-15"),
@@ -73,7 +73,7 @@ def test_canonical_decode_refuses_an_admitted_alternative() -> None:
     [
         ("int64", "1", "type-mismatch"),
         ("int64", 2**63, "out-of-space"),
-        ("decimal(4,2)", "-0.00", "noncanonical"),
+        ("numeric(4,2)", "-0.00", "noncanonical"),
         ("bytes", "0A1B", "noncanonical"),
         ("time", "09:30", "type-mismatch"),
         ("time", "09:30:00.1234560", "type-mismatch"),
@@ -172,8 +172,8 @@ def test_float_encoding_refuses_authored_number_provenance(spelling: str) -> Non
 
 
 def test_declared_projection_not_host_carrier_inference_decides_equality() -> None:
-    assert literal.values_equal(decimal.Decimal("10.50"), "10.50", "decimal(12,2)", None)
-    assert not literal.values_equal(decimal.Decimal("10.51"), "10.50", "decimal(12,2)", None)
+    assert literal.values_equal(decimal.Decimal("10.50"), "10.50", "numeric(12,2)", None)
+    assert not literal.values_equal(decimal.Decimal("10.51"), "10.50", "numeric(12,2)", None)
 
 
 @pytest.mark.parametrize(
@@ -215,4 +215,4 @@ def test_each_numeric_codec_uses_the_shared_canonical_spelling_rule(
 
 
 def test_decimal_managed_negative_zero_encodes_as_positive_zero() -> None:
-    assert literal.encode(decimal.Decimal("-0.00"), "decimal(12,2)") == "0.00"
+    assert literal.encode(decimal.Decimal("-0.00"), "numeric(12,2)") == "0.00"

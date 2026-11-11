@@ -34,7 +34,7 @@
 # `Ledger` is the versioned side. `version` carries `optimisticLocking`, which the
 # layout keeps direct (role 5), so the per-object gate stays `and version = ?` over a
 # Column while `label` and `balance` live in the document the same UPDATE patches.
-# `balance` is a `decimal(18,2)`, whose document form is an exact digit string
+# `balance` is a `numeric(18,2)`, whose document form is an exact digit string
 # (m-document-codec) — a member whose stored spelling differs from its Column
 # spelling, so a read that skipped the decode would observe the wrong value.
 #
@@ -153,7 +153,7 @@ entities:
         maxLength: 64
         nullable: true
       - name: balance
-        type: decimal(18,2)
+        type: numeric(18,2)
         nullable: true
     valueObjects:
       - name: details
@@ -295,7 +295,7 @@ entities:
       tagValue: cash
     attributes:
       - name: detail
-        type: decimal(18,2)
+        type: numeric(18,2)
   # Publication: a table-per-concrete-subtype family. Each concrete table owns a
   # Structured Column governed by the root's one layout declaration.
   - name: Publication

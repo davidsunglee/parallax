@@ -629,7 +629,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
           maxLength: 40
           readOnly: true
         - name: balance
-          type: decimal(18,2)
+          type: numeric(18,2)
           optimisticLocking: true
         - name: openedOn
           type: date
@@ -963,8 +963,8 @@ def test_an_incoherent_inheritance_record_is_rejected(
         ("int64", INT64),
         ("string", STRING),
         ("timestamp", TIMESTAMP),
-        ("decimal(18,2)", Numeric(18, 2)),
-        ("decimal(1,0)", Numeric(1, 0)),
+        ("numeric(18,2)", Numeric(18, 2)),
+        ("numeric(1,0)", Numeric(1, 0)),
     ],
 )
 def test_a_valid_spelling_denotes_its_structured_type(spelling: str, expected: object) -> None:
@@ -973,7 +973,7 @@ def test_a_valid_spelling_denotes_its_structured_type(spelling: str, expected: o
 
 @pytest.mark.parametrize(
     "spelling",
-    ["", "Int64", "decimal", "decimal(18)", "decimal(0,9)", "decimal(2,5)", "decimal(09,2)"],
+    ["", "Int64", "decimal(18,2)", "numeric(18)", "numeric(0,9)", "numeric(2,5)", "numeric(09,2)"],
 )
 def test_an_unrepresentable_spelling_denotes_nothing(spelling: str) -> None:
     assert parse_type_spelling(spelling) is None
@@ -987,7 +987,7 @@ def test_an_unrepresentable_attribute_spelling_is_rejected() -> None:
       table: account
       attributes:
         - name: id
-          type: decimal(2,5)
+          type: numeric(2,5)
           primaryKey: true
     """
     with raises_code(

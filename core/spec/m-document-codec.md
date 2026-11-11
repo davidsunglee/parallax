@@ -26,8 +26,8 @@ representation of both:
 The two differ only in which shape reaches the codec: a Value Object occurrence's
 own shape, or the applicable document shape of one Entity. Everything below —
 the per-leaf encodings, presence, patching, and comparison — is identical for
-both. That is the module's reason to exist: a `Decimal` inside a Value Object and
-a `Decimal` inside an Entity document are the same six characters, so the two
+both. That is the module's reason to exist: a `Numeric` inside a Value Object and
+a `Numeric` inside an Entity document are the same six characters, so the two
 kinds cannot drift apart and no consumer needs to know which kind it holds.
 
 ## Shapes, documents, and values
@@ -202,16 +202,16 @@ type compares as **extracted text** rather than through a cast (`m-dialect`,
 string's own characters, unquoted and unescaped, so a consumer binds `0a1b`
 rather than the JSON text `"0a1b"` that carries it, against an extraction that
 returns the characters alone. The domain is fixed by how a type **compares**, not
-by its document form: `decimal(p, s)`'s document form is a JSON string too and it
+by its document form: `numeric(p, s)`'s document form is a JSON string too and it
 is deliberately not here, because it casts (below).
 
 No other type has a comparison text, because no other type is compared as text. A
 member whose comparison casts the extraction — the numeric family and `boolean`
 (`m-dialect`) — is compared inside the engine's own type system, so what SQL binds
 there is the **managed value in its declared Neutral Type**, not a literal this
-module produces: a `decimal(p, s)` binds the exact decimal rather than any JSON
+module produces: a `numeric(p, s)` binds the exact decimal rather than any JSON
 number, and a `boolean` binds the boolean rather than any text. The distinction is
-not decorative. `decimal`'s document form is a digit string precisely because a
+not decorative. `numeric`'s document form is a digit string precisely because a
 JSON number cannot carry its scale and precision, so binding one against
 a cast extraction compares a binary float and matches stored values that merely
 round to the same float; and a JSON boolean is the one document form the concrete
@@ -227,7 +227,7 @@ document **containment** rather than as an extraction — MariaDB's `json_contai
 does (`m-dialect`, `m-sql`) — and containment compares **JSON values**, so neither
 comparison form above is what it binds. Both are wrong there, silently: a
 `boolean` in the form its cast comparison binds is MariaDB's `1`, and a candidate
-`{"flag": 1}` matches no element storing a JSON boolean, while a `decimal(p, s)`
+`{"flag": 1}` matches no element storing a JSON boolean, while a `numeric(p, s)`
 in that form is a JSON number, and `{"amt": 1.50}` matches no element storing the
 exact digit string `"1.50"`. What containment needs is each constrained leaf's own
 **document encoding**, in place inside an object — this module's answer, and no
@@ -298,7 +298,7 @@ characters the concrete dialects do not agree on — through a dialect cast, and
 six **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, and
 `uuid` — **by comparing the extracted text directly**, with no cast on either
 dialect (`m-dialect`, `m-sql`). The split is by comparison behavior, not by
-document form: `decimal(p, s)` is a JSON string and still casts, because its
+document form: `numeric(p, s)` is a JSON string and still casts, because its
 integer part has no fixed width, so `10.00` sorts below `9.00` as text and a range
 predicate over it would answer with the wrong rows. Each of those six spellings is
 chosen so that, for two values of one declared type, the encodings are equal
@@ -321,7 +321,7 @@ variant-aware canonical output. The document codec maps every Wire failure reaso
 to its existing `LeafUndecodable` finding at the Logical Judging Cursor; it does
 not expose `neutral-literal-*` rules for corrupt stored state.
 
-A `decimal(p, s)` short of its declared scale, uppercase hexadecimal, a
+A `numeric(p, s)` short of its declared scale, uppercase hexadecimal, a
 `timestamp` at a non-UTC offset, an uppercase or hyphenless UUID, and a float
 number that is not the shortest one for the value it names are therefore stored
 data findings even when admitted public ingress could name the same managed

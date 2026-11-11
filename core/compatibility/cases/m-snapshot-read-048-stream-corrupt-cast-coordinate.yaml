@@ -1,7 +1,7 @@
 # Diagnostic evidence and a physical coordinate describe the same stored cell and
 # are still two different values, and this is the case that separates them.
 # `given.corrupt` writes the digit string `1.500` over row 102's `amount`, a
-# `decimal(12,2)` whose canonical document spelling carries exactly the declared
+# `numeric(12,2)` whose canonical document spelling carries exactly the declared
 # scale — so no decoding admits it and the read publishes no value for that root.
 # The ordering expression is untouched by that verdict: `decimal` compares through
 # a dialect cast, and the cast of `1.500` is `1.50`, an ordinary member of the

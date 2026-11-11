@@ -60,7 +60,7 @@ _EXCLUDED: tuple[tuple[str, type, dict[str, Any]], ...] = (
     ("boolean", bool, {}),
     ("float32", float, {"type": Float32}),
     ("float64", float, {}),
-    ("decimal(18,2)", Decimal, {"precision": 18, "scale": 2}),
+    ("numeric(18,2)", Decimal, {"precision": 18, "scale": 2}),
     ("bytes", bytes, {}),
     ("date", dt.date, {}),
     ("time", dt.time, {}),

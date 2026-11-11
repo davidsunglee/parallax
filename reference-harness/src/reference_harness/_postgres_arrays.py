@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # m-core neutral type -> the unmodified PostgreSQL element type an array compared
-# with, or inserted into, a column of that type is cast to. A decimal casts to
+# with, or inserted into, a column of that type is cast to. A Numeric casts to
 # bare `decimal`; a structured document column takes one `jsonb` element per row.
 _COLUMN_ELEMENTS = {
     "boolean": "boolean",
@@ -24,7 +24,7 @@ _COLUMN_ELEMENTS = {
 def column_array_element(neutral_type: str) -> str:
     """The element type of an array compared with, or inserted into, a column of
     *neutral_type*."""
-    return "decimal" if neutral_type.startswith("decimal(") else _COLUMN_ELEMENTS[neutral_type]
+    return "decimal" if neutral_type.startswith("numeric(") else _COLUMN_ELEMENTS[neutral_type]
 
 
 def column_array_parameter(neutral_type: str) -> str:
