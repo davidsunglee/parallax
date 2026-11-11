@@ -79,23 +79,23 @@ CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] 
 of them in its top-level member namespace, whatever dimensions it declares; only
 an As-Of Axis's own start and end Attributes may bear them."""
 
-_DERIVED_AXES: Final[Mapping[TemporalDimension, DerivedAxis]] = MappingProxyType(
-    {
-        dimension: DerivedAxis(dimension, *endpoints)
-        for dimension, endpoints in TEMPORAL_MEMBERS.items()
-    }
+_VALID_TIME_AXIS: Final = DerivedAxis(
+    TemporalDimension.VALID_TIME,
+    *TEMPORAL_MEMBERS[TemporalDimension.VALID_TIME],
+)
+_TRANSACTION_TIME_AXIS: Final = DerivedAxis(
+    TemporalDimension.TRANSACTION_TIME,
+    *TEMPORAL_MEMBERS[TemporalDimension.TRANSACTION_TIME],
 )
 
 TEMPORALITY_PROFILES: Final[Mapping[str, tuple[DerivedAxis, ...]]] = MappingProxyType(
     {
         NONTEMPORAL: (),
-        "transaction-time": (_DERIVED_AXES[TemporalDimension.TRANSACTION_TIME],),
-        "bitemporal": (
-            _DERIVED_AXES[TemporalDimension.VALID_TIME],
-            _DERIVED_AXES[TemporalDimension.TRANSACTION_TIME],
-        ),
+        "transaction-time": (_TRANSACTION_TIME_AXIS,),
+        "bitemporal": (_VALID_TIME_AXIS, _TRANSACTION_TIME_AXIS),
     }
 )
+
 """Each Temporality Profile's immutable axis definitions in canonical order.
 
 The members are exactly the composed profiles, so a dimension set no member
