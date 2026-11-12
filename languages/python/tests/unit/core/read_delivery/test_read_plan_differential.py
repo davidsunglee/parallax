@@ -12,6 +12,7 @@ from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel, TablePerConcreteSubtype
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.read_delivery._page import page_rows
 from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from tests._support.case_corpus import cases
@@ -166,7 +167,7 @@ def test_every_corpus_read_proves_exactly_the_levels_no_row_key_can_recur_at(
     # The proof is read off the compiled statements; this derives it again from
     # the include tree's targets, so the two descriptions of a level must agree.
     plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
-    schema = plan._preparation().schema
+    schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
 
     repeating = frozenset(
         level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)
@@ -192,9 +193,8 @@ def test_corpus_reads_that_merge_rows_prove_no_level_that_shares_a_row_key(
 ) -> None:
     (read,) = (read for read in _CORPUS_READS if read.case.case_id == case_id)
     plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
+    schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
 
     assert {
-        level
-        for level in range(plan.fetch_count + 1)
-        if plan._preparation().schema.may_repeat_rows(level)
+        level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)
     } == repeating

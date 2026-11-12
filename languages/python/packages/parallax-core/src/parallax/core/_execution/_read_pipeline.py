@@ -209,11 +209,12 @@ def read_page(
     def body(calls: DatabaseCallScope, inputs: ReadInputs) -> PageResult[ReadEvidence]:
         parameters = paging.parameters_for(at.emitted)
         first_plan = paging.read_plan
-        assert first_plan is not None
         if at.coordinate is None:
             plan = first_plan
         else:
-            query = paging.plan.after(at.coordinate, limit=parameters.size)
+            pages = first_plan.continuation
+            assert pages is not None
+            query = pages.after(at.coordinate, limit=parameters.size)
             plan = planner.plan(
                 edition=selected.edition,
                 model=model,

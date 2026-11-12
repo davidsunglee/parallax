@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from parallax.core.internal.continuation import ContinuationPlan
 from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 
@@ -84,15 +83,14 @@ class PagingPlan:
     The continuation and bounds are fixed for a delivery's whole life —
     ``batch_size`` is how many roots a page may DELIVER — what its statement
     asks for is :meth:`parameters_for`'s answer — ``limit`` is the authored
-    cap the delivery may never read past, and ``plan`` is what turns either into
-    a node. Carrying them as one value is what leaves the stream holding a
+    cap the delivery may never read past, and ``read_plan`` owns the continuation
+    that turns either into a node. Carrying them as one value leaves the stream holding a
     position and nothing else.
     """
 
-    plan: ContinuationPlan
+    read_plan: ReadPlan
     batch_size: int
     limit: int | None
-    read_plan: ReadPlan | None = None
 
     def parameters_for(self, emitted: int) -> PagingParameters:
         """What the page after ``emitted`` asks the database for.

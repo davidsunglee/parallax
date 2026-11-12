@@ -21,14 +21,16 @@ from typing import cast
 
 import pytest
 
-from parallax.core.internal import continuation
 from parallax.core.internal.base import InternalError
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import object_query, validate_object_query
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.predicate import TrueNode
 from parallax.core.internal.read_delivery._page_reader import PageReader
 from parallax.core.internal.read_delivery._paging import PagingParameters, PagingPlan, page_decision
+from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
@@ -49,7 +51,14 @@ def _page_plan(*, batch_size: int, limit: int | None = None) -> PagingPlan:
     entity = entity_of(ORDERS, "Order")
     query = object_query(entity.identity, TrueNode(), limit=limit)
     return PagingPlan(
-        continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS),
+        ReadPlanCache(0).plan(
+            edition="test",
+            model=CatalogedModel(ORDERS),
+            dialect=POSTGRES,
+            query=validate_object_query(entity, query, ORDERS),
+            preference=None,
+            paging=PagingParameters.for_page(batch_size, limit, 0),
+        ),
         batch_size,
         limit,
     )
