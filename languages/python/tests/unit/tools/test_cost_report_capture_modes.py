@@ -7,9 +7,11 @@ import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Final, cast
 
 import pytest
@@ -188,6 +190,59 @@ def test_shard_preflights_children_and_places_journal_inside_output(
     monkeypatch.setattr(cost_report, "run_shards", run_shards)
     assert cost_report.main(["--shard", shard, "--out", str(out)]) == 0
     assert events == ["preflight", "measure"]
+
+
+def test_complete_member_journal_tracks_actual_other_minor_and_support_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PARALLAX_CAPTURE_JOURNAL", str(tmp_path))
+    patch = 10
+
+    def probe(runtime: str, _namespace: str) -> RuntimeIdentity:
+        return RuntimeIdentity("CPython", f"{runtime}.{patch}", "/temporary/python", _ORIGINS)
+
+    monkeypatch.setattr(cost_report, "probe_runtime", probe)
+    first = cost_report._member_journal()  # pyright: ignore[reportPrivateUsage] - journal seam
+    first.store({"member": "instance-state"}, {"value": 1})
+    document = json.loads(next(tmp_path.rglob("*.json")).read_bytes())
+    assert "tests/_support/db_port.py" in document["identity"]["sources"]
+    assert "tests/_support/document_reads.py" in document["identity"]["sources"]
+    patch = 11
+    second = cost_report._member_journal()  # pyright: ignore[reportPrivateUsage] - journal seam
+    assert second.load({"member": "instance-state"}) is None
+
+
+def test_import_preflight_executes_deferred_snapshot_workloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DeferredFailure(ModuleType):
+        def __getattribute__(self, name: str) -> object:
+            if name == "__dict__":
+                raise ImportError("deferred model failed")
+            return super().__getattribute__(name)
+
+    for name in ("snapshot_delivery_reading", "write_lowering_reading"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    for name in (
+        "_delivery_control_support",
+        "_scalar_type_support",
+        "_snapshot_materialization_support",
+        "_structural_geometry_support",
+    ):
+        qualified = f"tests.unit.{name}"
+        monkeypatch.setitem(sys.modules, qualified, DeferredFailure(qualified))
+
+    def execute(command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        try:
+            exec(command[-1], {})
+        except ImportError as error:
+            return 1, "", str(error)
+        return 0, "", ""
+
+    monkeypatch.setattr(cost_report, "run_probe", execute)
+    failures = cost_report._child_import_mismatches()  # pyright: ignore[reportPrivateUsage] - preflight seam
+    assert len(failures) == 4
+    assert all("deferred model failed" in failure for failure in failures)
 
 
 @pytest.mark.parametrize(

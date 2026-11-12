@@ -9,6 +9,14 @@ import capture_journal
 from capture_journal import CaptureJournal
 
 
+def test_serialized_identity_round_trips_nested_tuples(tmp_path: Path) -> None:
+    identity = {"runtimes": ("3.14", "3.15"), "origins": (("module", "source.py"),)}
+    CaptureJournal(tmp_path, "members", identity).store({"member": "snapshot"}, {"value": 1})
+    assert CaptureJournal(tmp_path, "members", identity).load({"member": "snapshot"}) == {
+        "value": 1
+    }
+
+
 def test_saved_reading_is_immutable_and_other_inputs_do_not_reuse_it(tmp_path: Path) -> None:
     journal = CaptureJournal(tmp_path, "snapshot", {"runtime": "3.15.0"})
     key = {"cell": "memory", "sample": 0}
