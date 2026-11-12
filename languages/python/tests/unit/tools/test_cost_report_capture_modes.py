@@ -20,7 +20,7 @@ import cost_report
 import snapshot_delivery_overhead as snapshot_report
 from cost_report import Collection, MemberResult
 from durations import Spans
-from interpreter_matrix import RuntimeIdentity, RuntimeUnavailable, authority_minor
+from interpreter_matrix import CURRENT_MINOR, RuntimeIdentity, RuntimeUnavailable, authority_minor
 from parallax.conformance import cost_envelope, workloads
 from parallax.conformance.budget import BudgetContract, MemoryGates, derive_memory_gates
 from parallax.conformance.cost_envelope import Provenance, classify_authority
@@ -145,12 +145,14 @@ def test_preflight_refuses_a_failed_other_minor_reading_import(
     checked: list[tuple[str, str]] = []
 
     def import_child(
-        command: Sequence[str], environment: Mapping[str, str]
+        command: Sequence[str], _environment: Mapping[str, str]
     ) -> tuple[int, str, str]:
-        runtime = command[command.index("--python") + 1] if "--python" in command else "3.15"
-        namespace = Path(environment.get("UV_PROJECT_ENVIRONMENT", "current")).name
+        runtime = command[command.index("--python") + 1] if "--python" in command else CURRENT_MINOR
+        namespace = (
+            "write-lowering" if "write_lowering_reading" in command[-1] else "snapshot-delivery"
+        )
         checked.append((runtime, namespace))
-        if runtime == "3.14" and "write-lowering" in namespace:
+        if runtime == "3.14" and namespace == "write-lowering":
             return 1, "", "ModuleNotFoundError: No module named 'parallax'"
         return 0, "", ""
 
