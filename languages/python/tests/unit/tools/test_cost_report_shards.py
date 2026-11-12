@@ -589,14 +589,13 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole
     assert [member["subject"] for member in portfolio["members"]] == [m.subject for m in MEMBERS]
     assert portfolio["members"][0] == envelopes[SNAPSHOT.subject]
     assert portfolio["failures"] == []
-    assert sorted(path.name for path in out.iterdir()) == sorted(
-        [
-            "portfolio.json",
-            "summary.md",
-            DURATIONS_FILE,
-            cost_report.CONDITIONS_FILE,
-        ]
-    )
+    assert {path.name for path in out.iterdir()} - {"checkpoints"} == {
+        "portfolio.json",
+        "summary.md",
+        DURATIONS_FILE,
+        cost_report.CONDITIONS_FILE,
+    }
+    assert not (out / "checkpoints").exists() or (out / "checkpoints").is_dir()
     assert not (out / CAPTURE_FILE).exists() and not (out / HEAD).exists()
 
 

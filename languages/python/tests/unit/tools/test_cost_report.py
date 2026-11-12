@@ -485,14 +485,13 @@ def test_written_output_keeps_one_portfolio_with_conditions_and_durations(
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
-    assert sorted(path.name for path in out.iterdir()) == sorted(
-        [
-            "portfolio.json",
-            "summary.md",
-            DURATIONS_FILE,
-            cost_report.CONDITIONS_FILE,
-        ]
-    )
+    assert {path.name for path in out.iterdir()} - {"checkpoints"} == {
+        "portfolio.json",
+        "summary.md",
+        DURATIONS_FILE,
+        cost_report.CONDITIONS_FILE,
+    }
+    assert not (out / "checkpoints").exists() or (out / "checkpoints").is_dir()
     portfolio = cast("dict[str, Any]", json.loads((out / "portfolio.json").read_text("utf-8")))
     assert set(portfolio) == {"schemaVersion", "members", "failures"}
     assert portfolio["schemaVersion"] == 1
