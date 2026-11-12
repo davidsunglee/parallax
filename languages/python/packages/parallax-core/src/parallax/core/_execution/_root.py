@@ -94,6 +94,7 @@ class RootResources[Authorization]:
             options,
             read_policy,
             routes=self.runtime.routes,
+            dialect=self.runtime.dialect,
             lifecycle=self.lifecycle,
             serving=self.serving,
             planner=self.planner,

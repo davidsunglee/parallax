@@ -40,6 +40,7 @@ from parallax.core._execution._read_pipeline import (
     ReadInputs,
     _page_origin_collector,  # pyright: ignore[reportPrivateUsage] - the selection is under test
 )
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core.execution_lifecycle import (
@@ -50,11 +51,14 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle._activity import ActivityTarget, StreamActivity
 from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import ServingModel, prepare_model
 from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.read_delivery._page import Page
 from parallax.core.internal.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER
 from parallax.core.internal.unit_work import (
     ParticipationToken,
     ReadEvidence,
@@ -606,8 +610,18 @@ class _EvidenceContext:
 
 def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None:
     context = _EvidenceContext()
-    first = _page_origin_collector(ACCOUNT_META, context, scanned=False)
-    second = _page_origin_collector(ACCOUNT_META, context, scanned=False)
+    selected = read_projection(_SERVING.current())
+    plan = UNCACHED_READ_PLANNER.plan(
+        edition=selected.edition,
+        model=selected.model,
+        dialect=POSTGRES,
+        query=resolve_read_query(
+            deserialize({"target": "Account", "predicate": {"true": {}}}), model=ACCOUNT_META
+        ),
+        preference="optimistic",
+    )
+    first = _page_origin_collector(plan, context)
+    second = _page_origin_collector(plan, context)
 
     assert isinstance(first, ReadEvidenceCollector)
     assert isinstance(second, ReadEvidenceCollector)

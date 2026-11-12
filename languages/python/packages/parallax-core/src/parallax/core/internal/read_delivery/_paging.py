@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from parallax.core.internal.continuation import ContinuationPlan
 from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
+
+if TYPE_CHECKING:
+    from parallax.core.internal.read_delivery._read_plan import ReadPlan
 
 __all__ = [
     "At",
@@ -33,6 +37,12 @@ class PagingParameters:
     size: int
     lookahead: bool
     emitted: int
+
+    @classmethod
+    def for_page(cls, batch_size: int, limit: int | None, emitted: int) -> PagingParameters:
+        if limit is None or limit - emitted > batch_size:
+            return cls(size=batch_size + 1, lookahead=True, emitted=emitted)
+        return cls(size=limit - emitted, lookahead=False, emitted=emitted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +81,7 @@ class PageVerdict:
 class PagingPlan:
     """How one delivery pages: its page nodes and the two counts bounding them.
 
-    All three are fixed for a delivery's whole life and mean nothing apart —
+    The continuation and bounds are fixed for a delivery's whole life —
     ``batch_size`` is how many roots a page may DELIVER — what its statement
     asks for is :meth:`parameters_for`'s answer — ``limit`` is the authored
     cap the delivery may never read past, and ``plan`` is what turns either into
@@ -82,6 +92,7 @@ class PagingPlan:
     plan: ContinuationPlan
     batch_size: int
     limit: int | None
+    read_plan: ReadPlan | None = None
 
     def parameters_for(self, emitted: int) -> PagingParameters:
         """What the page after ``emitted`` asks the database for.
@@ -97,9 +108,7 @@ class PagingPlan:
         a boundary tie. The tie there goes undetected, and no later seek exists
         that could skip it.
         """
-        if self.limit is None or self.limit - emitted > self.batch_size:
-            return PagingParameters(size=self.batch_size + 1, lookahead=True, emitted=emitted)
-        return PagingParameters(size=self.limit - emitted, lookahead=False, emitted=emitted)
+        return PagingParameters.for_page(self.batch_size, self.limit, emitted)
 
 
 @dataclass(frozen=True, slots=True)

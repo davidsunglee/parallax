@@ -13,6 +13,7 @@ from parallax.core._execution._publication import (
 from parallax.core._execution._read_pipeline import (
     ReadQuery,
     StandaloneRead,
+    plan_stream,
     read_graph,
     read_page,
     resolved,
@@ -30,12 +31,13 @@ from parallax.core.internal import read_planning
 from parallax.core.internal.auto_retry import RetryPolicy
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
+from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.execution_authority._authority import ExecutionAuthority
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
-from parallax.core.internal.read_delivery._page_reader import StreamPageResult
+from parallax.core.internal.read_delivery._page_reader import PageResult
 from parallax.core.internal.read_delivery._paging import At, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
-from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
 
 __all__ = ["ExecutionScope"]
@@ -71,6 +73,7 @@ class ExecutionScope:
 
     __slots__ = (
         "_authority",
+        "_dialect",
         "_lifecycle",
         "_options",
         "_planner",
@@ -88,12 +91,14 @@ class ExecutionScope:
         read_policy: RoutePolicy,
         *,
         routes: Mapping[Route, RouteCapabilities],
+        dialect: Dialect,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
     ) -> None:
         self._runner = runner
         self._authority = authority
+        self._dialect = dialect
         self._options = options
         self._read_policy: RoutePolicy = read_policy
         self._routes = routes
@@ -108,6 +113,7 @@ class ExecutionScope:
             options,
             read_policy,
             routes=self._routes,
+            dialect=self._dialect,
             lifecycle=self._lifecycle,
             serving=self._serving,
             planner=self._planner,
@@ -206,6 +212,13 @@ class ExecutionScope:
     def resolved(self, read: StandaloneRead, query: ReadQuery, /) -> ResolvedObjectQuery:
         return resolved(read, query)
 
+    def planned(
+        self, read: StandaloneRead, query: ResolvedObjectQuery, batch_size: int, /
+    ) -> ReadPlan:
+        return plan_stream(
+            read, query, batch_size, self._planner, dialect=self._dialect, preference=None
+        )
+
     def page(
         self,
         read: StandaloneRead,
@@ -213,10 +226,8 @@ class ExecutionScope:
         at: At,
         batch: StreamBatchActivity,
         /,
-        *,
-        scanned: bool,
-    ) -> StreamPageResult[ReadEvidence]:
-        return read_page(read, paging, at, batch, self._planner, scanned=scanned)
+    ) -> PageResult[ReadEvidence]:
+        return read_page(read, paging, at, batch, self._planner)
 
     def transact[Tx, T](
         self,

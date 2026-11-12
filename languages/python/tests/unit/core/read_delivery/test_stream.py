@@ -23,6 +23,8 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.internal import read_planning
+from parallax.core.internal.dialect import POSTGRES
+from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
 from parallax.core.internal.object_query import ObjectQueryNode, deserialize, validate_object_query
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
@@ -31,10 +33,12 @@ from parallax.core.internal.read_delivery._page import Page, PageBuilder, ViewSc
 from parallax.core.internal.read_delivery._page_reader import (
     EagerPageResult,
     HistoryPageResult,
-    StreamPageResult,
+    PageContinuation,
+    PageResult,
 )
-from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._paging import At, PagingParameters, PagingPlan
 from parallax.core.internal.read_delivery._publication import RootsOf
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
 from parallax.core.internal.read_delivery._stream import StreamDelivery
 from parallax.core.internal.temporal_read import Pin, TemporalShape
 from parallax.core.internal.write_plan import ObjectKey
@@ -120,6 +124,16 @@ class _Scope:
         del read
         return validate_object_query(entity_of(ORDERS, "Order"), node, ORDERS)
 
+    def planned(self, read: _Read, query: ResolvedObjectQuery, batch_size: int, /) -> ReadPlan:
+        return UNCACHED_READ_PLANNER.plan(
+            edition=read.edition,
+            model=CatalogedModel(read.meta),
+            dialect=POSTGRES,
+            query=query,
+            preference=None,
+            paging=PagingParameters.for_page(batch_size=batch_size, limit=query.limit, emitted=0),
+        )
+
     def page(
         self,
         read: _Read,
@@ -127,20 +141,15 @@ class _Scope:
         at: At,
         batch: StreamBatchActivity,
         /,
-        *,
-        scanned: bool,
-    ) -> StreamPageResult[object]:
-        del read, paging, at, batch, scanned
+    ) -> PageResult[object]:
+        del read, paging, at, batch
         roots = self._pages.pop(0)
         builder = PageBuilder(ViewSchema.of())
-        return StreamPageResult(
+        return PageResult(
             page=builder.finish((), Pin()),
             includes=_INCLUDES,
             origins={},
-            delivered=roots,
-            resume_from=None,
-            exhausted=not self._pages,
-            tie=None,
+            continuation=PageContinuation(roots, None, not self._pages, None),
         )
 
 

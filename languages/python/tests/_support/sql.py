@@ -8,7 +8,6 @@ from typing import Literal
 from parallax.core.internal import concurrency, inheritance, read_planning
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.inheritance import InheritancePositionView
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.internal.navigate import (
@@ -26,7 +25,6 @@ from parallax.core.internal.object_query._nodes import TemporalDimension
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.predicate import PredicateNode, validate_predicate
 from parallax.core.internal.predicate._resolved import ResolvedPredicate
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
 from parallax.core.internal.sql_gen._compile import (
     CompiledPredicate,
     CompiledRead,
@@ -82,9 +80,7 @@ def compile_read(
     result_form: Literal["row", "instance"] = "row",
     preference: ConcurrencyPreference | None = None,
 ) -> CompiledRead:
-    """Compile ``predicate`` as the predicate of ``target``'s Entity Query: an
-    ``instance`` read as production plans every delivery, and a ``row`` read as
-    acquisition compiles one, projecting no Value Object."""
+    """Compile one root statement without applying delivery orchestration."""
     query = _validated(
         predicate,
         model,
@@ -94,29 +90,21 @@ def compile_read(
         limit=limit,
         temporal=temporal,
     )
-    if result_form == "row":
-        return compile_nonempty_read(
-            read_planning.plan_root(
-                query, model, projection=read_planning.ReadProjectionRequest("none", False)
-            ),
+    return compile_nonempty_read(
+        read_planning.plan_root(
+            query,
             model,
-            dialect,
-            result_form="row",
-            shared_lock=preference is not None
-            and concurrency.concurrency_facet_of(model).effective_strategy(
-                target.identity, preference
-            )
-            == "locking",
-        )
-    root = UNCACHED_READ_PLANNER.plan(
-        edition="test",
-        model=CatalogedModel(model),
-        dialect=dialect,
-        query=query,
-        preference=preference,
-    ).root_read()
-    assert not isinstance(root, EmptyRead)
-    return root[0]
+            projection=read_planning.ReadProjectionRequest("all", True)
+            if result_form == "instance"
+            else read_planning.ReadProjectionRequest("none", False),
+        ),
+        model,
+        dialect,
+        result_form=result_form,
+        shared_lock=preference is not None
+        and concurrency.concurrency_facet_of(model).effective_strategy(target.identity, preference)
+        == "locking",
+    )
 
 
 def compile_projected_read(

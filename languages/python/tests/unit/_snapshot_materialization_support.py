@@ -93,6 +93,7 @@ from parallax.core.internal.read_delivery._page import ABSENT, Page, page_rows
 from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
+    PageReadContext,
     PageReader,
     _RootRead,  # pyright: ignore[reportPrivateUsage]
 )
@@ -572,10 +573,11 @@ def read_root(
     model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
 ) -> _RootRead:
     """``plan``'s root statement executed on ``port`` and held for one Page build."""
+    del model, validated
     root = plan.root_read()
     assert not isinstance(root, EmptyRead)
     return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
-        plan, root, validated, port, INERT
+        plan, root, PageReadContext[ReadEvidence](port, INERT)
     )
 
 
@@ -585,12 +587,12 @@ def build_page(
     """One whole Page built from an executed ``root``: its rows converted, every
     fetch rendered, executed on ``port``, converted, and attached, and the Page's
     read sources retained. ``root`` is consumed."""
+    del model
     return _MATERIALIZER._build_page(  # pyright: ignore[reportPrivateUsage]
         root,
-        model,
-        port,
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-        calls=INERT,
+        PageReadContext[ReadEvidence](port, INERT),
+        EMPTY_PAGE_ORIGIN_COLLECTOR,
+        None,
     )
 
 

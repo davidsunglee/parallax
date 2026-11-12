@@ -65,10 +65,6 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.internal.read_delivery._page_reader",
         "parallax.core.internal.sql_gen._compile",
     ): frozenset({"CompiledRead"}),
-    (
-        "parallax.core._execution._transaction._attempt",
-        "parallax.core.internal.sql_gen._compile",
-    ): frozenset({"compile_read", "CompiledRead"}),
     **{
         (importer, "parallax.core.internal.sql_gen._context"): frozenset({"SQL_GENERATION_FAILED"})
         for importer in (
@@ -237,7 +233,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core.internal.read_delivery._page._rows", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.internal.read_delivery._page._views", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.internal.read_delivery._acquired_rows", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.core.internal.read_delivery._page_reader", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.internal.read_delivery._read_plan", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.internal.read_delivery._row_converter", "_layout"): frozenset(
         {"CatalogedModel"}

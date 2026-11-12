@@ -192,7 +192,7 @@ class CompiledTemplate:
         self,
         keys: list[ManagedValue] | None = None,
         *,
-        query: ResolvedObjectQuery | None = None,
+        query: ResolvedObjectQuery | PlannedEntityQuery | None = None,
     ) -> CompiledRead:
         """This read with its execution values taken from ``query`` and the
         gathered ``keys``, or :attr:`compiled` itself when it defers none.
@@ -232,7 +232,7 @@ def _expanded_sql(
 def _execution_values(
     positions: tuple[ExecutionValuePositions, ...],
     keys: list[ManagedValue] | None,
-    query: ResolvedObjectQuery | None,
+    query: ResolvedObjectQuery | PlannedEntityQuery | None,
 ) -> Iterator[tuple[ExecutionValuePositions, object]]:
     """Each group with its execution value, in the groups' canonical order.
 
@@ -252,7 +252,11 @@ def _execution_values(
                             SQL_GENERATION_FAILED,
                             "a template of authored operands requires its query",
                         )
-                    operands = predicate_operands(query.predicate)
+                    operands = predicate_operands(
+                        query.predicate.predicate
+                        if isinstance(query, PlannedEntityQuery)
+                        else query.predicate
+                    )
                 while ordinal < wanted:
                     operand = next(operands)
                     ordinal += 1
@@ -272,7 +276,7 @@ def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
 def _execution_value(
     group: ExecutionValuePositions,
     keys: list[ManagedValue] | None,
-    query: ResolvedObjectQuery | None,
+    query: ResolvedObjectQuery | PlannedEntityQuery | None,
 ) -> object:
     match group.source:
         case ("temporal", dimension, bound):
@@ -303,12 +307,12 @@ def _execution_value(
 
 
 def _temporal_bound(
-    query: ResolvedObjectQuery | None,
+    query: ResolvedObjectQuery | PlannedEntityQuery | None,
     dimension: TemporalDimension,
     bound: Literal["coordinate", "start", "end"],
 ) -> object:
     """The current finite selection's ``bound`` in ``dimension``."""
-    for selection in () if query is None else query.temporal:
+    for selection in query.temporal if isinstance(query, ResolvedObjectQuery) else ():
         if selection.axis.dimension is not dimension:
             continue
         match selection:

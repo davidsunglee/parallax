@@ -51,11 +51,12 @@ from parallax.core.internal.base import (
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import MappingRow
 from parallax.core.internal.read_delivery._page_reader import (
-    EagerPageRequest,
     EagerPageResult,
+    PageReadContext,
     PageReader,
 )
 from parallax.core.internal.read_delivery._publication import Publication
+from parallax.core.internal.read_delivery._read_plan import ReadPlan
 from parallax.core.internal.unit_work import (
     STALE_WRITE,
     ReadEvidence,
@@ -125,11 +126,13 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
     parameter fails here rather than silently recording ``None`` forever.
     """
 
-    def recording(request: EagerPageRequest[Any], publication: Publication[Any, Any]) -> object:
+    def recording(
+        plan: ReadPlan, context: PageReadContext[Any], publication: Publication[Any, Any]
+    ) -> object:
         evidence_context: ReadEvidenceContext | None = getattr(
-            request.origin_collector, "_evidence_context", None
+            context.origin_collector, "_evidence_context", None
         )
-        result = PageReader().read_page(request)
+        result = PageReader().read_page(plan, context)
         recorded.append(
             _RecordedFind(
                 None if evidence_context is None else evidence_context.participation, result

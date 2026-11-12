@@ -25,6 +25,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import DatabaseConnection
+from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.entity._authored_resolver import typed_query_interpretation
 from parallax.core.internal.entity._expressions import AuthoredQuery
 from parallax.core.internal.metamodel import Metamodel
@@ -33,17 +34,15 @@ from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.read_delivery._delivery import deliver_find, deliver_history
 from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
-    EagerPageRequest,
     PageOriginCollector,
+    PageReadContext,
     PageReader,
-    StreamPageRequest,
-    StreamPageResult,
+    PageResult,
 )
-from parallax.core.internal.read_delivery._paging import At, PagingPlan
+from parallax.core.internal.read_delivery._paging import At, PagingParameters, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
-from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.internal.read_delivery._stream import StreamRead
-from parallax.core.internal.temporal_read import scans_resolved_axis
 
 __all__ = [
     "BegunRead",
@@ -51,6 +50,7 @@ __all__ = [
     "ReadQuery",
     "StandaloneRead",
     "interpreted",
+    "plan_stream",
     "read_graph",
     "read_page",
     "resolved",
@@ -141,30 +141,21 @@ def read_graph[Eager](
     checked = resolve_read_query(interpreted(selected, query), model=selected.model.meta)
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
-        if scans_resolved_axis(checked.temporal):
-            return deliver_history(
-                checked,
-                selected.model,
-                inputs.connection,
-                publication=publication,
-                read=activity,
-                edition=selected.edition,
-                preference=inputs.preference,
-                planner=planner,
-            )
-        return deliver_find(
-            EagerPageRequest(
-                checked,
-                selected.model,
-                inputs.connection,
-                inputs.preference,
-                _page_origin_collector(selected.model.meta, inputs.evidence_context, scanned=False),
-                activity,
-                planner,
-                selected.edition,
-            ),
-            publication,
+        plan = planner.plan(
+            edition=selected.edition,
+            model=selected.model,
+            dialect=inputs.connection.dialect,
+            query=checked,
+            preference=inputs.preference,
         )
+        context = PageReadContext(
+            inputs.connection,
+            activity,
+            _page_origin_collector(plan, inputs.evidence_context),
+        )
+        if plan.kind == "milestone_set":
+            return deliver_history(plan, context, publication)
+        return deliver_find(plan, context, publication)
 
     return read.eager(query.target, publication.representation, published)
 
@@ -174,6 +165,27 @@ def resolved(read: BegunRead, query: ReadQuery, /) -> ResolvedObjectQuery:
     return resolve_read_query(interpreted(read.selected, query), model=read.meta)
 
 
+def plan_stream(
+    read: BegunRead,
+    query: ResolvedObjectQuery,
+    batch_size: int,
+    planner: ReadPlanner,
+    /,
+    *,
+    dialect: Dialect,
+    preference: ConcurrencyPreference | None,
+) -> ReadPlan:
+    parameters = PagingParameters.for_page(batch_size, query.limit, 0)
+    return planner.plan(
+        edition=read.selected.edition,
+        model=read.selected.model,
+        dialect=dialect,
+        query=query,
+        preference=preference,
+        paging=parameters,
+    )
+
+
 def read_page(
     read: BegunRead,
     paging: PagingPlan,
@@ -181,9 +193,7 @@ def read_page(
     batch: StreamBatchActivity,
     planner: ReadPlanner,
     /,
-    *,
-    scanned: bool,
-) -> StreamPageResult[ReadEvidence]:
+) -> PageResult[ReadEvidence]:
     """One page of a delivery, read inside its begun read's own bracket.
 
     A page IS an eager read of a bounded root query, so it threads the same
@@ -196,26 +206,37 @@ def read_page(
     selected = read.selected
     model = selected.model
 
-    def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPageResult[ReadEvidence]:
-        return PageReader().read_page(
-            StreamPageRequest(
-                paging,
-                at,
-                model,
-                inputs.connection,
-                inputs.preference,
-                _page_origin_collector(model.meta, inputs.evidence_context, scanned=scanned),
-                calls,
-                planner,
-                selected.edition,
+    def body(calls: DatabaseCallScope, inputs: ReadInputs) -> PageResult[ReadEvidence]:
+        parameters = paging.parameters_for(at.emitted)
+        first_plan = paging.read_plan
+        assert first_plan is not None
+        if at.coordinate is None:
+            plan = first_plan
+        else:
+            query = paging.plan.after(at.coordinate, limit=parameters.size)
+            plan = planner.plan(
+                edition=selected.edition,
+                model=model,
+                dialect=inputs.connection.dialect,
+                query=query,
+                preference=inputs.preference,
+                policy=first_plan,
             )
+        return PageReader().read_page(
+            plan,
+            PageReadContext(
+                inputs.connection,
+                calls,
+                _page_origin_collector(plan, inputs.evidence_context),
+            ),
+            parameters,
         )
 
     return read.paged(batch, body)
 
 
 def _page_origin_collector(
-    meta: Metamodel, evidence_context: ReadEvidenceContext | None, *, scanned: bool
+    plan: ReadPlan, evidence_context: ReadEvidenceContext | None
 ) -> PageOriginCollector[ReadEvidence]:
     """The origin collector one eager Page or stream Page reads through.
 
@@ -224,9 +245,9 @@ def _page_origin_collector(
     state: both record nothing and build nothing. A writable attempt's other
     reads take a fresh collector filing into that attempt's source authority.
     """
-    if evidence_context is None or scanned:
+    if evidence_context is None or not plan.collects_evidence:
         return EMPTY_PAGE_ORIGIN_COLLECTOR
-    return ReadEvidenceCollector(meta, evidence_context=evidence_context)
+    return ReadEvidenceCollector(plan.model.meta, evidence_context=evidence_context)
 
 
 class StandaloneRead:

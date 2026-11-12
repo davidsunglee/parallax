@@ -166,7 +166,7 @@ def test_every_corpus_read_proves_exactly_the_levels_no_row_key_can_recur_at(
     # The proof is read off the compiled statements; this derives it again from
     # the include tree's targets, so the two descriptions of a level must agree.
     plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
-    schema = plan._schema
+    schema = plan._preparation().schema
 
     repeating = frozenset(
         level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)
@@ -194,5 +194,7 @@ def test_corpus_reads_that_merge_rows_prove_no_level_that_shares_a_row_key(
     plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
 
     assert {
-        level for level in range(plan.fetch_count + 1) if plan._schema.may_repeat_rows(level)
+        level
+        for level in range(plan.fetch_count + 1)
+        if plan._preparation().schema.may_repeat_rows(level)
     } == repeating

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Never, Protocol, cast, overload
+from typing import Any, Final, Never, Protocol, cast
 
 from parallax.core.execution_lifecycle._activity import (
     DatabaseCallActivity,
@@ -12,9 +12,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import InternalError
-from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import DatabaseConnection, PipelineStatement, Row
-from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.object_query._resolved import (
     ContinuationCoordinate,
@@ -37,39 +35,32 @@ from parallax.core.internal.read_delivery._page import (
     Page,
     PageBuilder,
     SourceLevel,
-    ViewSchema,
 )
-from parallax.core.internal.read_delivery._paging import At, PagingPlan, TieFound, page_decision
+from parallax.core.internal.read_delivery._paging import PagingParameters, TieFound, page_decision
 from parallax.core.internal.read_delivery._read_plan import (
     EmptyRead,
     ReadPlan,
-    ReadPlanner,
-    repeating_levels,
 )
 from parallax.core.internal.read_delivery._row_converter import (
     FetchedRowObserver,
     ReadRowConverter,
-    bind,
 )
 from parallax.core.internal.read_delivery._row_decoding import row_coordinates
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.temporal_read import Pin, TemporalShape, resolved_query_pin
+from parallax.core.internal.temporal_read import TemporalShape
 
 __all__ = [
     "EMPTY_PAGE_ORIGIN_COLLECTOR",
-    "EagerPageRequest",
     "EagerPageResult",
     "EmptyPageOriginCollector",
     "FetchedRowObserver",
-    "FlatPageRequest",
-    "FlatPageResult",
     "HistoryPageResult",
+    "PageContinuation",
     "PageOriginCollector",
+    "PageReadContext",
     "PageReader",
-    "PlannedFlatPageRequest",
-    "StreamPageRequest",
-    "StreamPageResult",
+    "PageResult",
 ]
 
 
@@ -107,112 +98,37 @@ EMPTY_PAGE_ORIGIN_COLLECTOR: Final = EmptyPageOriginCollector()
 
 
 @dataclass(frozen=True, slots=True)
-class EagerPageRequest[Origin]:
-    """Inputs for one eager Page read."""
-
-    query: ResolvedObjectQuery
-    model: CatalogedModel
-    port: DatabaseConnection
-    preference: ConcurrencyPreference | None
-    origin_collector: PageOriginCollector[Origin]
-    calls: DatabaseCallScope
-    planner: ReadPlanner
-    edition: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class EagerPageResult[Origin]:
-    """An eager read's sealed delivery Page.
-
-    ``includes`` is the query's own Include Paths as the relationship views a
-    wire unwind follows. The Page alone cannot supply them: it keeps every view
-    any level loaded onto a node, so a back-reference would revisit its target
-    forever. The reader knows the plan, so it hands the tree on.
-
-    ``origins`` is the origin each observed fetched row's value will carry,
-    keyed by that fetched row's own index in the Page, exactly as the request's
-    origin capability answered it.
-    """
-
-    page: Page
-    includes: read_planning.IncludeTree
-    origins: Mapping[int, Origin] = MappingProxyType({})
-
-
-@dataclass(frozen=True, slots=True)
-class HistoryPageResult:
-    """A milestone-set read's one database-ordered Page of flat roots.
-
-    ``milestones`` is the target family's Temporal Shape, whose axis starts are
-    each root's own edge.
-    """
-
-    page: Page
-    milestones: TemporalShape
-    includes: read_planning.IncludeTree
-
-
-@dataclass(frozen=True, slots=True)
-class FlatPageRequest:
-    """Inputs for one statement whose rows form a root-only Page."""
-
-    model: CatalogedModel
-    compiled: CompiledRead
-    read: Callable[[], Sequence[Row]]
-    pin: Pin
-    converter: ReadRowConverter | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PlannedFlatPageRequest:
-    """Inputs for one planned root-only read, whose root may be structurally
-    empty."""
-
-    model: CatalogedModel
-    plan: ReadPlan
+class PageReadContext[Origin]:
     port: DatabaseConnection
     calls: DatabaseCallScope
-    pin: Pin
+    origin_collector: PageOriginCollector[Origin] = EMPTY_PAGE_ORIGIN_COLLECTOR
 
 
 @dataclass(frozen=True, slots=True)
-class FlatPageResult:
-    """One flat batch and the Page-owned Entity States that judge it.
-
-    Each row's shared document is retained beside the Page. Provider rows end at
-    Page assembly.
-    """
-
-    documents: tuple[object | None, ...]
-    page: Page
-
-
-@dataclass(frozen=True, slots=True)
-class StreamPageRequest[Origin]:
-    """Inputs for one bounded Page in an already planned delivery."""
-
-    paging: PagingPlan
-    at: At
-    model: CatalogedModel
-    port: DatabaseConnection
-    preference: ConcurrencyPreference | None
-    origin_collector: PageOriginCollector[Origin]
-    calls: DatabaseCallScope
-    planner: ReadPlanner
-    edition: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class StreamPageResult[Origin]:
-    """One streamed Page and the minimal state needed to continue its delivery."""
-
-    page: Page
-    includes: read_planning.IncludeTree
-    origins: Mapping[int, Origin]
+class PageContinuation:
     delivered: int
     resume_from: ContinuationCoordinate | None
     exhausted: bool
     tie: TieFound | None
+
+
+@dataclass(frozen=True, slots=True)
+class PageResult[Origin]:
+    page: Page
+    includes: read_planning.IncludeTree
+    origins: Mapping[int, Origin] = MappingProxyType({})
+    documents: tuple[object | None, ...] | None = None
+    continuation: PageContinuation | None = None
+
+
+type EagerPageResult[Origin] = PageResult[Origin]
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryPageResult:
+    page: Page
+    milestones: TemporalShape
+    includes: read_planning.IncludeTree
 
 
 @dataclass(slots=True)
@@ -221,7 +137,6 @@ class _RootRead:
     converter: ReadRowConverter
     rows: list[Row]
     coordinates: tuple[ContinuationCoordinate | None, ...]
-    query: ResolvedObjectQuery
     observer: MaterializationObserver = INERT_OBSERVER
 
     def take_rows(self) -> list[Row]:
@@ -306,166 +221,63 @@ def _recorded_rows(
 
 @dataclass(frozen=True, slots=True)
 class PageReader:
-    """Plans, executes, records, and seals one Page per request."""
+    """Execute, record, and seal one plan-driven Page."""
 
     observer: MaterializationObserver = INERT_OBSERVER
 
-    @overload
-    def read_page[Origin](self, request: EagerPageRequest[Origin]) -> EagerPageResult[Origin]: ...
-
-    @overload
-    def read_page(self, request: FlatPageRequest | PlannedFlatPageRequest) -> FlatPageResult: ...
-
-    @overload
-    def read_page[Origin](self, request: StreamPageRequest[Origin]) -> StreamPageResult[Origin]: ...
-
-    def read_page(
-        self,
-        request: EagerPageRequest[Any]
-        | FlatPageRequest
-        | PlannedFlatPageRequest
-        | StreamPageRequest[Any],
-    ) -> EagerPageResult[Any] | FlatPageResult | StreamPageResult[Any]:
-        """Plan, execute, and assemble one Page from typed inputs."""
-        if isinstance(request, EagerPageRequest):
-            plan = self._plan(
-                request.query,
-                request.model,
-                request.port,
-                preference=request.preference,
-                edition=request.edition,
-                planner=request.planner,
-            )
-            root = plan.root_read()
-            if isinstance(root, EmptyRead):
-                return self._empty_page(plan, request.query, request.origin_collector)
-            roots = self._read_root(plan, root, request.query, request.port, request.calls)
-            return self._build_page(
-                roots,
-                request.model,
-                request.port,
-                origin_collector=request.origin_collector,
-                calls=request.calls,
-            )
-        if isinstance(request, PlannedFlatPageRequest):
-            plan = request.plan
-            root = plan.root_read()
-            if isinstance(root, EmptyRead):
-                self.observer.prepared(1)
-                builder = plan.page_builder(_page_observer(self.observer))
-                return FlatPageResult((), builder.finish((), request.pin))
-            compiled, converter = root
-            port, calls = request.port, request.calls
-            return self._read_flat(
-                lambda: execute_read(port, compiled, calls),
-                request.pin,
-                converter,
-                plan.page_builder(_page_observer(self.observer)),
-            )
-        if isinstance(request, FlatPageRequest):
-            return self._read_acquisition(request)
-
-        return self._read_stream_page(request)
-
-    def _read_acquisition(self, request: FlatPageRequest) -> FlatPageResult:
-        """Read one statement a write acquires its rows by into a root-only Page.
-
-        Its rows record each row key at most once unless its read can return two
-        concretes whose keys collide; either way their payload judgment stays
-        deferred, as acquisition's contract requires."""
-        model = request.model
-        compiled = request.compiled
-        repeating = repeating_levels(model, (compiled.result_contract.resolvable,), ())
-        if compiled.result_contract.may_repeat_row_keys:
-            repeating |= frozenset((ROOT_LEVEL,))
-        converter = request.converter or bind(
-            model,
-            compiled.result_contract,
-            compiled.projection,
-            singleton=not repeating,
-            acquisition=True,
-        )
-        return self._read_flat(
-            request.read,
-            request.pin,
-            converter,
-            PageBuilder(ViewSchema.of(repeating_levels=repeating), _page_observer(self.observer)),
-        )
-
-    def _read_flat(
-        self,
-        read: Callable[[], Sequence[Row]],
-        pin: Pin,
-        converter: ReadRowConverter,
-        builder: PageBuilder,
-    ) -> FlatPageResult:
-        """Execute one statement and record its rows into a root-only Page."""
-        self.observer.prepared(1)
-        self.observer.statement_rendered(ROOT_LEVEL)
-        rows = read()
-        self.observer.statement_executed(ROOT_LEVEL, len(rows))
-        recorded = tuple(converter.record_row(row, builder, source=ROOT_LEVEL) for row in rows)
-        return FlatPageResult(
-            tuple(item[2] for item in recorded),
-            builder.finish(tuple(item[0] for item in recorded), pin),
-        )
-
-    def _plan(
-        self,
-        query: ResolvedObjectQuery,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
-        preference: ConcurrencyPreference | None,
-        edition: str,
-        planner: ReadPlanner,
-    ) -> ReadPlan:
-        """Plan one instance-form Page, announcing every level it prepared."""
-        plan = planner.plan(
-            edition=edition,
-            model=model,
-            dialect=port.dialect,
-            query=query,
-            preference=preference,
-        )
-        self.observer.prepared(plan.fetch_count + 1)
-        return plan
-
-    def _empty_page[Origin](
+    def read_page[Origin](
         self,
         plan: ReadPlan,
-        query: ResolvedObjectQuery,
-        origin_collector: PageOriginCollector[Origin],
-    ) -> EagerPageResult[Origin]:
-        """Seal the zero-root Page of a structurally empty root, without
-        executing or recording anything."""
-        page = plan.page_builder(_page_observer(self.observer)).finish(
-            (), resolved_query_pin(query.temporal)
+        context: PageReadContext[Origin],
+        paging: PagingParameters | None = None,
+    ) -> PageResult[Origin]:
+        self.observer.prepared(plan.fetch_count + 1)
+        collector = (
+            context.origin_collector if plan.collects_evidence else EMPTY_PAGE_ORIGIN_COLLECTOR
         )
-        return EagerPageResult(
-            page=page, includes=plan.include_tree(), origins=origin_collector.origins_for(page)
-        )
+        root = plan.root_read()
+        if isinstance(root, EmptyRead):
+            page = plan.page_builder(_page_observer(self.observer)).finish((), plan.pin)
+            return PageResult(
+                page,
+                plan.include_tree(),
+                collector.origins_for(page),
+                None,
+                PageContinuation(0, None, True, None) if paging is not None else None,
+            )
+        root_read = self._read_root(plan, root, context)
+        continuation_result = None
+        if paging is not None:
+            coordinates = self._coordinates(root_read)
+            assert isinstance(plan.query, ResolvedObjectQuery)
+            terms = tuple(term.member.identity for term in plan.query.order_by)
+            verdict = page_decision(paging, terms, coordinates)
+            root_read.rows = root_read.rows[: verdict.keep]
+            root_read.coordinates = root_read.coordinates[: verdict.keep]
+            continuation_result = PageContinuation(
+                verdict.keep,
+                coordinates[verdict.keep - 1] if verdict.keep else None,
+                verdict.exhausted,
+                verdict.tie,
+            )
+        return self._build_page(root_read, context, collector, continuation_result)
 
-    def _read_root(
+    def _read_root[Origin](
         self,
         plan: ReadPlan,
         root: tuple[CompiledRead, ReadRowConverter],
-        query: ResolvedObjectQuery,
-        port: DatabaseConnection,
-        calls: DatabaseCallScope,
+        context: PageReadContext[Origin],
     ) -> _RootRead:
-        """Execute the root statement for one Page."""
-        compiled_read, converter = root
+        compiled, converter = root
         self.observer.statement_rendered(ROOT_LEVEL)
-        driver_rows = execute_read(port, compiled_read, calls)
+        driver_rows = execute_read(context.port, compiled, context.calls)
         self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
         return _RootRead(
-            plan=plan,
-            converter=converter,
-            rows=list(driver_rows),
-            coordinates=row_coordinates(compiled_read.result_contract, driver_rows),
-            query=query,
-            observer=self.observer,
+            plan,
+            converter,
+            list(driver_rows),
+            row_coordinates(compiled.result_contract, driver_rows),
+            self.observer,
         )
 
     @staticmethod
@@ -478,24 +290,45 @@ class PageReader:
             )
         return cast("tuple[ContinuationCoordinate, ...]", coordinates)
 
+    @staticmethod
+    def _record_roots[Origin](
+        root_read: _RootRead,
+        builder: PageBuilder,
+        rows: list[Row],
+        origin_collector: PageOriginCollector[Origin],
+    ) -> tuple[tuple[int, ...], tuple[object | None, ...] | None]:
+        plan = root_read.plan
+        if plan.purpose != "write_support":
+            return _recorded_rows(
+                builder, ROOT_LEVEL, root_read.converter, _drain_rows(rows), origin_collector
+            ), None
+        recorded = tuple(
+            root_read.converter.record_row(row, builder, source=ROOT_LEVEL)
+            for row in _drain_rows(rows)
+        )
+        root = plan.root_read()
+        assert not isinstance(root, EmptyRead)
+        documents = (
+            tuple(item[2] for item in recorded)
+            if root[0].result_contract.shared_document is not None
+            else None
+        )
+        return tuple(item[0] for item in recorded), documents
+
     def _build_page[Origin](
         self,
         root_read: _RootRead,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
+        context: PageReadContext[Origin],
         origin_collector: PageOriginCollector[Origin],
-        calls: DatabaseCallScope,
-    ) -> EagerPageResult[Origin]:
-        """Record roots and execute every reachable fetch step into one Page."""
-        meta = model.meta
+        continuation_result: PageContinuation | None,
+    ) -> PageResult[Origin]:
         plan = root_read.plan
+        meta = plan.model.meta
+        port, calls = context.port, context.calls
         includes = plan.include_tree()
         builder = plan.page_builder(_page_observer(root_read.observer))
         root_rows = root_read.take_rows()
-        root_refs = _recorded_rows(
-            builder, ROOT_LEVEL, root_read.converter, _drain_rows(root_rows), origin_collector
-        )
+        root_refs, documents = self._record_roots(root_read, builder, root_rows, origin_collector)
         del root_rows
 
         fetch_refs: list[tuple[int, ...]] = [()] * plan.fetch_count
@@ -538,7 +371,7 @@ class PageReader:
                         index,
                         step,
                         parents,
-                        template.render(keys, query=root_read.query),
+                        template.render(keys, query=plan.query),
                         converter,
                     )
                 )
@@ -555,66 +388,7 @@ class PageReader:
                 attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
                 fetch_refs[fetch.index] = child_refs
 
-        page = builder.finish(root_refs, resolved_query_pin(root_read.query.temporal))
-        return EagerPageResult(
-            page=page, includes=includes, origins=origin_collector.origins_for(page)
-        )
-
-    def _read_stream_page[Origin](
-        self, request: StreamPageRequest[Origin]
-    ) -> StreamPageResult[Origin]:
-        """Execute one streamed Page and retain only its continuation boundary."""
-        paging = request.paging
-        parameters = paging.parameters_for(request.at.emitted)
-        query = (
-            paging.plan.first(limit=parameters.size)
-            if request.at.coordinate is None
-            else paging.plan.after(request.at.coordinate, limit=parameters.size)
-        )
-        plan = self._plan(
-            query,
-            request.model,
-            request.port,
-            preference=request.preference,
-            edition=request.edition,
-            planner=request.planner,
-        )
-        root = plan.root_read()
-        if isinstance(root, EmptyRead):
-            empty = self._empty_page(plan, query, request.origin_collector)
-            return StreamPageResult(
-                page=empty.page,
-                includes=empty.includes,
-                origins=empty.origins,
-                delivered=0,
-                resume_from=None,
-                exhausted=True,
-                tie=None,
-            )
-        root_read = self._read_root(plan, root, query, request.port, request.calls)
-        coordinates = self._coordinates(root_read)
-        terms = tuple(term.member.identity for term in query.order_by)
-        verdict = page_decision(parameters, terms, coordinates)
-        kept = replace(
-            root_read,
-            rows=root_read.rows[: verdict.keep],
-            coordinates=root_read.coordinates[: verdict.keep],
-        )
-        discarded_rows = root_read.take_rows()
-        del discarded_rows, root_read
-        result = self._build_page(
-            kept,
-            request.model,
-            request.port,
-            origin_collector=request.origin_collector,
-            calls=request.calls,
-        )
-        return StreamPageResult(
-            page=result.page,
-            includes=result.includes,
-            origins=result.origins,
-            delivered=verdict.keep,
-            resume_from=coordinates[verdict.keep - 1] if verdict.keep else None,
-            exhausted=verdict.exhausted,
-            tie=verdict.tie,
+        page = builder.finish(root_refs, plan.pin)
+        return PageResult(
+            page, includes, origin_collector.origins_for(page), documents, continuation_result
         )

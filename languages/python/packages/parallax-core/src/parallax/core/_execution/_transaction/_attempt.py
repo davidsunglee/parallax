@@ -20,6 +20,7 @@ from parallax.core._execution._publication import SelectedReadModel, SelectedWri
 from parallax.core._execution._read_pipeline import (
     ReadInputs,
     ReadQuery,
+    plan_stream,
     read_graph,
     read_page,
     resolved,
@@ -76,20 +77,16 @@ from parallax.core.internal.read_delivery._acquired_rows import (
     completed_member_rows,
     publishable_member_rows,
 )
-from parallax.core.internal.read_delivery._fetch import execute_read
 from parallax.core.internal.read_delivery._page import ABSENT, release_page_rows
 from parallax.core.internal.read_delivery._page_reader import (
-    FlatPageRequest,
+    PageReadContext,
     PageReader,
-    StreamPageResult,
+    PageResult,
 )
 from parallax.core.internal.read_delivery._paging import At, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
-from parallax.core.internal.read_delivery._read_plan import ReadPlanner
+from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
-from parallax.core.internal.read_planning import PlannedEntityQuery
-from parallax.core.internal.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.internal.temporal_read import Pin
 from parallax.core.internal.write_plan.payload import PatchedDocument
 from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import (
@@ -322,6 +319,16 @@ class _TxnAttemptBase:
     def resolved(self, read: Self, query: ReadQuery, /) -> ResolvedObjectQuery:
         return resolved(read, query)
 
+    def planned(self, read: Self, query: ResolvedObjectQuery, batch_size: int, /) -> ReadPlan:
+        return plan_stream(
+            read,
+            query,
+            batch_size,
+            self._planner,
+            dialect=self._connection.dialect,
+            preference=self._inputs.preference,
+        )
+
     def page(
         self,
         read: Self,
@@ -329,10 +336,8 @@ class _TxnAttemptBase:
         at: At,
         batch: StreamBatchActivity,
         /,
-        *,
-        scanned: bool,
-    ) -> StreamPageResult[ReadEvidence]:
-        return read_page(read, paging, at, batch, self._planner, scanned=scanned)
+    ) -> PageResult[ReadEvidence]:
+        return read_page(read, paging, at, batch, self._planner)
 
     @property
     def selected(self) -> SelectedReadModel:
@@ -719,12 +724,12 @@ class TxnAttempt(_TxnAttemptBase):
 
     def _consume[Request: RowReadRequest, Result](
         self,
-        compiled: CompiledRead,
+        plan: ReadPlan,
         calls: DatabaseCallScope,
         request: Request,
         consumer: RowConsumer[Request, Result],
     ) -> Result:
-        """Execute ``compiled`` as one flat Page and run ``consumer`` over its
+        """Execute ``plan`` as one flat Page and run ``consumer`` over its
         judged member rows, releasing the Page and dropping this reader's own
         references to its staging, rows, and raw documents however the
         consumer left it — before starting the rows, part way through them, or
@@ -732,15 +737,10 @@ class TxnAttempt(_TxnAttemptBase):
         returned keeps what it adopted. A retaining target read's rows have
         only their Attributes judged."""
         model = self._write.model
-        connection = self._connection
         layout = entity_layout(model.meta, request.entity)
         if layout is None:  # pragma: no cover - a write target always owns rows
             raise ValueError(f"{request.entity.identity.canonical}: write target has no Table")
-        stage = PageReader().read_page(
-            FlatPageRequest(
-                model, compiled, lambda: execute_read(connection, compiled, calls), Pin()
-            )
-        )
+        stage = PageReader().read_page(plan, PageReadContext(self._connection, calls))
         page = stage.page
         rows = (
             admitted_member_rows(page)
@@ -753,7 +753,7 @@ class TxnAttempt(_TxnAttemptBase):
                 layout.member_selection,
                 rows,
                 ABSENT,
-                stage.documents if compiled.result_contract.shared_document is not None else None,
+                stage.documents,
                 page.root_count,
             )
         finally:
@@ -761,7 +761,7 @@ class TxnAttempt(_TxnAttemptBase):
             release_page_rows(page)
             del stage, page, rows
 
-    def _target_read(self, request: TargetReadRequest) -> CompiledRead:
+    def _target_read(self, request: TargetReadRequest) -> ReadPlan:
         """The point read of the row a target write starts from: the
         current row at ``valid_from`` of a Bitemporal object, the current one of
         any other, read whole where the request retains it."""
@@ -774,27 +774,29 @@ class TxnAttempt(_TxnAttemptBase):
             valid_from=request.valid_from,
             retain_predecessor=request.retains,
         )
-        return self._row_read(query, shared_lock=True)
+        return self._planner.plan_acquisition(
+            edition=self._write.edition,
+            model=self._write.model,
+            dialect=self._connection.dialect,
+            query=query,
+            preference=self._uow.settings.preference,
+        )
 
-    def _coverage_read(self, request: CoverageReadRequest) -> CompiledRead:
+    def _coverage_read(self, request: CoverageReadRequest) -> ReadPlan:
         query = read_planning.plan_coverage_read(
             request.entity,
             model=self._write.model.meta,
             key=request.key_attribute.name,
             terms=tuple((term.key_value, term.valid_time_windows) for term in request.terms),
         )
-        return self._row_read(query, shared_lock=request.shared_lock)
-
-    def _row_read(self, query: PlannedEntityQuery, *, shared_lock: bool) -> CompiledRead:
-        compiled = compile_read(
-            query,
-            self._write.model.meta,
-            self._connection.dialect,
-            result_form="row",
-            shared_lock=shared_lock,
+        return self._planner.plan_acquisition(
+            edition=self._write.edition,
+            model=self._write.model,
+            dialect=self._connection.dialect,
+            query=query,
+            preference=self._uow.settings.preference,
+            coverage_shared_lock=request.shared_lock,
         )
-        assert isinstance(compiled, CompiledRead)
-        return compiled
 
     # Flush execution.
 

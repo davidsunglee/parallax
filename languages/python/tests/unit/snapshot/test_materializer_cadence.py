@@ -9,6 +9,7 @@ import pytest
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core import DomainModel
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
@@ -24,12 +25,12 @@ from parallax.core.internal.read_delivery._page import (
     ViewSchema,
     page_cadence,
 )
-from parallax.core.internal.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.read_delivery._page_reader import PageReadContext, PageReader
+from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
-from tests._support.sql import compile_nonempty_read as compile_read
+from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import PageFixture, RecordingObserver
@@ -66,7 +67,7 @@ def _publish(_root: GraphView, ordinal: int) -> tuple[object, ...]:
     return (ordinal,)
 
 
-def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
+def _order_read() -> tuple[Metamodel, ReadPlan]:
     meta = model_of(ORDERS_MODEL)
     query = resolve_read_query(
         deserialize({"target": "Order", "predicate": {"true": {}}}),
@@ -75,20 +76,22 @@ def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
     plan = read_planning.plan(
         query, meta, projection=read_planning.ReadProjectionRequest("all", True)
     )
-    return (
-        meta,
-        CatalogedModel(meta),
-        compile_read(plan.root, meta, POSTGRES, result_form="instance"),
+    return meta, UNCACHED_READ_PLANNER.plan_acquisition(
+        edition="",
+        model=CatalogedModel(meta),
+        dialect=POSTGRES,
+        query=plan.root,
+        preference=None,
     )
 
 
 def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     observer = RecordingObserver()
     materializer = PageReader(observer)
-    meta, model, compiled = _order_read()
-    rows = tuple(result_row(compiled, _row(1)) for _ in range(2))
+    meta, plan = _order_read()
+    port = ScriptedAdapter(Read(rows=[_row(1), _row(1)]))
 
-    stage = materializer.read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
+    stage = materializer.read_page(plan, PageReadContext(port, INERT))
 
     assert page_cadence(stage.page) is observer
     assert list(publish_roots(stage.page, _publish, meta, atomic=True)) == [0, 1]
@@ -107,10 +110,10 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
 
 
 def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly() -> None:
-    _meta, model, compiled = _order_read()
-    rows = (result_row(compiled, _row(1)),)
+    _meta, plan = _order_read()
+    port = ScriptedAdapter(Read(rows=[_row(1)]))
 
-    stage = PageReader().read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
+    stage = PageReader().read_page(plan, PageReadContext(port, INERT))
 
     assert stage.page.observer is None
     assert page_cadence(stage.page) is INERT_OBSERVER
