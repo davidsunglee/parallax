@@ -61,8 +61,10 @@ callback still runs a standalone read on its own connection. The three lane obje
 `StandaloneRead`, `ReadOnlyTxnAttempt` and `TxnAttempt` — all satisfy one protocol,
 `BegunRead`, which supplies the bracket a read runs inside; everything after the
 capture is the same code for every lane and both representations. Typed and Wire reads
-share one instance-form plan. Row form belongs to a write's acquisition, which compiles
-its read directly and consumes judged member rows; it publishes nothing.
+share one instance-form plan. Row form belongs to a write's acquisition, which passes
+its described read through `ReadPlanner.plan_acquisition` and consumes judged member
+rows; it publishes nothing. Read Delivery derives its target or coverage lock and
+caches its preparation, while acquisition keeps its activity and consumption brackets.
 
 ### Symbols
 
@@ -77,6 +79,7 @@ its read directly and consumes judged member rows; it publishes nothing.
 - `parallax.core._execution._root:DatabaseRoot.using_principal`
 - `parallax.core._execution._root:RootResources`
 - `parallax.core.internal.read_delivery._read_plan:ReadPlanCache`
+- `parallax.core.internal.read_delivery._read_plan:ReadPlanner.plan_acquisition`
 - `parallax.core._execution._transaction._runner:TransactionRunner.transact`
 - `parallax.core._execution._transaction._runner:TransactionRunner.read_only`
 - `parallax.core._execution._scope:ExecutionScope`
@@ -140,13 +143,11 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │                       attempt's connection
    │ → ReadInputs(connection, preference, evidence_context)
    ▼
- scanned As-Of Axis? → deliver_history (next sections); otherwise
- deliver_find(EagerPageRequest(..., origin collector, ...), publication)  _delivery
+ ReadPlanner.plan(edition, model, dialect, query, preference)            _read_plan
+   │ decide kind, milestone shape and evidence eligibility
+   │ milestone set: supply milestone attributes to continuation.ordered
    ▼
- PageReader.read_page                                                   _page_reader
-   │ ReadPlanner.plan(edition, model, dialect, query, preference)
-   ▼
- ReadPlanCache: hit → reuse; miss → build below, once per key            _read_plan
+ ReadPlanCache: hit → reuse; miss → build below, once per key
    ├ read_planning.plan → ObjectQueryPlan
    │     root: PlannedEntityQuery
    │     includes: IncludeTree
@@ -161,9 +162,14 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │       each Entity's member sources, a scalar slot per cell, and the
    │       ordinals of the row identity, the shared document and each coordinate
    ├ bind(model, result_contract, projection) → a ReadRowConverter per compiled read
-   └ ReadPlan: compiled root + fetch work + converters + ViewSchema
-   │ rendered for this query: its predicate operands, finite temporal bounds, and a
-   │ stream page's cap and seek coordinate are bound
+   └ ReadPlan: kind + purpose + milestone shape + prepared read work
+   │ rendered for this query: current Pin and query values; predicate operands, finite
+   │ temporal bounds, and a stream page's cap and seek coordinate are bound
+   ▼
+ PageReadContext(connection, calls, fresh origin collector)             _page_reader
+   │ deliver_find / deliver_history(plan, context, publication)          _delivery
+   ▼
+ PageReader.read_page(plan, context, optional paging)                   _page_reader
    ▼
  execute_read(connection, CompiledRead, calls)                          _fetch
    LoweredStatement + document-read ordinals → canonical SQL → DatabaseConnection.execute
@@ -182,9 +188,9 @@ An eager graph read, from the lane's entry point to the sealed Page:
    one statement: execute_read; several: DatabaseConnection.execute_pipeline
    record rows → attach_children / attach_back_reference / attach_empty
    ▼
- PageBuilder.finish(root refs, query pin)
+ PageBuilder.finish(root refs, plan.pin)
    ▼
- EagerPageResult(page, includes, origins = collector.origins_for(page))
+ PageResult(page, includes, origins = collector.origins_for(page))
 ```
 
 The gate runs before the bracket, so a query the model refuses opens no activity,
@@ -209,8 +215,8 @@ asks the Concurrency Facet about its own Entity, and SQL lowering receives only 
 yes or no.
 
 `ReadPlanCache` (owned once by `RootResources`) keeps the reusable planning products
-and nothing else: no Page, result, connection, evidence or publication. The
-[Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines its
+and nothing else: no execution query, Pin, collector, Page, result, connection, evidence
+or publication. The [Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines its
 key. A cached plan is planned with the place each predicate operand and finite
 temporal bound renders from, compiled once into templates, and released from those
 associations before the plan is kept. Every delivery renders the root template from its
@@ -218,8 +224,10 @@ own query, and each child level it executes from that query and the level's gath
 keys, so a propagated As-Of coordinate is the current one. A miss whose key differs
 from a cached plan's only in its page shape reuses that plan's fetch work and plans
 only the root. `UNCACHED_READ_PLANNER` is a zero-capacity cache, so
-uncached planning builds the same products through the same code. Validation and read
-admission stay outside the cache.
+uncached planning builds the same products through the same code. A single-instant
+publication shares its prepared schema; milestone-set and write-support Pages each get
+a fresh plain schema. Write-support converters defer occurrence judgement and retain
+raw documents for acquisition. Validation and read admission stay outside the cache.
 
 ### Symbols
 
@@ -250,7 +258,7 @@ admission stay outside the cache.
 - `parallax.core._execution._read_pipeline:ReadInputs.evidence_context`
 - `parallax.core.internal.read_delivery._delivery:deliver_find`
 - `parallax.core.internal.read_delivery._delivery:deliver_history`
-- `parallax.core.internal.read_delivery._page_reader:EagerPageRequest`
+- `parallax.core.internal.read_delivery._page_reader:PageReadContext`
 - `parallax.core.internal.read_delivery._page_reader:PageReader.read_page`
 - `parallax.core.internal.read_delivery._read_plan:ReadPlanner.plan`
 - `parallax.core.internal.read_delivery._read_plan:ReadPlanCache`
@@ -299,14 +307,14 @@ admission stay outside the cache.
 - `parallax.core.internal.read_delivery._fetch:attach_children`
 - `parallax.core.internal.read_delivery._fetch:attach_back_reference`
 - `parallax.core.internal.read_delivery._fetch:attach_empty`
-- `parallax.core.internal.read_delivery._page_reader:EagerPageResult`
+- `parallax.core.internal.read_delivery._page_reader:PageResult`
 - `parallax.core.internal.read_delivery._page_reader:PageOriginCollector.origins_for`
 - `parallax.core._execution._root:RootResources`
 
 ## From Page to application values
 
 ```text
- EagerPageResult / HistoryPageResult / StreamPageResult (Page + IncludeTree + origins)
+ PageResult / HistoryPageResult (Page + IncludeTree; publication origins where eligible)
               │
               ▼
  SnapshotPublication.roots_of(page, includes, atomic, origins, milestones)  _handle/_read
@@ -372,7 +380,7 @@ are already published into Wire form in memory, with no further read.
 ### Symbols
 
 - `parallax.core.internal.read_delivery._page_reader:HistoryPageResult`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageResult`
+- `parallax.core.internal.read_delivery._page_reader:PageResult`
 - `parallax.snapshot._handle._read:SnapshotPublication.roots_of`
 - `parallax.snapshot._handle._read:SnapshotPublication.from_find`
 - `parallax.snapshot._handle._read:SnapshotPublication.from_history`
@@ -407,31 +415,32 @@ are already published into Wire form in memory, with no further read.
  ResolvedObjectQuery
         │
         ├ eager, one instant
-        │     deliver_find → EagerPageRequest → PageReader → EagerPageResult
-        │     → SnapshotPublication.from_find → Snapshot at the query's own pin
+        │     ReadPlanner.plan → ReadPlan + PageReadContext → deliver_find
+        │     → PageReader → PageResult → SnapshotPublication.from_find
+        │     → Snapshot at the plan's current Pin
         │
-        ├ eager milestone set (history / as_of_range: an As-Of Axis is scanned)
-        │     deliver_history → find_history:
-        │       continuation.ordered → ReadPlanner.plan → PlannedFlatPageRequest
-        │       → PageReader → root-only Page → HistoryPageResult
-        │     → SnapshotPublication.from_history
+        ├ eager milestone set (history / as_of_range)
+        │     ReadPlanner.plan: decide kind → continuation.ordered
+        │     → ReadPlan + PageReadContext → deliver_history → PageReader
+        │     → root-only Page → HistoryPageResult → SnapshotPublication.from_history
         │     → Snapshot with an empty Pin; each root at its own milestone edge
         │
         └ stream
               construct  SnapshotStream → ExecutionScope.stream or the attempt's stream:
                          capture the query, check_batch_size; no read begins
               enter      StreamDelivery.enter: begin → build_publication → resolved
-                         (the shared gate) → PagingPlan(continuation.plan(...),
-                         batch_size, limit) → the delivery's pin → open the Stream activity
+                         (the shared gate) → planned → ReadPlan with kind, Pin and
+                         continuation.plan; SQL preparation deferred → Stream activity
               each page  read_page, inside the lane's BegunRead.paged bracket and a
                          Stream Batch:
-                           StreamPageRequest(PagingPlan, At(coordinate, emitted))
-                           → PageReader: ContinuationPlan.first / ContinuationPlan.after
-                             → plan → root statement, reading one lookahead root;
-                               row_coordinates reads each root's coordinate cells
+                           first ReadPlan / ContinuationPlan.after → ReadPlanner.plan
+                           → PageReadContext + PagingParameters → PageReader
+                           → root statement, reading one lookahead root;
+                             row_coordinates reads each root's coordinate cells
                            → page_decision: keep a strictly ordered prefix, detect a tie
-                           → fetch levels for the kept roots
-                           → StreamPageResult(delivered, resume_from, exhausted, tie)
+                           → convert and fetch levels for the kept roots
+                           → PageResult with PageContinuation
+                             (delivered, resume_from, exhausted, tie)
               publish    outside the batch: roots_of for this Page; roots handed over
                          one at a time
               then       resume_from → next page | exhausted → done
@@ -446,12 +455,10 @@ are already published into Wire form in memory, with no further read.
                               a TxnAttempt flushes pending writes before every read
                               and every page
 
- origins     TxnAttempt, one instant → ReadEvidenceCollector, filing into the
-                              attempt's SourceAuthority → origins_for(page)
-                              → Read Evidence on conforming Typed and Wire nodes
-             StandaloneRead / ReadOnlyTxnAttempt (no evidence context),
-             or a scanned-axis stream page → EMPTY_PAGE_ORIGIN_COLLECTOR → none
-             eager milestone set → find_history observes no origins at all
+ origins     plan.collects_evidence and current attempt's evidence context
+               → fresh ReadEvidenceCollector → attempt's SourceAuthority
+               → origins_for(page) → Read Evidence on conforming Typed and Wire nodes
+             no evidence context, or plan ineligible → EMPTY_PAGE_ORIGIN_COLLECTOR
 ```
 
 The `ReadInputs` a lane passes decide most of this. A standalone read passes its own
@@ -459,7 +466,8 @@ connection, no Concurrency Preference and no evidence context; a read-only attem
 passes its connection and neither of the others; a writable attempt passes its
 connection, its unit of work's preference and that unit of work's `SourceAuthority` as
 the evidence context. `_page_origin_collector` in `_read_pipeline` turns "no evidence
-context, or a scanned axis" into `EMPTY_PAGE_ORIGIN_COLLECTOR`.
+context, or an ineligible plan" into `EMPTY_PAGE_ORIGIN_COLLECTOR`; `PageReader` also
+applies the plan's eligibility when it receives a collector.
 
 Read Evidence is not authority. The `SourceAuthority` is the attempt's one judge of
 what its sources and insertions still license. A source write of a value a read
@@ -492,15 +500,17 @@ exhausted, failed or stopped early.
 - `parallax.core.internal.continuation:plan`
 - `parallax.core.internal.continuation:ContinuationPlan.first`
 - `parallax.core.internal.continuation:ContinuationPlan.after`
-- `parallax.core.internal.read_delivery._page_reader:PlannedFlatPageRequest`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageRequest`
+- `parallax.core.internal.read_delivery._page_reader:PageReadContext`
+- `parallax.core.internal.read_delivery._paging:PagingParameters`
 - `parallax.core.internal.read_delivery._page_reader:PageReader`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageResult.delivered`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageResult.resume_from`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageResult.exhausted`
-- `parallax.core.internal.read_delivery._page_reader:StreamPageResult.tie`
+- `parallax.core.internal.read_delivery._page_reader:PageContinuation.delivered`
+- `parallax.core.internal.read_delivery._page_reader:PageContinuation.resume_from`
+- `parallax.core.internal.read_delivery._page_reader:PageContinuation.exhausted`
+- `parallax.core.internal.read_delivery._page_reader:PageContinuation.tie`
 - `parallax.snapshot._handle._stream:SnapshotStream`
 - `parallax.core.internal.read_delivery._read_plan:ReadPlanner.plan`
+- `parallax.core.internal.read_delivery._read_plan:ReadPlan.collects_evidence`
+- `parallax.core.internal.read_delivery._stream:StreamScope.planned`
 - `parallax.core._execution._read_pipeline:ReadInputs`
 - `parallax.core._execution._scope:ExecutionScope.stream`
 - `parallax.core._execution._transaction._attempt:_TxnAttemptBase.stream`

@@ -10,7 +10,7 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.internal import continuation, read_planning
+from parallax.core.internal import read_planning
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import QueryClauses
@@ -18,21 +18,19 @@ from parallax.core.internal.object_query._resolved import (
     ContinuationCoordinate,
     ResolvedObjectQuery,
 )
-from parallax.core.internal.read_delivery._delivery import temporal_shape
 from parallax.core.internal.read_delivery._page import (
     CONTINUATION_ORDER_NOT_TOTAL,
     InvalidData,
     InvalidDataError,
     invalid_result_refusal,
 )
-from parallax.core.internal.read_delivery._page_reader import StreamPageResult
+from parallax.core.internal.read_delivery._page_reader import PageResult
 from parallax.core.internal.read_delivery._paging import At, PagingPlan, TieFound
 from parallax.core.internal.read_delivery._publication import Publication
+from parallax.core.internal.read_delivery._read_plan import ReadPlan
 from parallax.core.internal.temporal_read import (
     Pin,
     TemporalShape,
-    resolved_query_pin,
-    scans_resolved_axis,
 )
 
 __all__ = [
@@ -86,13 +84,13 @@ class StreamScope[R, Q, Origin](Protocol):
     inside its unit of work's read gate, so buffered writes reach the database
     before the page that must see them. A page is handed its own Stream Batch
     UNENTERED, because where that scope opens is part of the same answer.
-    ``scanned`` marks a delivery that scans an As-Of Axis, whose Pages carry no
-    origins.
     """
 
     def begin(self) -> R: ...
 
     def resolved(self, read: R, query: Q, /) -> ResolvedObjectQuery: ...
+
+    def planned(self, read: R, query: ResolvedObjectQuery, batch_size: int, /) -> ReadPlan: ...
 
     def page(
         self,
@@ -101,9 +99,7 @@ class StreamScope[R, Q, Origin](Protocol):
         at: At,
         batch: StreamBatchActivity,
         /,
-        *,
-        scanned: bool,
-    ) -> StreamPageResult[Origin]: ...
+    ) -> PageResult[Origin]: ...
 
 
 type _State = Literal["created", "open", "draining", "exhausted", "failed", "closed"]
@@ -261,16 +257,12 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         publication = self._build_publication(read.selected)
         self._publication = publication
         try:
-            meta = read.meta
             resolved = self._scope.resolved(read, self._query)
-            self._paging = PagingPlan(
-                continuation.plan(resolved, meta), self._batch_size, resolved.limit
-            )
-            if scans_resolved_axis(resolved.temporal):
-                self._milestones = temporal_shape(meta, resolved.root)
-                self._pin = Pin()
-            else:
-                self._pin = resolved_query_pin(resolved.temporal)
+            plan = self._scope.planned(read, resolved, self._batch_size)
+            assert plan.continuation is not None
+            self._paging = PagingPlan(plan.continuation, self._batch_size, resolved.limit, plan)
+            self._milestones = plan.milestones
+            self._pin = plan.pin
             self._read = read
             self._activity = read.open_stream(
                 self._query.target, publication.representation, self._batch_size
@@ -480,7 +472,6 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 paging,
                 At(coordinate, emitted),
                 self._activity.batch(),
-                scanned=self._milestones is not None,
             )
             includes = page.includes
             self._on_page_start(includes)
@@ -499,10 +490,12 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 self._paused_includes = includes
                 yield root
                 self._paused_includes = None
-            delivered = page.delivered
-            resume_from = page.resume_from
-            tie = page.tie
-            exhausted = page.exhausted
+            outcome = page.continuation
+            assert outcome is not None
+            delivered = outcome.delivered
+            resume_from = outcome.resume_from
+            tie = outcome.tie
+            exhausted = outcome.exhausted
             del page
             emitted += delivered
             if resume_from is not None:

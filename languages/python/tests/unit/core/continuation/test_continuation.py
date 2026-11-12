@@ -109,6 +109,7 @@ def _planned(
     *,
     predicate: PredicateNode | None = None,
     temporal: dict[TemporalDimension, TemporalSelection] | None = None,
+    milestone_attributes: tuple[str, ...] = (),
     **clauses: object,
 ) -> continuation.ContinuationPlan:
     entity = entity_of(model, target)
@@ -124,7 +125,11 @@ def _planned(
         temporal=selections,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
     )
-    return continuation.plan(validate_object_query(entity, query, model), model)
+    return continuation.plan(
+        validate_object_query(entity, query, model),
+        model,
+        milestone_attributes=tuple(_identity(model, identity) for identity in milestone_attributes),
+    )
 
 
 def _identity(model: Metamodel, reference: str) -> AttributeIdentity:
@@ -664,7 +669,12 @@ def test_a_milestone_set_read_orders_by_the_key_then_its_one_axis_start(
     # One primary key stands behind several result roots of a milestone-set read,
     # so the key alone is not total there. What separates two milestones of one
     # key is the milestone each stands at, which is the axis's own start.
-    plan = _planned(BALANCE, "Balance", temporal={"transaction-time": selection})
+    plan = _planned(
+        BALANCE,
+        "Balance",
+        temporal={"transaction-time": selection},
+        milestone_attributes=(_BALANCE_TX_START,),
+    )
     assert _order(plan.first(limit=2)) == _normalized(
         (
             OrderKey(attr=_BALANCE_ID, direction="asc"),
@@ -684,7 +694,12 @@ def test_a_bitemporal_scan_appends_both_axis_starts_valid_time_first(
     # order a whole-result milestone read already ranks its graphs in. Scanning
     # ONE axis still appends both: a milestone is a rectangle, and two rectangles
     # of one key may differ on the axis the read pinned.
-    plan = _planned(POSITION, "Position", temporal={"transaction-time": selection})
+    plan = _planned(
+        POSITION,
+        "Position",
+        temporal={"transaction-time": selection},
+        milestone_attributes=(_POSITION_VALID_START, _POSITION_TX_START),
+    )
     assert _order(plan.first(limit=2)) == _normalized(
         (
             OrderKey(attr=_POSITION_ID, direction="asc"),
@@ -712,6 +727,7 @@ def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> No
         "Position",
         temporal={"transaction-time": History()},
         order_by=(OrderKey(attr=_POSITION_TX_START, direction="desc"),),
+        milestone_attributes=(_POSITION_VALID_START, _POSITION_TX_START),
     )
     assert _order(plan.first(limit=2)) == _normalized(
         (
@@ -755,7 +771,14 @@ def test_an_inherited_milestone_set_read_orders_by_the_family_owners_key_and_edg
     )
     _undiscoverable_family_facts(monkeypatch, RATE)
 
-    node = continuation.plan(query, RATE).first(limit=2)
+    node = continuation.plan(
+        query,
+        RATE,
+        milestone_attributes=(
+            shape.valid_time.start_attribute,
+            shape.transaction_time.start_attribute,
+        ),
+    ).first(limit=2)
 
     root = entity_of(RATE, "Rate").identity.canonical
     assert node.root.identity == deposit_rate.identity
@@ -773,7 +796,12 @@ def test_a_milestone_page_seeks_past_the_edge_the_database_evaluated() -> None:
     # expressions produced them, so the seek binds those carriers rather than
     # any spelling of them — and it is the same lexicographic tree an authored
     # Sort Key gets, over one key term and two edge terms.
-    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    plan = _planned(
+        POSITION,
+        "Position",
+        temporal={"transaction-time": History()},
+        milestone_attributes=(_POSITION_VALID_START, _POSITION_TX_START),
+    )
     valid_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     tx_start = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     statement = _lowered(
@@ -827,7 +855,12 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
     # alone would end each of those deliveries early — the next page seeks past
     # the whole key — and this is the same paging evaluation the Column orderings
     # above are graded by, over instants rather than scalars.
-    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    plan = _planned(
+        POSITION,
+        "Position",
+        temporal={"transaction-time": History()},
+        milestone_attributes=(_POSITION_VALID_START, _POSITION_TX_START),
+    )
     delivered = _delivered(POSITION, "Position", plan, _milestones(), batch_size=batch_size)
     ranked = _ranked(POSITION, _order(plan.first(limit=1)))
     assert delivered == sorted(_milestones(), key=ranked)

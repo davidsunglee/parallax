@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Final, NamedTuple, Protocol, assert_never
+from typing import Final, Literal, NamedTuple, Protocol, assert_never
 
-from parallax.core.internal import concurrency, inheritance, read_planning
+from parallax.core.internal import concurrency, continuation, inheritance, read_planning
 from parallax.core.internal.concurrency import ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    TemporalDimension,
 )
 from parallax.core.internal.object_query._resolved import (
     ResolvedAsOfSelection,
@@ -23,6 +24,7 @@ from parallax.core.internal.object_query._resolved import (
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
+from parallax.core.internal.predicate._execution_values import ExecutionValueSources
 from parallax.core.internal.predicate._resolved import (
     DeferredKeySet,
     RelatedObject,
@@ -51,7 +53,9 @@ from parallax.core.internal.read_delivery._page import (
     SourceLevel,
     ViewSchema,
 )
+from parallax.core.internal.read_delivery._paging import PagingParameters
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.internal.read_planning._include_tree import build_include_tree
 from parallax.core.internal.sql_gen._compile import (
     CompiledRead,
     CompiledTemplate,
@@ -61,16 +65,25 @@ from parallax.core.internal.sql_gen._compile import (
 from parallax.core.internal.sql_gen._inheritance import EMPTY_READ, EmptyRead
 from parallax.core.internal.sql_gen._predicate import affix_needs_escape
 from parallax.core.internal.sql_gen._seek import continuation_pattern
-from parallax.core.internal.temporal_read import scans_resolved_axis
+from parallax.core.internal.temporal_read import (
+    Pin,
+    TemporalShape,
+    ranked_axes,
+    resolved_query_pin,
+    scans_resolved_axis,
+    temporal_facet_of,
+)
 
 __all__ = [
     "DEFAULT_READ_PLAN_CACHE_CAPACITY",
     "EMPTY_READ",
     "UNCACHED_READ_PLANNER",
     "EmptyRead",
+    "ReadKind",
     "ReadPlan",
     "ReadPlanCache",
     "ReadPlanner",
+    "ReadPurpose",
     "check_read_plan_cache_capacity",
     "repeating_levels",
 ]
@@ -95,73 +108,115 @@ class _ReadPlanCacheStatistics:
     evictions: int
 
 
+type ReadKind = Literal["single_instant", "milestone_set"]
+type ReadPurpose = Literal["publication", "write_support"]
+
 type _FetchWork = CompiledTemplate | EmptyRead | None
 
 
 @dataclass(frozen=True, slots=True)
-class ReadPlan:
-    """An immutable read plan consumed through behavioral accessors."""
+class _ReadPreparation:
+    query_plan: read_planning.ObjectQueryPlan
+    root: CompiledRead | EmptyRead
+    root_rows: ReadRowConverter | None
+    schema: ViewSchema
+    repeating: frozenset[SourceLevel]
+    correlations: tuple[tuple[AttributeIdentity, ...], ...]
+    fetches: tuple[_FetchWork, ...]
+    fetch_rows: tuple[ReadRowConverter | None, ...]
 
-    _query_plan: read_planning.ObjectQueryPlan
-    _root: CompiledRead | EmptyRead
-    _root_rows: ReadRowConverter | None
-    _schema: ViewSchema
-    _correlations: tuple[tuple[AttributeIdentity, ...], ...]
-    _fetches: tuple[_FetchWork, ...]
-    _fetch_rows: tuple[ReadRowConverter | None, ...]
+
+class _DeferredRead:
+    __slots__ = ("_build", "_lock", "_prepared")
+
+    def __init__(self, build: Callable[[], _ReadPreparation]) -> None:
+        self._build: Callable[[], _ReadPreparation] | None = build
+        self._lock = threading.Lock()
+        self._prepared: _ReadPreparation | None = None
+
+    def get(self) -> _ReadPreparation:
+        with self._lock:
+            if self._prepared is None:
+                assert self._build is not None
+                self._prepared = self._build()
+                self._build = None
+            return self._prepared
+
+
+@dataclass(frozen=True, slots=True)
+class ReadPlan:
+    model: CatalogedModel
+    kind: ReadKind
+    purpose: ReadPurpose
+    milestones: TemporalShape | None
+    query: ResolvedObjectQuery | read_planning.PlannedEntityQuery
+    pin: Pin
+    _prepared: _ReadPreparation | _DeferredRead
+    continuation: continuation.ContinuationPlan | None = None
+
+    @property
+    def collects_evidence(self) -> bool:
+        return self.kind == "single_instant" and self.purpose == "publication"
+
+    @property
+    def milestone_attributes(self) -> tuple[AttributeIdentity, ...]:
+        return (
+            ()
+            if self.milestones is None
+            else tuple(axis.start_attribute for axis in ranked_axes(self.milestones))
+        )
+
+    def _preparation(self) -> _ReadPreparation:
+        prepared = self._prepared
+        return prepared.get() if isinstance(prepared, _DeferredRead) else prepared
 
     @property
     def fetch_count(self) -> int:
-        return len(self._query_plan.fetch_steps)
+        return len(self._preparation().query_plan.fetch_steps)
 
     def root_read(self) -> tuple[CompiledRead, ReadRowConverter] | EmptyRead:
-        root = self._root
-        if isinstance(root, EmptyRead):
-            return root
-        assert self._root_rows is not None
-        return root, self._root_rows
+        prepared = self._preparation()
+        if isinstance(prepared.root, EmptyRead):
+            return prepared.root
+        assert prepared.root_rows is not None
+        return prepared.root, prepared.root_rows
 
     def page_builder(self, observer: object | None) -> PageBuilder:
-        return PageBuilder(self._schema, observer)
+        prepared = self._preparation()
+        schema = (
+            prepared.schema
+            if self.kind == "single_instant" and self.purpose == "publication"
+            else ViewSchema.of(repeating_levels=prepared.repeating)
+        )
+        return PageBuilder(schema, observer)
 
     def ready_fetches(self, completed: set[int]) -> tuple[int, ...]:
         return tuple(
             index
-            for index, step in enumerate(self._query_plan.fetch_steps)
+            for index, step in enumerate(self._preparation().query_plan.fetch_steps)
             if index not in completed
             and (isinstance(step.parent, read_planning.RootRef) or step.parent.index in completed)
         )
 
     def fetch_step(self, index: int) -> read_planning.FetchStep:
-        return self._query_plan.fetch_steps[index]
+        return self._preparation().query_plan.fetch_steps[index]
 
     def prepared_fetch(
         self, index: int
     ) -> tuple[CompiledTemplate, ReadRowConverter] | EmptyRead | None:
-        """Fetch step ``index``'s executable template and converter, or
-        :class:`EmptyRead` for a level at or beneath an empty position, or
-        ``None`` for a reachable back-reference, which attaches from rows
-        already converted."""
-        fetch = self._fetches[index]
+        prepared = self._preparation()
+        fetch = prepared.fetches[index]
         if fetch is None or isinstance(fetch, EmptyRead):
             return fetch
-        rows = self._fetch_rows[index]
+        rows = prepared.fetch_rows[index]
         assert rows is not None
         return fetch, rows
 
     def include_tree(self) -> read_planning.IncludeTree:
-        return self._query_plan.includes
-
-    def with_root(
-        self,
-        compiled: CompiledRead,
-    ) -> ReadPlan:
-        return replace(self, _root=compiled)
+        return self._preparation().query_plan.includes
 
 
 class ReadPlanner(Protocol):
-    """The one read-planning operation every delivery crosses."""
-
     def plan(
         self,
         *,
@@ -170,24 +225,51 @@ class ReadPlanner(Protocol):
         dialect: Dialect,
         query: ResolvedObjectQuery,
         preference: ConcurrencyPreference | None,
+        paging: PagingParameters | None = None,
+        policy: ReadPlan | None = None,
+    ) -> ReadPlan: ...
+
+    def plan_acquisition(
+        self,
+        *,
+        edition: str,
+        model: CatalogedModel,
+        dialect: Dialect,
+        query: read_planning.PlannedEntityQuery,
+        preference: ConcurrencyPreference | None,
+        coverage_shared_lock: bool | None = None,
     ) -> ReadPlan: ...
 
 
 @dataclass(frozen=True, slots=True)
 class _CachedDelivery:
-    """A plan whose root is ``root_template``'s unrendered read, when it has one."""
-
-    plan: ReadPlan
+    prepared: _ReadPreparation
     root_template: CompiledTemplate | None
+    model: CatalogedModel
+    kind: ReadKind
+    purpose: ReadPurpose
+    milestones: TemporalShape | None
 
-    def render(self, query: ResolvedObjectQuery) -> ReadPlan:
+    def render(self, query: ResolvedObjectQuery | read_planning.PlannedEntityQuery) -> ReadPlan:
         template = self.root_template
-        if template is None:
-            return self.plan
-        compiled = template.render(query=query)
-        if compiled is template.compiled:
-            return self.plan
-        return self.plan.with_root(compiled)
+        prepared = (
+            self.prepared
+            if template is None
+            else replace(self.prepared, root=template.render(query=query))
+        )
+        pin = (
+            resolved_query_pin(query.temporal)
+            if isinstance(query, ResolvedObjectQuery) and self.kind == "single_instant"
+            else Pin()
+        )
+        return ReadPlan(self.model, self.kind, self.purpose, self.milestones, query, pin, prepared)
+
+
+def _milestones(model: CatalogedModel, entity: EntityIdentity) -> TemporalShape:
+    shape = temporal_facet_of(model.meta).shape(entity)
+    if shape is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.canonical}: no Temporal Facet shape")
+    return shape
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +308,8 @@ class _ReadPlanKey(NamedTuple):
     query: _QueryKey
     preference: ConcurrencyPreference | None
     delivery: object
+    purpose: ReadPurpose = "publication"
+    acquisition_lock: bool | None = None
 
     def same_family(self, other: _ReadPlanKey) -> bool:
         return (
@@ -234,6 +318,8 @@ class _ReadPlanKey(NamedTuple):
             and self.dialect == other.dialect
             and self.preference == other.preference
             and self.query == other.query
+            and self.purpose == other.purpose
+            and self.acquisition_lock == other.acquisition_lock
         )
 
 
@@ -249,8 +335,10 @@ def _read_plan_key(
     edition: str,
     model: CatalogedModel,
     dialect: Dialect,
-    query: ResolvedObjectQuery,
+    query: ResolvedObjectQuery | read_planning.PlannedEntityQuery,
     preference: ConcurrencyPreference | None,
+    purpose: ReadPurpose = "publication",
+    coverage_shared_lock: bool | None = None,
 ) -> _ReadPlanKey:
     paging = query.paging
     delivery: tuple[object, ...]
@@ -267,9 +355,21 @@ def _read_plan_key(
         edition,
         _Identity(model),
         _Identity(dialect),
-        _QueryKey(_query_key(query)),
+        _QueryKey(
+            _query_key(query)
+            if isinstance(query, ResolvedObjectQuery)
+            else (
+                query.target,
+                _predicate_key(query.predicate.predicate),
+                query.narrow_to,
+                tuple(member.identity for member in query.projection.value_objects),
+                query.projection.observe_structured_document,
+            )
+        ),
         preference,
         delivery,
+        purpose,
+        coverage_shared_lock,
     )
 
 
@@ -457,32 +557,55 @@ def _plan_uncached(
     *,
     model: CatalogedModel,
     dialect: Dialect,
-    query: ResolvedObjectQuery,
+    query: ResolvedObjectQuery | read_planning.PlannedEntityQuery,
     preference: ConcurrencyPreference | None,
-    reusable: ReadPlan | None = None,
+    reusable: _ReadPreparation | None = None,
     templated: bool = False,
+    kind: ReadKind = "single_instant",
+    milestones: TemporalShape | None = None,
+    purpose: ReadPurpose = "publication",
+    coverage_shared_lock: bool | None = None,
 ) -> _CachedDelivery:
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
     versioning = concurrency.concurrency_facet_of(model.meta)
     projection = read_planning.ReadProjectionRequest("all", True)
-    planned = (
-        read_planning.plan(
-            query, model.meta, projection=projection, defer_execution_values=templated
+    if isinstance(query, read_planning.PlannedEntityQuery):
+        root_query = (
+            replace(
+                query,
+                execution_value_sources=ExecutionValueSources.authored(query.predicate.predicate),
+            )
+            if templated
+            else query
         )
-        if reusable is None
-        else replace(
-            reusable._query_plan,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            root=read_planning.plan_root(
-                query, model.meta, projection=projection, defer_execution_values=templated
+        planned = read_planning.ObjectQueryPlan(
+            root_query,
+            build_include_tree(
+                queried=query.target, root=tuple(query.position.concrete_subtypes), positions=()
             ),
+            (),
         )
-    )
+        shared_lock = True if coverage_shared_lock is None else coverage_shared_lock
+    else:
+        planned = (
+            read_planning.plan(
+                query, model.meta, projection=projection, defer_execution_values=templated
+            )
+            if reusable is None
+            else replace(
+                reusable.query_plan,
+                root=read_planning.plan_root(
+                    query, model.meta, projection=projection, defer_execution_values=templated
+                ),
+            )
+        )
+        shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
     root_template: CompiledTemplate | None = None
-    shared_lock = _takes_shared_lock(versioning, query.root.identity, preference)
+    result_form = "row" if purpose == "write_support" else "instance"
     if templated:
         compiled_root = compile_template(
-            planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
+            planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
         )
         if isinstance(compiled_root, EmptyRead):
             root = compiled_root
@@ -491,7 +614,7 @@ def _plan_uncached(
             root = compiled_root.compiled
     else:
         root = compile_read(
-            planned.root, model.meta, dialect, result_form="instance", shared_lock=shared_lock
+            planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
         )
     if reusable is None:
         fetches = _fetch_work(
@@ -550,17 +673,18 @@ def _plan_uncached(
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
                 repeating_levels=repeating,
             )
-            if not scans_resolved_axis(query.temporal)
+            if kind == "single_instant" and purpose == "publication"
             else ViewSchema.of(repeating_levels=repeating)
         )
     else:
+        repeating = reusable.repeating
         fetches, correlations, fetch_rows, schema = (
-            reusable._fetches,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            reusable._correlations,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            reusable._fetch_rows,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            reusable._schema,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+            reusable.fetches,
+            reusable.correlations,
+            reusable.fetch_rows,
+            reusable.schema,
         )
-    prepared = ReadPlan(
+    prepared = _ReadPreparation(
         read_planning.release_execution_value_sources(planned),
         root,
         None
@@ -571,13 +695,15 @@ def _plan_uncached(
             root.projection,
             correlation_members=correlations[0],
             singleton=not schema.may_repeat_rows(ROOT_LEVEL),
+            acquisition=purpose == "write_support",
         ),
         schema,
+        repeating,
         correlations,
         fetches,
         fetch_rows,
     )
-    return _CachedDelivery(prepared, root_template)
+    return _CachedDelivery(prepared, root_template, model, kind, purpose, milestones)
 
 
 def _takes_shared_lock(
@@ -657,6 +783,118 @@ class ReadPlanCache:
         dialect: Dialect,
         query: ResolvedObjectQuery,
         preference: ConcurrencyPreference | None,
+        paging: PagingParameters | None = None,
+        policy: ReadPlan | None = None,
+    ) -> ReadPlan:
+        if paging is not None:
+            kind: ReadKind = (
+                "milestone_set" if scans_resolved_axis(query.temporal) else "single_instant"
+            )
+            milestones = (
+                _milestones(model, query.root.identity) if kind == "milestone_set" else None
+            )
+            edge = (
+                ()
+                if milestones is None
+                else tuple(axis.start_attribute for axis in ranked_axes(milestones))
+            )
+            pages = continuation.plan(query, model.meta, milestone_attributes=edge)
+            page_query = pages.first(limit=paging.size)
+            plan = ReadPlan(
+                model,
+                kind,
+                "publication",
+                milestones,
+                page_query,
+                resolved_query_pin(query.temporal) if kind == "single_instant" else Pin(),
+                _DeferredRead(
+                    lambda: self.plan(
+                        edition=edition,
+                        model=model,
+                        dialect=dialect,
+                        query=page_query,
+                        preference=preference,
+                        policy=plan,
+                    )._preparation()  # pyright: ignore[reportPrivateUsage] - same-module preparation
+                ),
+                pages,
+            )
+            return plan
+        kind = (
+            policy.kind
+            if policy is not None
+            else ("milestone_set" if scans_resolved_axis(query.temporal) else "single_instant")
+        )
+        milestones = (
+            policy.milestones
+            if policy is not None
+            else (_milestones(model, query.root.identity) if kind == "milestone_set" else None)
+        )
+        if kind == "milestone_set" and query.paging is None:
+            if query.includes:  # pragma: no cover - query validation rejects milestone includes
+                raise ValueError(
+                    "a milestone-set (history / asOfRange) read carries no fetch steps"
+                )
+            query = continuation.ordered(
+                query,
+                model.meta,
+                milestone_attributes=tuple(axis.start_attribute for axis in ranked_axes(milestones))
+                if milestones is not None
+                else (),
+            )
+        return self._cached(
+            edition=edition,
+            model=model,
+            dialect=dialect,
+            query=query,
+            preference=preference,
+            kind=kind,
+            milestones=milestones,
+            purpose="publication",
+            coverage_shared_lock=None,
+        )
+
+    def plan_acquisition(
+        self,
+        *,
+        edition: str,
+        model: CatalogedModel,
+        dialect: Dialect,
+        query: read_planning.PlannedEntityQuery,
+        preference: ConcurrencyPreference | None,
+        coverage_shared_lock: bool | None = None,
+    ) -> ReadPlan:
+        shape = _milestones(model, query.target)
+        kind: ReadKind = (
+            "milestone_set"
+            if coverage_shared_lock is not None
+            and any(axis.dimension is TemporalDimension.VALID_TIME for axis in ranked_axes(shape))
+            else "single_instant"
+        )
+        return self._cached(
+            edition=edition,
+            model=model,
+            dialect=dialect,
+            query=query,
+            preference=preference,
+            kind=kind,
+            milestones=shape if kind == "milestone_set" else None,
+            purpose="write_support",
+            coverage_shared_lock=coverage_shared_lock,
+        )
+
+    def _cached(
+        self,
+        *,
+        edition: str,
+        model: CatalogedModel,
+        dialect: Dialect,
+        query: ResolvedObjectQuery | read_planning.PlannedEntityQuery,
+        preference: ConcurrencyPreference | None,
+        kind: ReadKind,
+        milestones: TemporalShape | None,
+        purpose: ReadPurpose,
+        coverage_shared_lock: bool | None,
     ) -> ReadPlan:
         if self._capacity == 0:
             return _plan_uncached(
@@ -664,6 +902,10 @@ class ReadPlanCache:
                 dialect=dialect,
                 query=query,
                 preference=preference,
+                kind=kind,
+                milestones=milestones,
+                purpose=purpose,
+                coverage_shared_lock=coverage_shared_lock,
             ).render(query)
         key = _read_plan_key(
             edition=edition,
@@ -671,8 +913,10 @@ class ReadPlanCache:
             dialect=dialect,
             query=query,
             preference=preference,
+            purpose=purpose,
+            coverage_shared_lock=coverage_shared_lock,
         )
-        reusable: ReadPlan | None = None
+        reusable: _ReadPreparation | None = None
         pending: _Pending | None = None
         elected = False
         with self._lock:
@@ -686,7 +930,7 @@ class ReadPlanCache:
                 self._misses += 1
                 reusable = next(
                     (
-                        value.plan
+                        value.prepared
                         for existing, value in reversed(self._entries.items())
                         if existing.same_family(key)
                     ),
@@ -705,6 +949,10 @@ class ReadPlanCache:
                 dialect=dialect,
                 query=query,
                 preference=preference,
+                kind=kind,
+                milestones=milestones,
+                purpose=purpose,
+                coverage_shared_lock=coverage_shared_lock,
                 reusable=reusable,
                 templated=True,
             )

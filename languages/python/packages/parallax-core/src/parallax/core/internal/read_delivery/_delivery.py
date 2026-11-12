@@ -1,32 +1,26 @@
 from __future__ import annotations
 
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
-from parallax.core.internal import continuation, temporal_read
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity._layout import CatalogedModel
-from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.read_delivery._page import INERT_OBSERVER, MaterializationObserver
 from parallax.core.internal.read_delivery._page_reader import (
-    EagerPageRequest,
     EagerPageResult,
     HistoryPageResult,
     PageOriginCollector,
+    PageReadContext,
     PageReader,
-    PlannedFlatPageRequest,
 )
 from parallax.core.internal.read_delivery._publication import Publication
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
-from parallax.core.internal.temporal_read import Pin, TemporalShape
+from parallax.core.internal.read_delivery._read_plan import (
+    UNCACHED_READ_PLANNER,
+    ReadPlan,
+    ReadPlanner,
+)
 
-__all__ = [
-    "deliver_find",
-    "deliver_history",
-    "find",
-    "find_history",
-    "temporal_shape",
-]
+__all__ = ["deliver_find", "deliver_history", "find", "find_history"]
 
 
 def find[Origin](
@@ -41,34 +35,10 @@ def find[Origin](
     edition: str = "",
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> EagerPageResult[Origin]:
-    """The whole-result read: every root ``query`` matches, with its included values.
-
-    ``query`` is the read's canonical Object Query: one carrying Include Paths,
-    or any other query planned with zero levels (root-only instance-form
-    materialization).
-
-    ``model`` is the connected model as one value: the accepted Metamodel every
-    level's own Entity resolves against, and the exact-model layout catalog
-    every level's conversion reads its applicable member set from. The two
-    travel together rather than as two arguments, so no read can be handed
-    layouts derived from a model other than the one it resolves against.
-
-    ``preference`` is the owning unit of work's Concurrency Preference, and
-    EVERY level derives its own read lock from it against that level's own
-    target Entity: a versioned root reads lock-free while an unversioned
-    included Entity in the same transaction takes the shared lock. Omitting it
-    is how a non-transactional read locks nothing at all.
-
-    ``origin_collector`` observes every recorded fetched row and answers the sealed
-    Page's origins, which the result carries by reference.
-
-    ``calls`` is the scope this read brackets its Database Calls against: the
-    Read the owning operation opened. Passing the shared inert activity runs
-    the same code and emits nothing.
-    """
-    return PageReader(observer).read_page(
-        EagerPageRequest(query, model, port, preference, origin_collector, calls, planner, edition)
+    plan = planner.plan(
+        edition=edition, model=model, dialect=port.dialect, query=query, preference=preference
     )
+    return PageReader(observer).read_page(plan, PageReadContext(port, calls, origin_collector))
 
 
 def find_history(
@@ -82,76 +52,27 @@ def find_history(
     preference: ConcurrencyPreference | None = None,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> HistoryPageResult:
-    """The flat milestone-set read.
-
-    ``history`` and ``asOfRange`` return the full matching milestone sequence in
-    at most one statement and one Page. Continuation order is authored before SQL
-    compilation, so the flat roots already rank by logical key and canonical axis
-    starts. A milestone-set query carries no includes, so the Page schema is
-    root-only, and it observes no origin.
-    """
-    meta = model.meta
-    ordered = continuation.ordered(query, meta)
     plan = planner.plan(
-        edition=edition,
-        model=model,
-        dialect=port.dialect,
-        query=ordered,
-        preference=preference,
+        edition=edition, model=model, dialect=port.dialect, query=query, preference=preference
     )
-    if plan.fetch_count:  # pragma: no cover - validated milestone queries cannot include
-        # m-case-format: a v1 milestone-set read carries no includes.
-        raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
-    stage = PageReader(observer).read_page(PlannedFlatPageRequest(model, plan, port, read, Pin()))
-    return HistoryPageResult(
-        page=stage.page, milestones=temporal_shape(meta, query.root), includes=plan.include_tree()
-    )
-
-
-def temporal_shape(meta: Metamodel, entity: CompiledEntity) -> TemporalShape:
-    """``entity``'s family Temporal Shape, which every milestone edge of a read
-    targeting it is read against.
-
-    Temporality is family-wide (`m-inheritance`), so a milestone edge reads the
-    family's shared Temporal Shape rather than the queried target's own,
-    possibly locally empty, axes.
-    """
-    shape = temporal_read.temporal_facet_of(meta).shape(entity.identity)
-    if shape is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise RuntimeError(f"{entity.identity.canonical}: no Temporal Facet shape")
-    return shape
+    assert plan.milestones is not None
+    stage = PageReader(observer).read_page(plan, PageReadContext(port, read))
+    return HistoryPageResult(stage.page, plan.milestones, stage.includes)
 
 
 def deliver_find[Origin, Eager](
-    request: EagerPageRequest[Origin],
+    plan: ReadPlan,
+    context: PageReadContext[Origin],
     publication: Publication[Origin, Eager],
     *,
     observer: MaterializationObserver = INERT_OBSERVER,
 ) -> Eager:
-    """One whole-result read published as ``publication``'s eager envelope."""
-    return publication.from_find(PageReader(observer).read_page(request))
+    return publication.from_find(PageReader(observer).read_page(plan, context))
 
 
 def deliver_history[Origin, Eager](
-    query: ResolvedObjectQuery,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    *,
-    publication: Publication[Origin, Eager],
-    read: DatabaseCallScope,
-    edition: str,
-    preference: ConcurrencyPreference | None,
-    planner: ReadPlanner,
+    plan: ReadPlan, context: PageReadContext[Origin], publication: Publication[Origin, Eager]
 ) -> Eager:
-    """One milestone-set read published as ``publication``'s eager envelope."""
-    return publication.from_history(
-        find_history(
-            query,
-            model,
-            port,
-            read=read,
-            edition=edition,
-            preference=preference,
-            planner=planner,
-        )
-    )
+    assert plan.milestones is not None
+    stage = PageReader().read_page(plan, context)
+    return publication.from_history(HistoryPageResult(stage.page, plan.milestones, stage.includes))

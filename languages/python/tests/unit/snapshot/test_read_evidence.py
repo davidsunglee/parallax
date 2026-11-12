@@ -1270,3 +1270,43 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
     with raises_code(UsageError, "write-value-not-stored"):
         own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+@pytest.mark.parametrize("delivery", ["find", "stream"])
+def test_reused_read_preparation_keeps_each_executions_pin_and_write_authority(
+    representation: str, delivery: str
+) -> None:
+    first_at = _CENSUS_AT
+    second_at = first_at + dt.timedelta(days=1)
+    row, _document = _census_row()
+    port = ScriptedAdapter(
+        Read(rows=[row]),
+        Transact(Read(rows=[row])),
+        Transact(Read(rows=[row])),
+        Transact(Read(rows=[row])),
+    )
+    db = db_for(_CENSUS_MODEL, port)
+
+    def published(reader: Any, instant: dt.datetime) -> object:
+        query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=instant)
+        (value,) = _published_by(reader, query, representation, delivery)
+        assert pin_of(value) == Pin(tx_time=LATEST, valid_time=instant)
+        return value
+
+    standalone = published(db, first_at)
+    first = db.transact(lambda tx: published(tx, first_at))
+    read_only = db.read_only(lambda tx: published(tx, second_at))
+    second = db.transact(lambda tx: published(tx, second_at))
+
+    def evidence(value: object) -> object:
+        return read_evidence_of(value) if isinstance(value, WireEntity) else _typed_hint(value)
+
+    assert evidence(standalone) is None
+    assert evidence(read_only) is None
+    first_evidence, second_evidence = evidence(first), evidence(second)
+    assert isinstance(first_evidence, ReadEvidence)
+    assert isinstance(second_evidence, ReadEvidence)
+    assert first_evidence.participation is not second_evidence.participation
+    assert pin_of(first) == Pin(tx_time=LATEST, valid_time=first_at)
+    assert pin_of(second) == Pin(tx_time=LATEST, valid_time=second_at)

@@ -67,8 +67,9 @@ def predicate_operands(predicate: ResolvedPredicate) -> Iterator[object]:  # noq
     The position of an operand in this order is its ordinal.
     """
     match predicate:
-        case ResolvedComparison(value=value):
-            yield value
+        case ResolvedComparison(value=value, framework=framework):
+            if not framework:
+                yield value
         case ResolvedRange(lower=lower, upper=upper):
             yield lower
             yield upper
@@ -176,7 +177,7 @@ def _record_authored(
     order :func:`predicate_operands` yields them, and return the next ordinal."""
     match predicate:
         case ResolvedComparison() | ResolvedStringMatch():
-            width = 1
+            width = int(not isinstance(predicate, ResolvedComparison) or not predicate.framework)
         case ResolvedRange():
             width = 2
         case ResolvedMembership(values=values):

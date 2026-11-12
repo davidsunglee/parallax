@@ -21,7 +21,6 @@ from parallax.core.internal.object_query._resolved import (
     derive_page,
     resolved_order_term,
 )
-from parallax.core.internal.temporal_read import ranked_axes, scans_resolved_axis, temporal_facet_of
 
 __all__ = ["ContinuationPlan", "ordered", "plan"]
 
@@ -110,7 +109,12 @@ class ContinuationPlan:
         )
 
 
-def plan(query: ResolvedObjectQuery, model: Metamodel) -> ContinuationPlan:
+def plan(
+    query: ResolvedObjectQuery,
+    model: Metamodel,
+    *,
+    milestone_attributes: tuple[AttributeIdentity, ...] = (),
+) -> ContinuationPlan:
     """``query``'s page plan against ``model``, in its Continuation Order.
 
     The Continuation Order is the query's authored Sort Keys in the precedence it
@@ -129,7 +133,7 @@ def plan(query: ResolvedObjectQuery, model: Metamodel) -> ContinuationPlan:
     entity = query.root
     key = _family_view(entity, model).primary_key.identity
     terms = [_term_from_resolved(term) for term in query.order_by]
-    for identity in (key, *_milestone_edge(entity, model, query)):
+    for identity in (key, *milestone_attributes):
         if all(term.identity != identity for term in terms):
             terms.append(
                 _term_from_resolved(
@@ -139,36 +143,18 @@ def plan(query: ResolvedObjectQuery, model: Metamodel) -> ContinuationPlan:
     return ContinuationPlan(model, query, tuple(terms))
 
 
-def ordered(query: ResolvedObjectQuery, model: Metamodel) -> ResolvedObjectQuery:
+def ordered(
+    query: ResolvedObjectQuery,
+    model: Metamodel,
+    *,
+    milestone_attributes: tuple[AttributeIdentity, ...] = (),
+) -> ResolvedObjectQuery:
     """``query`` ordered by its Continuation Order without making it a page.
 
     Eager milestone-set delivery needs the same deterministic root sequence as a
     stream while retaining one ordinary, uncaptured database result.
     """
-    return plan(query, model).ordered()
-
-
-def _milestone_edge(
-    entity: CompiledEntity, model: Metamodel, query: ResolvedObjectQuery
-) -> tuple[AttributeIdentity, ...]:
-    """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
-
-    Empty for a read that scans no axis, whose roots are one per primary key and
-    therefore already totally ordered by it. A scan puts every milestone of a key
-    in the result at once, and each milestone's own coordinate is its As-Of Axis
-    start (`m-temporal-read`'s edge) — the from-instant that lies inside its own
-    half-open interval and so distinguishes it from every other milestone of the
-    same key.
-    """
-    if not scans_resolved_axis(query.temporal):
-        return ()
-    shape = temporal_facet_of(model).shape(entity.identity)
-    if shape is None:  # pragma: no cover - the Temporal Facet covers every accepted Entity
-        raise InternalError(
-            CONTINUATION_PLANNING_FAILED,
-            f"{entity.identity.canonical}: the model declares no such Entity",
-        )
-    return tuple(axis.start_attribute for axis in ranked_axes(shape))
+    return plan(query, model, milestone_attributes=milestone_attributes).ordered()
 
 
 def _term_from_resolved(term: ResolvedOrderTerm) -> _Term:

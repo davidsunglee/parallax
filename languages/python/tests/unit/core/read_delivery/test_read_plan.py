@@ -157,11 +157,11 @@ def _shares_preparation(rendered: _read_plan.ReadPlan, prepared: _read_plan.Read
     """Whether ``rendered`` reuses everything ``prepared`` prepared but its root."""
     return (
         _root(rendered)[1] is _root(prepared)[1]
-        and rendered._schema is prepared._schema
-        and rendered._fetches is prepared._fetches
-        and rendered._fetch_rows is prepared._fetch_rows
-        and rendered._correlations is prepared._correlations
-        and rendered._query_plan is prepared._query_plan
+        and rendered._preparation().schema is prepared._preparation().schema
+        and rendered._preparation().fetches is prepared._preparation().fetches
+        and rendered._preparation().fetch_rows is prepared._preparation().fetch_rows
+        and rendered._preparation().correlations is prepared._preparation().correlations
+        and rendered._preparation().query_plan is prepared._preparation().query_plan
     )
 
 
@@ -700,8 +700,8 @@ def test_a_family_member_reuses_its_familys_preparation_but_plans_its_own_root()
     after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3))
 
     assert _root(after)[1] is not _root(first)[1]
-    assert after._schema is first._schema
-    assert after._fetches is first._fetches
+    assert after._preparation().schema is first._preparation().schema
+    assert after._preparation().fetches is first._preparation().fetches
 
 
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:
@@ -1008,7 +1008,7 @@ def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatc
 
     assert _read_plan._ReadPlanCacheStatistics(1, 1, 1, 2, 1) == cache._statistics()
     assert _root(rendered)[0].statement == _root(_plan(ReadPlanCache(0), _after(2)))[0].statement
-    assert rendered._fetches is cached._fetches
+    assert rendered._preparation().fetches is cached._preparation().fetches
 
 
 @pytest.mark.parametrize(("model", "valued"), _VALUED.values(), ids=_VALUED.keys())
@@ -1045,7 +1045,7 @@ def test_callers_of_one_pending_key_each_render_their_own_values(
     for value, delivered in zip((10, 20, 30, 40), plans, strict=True):
         expected = _root(_plan(uncached_planner, valued(value), model=model))[0].statement
         assert _root(delivered)[0].statement == expected
-    assert len({id(delivered._schema) for delivered in plans}) == 1
+    assert len({id(delivered._preparation().schema) for delivered in plans}) == 1
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
         _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 3, 1, 0
     )
@@ -1138,7 +1138,10 @@ def test_concurrent_cold_callers_plan_one_shared_value(
 
 
 def test_a_back_reference_has_no_executable_child_read() -> None:
-    plan = replace(_plan(ReadPlanCache(), _query()), _fetches=(None,), _fetch_rows=(None,))
+    initial = _plan(ReadPlanCache(), _query())
+    plan = replace(
+        initial, _prepared=replace(initial._preparation(), fetches=(None,), fetch_rows=(None,))
+    )
 
     assert plan.prepared_fetch(0) is None
 
@@ -1618,7 +1621,7 @@ def test_a_dormant_root_prepares_no_statement_converter_or_child_work() -> None:
         EMPTY_READ,
     ]
     assert isinstance(plan.fetch_step(1), read_planning.BackReferenceFetchStep)
-    assert plan._correlations == ((), (), ())
+    assert plan._preparation().correlations == ((), (), ())
 
 
 def test_direct_and_template_compilation_share_the_empty_read_outcome() -> None:
@@ -1647,7 +1650,10 @@ def test_an_empty_include_target_prepares_no_child_work_or_routing_demand() -> N
     # publication; only its routing demand is gone.
     assert "t0.prototype_id" in root.statement.sql
     by_view = {
-        _view_name(plan, index): (plan.prepared_fetch(index), plan._correlations[index + 1])
+        _view_name(plan, index): (
+            plan.prepared_fetch(index),
+            plan._preparation().correlations[index + 1],
+        )
         for index in range(plan.fetch_count)
     }
     assert by_view.keys() == {"gadgets", "prototype", "prototypes"}
@@ -1657,7 +1663,7 @@ def test_an_empty_include_target_prepares_no_child_work_or_routing_demand() -> N
     assert isinstance(live, tuple)
     assert live_correlations == (_gadget_member("workbenchId"),)
     workbench_id = AttributeIdentity(EntityIdentity("parallax.compatibility", "Workbench"), "id")
-    assert plan._correlations[0] == (workbench_id,)
+    assert plan._preparation().correlations[0] == (workbench_id,)
 
 
 def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
@@ -1676,12 +1682,12 @@ def test_a_dormant_page_carries_no_root_template() -> None:
     assert isinstance(first.root_read(), EmptyRead)
     assert isinstance(after.root_read(), EmptyRead)
     assert after is not first
-    assert after._fetches is first._fetches
-    assert after._fetch_rows is first._fetch_rows
-    assert after._correlations is first._correlations
-    assert after._schema is first._schema
+    assert after._preparation().fetches is first._preparation().fetches
+    assert after._preparation().fetch_rows is first._preparation().fetch_rows
+    assert after._preparation().correlations is first._preparation().correlations
+    assert after._preparation().schema is first._preparation().schema
     assert [entry.root_template for entry in cache._entries.values()] == [None, None]
-    assert _plan(cache, pages.first(limit=5), model=_DORMANT) is first
+    assert _plan(cache, pages.first(limit=5), model=_DORMANT)._preparation() is first._preparation()
 
 
 def test_cached_and_uncached_dormant_plans_agree() -> None:
@@ -1695,7 +1701,7 @@ def test_cached_and_uncached_dormant_plans_agree() -> None:
     assert [uncached.fetch_step(index) for index in range(uncached.fetch_count)] == [
         cached.fetch_step(index) for index in range(cached.fetch_count)
     ]
-    assert uncached._correlations == cached._correlations
+    assert uncached._preparation().correlations == cached._preparation().correlations
     assert [type(uncached.prepared_fetch(index)) for index in range(uncached.fetch_count)] == [
         type(cached.prepared_fetch(index)) for index in range(cached.fetch_count)
     ]

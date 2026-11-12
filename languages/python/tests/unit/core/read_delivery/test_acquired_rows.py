@@ -4,26 +4,36 @@ unjudged however its level is proved."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 import pytest
 
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.internal import predicate as oa
+from parallax.core.execution_lifecycle._activity import INERT
+from parallax.core.internal import read_planning
 from parallax.core.internal.base import StructuredDocument
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.read_delivery import _acquired_rows, _convert
 from parallax.core.internal.read_delivery._page import ABSENT, ROOT_LEVEL, entity_state, page_rows
-from parallax.core.internal.read_delivery._page_reader import FlatPageRequest, PageReader
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
+from parallax.core.internal.read_delivery._page_reader import (
+    PageReadContext,
+    PageReader,
+    PageResult,
+)
+from parallax.core.internal.read_delivery._read_plan import (
+    UNCACHED_READ_PLANNER,
+    EmptyRead,
+    ReadPlan,
+)
 from parallax.core.internal.temporal_read import Pin
-from tests._support.sql import compile_read
-from tests.unit._corpus_model_support import model, target
-from tests.unit._prepared_read_support import compiled_read, result_row
+from tests._support.db_port import Read, ScriptedAdapter
+from tests.unit._corpus_model_support import model
+from tests.unit._prepared_read_support import result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 
 _ENCODED: Final = model_of(ENCODED_ORDERS)
@@ -35,12 +45,36 @@ def _order(order_id: int, badge: str) -> dict[str, object]:
     return {"id": order_id, "name": "Ada", "badge_hex": badge, "address": _ADDRESS}
 
 
-def test_an_acquisition_defers_its_payload_on_a_level_that_records_each_key_once() -> None:
-    compiled = compiled_read(_ENCODED, "EncodedOrder")
-    rows = (result_row(compiled, _order(1, "0e")), result_row(compiled, _order(2, "0f")))
+def _acquisition_plan(meta: Metamodel, name: str, *, complete: bool = False) -> ReadPlan:
+    query = resolve_read_query(deserialize({"target": name, "predicate": {"true": {}}}), model=meta)
+    return UNCACHED_READ_PLANNER.plan_acquisition(
+        edition="test",
+        model=CatalogedModel(meta),
+        dialect=POSTGRES,
+        query=read_planning.plan_root(
+            query,
+            meta,
+            projection=read_planning.ReadProjectionRequest("all" if complete else "none", complete),
+        ),
+        preference=None,
+        coverage_shared_lock=False,
+    )
 
-    stage = PageReader().read_page(
-        FlatPageRequest(CatalogedModel(_ENCODED), compiled, lambda: rows, Pin())
+
+def _acquisition_page(plan: ReadPlan, rows: Sequence[Mapping[str, object]]) -> PageResult[object]:
+    with ScriptedAdapter(Read(rows=rows)) as adapter:
+        runtime = adapter.open()
+        try:
+            with runtime.login_source().new_context("writer_only") as connection:
+                return PageReader().read_page(plan, PageReadContext[object](connection, INERT))
+        finally:
+            runtime.close()
+
+
+def test_an_acquisition_defers_its_payload_on_a_level_that_records_each_key_once() -> None:
+    stage = _acquisition_page(
+        _acquisition_plan(_ENCODED, "EncodedOrder", complete=True),
+        (_order(1, "0e"), _order(2, "0f")),
     )
 
     page = page_rows(stage.page)
@@ -53,39 +87,30 @@ def test_an_acquisition_defers_its_payload_on_a_level_that_records_each_key_once
 
 
 def test_a_union_acquisition_keeps_colliding_concrete_keys_as_distinct_rows() -> None:
-    compiled = compile_read(oa.TrueNode(), _DOCUMENT, POSTGRES, target(_DOCUMENT, "Document"))
     rows = (
-        result_row(
-            compiled,
-            {
-                "id": 1,
-                "title": "Invoice A",
-                "folder_id": 3,
-                "currency": "USD",
-                "amount_due": "10.00",
-                "body": None,
-                "paid_amount": None,
-                "family_variant": "Invoice",
-            },
-        ),
-        result_row(
-            compiled,
-            {
-                "id": 1,
-                "title": "Memo B",
-                "folder_id": 3,
-                "currency": None,
-                "amount_due": None,
-                "body": "Text",
-                "paid_amount": None,
-                "family_variant": "Memo",
-            },
-        ),
+        {
+            "id": 1,
+            "title": "Invoice A",
+            "folder_id": 3,
+            "currency": "USD",
+            "amount_due": "10.00",
+            "body": None,
+            "paid_amount": None,
+            "family_variant": "Invoice",
+        },
+        {
+            "id": 1,
+            "title": "Memo B",
+            "folder_id": 3,
+            "currency": None,
+            "amount_due": None,
+            "body": "Text",
+            "paid_amount": None,
+            "family_variant": "Memo",
+        },
     )
 
-    stage = PageReader().read_page(
-        FlatPageRequest(CatalogedModel(_DOCUMENT), compiled, lambda: rows, Pin())
-    )
+    stage = _acquisition_page(_acquisition_plan(_DOCUMENT, "Document"), rows)
 
     page = page_rows(stage.page)
     assert page.schema.may_repeat_rows(ROOT_LEVEL)
@@ -98,13 +123,9 @@ def test_a_union_acquisition_keeps_colliding_concrete_keys_as_distinct_rows() ->
 
 
 def test_an_acquisition_projecting_no_value_object_leaves_its_occurrence_unjudged() -> None:
-    order = entity_by_name(_ENCODED, "EncodedOrder")
-    assert order is not None
-    compiled = compile_read(oa.TrueNode(), _ENCODED, POSTGRES, order)
-    rows = (result_row(compiled, {"id": 1, "name": "Ada", "badge_hex": "0e"}),)
-
-    stage = PageReader().read_page(
-        FlatPageRequest(CatalogedModel(_ENCODED), compiled, lambda: rows, Pin())
+    stage = _acquisition_page(
+        _acquisition_plan(_ENCODED, "EncodedOrder"),
+        ({"id": 1, "name": "Ada", "badge_hex": "0e"},),
     )
 
     (row,) = _acquired_rows.publishable_member_rows(stage.page)
