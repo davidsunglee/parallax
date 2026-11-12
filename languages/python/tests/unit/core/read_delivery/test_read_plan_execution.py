@@ -11,7 +11,7 @@ from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import INFINITY, StructuredDocument
 from parallax.core.internal.entity._layout import CatalogedModel
-from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.read_delivery import _acquired_rows
@@ -69,13 +69,19 @@ def _query(selection: Mapping[str, object]) -> ResolvedObjectQuery:
     )
 
 
-def _plan(cache: ReadPlanCache, query: ResolvedObjectQuery) -> ReadPlan:
+def _plan(
+    cache: ReadPlanCache,
+    query: ResolvedObjectQuery,
+    *,
+    paging: PagingParameters | None = None,
+) -> ReadPlan:
     return cache.plan(
         edition="edition-a",
         model=_TEMPORAL,
         dialect=ScriptedAdapter().dialect,
         query=query,
         preference="optimistic",
+        paging=paging,
     )
 
 
@@ -107,7 +113,7 @@ def test_cached_single_instant_policy_uses_each_executions_pin_and_collector() -
 
     assert all(plan.kind == "single_instant" for plan in plans)
     assert all(plan.purpose == "publication" and plan.collects_evidence for plan in plans)
-    assert all(plan.milestones is None and plan.milestone_attributes == () for plan in plans)
+    assert all(plan.milestones is None for plan in plans)
     assert [plan.pin.valid_time for plan in plans] == [shared.day(0), shared.day(1)]
     assert [result.page.pin for result in results] == [plan.pin for plan in plans]
     assert [result.origins for result in results] == [{0: "first"}, {0: "second"}]
@@ -149,7 +155,20 @@ def test_milestone_policy_supplies_shape_and_suppresses_a_supplied_collector(
         False,
     )
     assert plan.milestones is shape
-    assert plan.milestone_attributes == tuple(axis.start_attribute for axis in ranked_axes(shape))
+    expected_order = (
+        AttributeIdentity(shared.ShareCols.identity, "id"),
+        *(axis.start_attribute for axis in ranked_axes(shape)),
+    )
+    assert tuple(term.member.identity for term in plan.query.order_by) == expected_order
+    streamed = _plan(
+        ReadPlanCache(), _query(selection), paging=PagingParameters.for_page(2, None, 0)
+    )
+    assert streamed.continuation is not None
+    assert tuple(term.member.identity for term in streamed.query.order_by) == expected_order
+    assert (
+        tuple(term.member.identity for term in streamed.continuation.first(limit=2).order_by)
+        == expected_order
+    )
     assert plan.pin == result.page.pin == Pin()
     assert collector.observed == collector.sealed == []
     assert result.origins == {} and result.documents is None and result.continuation is None
@@ -344,6 +363,6 @@ def test_transaction_time_coverage_is_single_instant_write_support() -> None:
         "write_support",
         False,
     )
-    assert plan.milestones is None and plan.milestone_attributes == ()
+    assert plan.milestones is None
     assert collector.observed == collector.sealed == []
     assert result.origins == {} and not page_rows(result.page).roots
