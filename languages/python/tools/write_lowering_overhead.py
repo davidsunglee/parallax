@@ -480,20 +480,24 @@ def _journal_for(runtime: str) -> CaptureJournal:
     return CaptureJournal(journal_root(WORKSPACE), SUBJECT, captured_identity)
 
 
-def in_a_child(runtime: str, case: str) -> Cell:
-    """Reuse or durably record one case reading, or return why it is unavailable."""
+def in_a_child(runtime: str, case: str, *, checkpoint: bool = True) -> Cell:
+    """Read one case, optionally reusing or saving its durable checkpoint."""
     arguments = [case, "--warmups", str(WARMUPS), "--measured", str(MEASURED)]
     key = {"runtime": runtime, "case": case, "warmups": WARMUPS, "measured": MEASURED}
-    try:
-        journal = _journal_for(runtime)
-        saved = journal.load(key)
-    except (OSError, ValueError) as error:
-        return f"the child checkpoint could not be read: {error}"
-    if saved is not None:
-        decoded = _decoded(json.dumps(saved), case)
-        return (
-            f"the child checkpoint is invalid: {decoded}" if isinstance(decoded, str) else decoded
-        )
+    journal = None
+    if checkpoint:
+        try:
+            journal = _journal_for(runtime)
+            saved = journal.load(key)
+        except (OSError, ValueError) as error:
+            return f"the child checkpoint could not be read: {error}"
+        if saved is not None:
+            decoded = _decoded(json.dumps(saved), case)
+            return (
+                f"the child checkpoint is invalid: {decoded}"
+                if isinstance(decoded, str)
+                else decoded
+            )
     try:
         completed = subprocess.run(
             child_command(runtime, READING_SCRIPT, arguments),
@@ -510,10 +514,11 @@ def in_a_child(runtime: str, case: str) -> Cell:
     decoded = _decoded(completed.stdout, case)
     if isinstance(decoded, str):
         return decoded
-    try:
-        journal.store(key, json.loads(completed.stdout.strip().splitlines()[-1]))
-    except (OSError, ValueError) as error:
-        return f"the child checkpoint could not be written: {error}"
+    if journal is not None:
+        try:
+            journal.store(key, json.loads(completed.stdout.strip().splitlines()[-1]))
+        except (OSError, ValueError) as error:
+            return f"the child checkpoint could not be written: {error}"
     return decoded
 
 
@@ -685,7 +690,7 @@ def diagnostic(
     carries no provenance and is not an envelope, so nothing downstream can
     validate, verify, or retain it as a capture.
     """
-    take = in_a_child if child is None else child
+    take = functools.partial(in_a_child, checkpoint=False) if child is None else child
     matrix: Matrix = {
         runtime: {case: take(runtime, case) for case in runtime_cases(runtime, cases)}
         for runtime in runtimes
