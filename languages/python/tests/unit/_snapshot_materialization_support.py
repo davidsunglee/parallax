@@ -576,8 +576,9 @@ def read_root(
     del model, validated
     root = plan.root_read()
     assert not isinstance(root, EmptyRead)
+    context: PageReadContext[ReadEvidence] = PageReadContext(port, INERT)
     return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
-        plan, root, PageReadContext[ReadEvidence](port, INERT)
+        plan, root, context
     )
 
 
@@ -588,9 +589,10 @@ def build_page(
     fetch rendered, executed on ``port``, converted, and attached, and the Page's
     read sources retained. ``root`` is consumed."""
     del model
+    context: PageReadContext[ReadEvidence] = PageReadContext(port, INERT)
     return _MATERIALIZER._build_page(  # pyright: ignore[reportPrivateUsage]
         root,
-        PageReadContext[ReadEvidence](port, INERT),
+        context,
         EMPTY_PAGE_ORIGIN_COLLECTOR,
         None,
     )
