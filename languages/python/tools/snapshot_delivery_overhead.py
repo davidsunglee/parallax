@@ -1194,6 +1194,7 @@ def _measured(
                         *sorted((WORKSPACE / "tests" / "unit").glob("*support.py")),
                         WORKSPACE / "tests" / "unit" / "memory_instruments.py",
                         WORKSPACE / "tests" / "_support" / "db_port.py",
+                        WORKSPACE / "tests" / "_support" / "document_reads.py",
                     ],
                     {
                         "runtime": runtime,

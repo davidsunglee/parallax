@@ -760,13 +760,25 @@ def _member_journal() -> CaptureJournal:
         )
     }
     sources.add(WORKSPACE / "tools/cost_report.py")
+    sources.update(
+        WORKSPACE / "tests" / "_support" / name for name in ("db_port.py", "document_reads.py")
+    )
+    runtimes: dict[str, object] = {}
+    for member in MEMBERS:
+        for runtime in supported_minors():
+            identity = probe_runtime(runtime, member.subject)
+            if isinstance(identity, RuntimeUnavailable):
+                raise ValueError(f"CPython {runtime} {member.subject}: {identity.reason}")
+            metadata = identity.document()
+            metadata.pop("executable", None)
+            runtimes[f"{member.subject}:{runtime}"] = metadata
     return CaptureJournal(
         journal_root(WORKSPACE),
         "complete-members",
         capture_identity(
             WORKSPACE,
             sorted(sources),
-            {"runtimes": supported_minors(), "authority": dict(BudgetContract.load().authority)},
+            {"runtimes": runtimes, "authority": dict(BudgetContract.load().authority)},
         ),
     )
 
@@ -826,7 +838,14 @@ def _child_import_mismatches() -> list[str]:
             command = child_command(
                 runtime,
                 Path("-c"),
-                (f"import sys; sys.path.insert(0, 'tools'); import {module}",),
+                (
+                    "import sys, importlib; sys.path.insert(0, 'tools'); "
+                    f"import {module}; "
+                    "[vars(importlib.import_module(name)) for name in "
+                    "('tests.unit._delivery_control_support', 'tests.unit._scalar_type_support', "
+                    "'tests.unit._snapshot_materialization_support', "
+                    "'tests.unit._structural_geometry_support')]",
+                ),
             )
             status, _stdout, stderr = run_probe(command, child_environment(runtime, namespace))
             if status:
@@ -875,42 +894,57 @@ def collect(
         recorder.span("collection", COLLECTION_SPAN),
     ):
         for member in MEMBERS:
-            key = {"member": member.subject, "selection": "all"}
-            saved = journal.load(key) if journal is not None else None
-            if saved is not None:
-                envelope = _object(saved.get("envelope"), "checkpoint envelope")
-                validate(envelope)
-                validate_matrix(envelope, member.subject, BudgetContract.load())
-                if _producing_commit(envelope) != git_head():
-                    raise ValueError(f"the {member.subject} checkpoint names another producer")
-                identities = {
-                    str(runtime): runtime_status(status)
-                    for runtime, status in _object(
-                        saved.get("runtimes"), "checkpoint runtimes"
-                    ).items()
-                }
-                results.append(MemberResult(member, envelope))
-                runtimes[member.subject] = identities
-                recorder.missing(
-                    "member", member.subject, "reused checkpoint; duration unavailable"
-                )
-                continue
-            result, identities = _collected(
-                member, Path(scratch), recorder, runner, canonical=canonical
+            result, identities = _completed_member(
+                member, Path(scratch), recorder, runner, canonical=canonical, journal=journal
             )
             results.append(result)
             runtimes[member.subject] = identities
-            if journal is not None and result.envelope is not None:
-                journal.store(
-                    key,
-                    {
-                        "envelope": dict(result.envelope),
-                        "runtimes": {
-                            runtime: status.document() for runtime, status in identities.items()
-                        },
-                    },
-                )
     return Collection(tuple(results), recorder, runtimes)
+
+
+def _completed_member(
+    member: Member,
+    scratch: Path,
+    recorder: Spans,
+    runner: Runner,
+    *,
+    canonical: bool,
+    journal: CaptureJournal | None,
+    retained: Conditions | None = None,
+) -> tuple[MemberResult, dict[str, RuntimeStatus]]:
+    key = {"member": member.subject, "selection": "all"}
+    saved = journal.load(key) if journal is not None else None
+    if saved is not None:
+        envelope = _decoded(member, json.dumps(saved.get("envelope")))
+        if _producing_commit(envelope) != git_head():
+            raise ValueError(f"the {member.subject} checkpoint names another producer")
+        identities = {
+            str(runtime): runtime_status(status)
+            for runtime, status in _object(saved.get("runtimes"), "checkpoint runtimes").items()
+        }
+        recorder.missing("member", member.subject, "reused checkpoint; duration unavailable")
+        return MemberResult(member, envelope), identities
+    result, identities = _collected(member, scratch, recorder, runner, canonical=canonical)
+    if retained is not None:
+        mismatches = _interpreter_mismatches(retained, list(retained), identities)
+        if mismatches:
+            raise ValueError(
+                "the interpreters differ from the kept members': " + "; ".join(mismatches)
+            )
+    if (
+        journal is not None
+        and result.envelope is not None
+        and _producing_commit(result.envelope) == git_head()
+        and _object(result.envelope.get("provenance"), "provenance").get("dirty") is False
+    ):
+        journal.store(
+            key,
+            {
+                "envelope": dict(result.envelope),
+                "runtimes": {runtime: status.document() for runtime, status in identities.items()},
+            },
+        )
+    return result, identities
 
 
 def _collected(
@@ -2790,7 +2824,18 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
         durations.span("collection", REPLACEMENT_SPAN, member=subject),
     ):
         preflight()
-        result, identities = _collected(member, Path(scratch), durations, runner, canonical=True)
+        result, identities = _completed_member(
+            member,
+            Path(scratch),
+            durations,
+            runner,
+            canonical=True,
+            journal=_member_journal(),
+            retained={
+                str(envelope["subject"]): recorded_conditions[str(envelope["subject"])]
+                for envelope in kept
+            },
+        )
     if result.envelope is None:
         raise ValueError(f"the {subject} member failed again: {result.failure}")
     provenance = cast("Document", result.envelope["provenance"])
@@ -2815,6 +2860,8 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
     }
     members = _object(conditions.get("members"), "conditions members")
     out.mkdir(parents=True, exist_ok=True)
+    publishing = out / ".replacement-publishing"
+    publishing.touch()
     durations.write(out / DURATIONS_FILE)
     _write_adjusted(
         out / "portfolio.json",
@@ -2841,6 +2888,7 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
             },
         },
     )
+    publishing.unlink()
 
 
 def replace_members(
@@ -2869,9 +2917,19 @@ def replace_members(
         durations.span("collection", REPLACEMENT_SPAN),
     ):
         preflight()
+        journal = _member_journal()
         for member, _failure in selected:
-            result, identities = _collected(
-                member, Path(scratch), durations, runner, canonical=True
+            result, identities = _completed_member(
+                member,
+                Path(scratch),
+                durations,
+                runner,
+                canonical=True,
+                journal=journal,
+                retained={
+                    str(envelope["subject"]): recorded_conditions[str(envelope["subject"])]
+                    for envelope in kept
+                },
             )
             if result.envelope is None:
                 raise ValueError(f"the {member.subject} member failed again: {result.failure}")
@@ -2906,6 +2964,8 @@ def replace_members(
         },
     }
     out.mkdir(parents=True, exist_ok=True)
+    publishing = out / ".replacement-publishing"
+    publishing.touch()
     durations.write(out / DURATIONS_FILE)
     _write_adjusted(
         out / "portfolio.json",
@@ -2924,6 +2984,7 @@ def replace_members(
             }
         },
     )
+    publishing.unlink()
 
 
 def _selected_failures(document: Document, subjects: Sequence[str]) -> list[tuple[Member, str]]:
@@ -2942,7 +3003,20 @@ def _replacement_destination(out: Path) -> None:
     if not out.exists():
         return
     checkpoints = out / "checkpoints"
-    if not out.is_dir() or not checkpoints.is_dir() or set(out.iterdir()) != {checkpoints}:
+    allowed = {checkpoints}
+    publishing = out / ".replacement-publishing"
+    if publishing.is_file():
+        allowed.update(
+            out / name
+            for name in (
+                ".replacement-publishing",
+                DURATIONS_FILE,
+                CONDITIONS_FILE,
+                "portfolio.json",
+                "summary.md",
+            )
+        )
+    if not out.is_dir() or not checkpoints.is_dir() or not set(out.iterdir()) <= allowed:
         raise ValueError(f"{out} exists; the replacement writes a new capture directory")
 
 

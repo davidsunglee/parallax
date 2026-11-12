@@ -464,7 +464,12 @@ def _journal_for(runtime: str) -> CaptureJournal:
         raise ValueError(f"CPython {runtime} is unavailable: {identity.reason}")
     captured_identity = capture_identity(
         WORKSPACE,
-        (READING_SCRIPT, WORKSPACE / "tests" / "unit" / "memory_instruments.py"),
+        (
+            READING_SCRIPT,
+            WORKSPACE / "tests" / "unit" / "memory_instruments.py",
+            WORKSPACE / "tests" / "_support" / "db_port.py",
+            WORKSPACE / "tests" / "_support" / "document_reads.py",
+        ),
         {
             "implementation": identity.implementation,
             "version": identity.version,

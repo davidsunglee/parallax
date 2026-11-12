@@ -179,6 +179,11 @@ def replacement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Replacement
     monkeypatch.setattr(cost_report, "git_head", lambda: REPLACEMENT)
     monkeypatch.setattr(cost_report, "is_published", descends)
     monkeypatch.setattr(cost_report, "changed_since", changed)
+
+    def member_journal() -> CaptureJournal:
+        return CaptureJournal(tmp_path / "completed" / "checkpoints", "members", {"source": "same"})
+
+    monkeypatch.setattr(cost_report, "_member_journal", member_journal)
     return _Replacement(run_dir, tmp_path / "completed", contract, members, events)
 
 
@@ -378,6 +383,24 @@ def test_failed_second_replacement_keeps_the_original_and_writes_no_portfolio(
     assert "write-lowering member failed again" in capsys.readouterr().err
     assert replacement.files() == before
     assert not (replacement.out / "portfolio.json").exists()
+    replacement.members.failing = None
+    replacement.members.calls.clear()
+    assert (
+        cost_report.main(
+            [
+                "--replace-member",
+                SNAPSHOT_SUBJECT,
+                "--replace-member",
+                WRITE_SUBJECT,
+                "--from",
+                str(replacement.run_dir),
+                "--out",
+                str(replacement.out),
+            ]
+        )
+        == 0
+    )
+    assert [subject for subject, _ in replacement.members.calls] == [WRITE_SUBJECT]
 
 
 def test_replacement_resumes_with_only_checkpoints_in_its_destination(
@@ -399,6 +422,7 @@ def test_completed_members_survive_later_failures_and_are_reused(
     envelopes = _envelopes(contract, ORIGINAL)
     journal = CaptureJournal(tmp_path / "checkpoints", "complete-members", {"source": "same"})
     original = _Members(envelopes)
+    monkeypatch.setattr(cost_report, "git_head", lambda: ORIGINAL)
 
     def interrupted(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
         if member.subject in {SNAPSHOT_SUBJECT, WRITE_SUBJECT}:
@@ -425,6 +449,25 @@ def test_completed_members_survive_later_failures_and_are_reused(
         SNAPSHOT_SUBJECT,
         WRITE_SUBJECT,
     ]
+
+
+def test_interrupted_replacement_publication_resumes_saved_member(
+    replacement: _Replacement, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    publish = cost_report._write_adjusted  # pyright: ignore[reportPrivateUsage] - publication seam
+
+    def interrupted(*_args: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cost_report, "_write_adjusted", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        replacement.run()
+    assert (replacement.out / "durations.json").exists()
+    replacement.members.calls.clear()
+    monkeypatch.setattr(cost_report, "_write_adjusted", publish)
+    assert replacement.run() == 0
+    assert replacement.members.calls == []
+    assert not (replacement.out / ".replacement-publishing").exists()
 
 
 def _without_write_failure(document: Document) -> None:

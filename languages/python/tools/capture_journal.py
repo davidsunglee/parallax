@@ -55,7 +55,7 @@ class CaptureJournal:
     """Keep successful payloads immutable; incomplete or corrupt entries are refused."""
 
     def __init__(self, root: Path, subject: str, identity: Mapping[str, object]) -> None:
-        self._identity = dict(identity)
+        self._identity = cast("dict[str, object]", json.loads(_encoded(identity)))
         self._root = root / subject / hashlib.sha256(_encoded(identity)).hexdigest()
 
     def _path(self, key: Mapping[str, object]) -> Path:
