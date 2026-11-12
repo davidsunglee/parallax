@@ -9,72 +9,55 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `5fcedc88cc601688469779e973a1b791d424ef18` | 2026-11-07 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `51a70974bf32238b284e34562ff807601c83c0f3` for three retained members; `2505775c5652fc03e5e832bc436dd347c6155d17` for two replacements | 2026-11-11 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
-The historical bases have four members and predate the conditions and duration
-writers. Their missing sidecars prevent establishing source and interpreter
-compatibility with `--require-compatible`; they remain descriptive comparison
-bases with their original provenance.
-
-The current capture has five members: Snapshot delivery, write lowering, instance
-state, lifecycle overhead, and feature boundaries, with no errors, incomplete
-cells, or collector failures. Every member names the same clean producing
-commit. Its one adjustment, recorded in [conditions](current/conditions.json),
-re-stated all three workload digest families when workload source stopped
-covering import statements; no reading, sample, comparison, or measurement
-condition changed. The producing commit is not an ancestor of `main`; its
-byte-identical tree is the ancestor
-`35db6a73251be0be2149fe93763ccb5ad81e9615` that the adjustment names. Snapshot delivery is authoritative under its embedded Budget
+The current portfolio has five exact member matrices and 3,263 readings, with no
+collector failures, member errors, or incomplete cells. The first collection
+failed to produce Snapshot delivery and write lowering. Its lifecycle, instance
+state, and feature-boundary envelopes were retained byte-for-byte, preserving
+all 963 valid readings. The two missing members were measured together at the
+clean replacement commit. [Conditions](current/conditions.json) record both
+producer commits, the replacement adjustment, runtime identities, source hashes,
+and authority. Snapshot delivery is authoritative under its embedded Budget
 Contract; the other members have their own protocols and are non-authoritative.
-All 24 representative live-read cells are present, covering conventional graphs
-and finite historical transaction-time and bitemporal reads through Typed/Wire
-and eager/page32 delivery. The page-sharing cells are present too: the
-`repeated-fanout` and `invalid-roots` publication cells at both sharing scopes,
-their page-scope `page128` bound at the fixture's scale and at ten times its
-roots, and the wide fan-out timing cell.
+The source producer tree is `a0714c8421645d1eed62917ccb1e343f6c7fd418`;
+the replacement commit tree is `9980c46044eb742b7a93c58ed7e364802eb254be`.
 
-The recorded commit is the fact of what was captured. Verifying an envelope
-reconstructs its embedded Budget Contract and checks internal consistency
-without resolving that commit; the ancestry advisory alone consults Git history.
-This is an integrity check of reviewed evidence, not an attestation that the
-observations cannot be forged.
+The exclusive replacement ran from 20:01:17 to 20:44:46 EST on November 11
+(43m29s), on AC power under the machine-wide measurement lock. The host was a
+Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS 27.0.1, with CPython 3.14.10 and
+3.15.2. Fresh owned runtime environments passed actual workload-import preflight
+before measurements. Child checkpoints and complete-member envelopes were saved
+atomically during collection; [durations](current/durations.json) retain
+collection telemetry. The captured source tree was unchanged throughout.
 
-Rebase and squash merges rewrite branch commits. Snapshot redigest requires an
-ancestor of the inspected checkout, or a resolvable producing commit whose tree
-is byte-identical to one of its nearest ancestors'; write-lowering and
-feature-boundary redigest accept the exact resolvable producing commit after
-proving its captured sources and workload identity. Prefer capturing at a commit already on `main`, so source history
-remains available. This capture records its original reviewed branch commit.
+The unchanged 1.10-headroom derivation yields 410 memory-gate addresses, with
+58 ceilings higher and 120 lower than the preceding portfolio after the
+`decimal`→`numeric` label normalization. Every fresh reading remains below its
+previous ceiling. The largest derived rises are write-lowering
+`model.prepared.family` transient and retained bytes (+8.9% and +8.7%);
+`model.prepared` rises +3.3–3.4%. Its probe prepares a Domain Model without
+database I/O. Intervening model metadata changes plausibly add allocations, but
+these captures do not isolate a producing change.
 
-The collector ran once from 2026-11-07 23:05:30 to 2026-11-08 00:15:21 UTC, in
-69m51s wall time, on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS 27.0.1 build
-26A434, with CPython 3.14.10 and 3.15.2 and PostgreSQL 18.6 under OrbStack 2.2.5.
-Every tracked file and every package source-root file, ignored native extensions
-included, was recorded by digest, size, and modification time immediately before
-collection and was unchanged afterwards. Native-loader sources are unchanged
-from the outgoing capture. The other-minor children ran in throwaway
-environments built fresh for this capture in a dedicated temporary directory,
-because macOS had purged package metadata from older ones under the default.
-[Conditions](current/conditions.json) record interpreter identities, production
-origins, and instrument source hashes; [durations](current/durations.json)
-record collection telemetry. The dependency lock SHA-256 is
-`452b94ef99cced1ababe01d43a2a4df79e2e7c311c48d9a37b21d6ca9ec9472e`.
-The portfolio SHA-256 is
-`4e6911df8e207b483b6af736cf0927a0447ee9139ca2e5e8438a37fa152fcbc7`,
+The retained raw collection, checkpoints, and collector log are outside Git at
+`~/.local/share/parallax/evidence/cor-288/recovery-20261111/`, with 1,961 files
+verified by `SHA256SUMS` (manifest SHA-256
+`53af45b5398ccd985f6d8ec69f51a23dbb8c650e3152e619e4e0fd679efd6aec`).
+The original failed collection remains at `cor-288/failed-20261111/` in the
+same archive root. The current portfolio SHA-256 is
+`d49701a022270f585660b2c505ab32267868754c7c4c7dbe9dcfafad08686b23`,
 conditions SHA-256 is
-`3dc57ea18fa420061dd507cb5ec8331e69371be3347b3a6ced32ecb571bcfbd8`,
+`623bb8af8a7d573d40cadc8d4fe892ed00ec69a3a69099f096e150b5741851b0`,
 and durations SHA-256 is
-`aa9dcc983d76b2da1fd5c6cf6c55eb13ffcd0198e0e28f4b74cdfd127e072e89`.
+`d04125bfbf6998cd7d978447015899d3a7eb2c789f24471e29b0479aef6c0b8e`.
 
-The machine-wide measurement lock excluded other coordinated heavy work. The
-collector began on AC power at one-minute load 1.76; sampled in-run loads were
-2.9–3.7. A quiet start does not establish sustained quiet-host timing
-stability. The previous November 4 capture used the same host and software. The
-structural bases used macOS 26.6.2 and CPython 3.13.15/3.14.7.
+The following comparison and page-sharing sections describe the November 7
+capture. Their historical observations remain tied to its retained archive.
 
-## Comparison with the outgoing capture
+## November 7 comparison with its outgoing capture
 
 The outgoing producer `51c7f63bc5d8d892e3d3079b418323381344376a` is an ancestor
 of the fork point `77ea1ada6e33099a4e511d9cac2f545b76057b35`. Intervening
@@ -191,7 +174,7 @@ accepted timing; no selected batches were substituted.
 
 ## Retained archives
 
-This capture's raw collector output, input manifests, host records, grading
+The November 7 capture's raw collector output, input manifests, host records, grading
 output, the bound break, the before/after control pairs, the stream retention
 readings, the live R3 harness with its history and runs, and the scripts that
 produced them live outside Git at
@@ -242,7 +225,7 @@ warm-ups, and nine measured samples per cell. The value is the median; samples
 inside the envelope allow the verifier to recompute it. Structural matrices run
 on both supported minors, with scalar-type families on the newest alone.
 Lifecycle overhead instead uses 200 warm-ups and 3,000 interleaved plain/observed
-pairs on the captured primary runtime (3.15.2 in this capture). Its p95 differences include scheduler and collection differences
+pairs on the captured primary runtime (3.15.2 in the November 7 capture). Its p95 differences include scheduler and collection differences
 between arms and do not bound dispatch-tail latency. With the in-memory port,
 relative observation overhead uses a small denominator; database latency changes
 that ratio without changing dispatch work. A stable quiet-machine lifecycle
@@ -365,34 +348,32 @@ the wrong shape, or a meaningful workload or frozen-input change and writes
 nothing. Use a new capture for a
 changed measured workload. Do not amend the fixed historical bases.
 
-When a complete canonical capture failed to produce one member, re-measure that
-member alone instead of recapturing every member:
+When a capture fails to produce required members, replace all failed subjects
+in one run while retaining every complete member envelope:
 
 ```sh
 uv run --project languages/python python languages/python/tools/cost_report.py \
-  --replace-member write-lowering --from /tmp/parallax-cost-run \
-  --out /tmp/parallax-cost-run-completed
+  --replace-member snapshot-delivery --replace-member write-lowering \
+  --from /tmp/parallax-cost-run --out /tmp/parallax-cost-run-completed
 ```
 
-The member must be absent from the capture with exactly one recorded collection
-failure; a member the capture produced is never re-measured. The checkout must
-be clean and descend from the kept members' single producing commit. Before
-measuring, the command proves that HEAD changed nothing the kept members
-measured through: their recorded instrument and control sources, workload
-digests, and Budget Contract equal HEAD's, and no test module those sources
-import, production package, the dependency lock, or any tool other than the
-collector and the replaced member's own instruments changed. It then passes the canonical authority
-preflight and measures the member exactly as collection does, refusing a
-repeated failure, a dirty or different producing commit, or an interpreter
-other than the kept members'.
+Each selected member must be absent with one recorded collection failure; no
+complete member can be replaced. The clean checkout must descend from the kept
+members' producing commit. Before measurement, the collector proves their
+instrument, workload, production, dependency-lock, and Budget Contract inputs
+unchanged. It permits changes only to the collector and selected members' own
+instruments. The default full, shard, and replacement paths prepare fresh owned
+runtime environments and import the actual workloads on both supported runtimes
+before measuring any member. They save atomic child checkpoints and completed
+member envelopes under `<out>/checkpoints`; a rerun with the same output reuses
+valid saved work. A shard workflow places these checkpoints inside its uploaded
+reports directory.
 
-It writes a new directory and never the original. The kept envelopes,
-conditions, and duration spans are unchanged beside the new member, its
-conditions, and its span. The adjustment in conditions records the member, the
-original and replacement commits, the replaced failure, and both collection
-intervals. Verification accepts the members' differing commits only as that
-record assigns them, and verification and comparison state the replacement. It
-refuses a capture that already records an adjustment.
+Replacement writes a new directory, preserving the input capture. Kept member
+envelopes remain byte-identical. The conditions adjustment records every
+replacement, the original and replacement commits, failed subjects, and
+collection intervals. Verification accepts differing producer commits only as
+that adjustment assigns them. An already adjusted input cannot be replaced.
 
 The former previous/COR-191 comparisons can be reconstructed using Git revisions
 `3535d3e0f` and `dc65ef88`. Export both `portfolio.json` and `conditions.json`
