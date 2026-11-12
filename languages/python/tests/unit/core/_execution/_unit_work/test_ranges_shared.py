@@ -53,7 +53,8 @@ from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._reach_support import frames, reaches
-from tests.unit.core._execution._shared_coverage_support import (
+from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._shared_coverage_support import (
     AT,
     MODEL,
     ShareCols,
@@ -66,7 +67,6 @@ from tests.unit.core._execution._shared_coverage_support import (
     ranges_of,
     rectangle,
 )
-from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
 _BIND_RANGE = ranges_module._bind_range  # pyright: ignore[reportPrivateUsage] - the binding every deferred range takes
 
