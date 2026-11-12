@@ -158,14 +158,6 @@ class ReadPlan:
     def collects_evidence(self) -> bool:
         return self.kind == "single_instant" and self.purpose == "publication"
 
-    @property
-    def milestone_attributes(self) -> tuple[AttributeIdentity, ...]:
-        return (
-            ()
-            if self.milestones is None
-            else tuple(axis.start_attribute for axis in ranked_axes(self.milestones))
-        )
-
     def _preparation(self) -> _ReadPreparation:
         prepared = self._prepared
         return prepared.get() if isinstance(prepared, _DeferredRead) else prepared
