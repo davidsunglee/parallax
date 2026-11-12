@@ -11,6 +11,7 @@ from typing import Any, Final, cast
 import pytest
 
 import cost_report
+from capture_journal import CaptureJournal
 from cost_report import (
     DURATIONS_OPTION,
     METADATA_OPTION,
@@ -285,6 +286,145 @@ def test_a_failed_member_is_re_measured_alone_into_a_new_complete_capture(
         == 0
     )
     assert f"- The head capture is amended: {STATED}." in capsys.readouterr().out
+
+
+def test_two_failed_members_are_replaced_atomically_without_changing_kept_envelopes(
+    replacement: _Replacement,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original = json.loads(replacement.portfolio.read_text())
+    original["members"] = [
+        member for member in original["members"] if member["subject"] != SNAPSHOT_SUBJECT
+    ]
+    original["failures"].append(
+        {
+            "recipe": "python-report-snapshot-delivery",
+            "required": True,
+            "message": "snapshot child failed",
+        }
+    )
+    replacement.portfolio.write_text(json.dumps(original))
+    before = replacement.files()
+    assert (
+        cost_report.main(
+            [
+                "--replace-member",
+                SNAPSHOT_SUBJECT,
+                "--replace-member",
+                WRITE_SUBJECT,
+                "--from",
+                str(replacement.run_dir),
+                "--out",
+                str(replacement.out),
+            ]
+        )
+        == 0
+    )
+    assert replacement.files() == before
+    completed = json.loads((replacement.out / "portfolio.json").read_text())
+    assert completed["failures"] == []
+    assert [
+        member
+        for member in completed["members"]
+        if member["subject"]
+        not in {
+            SNAPSHOT_SUBJECT,
+            WRITE_SUBJECT,
+        }
+    ] == original["members"]
+    assert replacement.events == [
+        "preflight",
+        f"measure {SNAPSHOT_SUBJECT}",
+        f"measure {WRITE_SUBJECT}",
+    ]
+    conditions = json.loads((replacement.out / "conditions.json").read_text())
+    assert conditions[cost_report.ADJUSTMENT_FIELD][cost_report.MULTI_REPLACEMENT_KEY][
+        "members"
+    ] == [SNAPSHOT_SUBJECT, WRITE_SUBJECT]
+    _unread_gates(monkeypatch)
+    capsys.readouterr()
+    assert cost_report.main(["--verify", str(replacement.out / "portfolio.json")]) == 0
+
+
+def test_failed_second_replacement_keeps_the_original_and_writes_no_portfolio(
+    replacement: _Replacement, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original = json.loads(replacement.portfolio.read_text())
+    original["members"] = [
+        member for member in original["members"] if member["subject"] != SNAPSHOT_SUBJECT
+    ]
+    original["failures"].append(
+        {"recipe": "python-report-snapshot-delivery", "required": True, "message": "failed"}
+    )
+    replacement.portfolio.write_text(json.dumps(original))
+    replacement.members.failing = WRITE_SUBJECT
+    before = replacement.files()
+    assert (
+        cost_report.main(
+            [
+                "--replace-member",
+                SNAPSHOT_SUBJECT,
+                "--replace-member",
+                WRITE_SUBJECT,
+                "--from",
+                str(replacement.run_dir),
+                "--out",
+                str(replacement.out),
+            ]
+        )
+        == 1
+    )
+    assert "write-lowering member failed again" in capsys.readouterr().err
+    assert replacement.files() == before
+    assert not (replacement.out / "portfolio.json").exists()
+
+
+def test_replacement_resumes_with_only_checkpoints_in_its_destination(
+    replacement: _Replacement,
+) -> None:
+    checkpoints = replacement.out / "checkpoints"
+    checkpoints.mkdir(parents=True)
+    marker = checkpoints / "saved-child.json"
+    marker.write_text("saved")
+    assert replacement.run() == 0
+    assert marker.read_text() == "saved"
+    assert (replacement.out / "portfolio.json").exists()
+
+
+def test_completed_members_survive_later_failures_and_are_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = BudgetContract.load()
+    envelopes = _envelopes(contract, ORIGINAL)
+    journal = CaptureJournal(tmp_path / "checkpoints", "complete-members", {"source": "same"})
+    original = _Members(envelopes)
+
+    def interrupted(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        if member.subject in {SNAPSHOT_SUBJECT, WRITE_SUBJECT}:
+            return 3, "", "failed"
+        return original(member, arguments)
+
+    first = cost_report.collect(interrupted, journal=journal)
+    assert [result.member.subject for result in first.results if result.envelope is not None] == [
+        cost_report.LIFECYCLE_SUBJECT,
+        cost_report.INSTANCE_STATE_SUBJECT,
+        cost_report.FEATURE_SUBJECT,
+    ]
+    monkeypatch.setattr(cost_report, "git_head", lambda: ORIGINAL)
+    resumed = _Members(envelopes)
+
+    def only_missing(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        if member.subject not in {SNAPSHOT_SUBJECT, WRITE_SUBJECT}:
+            pytest.fail(f"re-measured saved member {member.subject}")
+        return resumed(member, arguments)
+
+    second = cost_report.collect(only_missing, journal=journal)
+    assert all(result.envelope is not None for result in second.results)
+    assert [subject for subject, _arguments in resumed.calls] == [
+        SNAPSHOT_SUBJECT,
+        WRITE_SUBJECT,
+    ]
 
 
 def _without_write_failure(document: Document) -> None:

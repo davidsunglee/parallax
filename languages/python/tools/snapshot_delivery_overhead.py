@@ -45,11 +45,16 @@ import statistics
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from fnmatch import fnmatchcase
+from itertools import groupby
 from pathlib import Path
+from threading import Lock
+from time import perf_counter, time
 from typing import Any, Final, Literal, cast
 
+from capture_journal import CaptureJournal, capture_identity, journal_root
 from durations import Spans, write_sidecar
 from interpreter_matrix import (
     CURRENT_MINOR,
@@ -65,6 +70,7 @@ from interpreter_matrix import (
     write_metadata,
 )
 from parallax.conformance.budget import BudgetCell, BudgetContract
+from parallax.conformance.constants import POSTGRES_IMAGE
 from parallax.conformance.cost_envelope import (
     Comparison,
     CostReportEnvelope,
@@ -183,6 +189,7 @@ class ChildRequest:
     connection_info: str | None = None
     connection_secret: str | None = field(default=None, repr=False)
     runtime: str = CURRENT_MINOR
+    sample: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -769,16 +776,16 @@ def _measure_runtime(
         if not chosen:
             continue
         with recorder.span("workload", group, member=SUBJECT, runtime=runtime):
-            for cell in chosen:
-                _read_root_count(
-                    contract,
-                    runner,
-                    runtime,
-                    results,
-                    cell,
-                    contract.memory_scaling_root_counts[0],
-                    None,
-                )
+            _read_cells(
+                contract,
+                runner,
+                runtime,
+                results,
+                chosen,
+                contract.memory_scaling_root_counts[0],
+                None,
+                recorder,
+            )
 
 
 def _measure_live_reads(
@@ -816,27 +823,54 @@ def _measure_live_reads(
                 roots=str(live_read_workloads.ROOTS),
             ):
                 live_read_workloads.provision(workload, provisioner)
-            for cell in cells:
-                _read_root_count(
-                    contract, runner, runtime, results, cell, live_read_workloads.ROOTS, provisioner
-                )
+            _read_cells(
+                contract,
+                runner,
+                runtime,
+                results,
+                cells,
+                live_read_workloads.ROOTS,
+                provisioner,
+                recorder,
+            )
 
 
-def _read_root_count(
+def _read_cells(
     contract: BudgetContract,
     runner: ChildRunner,
     runtime: str,
     results: dict[Address, list[ChildResult]],
-    cell: BudgetCell | GeometryCell,
+    cells: Sequence[BudgetCell | GeometryCell],
     roots: int,
     provisioner: Provisioner | None,
+    recorder: Spans,
 ) -> None:
-    """Read ``cell`` at ``roots`` in isolated children: ``memory_children`` of
-    them for a memory cell, one otherwise."""
-    for _ in range(contract.memory_children if is_memory_cell(cell.path) else 1):
-        results[(runtime, cell.workload, cell.path)].append(
-            runner(_request(contract, runtime, cell.workload, cell.path, roots, provisioner))
-        )
+    for memory, group in groupby(cells, key=lambda cell: is_memory_cell(cell.path)):
+        requests = [
+            replace(
+                _request(contract, runtime, cell.workload, cell.path, roots, provisioner),
+                sample=sample,
+            )
+            for cell in group
+            for sample in range(contract.memory_children if memory else 1)
+        ]
+        if memory:
+            with (
+                recorder.span(
+                    "case",
+                    "memory-batch",
+                    member=SUBJECT,
+                    runtime=runtime,
+                    children=str(len(requests)),
+                    roots=str(roots),
+                ),
+                ThreadPoolExecutor(max_workers=6) as executor,
+            ):
+                readings = list(executor.map(runner, requests))
+        else:
+            readings = [runner(request) for request in requests]
+        for request, reading in zip(requests, readings, strict=True):
+            results[(runtime, request.workload, request.cell)].append(reading)
 
 
 def _provision(
@@ -876,19 +910,26 @@ def _measure_workload(
     elif live:
         assert provisioner is not None
         _provision(workload, provisioner, scaling_root_counts[0], runtime, recorder)
-        for cell in live:
-            _read_root_count(
-                contract, runner, runtime, results, cell, scaling_root_counts[0], provisioner
-            )
+        _read_cells(
+            contract, runner, runtime, results, live, scaling_root_counts[0], provisioner, recorder
+        )
         memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
         for roots in scaling_root_counts[1:]:
             if memory_live:
                 _provision(workload, provisioner, roots, runtime, recorder)
-            for cell in memory_live:
-                _read_root_count(contract, runner, runtime, results, cell, roots, provisioner)
-    for cell in cells:
-        if not needs_database(cell.path):
-            _read_root_count(contract, runner, runtime, results, cell, scaling_root_counts[0], None)
+            _read_cells(
+                contract, runner, runtime, results, memory_live, roots, provisioner, recorder
+            )
+    _read_cells(
+        contract,
+        runner,
+        runtime,
+        results,
+        [cell for cell in cells if not needs_database(cell.path)],
+        scaling_root_counts[0],
+        None,
+        recorder,
+    )
 
 
 def measure(
@@ -1081,21 +1122,93 @@ def _measured(
     spans = Spans()
     reported: dict[str, list[Mapping[str, str]]] = {}
 
+    lock = Lock()
+    journals: dict[str, CaptureJournal] = {}
+
     def reporting_child(request: ChildRequest) -> ChildResult:
-        result = run_child(request)
+        key: dict[str, object] = {
+            "workload": request.workload,
+            "cell": request.cell,
+            "roots": request.roots,
+            "warmups": request.warmups,
+            "measured": request.measured,
+            "sample": request.sample,
+            "postgres": (
+                {"version": postgres_version, "image": POSTGRES_IMAGE}
+                if needs_database(request.cell)
+                else None
+            ),
+        }
+        journal = journals[request.runtime]
+        saved = journal.load(key)
+        with spans.span(
+            "case",
+            request.cell,
+            member=SUBJECT,
+            runtime=request.runtime,
+            workload=request.workload,
+            roots=str(request.roots),
+            sample=str(request.sample),
+            reused=str(saved is not None),
+        ):
+            if saved is None:
+                started_at = time()
+                started = perf_counter()
+                result = run_child(request)
+                if isinstance(result, ChildReading):
+                    journal.store(
+                        key,
+                        {
+                            **asdict(result),
+                            "startedAt": started_at,
+                            "seconds": perf_counter() - started,
+                        },
+                    )
+            else:
+                result = ChildReading(
+                    _number(saved["value"]),
+                    str(saved["unit"]),
+                    tuple(_number(value) for value in cast("list[object]", saved["samples"])),
+                    cast("dict[str, str]", saved["origins"]),
+                )
         if isinstance(result, ChildReading):
-            reported.setdefault(request.runtime, []).append(result.origins)
+            with lock:
+                reported.setdefault(request.runtime, []).append(result.origins)
         return result
 
     try:
-        probed = (
-            {} if metadata is None else runtime_identities(supported_minors(), spans, run_probe)
-        )
+        probed = runtime_identities(supported_minors(), spans, run_probe)
+        for runtime, identity in probed.items():
+            metadata_identity = identity.document()
+            metadata_identity.pop("executable", None)
+            journals[runtime] = CaptureJournal(
+                journal_root(WORKSPACE),
+                SUBJECT,
+                capture_identity(
+                    WORKSPACE,
+                    [
+                        READING_SCRIPT,
+                        CONTROL_MODULE,
+                        SCALAR_MODULE,
+                        LIVE_READ_MODULE,
+                        *sorted((WORKSPACE / "tests" / "unit").glob("*support.py")),
+                        WORKSPACE / "tests" / "unit" / "memory_instruments.py",
+                        WORKSPACE / "tests" / "_support" / "db_port.py",
+                    ],
+                    {
+                        "runtime": runtime,
+                        "identity": metadata_identity,
+                        "workloadDigest": workload_digest(catalog(contract)),
+                        "contract": contract.digest,
+                    },
+                ),
+            )
         with spans.span("setup", "provisioner", member=SUBJECT):
             provisioner = Provisioner()
         try:
+            postgres_version = str(provisioner.port.execute("show server_version", ())[0][0])
             if authority_preflight:
-                actual = str(provisioner.port.execute("show server_version", ())[0][0])
+                actual = postgres_version
                 expected = contract.authority.get("postgres")
                 if actual != expected:
                     raise ValueError(

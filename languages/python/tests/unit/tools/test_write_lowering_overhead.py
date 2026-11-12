@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import re
 import struct
+import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from psycopg.adapt import PyFormat, Transformer
 
 import write_lowering_overhead as report
 import write_lowering_reading as reading_child
+from capture_journal import CaptureJournal
 from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, IDENTITY_SCRIPT, supported_minors
 from parallax.conformance import workloads
@@ -540,6 +542,77 @@ def test_the_write_digest_ignores_prose_imports_and_layout_and_tracks_operationa
 # --------------------------------------------------------------------------- #
 # The child protocol and the envelope.                                         #
 # --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_completed_children_survive_a_later_failure_and_resume_only_missing_cases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: bool
+) -> None:
+    cases = report.CASE_NAMES[:2]
+    calls: list[str] = []
+    failing = True
+
+    def journal(runtime: str) -> CaptureJournal:
+        return CaptureJournal(tmp_path, report.SUBJECT, {"runtime": runtime})
+
+    def run(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        case = command[command.index(str(report.READING_SCRIPT)) + 1]
+        calls.append(case)
+        if failing and case == cases[1]:
+            if interrupted:
+                raise KeyboardInterrupt
+            return subprocess.CompletedProcess(command, 1, "", "child failed")
+        return subprocess.CompletedProcess(command, 0, json.dumps(_child_document(case)), "")
+
+    monkeypatch.setattr(report, "_journal_for", journal)
+    monkeypatch.setattr(report.subprocess, "run", run)
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            report.timed_matrix((CURRENT_MINOR,), cases, Spans())
+    else:
+        incomplete = report.timed_matrix((CURRENT_MINOR,), cases, Spans())
+        missing = report.missing_cells(incomplete, (CURRENT_MINOR,), cases)
+        assert len(missing) == 1
+        assert cases[1] in missing[0]
+    saved_files = list(tmp_path.rglob("*.json"))
+    assert len(saved_files) == 1
+    saved_bytes = saved_files[0].read_bytes()
+    failing = False
+    resumed = report.timed_matrix((CURRENT_MINOR,), cases, Spans())
+    assert calls == [cases[0], cases[1], cases[1]]
+    assert resumed[CURRENT_MINOR][cases[0]] == _reading(cases[0])
+    assert not report.missing_cells(resumed, (CURRENT_MINOR,), cases)
+    assert saved_files[0].read_bytes() == saved_bytes
+    assert len(list(tmp_path.rglob("*.json"))) == 2
+
+
+def test_a_checkpoint_with_an_invalid_child_protocol_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = report.CASE_NAMES[0]
+    journal = CaptureJournal(tmp_path, report.SUBJECT, {"runtime": CURRENT_MINOR})
+    journal.store(
+        {
+            "runtime": CURRENT_MINOR,
+            "case": case,
+            "warmups": report.WARMUPS,
+            "measured": report.MEASURED,
+        },
+        _child_document(case, {"samples": {}}),
+    )
+
+    def saved_journal(runtime: str) -> CaptureJournal:
+        return journal
+
+    monkeypatch.setattr(report, "_journal_for", saved_journal)
+
+    def unexpected_child(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        pytest.fail("An invalid checkpoint must be reported, not silently replaced")
+
+    monkeypatch.setattr(report.subprocess, "run", unexpected_child)
+    result = report.in_a_child(CURRENT_MINOR, case)
+    assert isinstance(result, str)
+    assert "checkpoint is invalid" in result
+
+
 def test_child_output_decodes_from_its_final_line() -> None:
     case = report.CASE_NAMES[0]
     decoded = report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test

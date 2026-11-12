@@ -20,6 +20,7 @@ command's exit status.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import subprocess
@@ -31,11 +32,13 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
 
+from capture_journal import CaptureJournal, capture_identity, journal_root
 from durations import Spans, write_sidecar
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
     ProbeRunner,
+    RuntimeIdentity,
     RuntimeStatus,
     child_command,
     child_environment,
@@ -454,9 +457,38 @@ def _decoded(output: str, case: str) -> Cell:
         return f"the child's reading did not decode: {error}"
 
 
+@functools.cache
+def _journal_for(runtime: str) -> CaptureJournal:
+    identity = probe_runtime(runtime, ENVIRONMENT_NAMESPACE, run_probe)
+    if not isinstance(identity, RuntimeIdentity):
+        raise ValueError(f"CPython {runtime} is unavailable: {identity.reason}")
+    captured_identity = capture_identity(
+        WORKSPACE,
+        (READING_SCRIPT, WORKSPACE / "tests" / "unit" / "memory_instruments.py"),
+        {
+            "implementation": identity.implementation,
+            "version": identity.version,
+            "hashSeed": HASH_SEED,
+            "workloadDigest": lowering_support.write_lowering_digest(),
+        },
+    )
+    return CaptureJournal(journal_root(WORKSPACE), SUBJECT, captured_identity)
+
+
 def in_a_child(runtime: str, case: str) -> Cell:
-    """Take one case reading on one runtime, or return why it is unavailable."""
+    """Reuse or durably record one case reading, or return why it is unavailable."""
     arguments = [case, "--warmups", str(WARMUPS), "--measured", str(MEASURED)]
+    key = {"runtime": runtime, "case": case, "warmups": WARMUPS, "measured": MEASURED}
+    try:
+        journal = _journal_for(runtime)
+        saved = journal.load(key)
+    except (OSError, ValueError) as error:
+        return f"the child checkpoint could not be read: {error}"
+    if saved is not None:
+        decoded = _decoded(json.dumps(saved), case)
+        return (
+            f"the child checkpoint is invalid: {decoded}" if isinstance(decoded, str) else decoded
+        )
     try:
         completed = subprocess.run(
             child_command(runtime, READING_SCRIPT, arguments),
@@ -470,7 +502,14 @@ def in_a_child(runtime: str, case: str) -> Cell:
         return f"the child could not be started: {error}"
     if completed.returncode != 0:
         return f"the child exited {completed.returncode}\n{completed.stdout}{completed.stderr}"
-    return _decoded(completed.stdout, case)
+    decoded = _decoded(completed.stdout, case)
+    if isinstance(decoded, str):
+        return decoded
+    try:
+        journal.store(key, json.loads(completed.stdout.strip().splitlines()[-1]))
+    except (OSError, ValueError) as error:
+        return f"the child checkpoint could not be written: {error}"
+    return decoded
 
 
 def missing_cells(matrix: Matrix, runtimes: Sequence[str], cases: Sequence[str]) -> list[str]:
