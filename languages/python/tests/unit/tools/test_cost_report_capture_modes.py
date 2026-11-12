@@ -7,10 +7,10 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
@@ -76,7 +76,13 @@ def _preflight(monkeypatch: pytest.MonkeyPatch) -> tuple[BudgetContract, Provena
     def capture(*_args: Any, **_kwargs: Any) -> Provenance:
         return provenance
 
+    def import_child(
+        _command: Sequence[str], _environment: Mapping[str, str]
+    ) -> tuple[int, str, str]:
+        return 0, "", ""
+
     monkeypatch.setattr(cost_report, "probe_runtime", probe)
+    monkeypatch.setattr(cost_report, "run_probe", import_child)
     monkeypatch.setattr(cost_report, "stale_extensions", tuple)
     monkeypatch.setattr(Provenance, "capture", capture)
     return contract, provenance
@@ -128,6 +134,60 @@ def test_preflight_checks_committed_digest(monkeypatch: pytest.MonkeyPatch) -> N
     )
     with pytest.raises(ValueError, match="budgetContractDigest"):
         cost_report.preflight()
+
+
+def test_preflight_refuses_a_failed_other_minor_reading_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _preflight(monkeypatch)
+    checked: list[tuple[str, str]] = []
+
+    def import_child(
+        command: Sequence[str], environment: Mapping[str, str]
+    ) -> tuple[int, str, str]:
+        runtime = command[command.index("--python") + 1] if "--python" in command else "3.15"
+        namespace = Path(environment.get("UV_PROJECT_ENVIRONMENT", "current")).name
+        checked.append((runtime, namespace))
+        if runtime == "3.14" and "write-lowering" in namespace:
+            return 1, "", "ModuleNotFoundError: No module named 'parallax'"
+        return 0, "", ""
+
+    monkeypatch.setattr(cost_report, "run_probe", import_child)
+    with pytest.raises(ValueError, match=r"CPython 3\.14 write-lowering child import failed"):
+        cost_report.preflight()
+    assert len(checked) == 4
+
+
+def test_shard_preflights_children_and_places_journal_inside_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    out = tmp_path / "reports"
+    shard = cost_report.plan_ids("sharded")[0]
+    events: list[str] = []
+
+    def shard_request(*_args: object) -> cost_report.Request:
+        return cast("cost_report.Request", object())
+
+    def validate_plan(_plan: Sequence[cost_report.Shard]) -> None:
+        pass
+
+    monkeypatch.setattr(cost_report, "_shard_request", shard_request)
+    monkeypatch.setattr(cost_report, "validate_plan", validate_plan)
+
+    def preflight_children() -> list[str]:
+        events.append("preflight")
+        return []
+
+    def run_shards(*_args: object) -> int:
+        events.append("measure")
+        assert os.environ["PARALLAX_CAPTURE_JOURNAL"] == str(out / "checkpoints")
+        assert Path(os.environ["TMPDIR"]).is_dir()
+        return 0
+
+    monkeypatch.setattr(cost_report, "_child_import_mismatches", preflight_children)
+    monkeypatch.setattr(cost_report, "run_shards", run_shards)
+    assert cost_report.main(["--shard", shard, "--out", str(out)]) == 0
+    assert events == ["preflight", "measure"]
 
 
 @pytest.mark.parametrize(
