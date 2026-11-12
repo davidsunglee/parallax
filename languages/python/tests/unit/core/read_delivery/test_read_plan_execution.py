@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
@@ -9,12 +9,13 @@ import pytest
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
-from parallax.core.internal.base import INFINITY, StructuredDocument
+from parallax.core.internal.base import INFINITY, InternalError, StructuredDocument
+from parallax.core.internal.db_port import Bind, DocumentReadOrdinals, Row
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
-from parallax.core.internal.read_delivery import _acquired_rows
+from parallax.core.internal.read_delivery import _acquired_rows, _page_reader
 from parallax.core.internal.read_delivery._page import (
     InvalidDataError,
     Page,
@@ -30,8 +31,10 @@ from parallax.core.internal.read_delivery._paging import PagingParameters
 from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.temporal_read import Pin, TimeInterval, ranked_axes, temporal_facet_of
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter
+from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
 from tests.unit.core import _shared_coverage_support as shared
@@ -58,11 +61,13 @@ class _Collector:
         return {index: self.label for index, _, _ in self.observed}
 
 
-def _query(selection: Mapping[str, object]) -> ResolvedObjectQuery:
+def _query(
+    selection: Mapping[str, object], *, entity_name: str = "ShareCols"
+) -> ResolvedObjectQuery:
     return resolve_read_query(
         deserialize(
             {
-                "target": "ShareCols",
+                "target": entity_name,
                 "predicate": {"true": {}},
                 "temporal": {
                     "valid-time": dict(selection),
@@ -128,6 +133,48 @@ def test_cached_single_instant_policy_uses_each_executions_pin_and_collector() -
     with ScriptedAdapter(Read()) as port:
         without_context = PageReader().read_page(plans[1], PageReadContext[str](port, INERT))
     assert without_context.origins == {}
+
+
+def test_an_unpaged_read_does_not_extract_per_row_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan(ReadPlanCache(), _query({"asOf": "latest"}))
+    rows = [
+        shared.physical_row(shared.ShareCols, shared.rectangle(shared.ShareCols, key, 0, None, key))
+        for key in (1, 2, 3)
+    ]
+
+    def refuse(*_args: object) -> None:
+        raise AssertionError("unpaged execution extracted coordinates")
+
+    monkeypatch.setattr(_page_reader, "row_coordinates", refuse)
+    with ScriptedAdapter(Read(rows)) as port:
+        context: PageReadContext[str] = PageReadContext(port, INERT)
+        result = PageReader().read_page(plan, context)
+
+    assert result.continuation is None
+    assert result.page.root_count == 3
+    recorded = page_rows(result.page)
+    assert [entity_state(recorded, root).member_row[0] for root in recorded.roots] == [1, 2, 3]
+
+
+def test_a_paging_root_without_an_evaluated_coordinate_is_refused() -> None:
+    plan = _plan(ReadPlanCache(), _query({"asOf": "latest"}))
+    collector = _Collector("must stay unused")
+    row = shared.physical_row(shared.ShareCols, shared.rectangle(shared.ShareCols, 1, 0, None, 3))
+    with (
+        ScriptedAdapter(Read([row])) as port,
+        raises_code(
+            InternalError,
+            SQL_GENERATION_FAILED,
+            match="returned a root carrying no evaluated coordinate",
+        ),
+    ):
+        PageReader().read_page(
+            plan, PageReadContext(port, INERT, collector), PagingParameters(3, True, 0)
+        )
+
+    assert collector.observed == collector.sealed == []
 
 
 @pytest.mark.parametrize(
@@ -259,22 +306,23 @@ def _target_plan(cache: ReadPlanCache, key: int, *, retain: bool) -> ReadPlan:
     )
 
 
+def _traveler_document(name: str) -> StructuredDocument:
+    return StructuredDocument(
+        {
+            "displayName": name,
+            "score": None,
+            "joinedOn": None,
+            "note": None,
+            "address": {"city": 42},
+            "tags": [],
+        }
+    )
+
+
 def test_cached_write_support_keeps_page_schemas_documents_and_judgement_per_execution() -> None:
     cache = ReadPlanCache()
     plans = tuple(_target_plan(cache, key, retain=True) for key in (1, 2))
-    documents = tuple(
-        StructuredDocument(
-            {
-                "displayName": name,
-                "score": None,
-                "joinedOn": None,
-                "note": None,
-                "address": {"city": 42},
-                "tags": [],
-            }
-        )
-        for name in ("Ada", "Bo")
-    )
+    documents = tuple(_traveler_document(name) for name in ("Ada", "Bo"))
 
     def execute(index: int) -> PageResult[str]:
         collector = _Collector("must stay unused")
@@ -299,6 +347,54 @@ def test_cached_write_support_keeps_page_schemas_documents_and_judgement_per_exe
         layout = _DOCUMENT.layouts.entity(target(_DOCUMENT.meta, "Traveler").identity)
         with pytest.raises(InvalidDataError, match=r"address\.city"):
             list(_acquired_rows.completed_member_rows(layout, admitted))
+
+
+def test_shared_document_acquisition_keeps_each_roots_document_in_fetched_order() -> None:
+    entity = target(_DOCUMENT.meta, "Traveler")
+    query = resolve_read_query(
+        deserialize({"target": "Traveler", "predicate": {"true": {}}}), model=_DOCUMENT.meta
+    )
+    plan = ReadPlanCache().plan_acquisition(
+        edition="edition-a",
+        model=_DOCUMENT,
+        dialect=ScriptedAdapter().dialect,
+        query=read_planning.plan_root(
+            query, _DOCUMENT.meta, projection=read_planning.ReadProjectionRequest("all", True)
+        ),
+        preference="optimistic",
+    )
+    first, second, repeated = (_traveler_document(name) for name in ("Bo", "Ada", "Bo"))
+    collector = _Collector("must stay unused")
+    with ScriptedAdapter(
+        Read(
+            [
+                {"id": 2, "payload": first},
+                {"id": 1, "payload": second},
+                {"id": 2, "payload": repeated},
+                {"id": 3, "payload": None},
+            ]
+        )
+    ) as port:
+        result = PageReader().read_page(plan, PageReadContext(port, INERT, collector))
+
+    rows = page_rows(result.page)
+    assert result.page.root_count == len(rows.roots) == 4
+    assert all(rows.decoders.pending(root) for root in rows.roots)
+    assert result.documents is not None and len(result.documents) == 4
+    assert all(
+        actual is expected
+        for actual, expected in zip(
+            result.documents,
+            (first.document, second.document, repeated.document, None),
+            strict=True,
+        )
+    )
+    assert collector.observed == collector.sealed == [] and result.origins == {}
+    retained = list(_acquired_rows.admitted_member_rows(result.page))
+    assert [(row[0], row[1]) for row in retained] == [(2, "Bo"), (1, "Ada"), (2, "Bo"), (3, None)]
+    layout = _DOCUMENT.layouts.entity(entity.identity)
+    with pytest.raises(InvalidDataError, match=r"address\.city"):
+        list(_acquired_rows.completed_member_rows(layout, retained))
 
 
 @pytest.mark.parametrize("retain", [False, True], ids=["point", "retained-point"])
@@ -383,17 +479,19 @@ def test_page_continuation_collects_only_the_retained_root_prefix(
         edition="edition-a",
         model=_TEMPORAL,
         dialect=ScriptedAdapter().dialect,
-        query=_query({"asOf": shared.day(0).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}),
+        query=_query(
+            {"asOf": shared.day(0).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}, entity_name="ShareDoc"
+        ),
         preference="optimistic",
         paging=paging,
     )
     collector = _Collector("retained")
     rows = [
-        shared.physical_row(
-            shared.ShareCols, shared.rectangle(shared.ShareCols, key, 0, None, index)
-        )
+        shared.physical_row(shared.ShareDoc, shared.rectangle(shared.ShareDoc, key, 0, None, index))
         for index, key in enumerate(keys)
     ]
+    for row in rows[kept:]:
+        row["payload"] = StructuredDocument({"amount": "invalid", "label": "invalid"})
     with ScriptedAdapter(Read(rows)) as port:
         result = PageReader().read_page(plan, PageReadContext(port, INERT, collector), paging)
 
@@ -407,6 +505,40 @@ def test_page_continuation_collects_only_the_retained_root_prefix(
     assert result.origins == {index: "retained" for index in range(kept)}
     assert continuation.resume_from is not None
     assert continuation.resume_from.carriers == (kept,)
+    recorded = page_rows(result.page)
+    assert all(entity_state(recorded, root).findings == () for root in recorded.roots)
+
+
+@pytest.mark.parametrize("keys", [(1, 2, 3), (1, 2, 2)], ids=["lookahead", "tie"])
+def test_a_malformed_discarded_root_is_refused_before_any_root_is_converted(
+    keys: tuple[int, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paging = PagingParameters(size=3, lookahead=True, emitted=0)
+    plan = _plan(ReadPlanCache(), _query({"asOf": "latest"}), paging=paging)
+    collector = _Collector("must stay unused")
+    rows = [
+        shared.physical_row(shared.ShareCols, shared.rectangle(shared.ShareCols, key, 0, None, key))
+        for key in keys
+    ]
+    with ScriptedAdapter(Read(rows)) as port:
+        execute = port.execute
+
+        def malformed(
+            sql: str,
+            binds: Sequence[Bind],
+            document_reads: Sequence[DocumentReadOrdinals] = (),
+            *,
+            read_only: bool = False,
+        ) -> list[Row]:
+            answer = execute(sql, binds, document_reads, read_only=read_only)
+            answer[-1] = answer[-1][:-1]
+            return answer
+
+        monkeypatch.setattr(port, "execute", malformed)
+        with pytest.raises(ValueError, match="does not match row arity"):
+            PageReader().read_page(plan, PageReadContext(port, INERT, collector), paging)
+
+    assert collector.observed == collector.sealed == []
 
 
 def test_transaction_time_coverage_is_single_instant_write_support() -> None:
