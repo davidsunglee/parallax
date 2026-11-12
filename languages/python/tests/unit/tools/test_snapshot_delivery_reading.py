@@ -588,13 +588,17 @@ def test_the_guarded_controls_plan_cold_and_warm_and_deliver_through_both_lanes(
             control_support.GuardedPlanControl(width, "warm", "elapsedUs"), warmups=1, measured=2
         )
         assert warm_elapsed > 0 and reading_unit == "us" and len(samples) == 2
-        # Warm reads a cache hit and cold a fresh compilation; the plan's identity
-        # says which, where comparing two timings on a shared runner cannot.
+        # Execution plans render afresh; the bound converter identifies cached preparation.
         prepared = ColdPlan.guarded(width)
-        compiled = prepared.plan()
-        assert prepared.plan() is compiled
+        compiled = prepared.plan().root_read()
+        assert isinstance(compiled, tuple)
+        warm = prepared.plan().root_read()
+        assert isinstance(warm, tuple)
+        assert warm[1] is compiled[1]
         prepared.reset()
-        assert prepared.plan() is not compiled
+        cold = prepared.plan().root_read()
+        assert isinstance(cold, tuple)
+        assert cold[1] is not compiled[1]
         warm_retained, _unit, _samples = _control(
             control_support.GuardedPlanControl(width, "warm", "retainedKiB"), warmups=1, measured=2
         )
