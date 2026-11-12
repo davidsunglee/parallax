@@ -91,7 +91,7 @@ from tests._support.db_port import (
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit import _family_predecessor_support as family
-from tests.unit.core._execution import _shared_coverage_support as shared
+from tests.unit.core import _shared_coverage_support as shared
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
 from tests.unit.core._execution._reach_support import frames, reaches
 

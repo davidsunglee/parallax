@@ -113,15 +113,6 @@ from tests._support.planner_probes import (
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WherePosition
-from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
-from tests.unit.core._execution._shared_coverage_support import (
-    ShareCols,
-    covered_target,
-    day,
-    frag,
-    frag_rows,
-)
-from tests.unit.core._execution._shared_coverage_support import rectangle as shared_rectangle
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 from tests.unit.core._execution._unit_work._stored_positions_support import StoredPositions
@@ -136,6 +127,15 @@ from tests.unit.core._execution._write_step_support import (
     POSITION_META,
     close,
 )
+from tests.unit.core._shared_coverage_support import MODEL as SHARED_MODEL
+from tests.unit.core._shared_coverage_support import (
+    ShareCols,
+    covered_target,
+    day,
+    frag,
+    frag_rows,
+)
+from tests.unit.core._shared_coverage_support import rectangle as shared_rectangle
 
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 

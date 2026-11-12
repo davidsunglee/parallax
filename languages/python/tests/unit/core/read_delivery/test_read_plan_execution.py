@@ -29,7 +29,7 @@ from parallax.core.internal.temporal_read import Pin, TimeInterval, ranked_axes,
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
-from tests.unit.core._execution import _shared_coverage_support as shared
+from tests.unit.core import _shared_coverage_support as shared
 
 _TEMPORAL = CatalogedModel(shared.MODEL)
 _DOCUMENT = CatalogedModel(corpus_model("document-layout"))

@@ -63,8 +63,8 @@ from tests._support.planner_probes import (
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
-from tests.unit.core._execution._shared_coverage_support import (
+from tests.unit.core._shared_coverage_support import MODEL as SHARED_MODEL
+from tests.unit.core._shared_coverage_support import (
     ShareCols,
     ShareDoc,
     day,
@@ -73,7 +73,7 @@ from tests.unit.core._execution._shared_coverage_support import (
     observation,
     rectangle,
 )
-from tests.unit.core._execution._shared_coverage_support import plan as shared_plan
+from tests.unit.core._shared_coverage_support import plan as shared_plan
 
 _MODELS = corpus_records()
 _WALLET = corpus_model("wallet")
