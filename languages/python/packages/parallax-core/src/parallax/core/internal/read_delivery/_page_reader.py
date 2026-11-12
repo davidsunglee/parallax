@@ -136,7 +136,6 @@ class _RootRead:
     plan: ReadPlan
     converter: ReadRowConverter
     rows: list[Row]
-    coordinates: tuple[ContinuationCoordinate | None, ...]
     observer: MaterializationObserver = INERT_OBSERVER
 
     def take_rows(self) -> list[Row]:
@@ -248,12 +247,17 @@ class PageReader:
         root_read = self._read_root(plan, root, context)
         continuation_result = None
         if paging is not None:
-            coordinates = self._coordinates(root_read)
+            captured = row_coordinates(root[0].result_contract, root_read.rows)
+            if any(coordinate is None for coordinate in captured):
+                raise InternalError(
+                    SQL_GENERATION_FAILED,
+                    "a paging read returned a root carrying no evaluated coordinate",
+                )
+            coordinates = cast("tuple[ContinuationCoordinate, ...]", captured)
             assert isinstance(plan.query, ResolvedObjectQuery)
             terms = tuple(term.member.identity for term in plan.query.order_by)
             verdict = page_decision(paging, terms, coordinates)
             root_read.rows = root_read.rows[: verdict.keep]
-            root_read.coordinates = root_read.coordinates[: verdict.keep]
             continuation_result = PageContinuation(
                 verdict.keep,
                 coordinates[verdict.keep - 1] if verdict.keep else None,
@@ -276,19 +280,8 @@ class PageReader:
             plan,
             converter,
             list(driver_rows),
-            row_coordinates(compiled.result_contract, driver_rows),
             self.observer,
         )
-
-    @staticmethod
-    def _coordinates(root_read: _RootRead) -> tuple[ContinuationCoordinate, ...]:
-        coordinates = root_read.coordinates
-        if any(coordinate is None for coordinate in coordinates):
-            raise InternalError(
-                SQL_GENERATION_FAILED,
-                "a paging read returned a root carrying no evaluated coordinate",
-            )
-        return cast("tuple[ContinuationCoordinate, ...]", coordinates)
 
     @staticmethod
     def _record_roots[Origin](
@@ -302,18 +295,19 @@ class PageReader:
             return _recorded_rows(
                 builder, ROOT_LEVEL, root_read.converter, _drain_rows(rows), origin_collector
             ), None
-        recorded = tuple(
-            root_read.converter.record_row(row, builder, source=ROOT_LEVEL)
-            for row in _drain_rows(rows)
-        )
         root = plan.root_read()
         assert not isinstance(root, EmptyRead)
-        documents = (
-            tuple(item[2] for item in recorded)
-            if root[0].result_contract.shared_document is not None
-            else None
-        )
-        return tuple(item[0] for item in recorded), documents
+        if root[0].result_contract.shared_document is None:
+            return root_read.converter.record_rows(
+                _drain_rows(rows), builder, ROOT_LEVEL, None
+            ), None
+        references: list[int] = []
+        documents: list[object | None] = []
+        for row in _drain_rows(rows):
+            reference, _, document = root_read.converter.record_row(row, builder, source=ROOT_LEVEL)
+            references.append(reference)
+            documents.append(document)
+        return tuple(references), tuple(documents)
 
     def _build_page[Origin](
         self,

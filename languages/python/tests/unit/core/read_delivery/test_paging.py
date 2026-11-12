@@ -15,24 +15,16 @@ and holds through any refactor of the functions below.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from types import SimpleNamespace
-from typing import cast
-
 import pytest
 
-from parallax.core.internal.base import InternalError
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import object_query, validate_object_query
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.predicate import TrueNode
-from parallax.core.internal.read_delivery._page_reader import PageReader
 from parallax.core.internal.read_delivery._paging import PagingParameters, PagingPlan, page_decision
 from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -105,16 +97,6 @@ def test_the_smallest_page_still_reads_two_roots() -> None:
     assert _page_plan(batch_size=1).parameters_for(0) == PagingParameters(
         size=2, lookahead=True, emitted=0
     )
-
-
-def test_a_paging_root_without_an_evaluated_coordinate_is_refused() -> None:
-    coordinates = cast("Callable[[object], object]", vars(PageReader)["_coordinates"])
-    with raises_code(
-        InternalError,
-        SQL_GENERATION_FAILED,
-        match="returned a root carrying no evaluated coordinate",
-    ):
-        coordinates(SimpleNamespace(coordinates=(None,)))
 
 
 # --------------------------------------------------------------------------- #

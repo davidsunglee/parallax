@@ -197,16 +197,10 @@ def test_a_failing_target_read_fails_before_any_count_is_taken() -> None:
 def test_a_conversion_failure_of_a_several_root_target_read_precedes_its_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    convert = ReadRowConverter.record_row
-    converted: list[object] = []
+    def failing(*_arguments: object, **_keywords: object) -> tuple[int, ...]:
+        raise ValueError("the root read does not convert")
 
-    def failing(self: ReadRowConverter, row: Any, *arguments: Any, **keywords: Any) -> Any:
-        converted.append(row)
-        if len(converted) == 2:
-            raise ValueError("the second row does not convert")
-        return convert(self, row, *arguments, **keywords)
-
-    monkeypatch.setattr(ReadRowConverter, "record_row", failing)
+    monkeypatch.setattr(ReadRowConverter, "record_rows", failing)
     port = ScriptedAdapter(Transact(Read(rows=[_account(), _account()])))
     with pytest.raises(ValueError, match="does not convert"):
         scope(port).transact(
