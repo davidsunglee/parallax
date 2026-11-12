@@ -786,7 +786,8 @@ def test_a_diagnostic_run_answers_the_chosen_cases_and_is_no_envelope(
 ) -> None:
     matrix = _matrix("3.14")
 
-    def child(runtime: str, case: str) -> report.Cell:
+    def child(runtime: str, case: str, *, checkpoint: bool) -> report.Cell:
+        assert checkpoint is False
         return matrix[runtime][case] if case.startswith("plain.") else f"{case} refused"
 
     monkeypatch.setattr(report, "in_a_child", child)
@@ -808,6 +809,51 @@ def test_a_diagnostic_run_answers_the_chosen_cases_and_is_no_envelope(
     assert "provenance" not in document
     with pytest.raises(Exception):  # noqa: B017 - any schema or semantic refusal proves it is no envelope
         validate(document)
+
+
+def test_repeated_diagnostics_measure_fresh_samples_without_reading_or_writing_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = report.CASE_NAMES[0]
+    journal = CaptureJournal(tmp_path, report.SUBJECT, {"runtime": CURRENT_MINOR})
+    journal.store(
+        {
+            "runtime": CURRENT_MINOR,
+            "case": case,
+            "warmups": report.WARMUPS,
+            "measured": report.MEASURED,
+        },
+        _child_document(case),
+    )
+    saved = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    journal_access: list[str] = []
+    child_calls: list[str] = []
+
+    def checkpoint(runtime: str) -> CaptureJournal:
+        journal_access.append(runtime)
+        return journal
+
+    def run(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        child_calls.append(command[command.index(str(report.READING_SCRIPT)) + 1])
+        samples = {
+            metric: _samples(metric) for metric in report.metrics_of(report.WINDOWS[case], case)
+        }
+        samples["elapsedUs"] = [float(len(child_calls))] * report.MEASURED
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps(_child_document(case, {"samples": samples})), ""
+        )
+
+    monkeypatch.setattr(report, "_journal_for", checkpoint)
+    monkeypatch.setattr(report.subprocess, "run", run)
+    diagnostics: list[dict[str, object]] = []
+    for _ in range(2):
+        assert report.main(["--diagnostic", "--case", case, "--runtime", CURRENT_MINOR]) == 0
+        diagnostics.append(json.loads(capsys.readouterr().out))
+    assert child_calls == [case, case]
+    assert journal_access == []
+    assert all(document["unavailable"] == [] for document in diagnostics)
+    assert diagnostics[0]["readings"] != diagnostics[1]["readings"]
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == saved
 
 
 def test_diagnostic_options_are_refused_outside_diagnostic_mode(
