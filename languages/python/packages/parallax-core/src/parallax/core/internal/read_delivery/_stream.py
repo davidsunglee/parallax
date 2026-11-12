@@ -260,7 +260,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
             resolved = self._scope.resolved(read, self._query)
             plan = self._scope.planned(read, resolved, self._batch_size)
             assert plan.continuation is not None
-            self._paging = PagingPlan(plan.continuation, self._batch_size, resolved.limit, plan)
+            self._paging = PagingPlan(plan, self._batch_size, resolved.limit)
             self._milestones = plan.milestones
             self._pin = plan.pin
             self._read = read

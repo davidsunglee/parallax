@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pytest
 
@@ -15,7 +15,12 @@ from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.read_delivery import _acquired_rows
-from parallax.core.internal.read_delivery._page import InvalidDataError, Page, page_rows
+from parallax.core.internal.read_delivery._page import (
+    InvalidDataError,
+    Page,
+    entity_state,
+    page_rows,
+)
 from parallax.core.internal.read_delivery._page_reader import (
     PageReadContext,
     PageReader,
@@ -26,7 +31,7 @@ from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan,
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Pin, TimeInterval, ranked_axes, temporal_facet_of
-from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.db_port import Read, ReadCall, ScriptedAdapter
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
 from tests.unit.core import _shared_coverage_support as shared
@@ -172,6 +177,68 @@ def test_milestone_policy_supplies_shape_and_suppresses_a_supplied_collector(
     assert plan.pin == result.page.pin == Pin()
     assert collector.observed == collector.sealed == []
     assert result.origins == {} and result.documents is None and result.continuation is None
+
+
+def test_warm_milestone_plans_reuse_ordering_with_current_ranges_and_independent_pages() -> None:
+    def query(start: int, end: int) -> ResolvedObjectQuery:
+        return _query(
+            {
+                "asOfRange": {
+                    "start": shared.day(start).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "end": shared.day(end).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                }
+            }
+        )
+
+    cache = ReadPlanCache()
+    seed = _plan(cache, query(0, 2))
+    current = query(1, 3)
+    warm = _plan(cache, current)
+    cold = _plan(ReadPlanCache(), current)
+    disabled = _plan(ReadPlanCache(0), current)
+    assert warm.query.order_by is seed.query.order_by
+    assert isinstance(warm.query, ResolvedObjectQuery)
+    assert warm.query.temporal is current.temporal
+    assert _root(warm)[1] is _root(seed)[1]
+    assert _root(seed)[0].statement.binds == (shared.day(2), shared.day(0), INFINITY)
+
+    results: list[PageResult[str]] = []
+    for plan in (warm, cold, disabled):
+        row = shared.physical_row(
+            shared.ShareCols, shared.rectangle(shared.ShareCols, 1, 1, None, 3)
+        )
+        with ScriptedAdapter(Read([row])) as port:
+            context: PageReadContext[str] = PageReadContext(port, INERT)
+            result = PageReader().read_page(plan, context)
+            assert port.calls == [
+                ReadCall(
+                    "select t0.id, t0.amount, t0.label, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
+                    "from share_cols t0 where t0.from_z < ? and t0.thru_z > ? and t0.out_z = ? "
+                    "order by t0.id asc, t0.from_z asc, t0.in_z asc",
+                    (shared.day(3), shared.day(1), INFINITY),
+                    read_only=True,
+                )
+            ]
+        assert result.page.root_count == 1
+        rows = page_rows(result.page)
+        state = entity_state(rows, rows.roots[0])
+        assert state.member_row[:3] == (1, 3, "k1")
+        assert state.findings == ()
+        results.append(result)
+    assert len({id(page_rows(result.page).schema) for result in results}) == 3
+
+
+def test_milestone_cache_keeps_authored_order_distinct_from_appended_order() -> None:
+    cache = ReadPlanCache()
+    implicit = _plan(cache, _query({"history": {}}))
+    authored = replace(_query({"history": {}}), order_by=implicit.query.order_by)
+    explicit = _plan(cache, authored)
+    repeated = _plan(cache, authored)
+
+    assert explicit.query.order_by == implicit.query.order_by
+    assert _root(explicit)[0].statement == _root(implicit)[0].statement
+    assert _root(explicit)[1] is not _root(implicit)[1]
+    assert _root(repeated)[1] is _root(explicit)[1]
 
 
 def _target_plan(cache: ReadPlanCache, key: int, *, retain: bool) -> ReadPlan:

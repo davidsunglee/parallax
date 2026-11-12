@@ -119,7 +119,7 @@ class _ReadPreparation:
     query_plan: read_planning.ObjectQueryPlan
     root: CompiledRead | EmptyRead
     root_rows: ReadRowConverter | None
-    schema: ViewSchema
+    schema: ViewSchema | None
     repeating: frozenset[SourceLevel]
     correlations: tuple[tuple[AttributeIdentity, ...], ...]
     fetches: tuple[_FetchWork, ...]
@@ -175,11 +175,9 @@ class ReadPlan:
 
     def page_builder(self, observer: object | None) -> PageBuilder:
         prepared = self._preparation()
-        schema = (
-            prepared.schema
-            if self.kind == "single_instant" and self.purpose == "publication"
-            else ViewSchema.of(repeating_levels=prepared.repeating)
-        )
+        schema = prepared.schema
+        if schema is None:
+            schema = ViewSchema.of(repeating_levels=prepared.repeating)
         return PageBuilder(schema, observer)
 
     def ready_fetches(self, completed: set[int]) -> tuple[int, ...]:
@@ -243,6 +241,13 @@ class _CachedDelivery:
     milestones: TemporalShape | None
 
     def render(self, query: ResolvedObjectQuery | read_planning.PlannedEntityQuery) -> ReadPlan:
+        if (
+            self.kind == "milestone_set"
+            and self.purpose == "publication"
+            and isinstance(query, ResolvedObjectQuery)
+            and query.paging is None
+        ):
+            query = replace(query, order_by=self.prepared.query_plan.root.order_by)
         template = self.root_template
         prepared = (
             self.prepared
@@ -553,13 +558,27 @@ def _plan_uncached(
     preference: ConcurrencyPreference | None,
     reusable: _ReadPreparation | None = None,
     templated: bool = False,
-    kind: ReadKind = "single_instant",
+    kind: ReadKind | None = None,
     milestones: TemporalShape | None = None,
     purpose: ReadPurpose = "publication",
     coverage_shared_lock: bool | None = None,
 ) -> _CachedDelivery:
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
+    if kind is None:
+        assert isinstance(query, ResolvedObjectQuery)
+        kind = "milestone_set" if scans_resolved_axis(query.temporal) else "single_instant"
+        milestones = _milestones(model, query.root.identity) if kind == "milestone_set" else None
+    if kind == "milestone_set" and isinstance(query, ResolvedObjectQuery) and query.paging is None:
+        if query.includes:  # pragma: no cover - query validation rejects milestone includes
+            raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
+        query = continuation.ordered(
+            query,
+            model.meta,
+            milestone_attributes=tuple(axis.start_attribute for axis in ranked_axes(milestones))
+            if milestones is not None
+            else (),
+        )
     versioning = concurrency.concurrency_facet_of(model.meta)
     projection = read_planning.ReadProjectionRequest("all", True)
     if isinstance(query, read_planning.PlannedEntityQuery):
@@ -666,7 +685,7 @@ def _plan_uncached(
                 repeating_levels=repeating,
             )
             if kind == "single_instant" and purpose == "publication"
-            else ViewSchema.of(repeating_levels=repeating)
+            else None
         )
     else:
         repeating = reusable.repeating
@@ -686,7 +705,7 @@ def _plan_uncached(
             root.result_contract,
             root.projection,
             correlation_members=correlations[0],
-            singleton=not schema.may_repeat_rows(ROOT_LEVEL),
+            singleton=ROOT_LEVEL not in repeating,
             acquisition=purpose == "write_support",
         ),
         schema,
@@ -812,36 +831,14 @@ class ReadPlanCache:
                 pages,
             )
             return plan
-        kind = (
-            policy.kind
-            if policy is not None
-            else ("milestone_set" if scans_resolved_axis(query.temporal) else "single_instant")
-        )
-        milestones = (
-            policy.milestones
-            if policy is not None
-            else (_milestones(model, query.root.identity) if kind == "milestone_set" else None)
-        )
-        if kind == "milestone_set" and query.paging is None:
-            if query.includes:  # pragma: no cover - query validation rejects milestone includes
-                raise ValueError(
-                    "a milestone-set (history / asOfRange) read carries no fetch steps"
-                )
-            query = continuation.ordered(
-                query,
-                model.meta,
-                milestone_attributes=tuple(axis.start_attribute for axis in ranked_axes(milestones))
-                if milestones is not None
-                else (),
-            )
         return self._cached(
             edition=edition,
             model=model,
             dialect=dialect,
             query=query,
             preference=preference,
-            kind=kind,
-            milestones=milestones,
+            kind=policy.kind if policy is not None else None,
+            milestones=policy.milestones if policy is not None else None,
             purpose="publication",
             coverage_shared_lock=None,
         )
@@ -883,7 +880,7 @@ class ReadPlanCache:
         dialect: Dialect,
         query: ResolvedObjectQuery | read_planning.PlannedEntityQuery,
         preference: ConcurrencyPreference | None,
-        kind: ReadKind,
+        kind: ReadKind | None,
         milestones: TemporalShape | None,
         purpose: ReadPurpose,
         coverage_shared_lock: bool | None,
