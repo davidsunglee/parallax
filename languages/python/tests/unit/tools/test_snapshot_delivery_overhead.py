@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+import time
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -54,6 +57,11 @@ from snapshot_delivery_overhead import (
 )
 from tests.unit import _delivery_control_support as control_support
 from tests.unit.tools._provenance_support import CHILD_ORIGINS, pin_dirty_tree
+
+
+@pytest.fixture(autouse=True)
+def isolated_checkpoints(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PARALLAX_CAPTURE_JOURNAL", str(tmp_path / "checkpoints"))
 
 
 def test_child_command_carries_the_contract_sampling_counts_and_its_runtime() -> None:
@@ -325,7 +333,7 @@ def test_recording_spans_changes_no_request_provisioning_or_reading() -> None:
     plain_requests, plain_provisioner, plain_readings = _measured(None)
     spans = Spans()
     timed_requests, timed_provisioner, timed_readings = _measured(spans)
-    assert timed_requests == plain_requests
+    assert Counter(timed_requests) == Counter(plain_requests)
     assert timed_provisioner.resets == plain_provisioner.resets
     assert timed_readings == plain_readings
     contract = BudgetContract.load()
@@ -370,7 +378,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     assert {roots for _workload, roots in provisioned} == {
         str(roots) for roots in contract.memory_scaling_root_counts
     }
-    assert {span.scope for span in spans.spans} == {"workload", "setup"}
+    assert {span.scope for span in spans.spans} == {"workload", "setup", "case"}
     assert spans.unavailable == ()
 
 
@@ -732,3 +740,131 @@ def test_live_reads_provision_frozen_roots_and_forward_the_connection() -> None:
         for request in asked
     )
     assert len(provisioner.resets) == 6
+
+
+def test_memory_batches_are_bounded_ordered_and_join_before_timing() -> None:
+    contract = BudgetContract.load()
+    cells = [
+        report.GeometryCell("geometry", path)
+        for path in ("one.peakKiB", "two.retainedKiB", "three.peakKiB", "elapsedMs", "four.peakKiB")
+    ]
+    results: dict[report.Address, list[report.ChildResult]] = {
+        (CURRENT_MINOR, cell.workload, cell.path): [] for cell in cells
+    }
+    lock = threading.Lock()
+    barrier = threading.Barrier(6)
+    active = peak = completed = 0
+    first_wave = 0
+
+    def runner(request: ChildRequest) -> ChildReading:
+        nonlocal active, peak, completed, first_wave
+        if not is_memory_cell(request.cell):
+            assert active == 0 and completed == 9
+            return ChildReading(1.0, "ms", (1.0,))
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            first_wave += 1
+            wave = first_wave
+        if wave <= 6:
+            barrier.wait(timeout=5)
+        time.sleep((3 - request.sample) / 1000)
+        with lock:
+            active -= 1
+            completed += 1
+        return ChildReading(float(request.sample), "KiB", ())
+
+    report._read_cells(  # pyright: ignore[reportPrivateUsage]
+        contract, runner, CURRENT_MINOR, results, cells, 200, None, Spans()
+    )
+    assert peak == 6 and completed == 12
+    for cell in cells:
+        values = [
+            reading.value
+            for reading in results[(CURRENT_MINOR, "geometry", cell.path)]
+            if isinstance(reading, ChildReading)
+        ]
+        assert values == ([0.0, 1.0, 2.0] if is_memory_cell(cell.path) else [1.0])
+
+
+def test_successful_children_survive_interruption_and_resume_only_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    pin_dirty_tree(monkeypatch)
+    identity = json.dumps({"implementation": "CPython", "version": "3.99.1", "executable": "/p"})
+
+    def probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        return (0, identity, "")
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "Provisioner", _FakeProvisioner)
+    calls: list[ChildRequest] = []
+    interrupted = False
+
+    def child(request: ChildRequest) -> ChildReading:
+        nonlocal interrupted
+        calls.append(request)
+        if len(calls) == 2 and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        return ChildReading(1.0, unit(request.cell), (1.0,) * request.measured, CHILD_ORIGINS)
+
+    monkeypatch.setattr(report, "run_child", child)
+    with pytest.raises(KeyboardInterrupt):
+        report.main(["--workload", PLAN_GROUP])
+    first = calls[0]
+    saved = tuple((tmp_path / "checkpoints").rglob("*.json"))
+    assert len(saved) == len(calls) - 1
+    original = {path: path.read_bytes() for path in saved}
+    assert report.main(["--workload", PLAN_GROUP]) == 0
+    assert calls.count(first) == 1
+    assert all(path.read_bytes() == data for path, data in original.items())
+    validate(json.loads(capsys.readouterr().out))
+
+
+def test_database_checkpoint_replay_requires_the_effective_postgres_version(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pin_dirty_tree(monkeypatch)
+    identity = json.dumps({"implementation": "CPython", "version": "3.99.1", "executable": "/p"})
+
+    def probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        return (0, identity, "")
+
+    version = "18.6"
+
+    def execute(
+        _self: _FakePort,
+        _sql: str,
+        _binds: Sequence[object],
+    ) -> list[tuple[str]]:
+        return [(version,)]
+
+    calls: list[ChildRequest] = []
+
+    def child(request: ChildRequest) -> ChildReading:
+        calls.append(request)
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples, CHILD_ORIGINS)
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "run_child", child)
+    monkeypatch.setattr(report, "Provisioner", _FakeProvisioner)
+    monkeypatch.setattr(_FakePort, "execute", execute)
+    arguments = ["--workload", "conventional-fanout"]
+    assert report.main(arguments) == 0
+    initial = len(calls)
+    database_calls = sum(report.needs_database(request.cell) for request in calls)
+    assert 0 < database_calls < initial
+    assert report.main(arguments) == 0
+    assert len(calls) == initial
+    version = "18.7"
+    assert report.main(arguments) == 0
+    assert len(calls) == initial + database_calls
+    version = "18.6"
+    assert report.main(arguments) == 0
+    assert len(calls) == initial + database_calls
+    capsys.readouterr()

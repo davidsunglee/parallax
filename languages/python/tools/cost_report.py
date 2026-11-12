@@ -87,14 +87,18 @@ import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import lifecycle_overhead as lifecycle_report
 import write_lowering_overhead as write_report
+from capture_journal import CaptureJournal, capture_identity, journal_root
 from durations import Span, Spans, render
 from interpreter_matrix import (
     RuntimeIdentity,
     RuntimeStatus,
     RuntimeUnavailable,
     authority_minor,
+    child_command,
+    child_environment,
     load_metadata,
     probe_runtime,
+    run_probe,
     runtime_status,
     supported_minors,
 )
@@ -233,6 +237,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tools/snapshot_delivery_overhead.py",
             "tools/snapshot_delivery_reading.py",
+            "tools/capture_journal.py",
             "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
@@ -261,6 +266,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tools/write_lowering_overhead.py",
             "tools/write_lowering_reading.py",
+            "tools/capture_journal.py",
             "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
@@ -713,6 +719,58 @@ def committed_contract() -> BudgetContract:
     return BudgetContract.from_bytes(path, completed.stdout)
 
 
+@contextlib.contextmanager
+def _fresh_child_environments() -> Generator[None]:
+    parent = Path("/private/tmp") if Path("/private/tmp").is_dir() else Path(tempfile.gettempdir())
+    with tempfile.TemporaryDirectory(prefix="parallax-capture-", dir=parent) as directory:
+        previous = os.environ.get("TMPDIR")
+        cached = tempfile.tempdir
+        os.environ["TMPDIR"] = directory
+        tempfile.tempdir = directory
+        try:
+            yield
+        finally:
+            tempfile.tempdir = cached
+            if previous is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = previous
+
+
+@contextlib.contextmanager
+def _capture_journal(out: Path) -> Generator[None]:
+    previous = os.environ.get("PARALLAX_CAPTURE_JOURNAL")
+    os.environ["PARALLAX_CAPTURE_JOURNAL"] = str((out / "checkpoints").resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("PARALLAX_CAPTURE_JOURNAL", None)
+        else:
+            os.environ["PARALLAX_CAPTURE_JOURNAL"] = previous
+
+
+def _member_journal() -> CaptureJournal:
+    sources = {
+        WORKSPACE / path
+        for member in MEMBERS
+        for path in (
+            *MEMBER_SOURCES[member.subject].instruments,
+            *MEMBER_SOURCES[member.subject].controls,
+        )
+    }
+    sources.add(WORKSPACE / "tools/cost_report.py")
+    return CaptureJournal(
+        journal_root(WORKSPACE),
+        "complete-members",
+        capture_identity(
+            WORKSPACE,
+            sorted(sources),
+            {"runtimes": supported_minors(), "authority": dict(BudgetContract.load().authority)},
+        ),
+    )
+
+
 def preflight() -> None:
     """Refuse canonical collection when facts known before reading fail authority."""
     contract = BudgetContract.load()
@@ -743,6 +801,7 @@ def preflight() -> None:
             f"budgetContractDigest: loaded {contract.digest}, committed {committed.digest}"
         )
     mismatches += _authority_runtime_mismatches(contract)
+    mismatches += _child_import_mismatches()
     mismatches += [
         f"stale extension: {path} would be imported ahead of the source beside it"
         for path in stale_extensions()
@@ -755,6 +814,26 @@ def preflight() -> None:
             + "\n- ".join(mismatches)
             + "\nChange the contract's authority block first, or run --diagnostic."
         )
+
+
+def _child_import_mismatches() -> list[str]:
+    mismatches: list[str] = []
+    for namespace, module in (
+        (SNAPSHOT_SUBJECT, "snapshot_delivery_reading"),
+        (WRITE_SUBJECT, "write_lowering_reading"),
+    ):
+        for runtime in supported_minors():
+            command = child_command(
+                runtime,
+                Path("-c"),
+                (f"import sys; sys.path.insert(0, 'tools'); import {module}",),
+            )
+            status, _stdout, stderr = run_probe(command, child_environment(runtime, namespace))
+            if status:
+                mismatches.append(
+                    f"CPython {runtime} {namespace} child import failed: {stderr.strip()}"
+                )
+    return mismatches
 
 
 def _authority_runtime_mismatches(contract: BudgetContract) -> list[str]:
@@ -782,6 +861,7 @@ def collect(
     spans: Spans | None = None,
     *,
     canonical: bool = False,
+    journal: CaptureJournal | None = None,
 ) -> Collection:
     """Attempt every member unless canonical authority preflight refuses.
 
@@ -795,11 +875,41 @@ def collect(
         recorder.span("collection", COLLECTION_SPAN),
     ):
         for member in MEMBERS:
+            key = {"member": member.subject, "selection": "all"}
+            saved = journal.load(key) if journal is not None else None
+            if saved is not None:
+                envelope = _object(saved.get("envelope"), "checkpoint envelope")
+                validate(envelope)
+                validate_matrix(envelope, member.subject, BudgetContract.load())
+                if _producing_commit(envelope) != git_head():
+                    raise ValueError(f"the {member.subject} checkpoint names another producer")
+                identities = {
+                    str(runtime): runtime_status(status)
+                    for runtime, status in _object(
+                        saved.get("runtimes"), "checkpoint runtimes"
+                    ).items()
+                }
+                results.append(MemberResult(member, envelope))
+                runtimes[member.subject] = identities
+                recorder.missing(
+                    "member", member.subject, "reused checkpoint; duration unavailable"
+                )
+                continue
             result, identities = _collected(
                 member, Path(scratch), recorder, runner, canonical=canonical
             )
             results.append(result)
             runtimes[member.subject] = identities
+            if journal is not None and result.envelope is not None:
+                journal.store(
+                    key,
+                    {
+                        "envelope": dict(result.envelope),
+                        "runtimes": {
+                            runtime: status.document() for runtime, status in identities.items()
+                        },
+                    },
+                )
     return Collection(tuple(results), recorder, runtimes)
 
 
@@ -1171,7 +1281,7 @@ def verify(
     document: Document,
     contract: BudgetContract | None = None,
     required: Sequence[str] = (),
-    replacement: MemberReplacement | None = None,
+    replacement: MemberReplacement | MultiMemberReplacement | None = None,
 ) -> list[str]:
     """Every reason the required portfolio is not valid evidence: a missing,
     malformed, or incomplete required envelope, a snapshot-delivery envelope
@@ -1267,6 +1377,23 @@ class MemberReplacement:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class MultiMemberReplacement:
+    members: tuple[str, ...]
+    original_commit: str
+    replacement_commit: str
+
+    def commit_failures(self, subject: str, envelope: Document) -> list[str]:
+        expected = self.replacement_commit if subject in self.members else self.original_commit
+        named = _producing_commit(envelope)
+        if named == expected:
+            return []
+        return [
+            f"the {subject} envelope names commit {named[:12]}, but the recorded replacement "
+            f"requires commit {expected[:12]}"
+        ]
+
+
 def _valid_member(
     document: Document, subject: str, matrix: Callable[[Document], None]
 ) -> tuple[Document | None, list[str]]:
@@ -1303,7 +1430,7 @@ def _optional_member_failures(
     subject: str,
     matrix: Callable[[Document], None],
     digest: str,
-    replacement: MemberReplacement | None,
+    replacement: MemberReplacement | MultiMemberReplacement | None,
 ) -> list[str]:
     member, failures = _valid_member(document, subject, matrix)
     if member is None:
@@ -2360,7 +2487,13 @@ def amendment_beside(portfolio: Path) -> str | None:
         statements.append("envelopes re-classified under a later Budget Contract")
     if redigested:
         statements.append("workload digest re-stated under a later digest definition")
-    if replaced is not None:
+    if isinstance(replaced, MultiMemberReplacement):
+        statements.append(
+            f"the {', '.join(replaced.members)} members, which the run at "
+            f"{replaced.original_commit[:12]} failed to produce, re-measured together "
+            f"at {replaced.replacement_commit[:12]}"
+        )
+    elif replaced is not None:
         statements.append(
             f"the {replaced.member} member, which the run at {replaced.original_commit[:12]} "
             f"failed to produce, re-measured alone at {replaced.replacement_commit[:12]}"
@@ -2384,11 +2517,34 @@ def _changed_readings(adjustment: Mapping[str, object]) -> list[str]:
 
 
 REPLACEMENT_KEY: Final = "replacedMember"
+MULTI_REPLACEMENT_KEY: Final = "replacedMembers"
 """Where an adjustment records a member re-measured after its collection failed."""
 REPLACEMENT_SPAN: Final = "python-report-cost-replacement"
 
 
-def _recorded_replacement(adjustment: Mapping[str, object]) -> MemberReplacement | None:
+def _recorded_replacement(
+    adjustment: Mapping[str, object],
+) -> MemberReplacement | MultiMemberReplacement | None:
+    if MULTI_REPLACEMENT_KEY in adjustment:
+        if REPLACEMENT_KEY in adjustment:
+            raise ValueError("an adjustment records both replacement forms")
+        fields = _object(adjustment[MULTI_REPLACEMENT_KEY], MULTI_REPLACEMENT_KEY)
+        subjects = fields.get("members")
+        listed = cast("list[object]", subjects) if isinstance(subjects, list) else []
+        if (
+            not isinstance(subjects, list)
+            or len(listed) < 2
+            or not all(isinstance(subject, str) for subject in listed)
+        ):
+            raise ValueError("replacedMembers must name at least two members")
+        names = tuple(cast("list[str]", listed))
+        if len(set(names)) != len(names) or not set(names) <= {m.subject for m in MEMBERS}:
+            raise ValueError("replacedMembers names duplicate or unknown members")
+        return MultiMemberReplacement(
+            names,
+            _commit(_text(fields, "originalCommit"), "originalCommit"),
+            _commit(_text(fields, "replacementCommit"), "replacementCommit"),
+        )
     if REPLACEMENT_KEY not in adjustment:
         return None
     fields = _object(adjustment[REPLACEMENT_KEY], f"{ADJUSTMENT_FIELD} {REPLACEMENT_KEY}")
@@ -2402,7 +2558,7 @@ def _recorded_replacement(adjustment: Mapping[str, object]) -> MemberReplacement
     )
 
 
-def replacement_beside(portfolio: Path) -> MemberReplacement | None:
+def replacement_beside(portfolio: Path) -> MemberReplacement | MultiMemberReplacement | None:
     """The member replacement the conditions beside ``portfolio`` record, or
     ``None``; ``ValueError`` names the first way a recorded one is malformed."""
     path = portfolio.parent / CONDITIONS_FILE
@@ -2513,7 +2669,10 @@ def _imported_test_sources(roots: Iterable[str]) -> frozenset[str]:
 
 
 def _prove_kept_unchanged(
-    kept: Sequence[Document], conditions: Conditions, changed: frozenset[str], replaced: str
+    kept: Sequence[Document],
+    conditions: Conditions,
+    changed: frozenset[str],
+    replaced: str | Sequence[str],
 ) -> None:
     """Refuse unless HEAD differs from the producing commit in nothing a kept
     member measured through: its recorded instrument and control sources, the
@@ -2541,9 +2700,14 @@ def _prove_kept_unchanged(
             )
         kept_sources.update(current)
     workspace = WORKSPACE.relative_to(WORKSPACE.parents[1]).as_posix()
+    subjects = (replaced,) if isinstance(replaced, str) else replaced
     own = {
         f"{workspace}/{path}"
-        for path in (*MEMBER_SOURCES[replaced].instruments, "tools/cost_report.py")
+        for path in (
+            *(path for subject in subjects for path in MEMBER_SOURCES[subject].instruments),
+            "tools/cost_report.py",
+            "tools/capture_journal.py",
+        )
         if path not in kept_sources
     }
     imported = {f"{workspace}/{path}" for path in _imported_test_sources(kept_sources)}
@@ -2603,8 +2767,7 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
     conditions, and duration spans are carried unchanged beside the new member,
     its conditions, and its span, and the adjustment records the replacement.
     """
-    if out.exists():
-        raise ValueError(f"{out} exists; the replacement writes a new capture directory")
+    _replacement_destination(out)
     portfolio = run_dir / "portfolio.json"
     document, conditions, durations = _reclassification_inputs(portfolio)
     if durations is None:
@@ -2620,11 +2783,13 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
     recorded_conditions = load_conditions(run_dir / CONDITIONS_FILE)
     _prove_kept_unchanged(kept, recorded_conditions, changed_since(original), subject)
     collection = _span(durations, COLLECTION_SPAN)
-    preflight()
     with (
+        _fresh_child_environments(),
+        _capture_journal(out),
         tempfile.TemporaryDirectory(prefix="parallax-durations-") as scratch,
         durations.span("collection", REPLACEMENT_SPAN, member=subject),
     ):
+        preflight()
         result, identities = _collected(member, Path(scratch), durations, runner, canonical=True)
     if result.envelope is None:
         raise ValueError(f"the {subject} member failed again: {result.failure}")
@@ -2649,7 +2814,7 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
         ],
     }
     members = _object(conditions.get("members"), "conditions members")
-    out.mkdir(parents=True)
+    out.mkdir(parents=True, exist_ok=True)
     durations.write(out / DURATIONS_FILE)
     _write_adjusted(
         out / "portfolio.json",
@@ -2676,6 +2841,109 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
             },
         },
     )
+
+
+def replace_members(
+    run_dir: Path, subjects: Sequence[str], out: Path, runner: Runner = run_member
+) -> None:
+    """Complete several failed members atomically while retaining all kept envelopes."""
+    _replacement_destination(out)
+    document, conditions, durations = _reclassification_inputs(run_dir / "portfolio.json")
+    if durations is None:
+        raise ValueError(f"{run_dir} records no {DURATIONS_FILE}")
+    selected = _selected_failures(document, subjects)
+    kept = cast("Sequence[Document]", document["members"])
+    original = _kept_commit(kept)
+    if not checkout_is_clean():
+        raise ValueError("the checkout is not clean")
+    head = git_head()
+    if not is_published(original):
+        raise ValueError(f"HEAD {head[:12]} does not descend from the capture's {original[:12]}")
+    recorded_conditions = load_conditions(run_dir / CONDITIONS_FILE)
+    _prove_kept_unchanged(kept, recorded_conditions, changed_since(original), subjects)
+    replacement_results: list[tuple[MemberResult, Mapping[str, RuntimeStatus]]] = []
+    with (
+        _fresh_child_environments(),
+        _capture_journal(out),
+        tempfile.TemporaryDirectory(prefix="parallax-durations-") as scratch,
+        durations.span("collection", REPLACEMENT_SPAN),
+    ):
+        preflight()
+        for member, _failure in selected:
+            result, identities = _collected(
+                member, Path(scratch), durations, runner, canonical=True
+            )
+            if result.envelope is None:
+                raise ValueError(f"the {member.subject} member failed again: {result.failure}")
+            provenance = cast("Document", result.envelope["provenance"])
+            if _producing_commit(result.envelope) != head or provenance.get("dirty") is not False:
+                raise ValueError(
+                    f"the {member.subject} member was not measured on a clean {head[:12]}"
+                )
+            mismatches = _interpreter_mismatches(
+                recorded_conditions, [str(envelope["subject"]) for envelope in kept], identities
+            )
+            if mismatches:
+                raise ValueError(
+                    "the interpreters differ from the kept members': " + "; ".join(mismatches)
+                )
+            replacement_results.append((result, identities))
+    order = [known.subject for known in MEMBERS]
+    completed = {
+        **document,
+        "members": sorted(
+            [*kept, *(cast("Document", result.envelope) for result, _ in replacement_results)],
+            key=lambda envelope: order.index(str(envelope["subject"])),
+        ),
+        "failures": [],
+    }
+    prior = _object(conditions.get("members"), "conditions members")
+    updated = {
+        **prior,
+        **{
+            result.member.subject: _member_conditions(result.member.subject, identities)
+            for result, identities in replacement_results
+        },
+    }
+    out.mkdir(parents=True, exist_ok=True)
+    durations.write(out / DURATIONS_FILE)
+    _write_adjusted(
+        out / "portfolio.json",
+        completed,
+        durations,
+        {**conditions, "members": updated},
+        {
+            MULTI_REPLACEMENT_KEY: {
+                "members": list(subjects),
+                "originalCommit": original,
+                "replacementCommit": head,
+                "failures": [
+                    {"member": member.subject, "recipe": member.recipe, "message": failure}
+                    for member, failure in selected
+                ],
+            }
+        },
+    )
+
+
+def _selected_failures(document: Document, subjects: Sequence[str]) -> list[tuple[Member, str]]:
+    if len(subjects) < 2 or len(set(subjects)) != len(subjects):
+        raise ValueError("replace at least two distinct failed members")
+    selected = [_replaceable(document, subject) for subject in subjects]
+    recorded = cast("Sequence[Document]", document.get("failures", ()))
+    if {member.recipe for member, _failure in selected} != {
+        str(failure.get("recipe")) for failure in recorded
+    }:
+        raise ValueError("every failed member must be selected for atomic replacement")
+    return selected
+
+
+def _replacement_destination(out: Path) -> None:
+    if not out.exists():
+        return
+    checkpoints = out / "checkpoints"
+    if not out.is_dir() or not checkpoints.is_dir() or set(out.iterdir()) != {checkpoints}:
+        raise ValueError(f"{out} exists; the replacement writes a new capture directory")
 
 
 # --------------------------------------------------------------------------- #
@@ -4414,8 +4682,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--redigest", type=Path, metavar="PORTFOLIO")
     parser.add_argument(
         "--replace-member",
+        action="append",
         metavar="SUBJECT",
-        help="re-measure the one member --from's collection failed to produce into --out",
+        help="re-measure a failed member; repeat to replace every failed member together",
     )
     parser.add_argument(
         "--from", dest="replace_from", type=Path, metavar="RUN_DIR", help="the capture to complete"
@@ -4535,7 +4804,12 @@ def _run_shard(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int
         parser.error(f"shard {args.shard!r} is not one of {plan_ids('sharded')} or {ALL_SHARDS!r}")
     validate_plan(SHARDS)
     request = _shard_request(parser, args.shard, args.request, args.base_commit)
-    return run_shards(ids, request, args.out, run_member, run_base)
+    with _fresh_child_environments(), _capture_journal(args.out):
+        failures = _child_import_mismatches()
+        if failures:
+            print("child import preflight refused:\n- " + "\n- ".join(failures), file=sys.stderr)
+            return 1
+        return run_shards(ids, request, args.out, run_member, run_base)
 
 
 def _run_assembly(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
@@ -4653,12 +4927,16 @@ def _run_adjustment(args: argparse.Namespace) -> int:
         adjust, refused = functools.partial(redigest, portfolio), "redigest"
         done = f"re-digested {portfolio} under HEAD's workload digest definition"
     else:
-        subject, run_dir, out = cast(
-            "tuple[str, Path, Path]", (args.replace_member, args.replace_from, args.out)
+        subjects, run_dir, out = cast(
+            "tuple[list[str], Path, Path]", (args.replace_member, args.replace_from, args.out)
         )
-        adjust = functools.partial(replace_member, run_dir, subject, out, run_member)
+        adjust = (
+            functools.partial(replace_member, run_dir, subjects[0], out, run_member)
+            if len(subjects) == 1
+            else functools.partial(replace_members, run_dir, subjects, out, run_member)
+        )
         refused = "member replacement"
-        done = f"re-measured {subject} at HEAD and wrote the capture it completes to {out}"
+        done = f"re-measured {', '.join(subjects)} at HEAD and wrote the capture to {out}"
     try:
         adjust()
     except (
@@ -4677,8 +4955,9 @@ def _run_adjustment(args: argparse.Namespace) -> int:
 
 def _run_collection(out: Path) -> int:
     try:
-        preflight()
-        collection = collect(run_member, canonical=True)
+        with _fresh_child_environments(), _capture_journal(out):
+            preflight()
+            collection = collect(run_member, canonical=True, journal=_member_journal())
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)
         return 1
