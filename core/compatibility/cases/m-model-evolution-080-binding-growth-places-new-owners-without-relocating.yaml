@@ -1,0 +1,78 @@
+# Binding GROWTH that publishes hot (m-model-evolution, m-database-binding,
+# m-schema-delta): the release adds Credit under the unchanged binding
+# default, Note under the existing `audit` namespace default, and Charge as the
+# first Entity of `billing`, whose namespace key the later binding ships with
+# it. Every surviving owner and the allocator resolve where they did, so
+# nothing relocates and the evolution is unilateral; its statements create each
+# new table qualified where its binding entry places it.
+tags: [m-model-evolution, m-database-binding, m-schema-delta, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/binding-release-v1.yaml
+    later: models/binding-release-v2.yaml
+    earlierBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        namespaces:
+          archive: { schema: px_archive }
+          audit: { schema: px_audit }
+        entities:
+          parallax.compatibility.Refund: { schema: px_refunds }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        namespaces:
+          archive: { database: px_archive }
+          audit: { database: px_audit }
+        entities:
+          parallax.compatibility.Refund: { database: px_refunds }
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        namespaces:
+          archive: { schema: px_archive }
+          audit: { schema: px_audit }
+          billing: { schema: px_billing }
+        entities:
+          parallax.compatibility.Refund: { schema: px_refunds }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        namespaces:
+          archive: { database: px_archive }
+          audit: { database: px_audit }
+          billing: { database: px_billing }
+        entities:
+          parallax.compatibility.Refund: { database: px_refunds }
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: audit.Note }
+      - { kind: EntityAdded, entity: billing.Charge }
+      - { kind: EntityAdded, entity: parallax.compatibility.Credit }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table px_billing.charge (id bigint not null, amount bigint not null, primary key (id))
+          - create table px.credit (id bigint not null, amount bigint not null, primary key (id))
+          - create table px_audit.note (id bigint not null, body varchar(64) not null, primary key (id))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create table px_billing.charge (id bigint not null, amount bigint not null, primary key (id))
+          - create table px.credit (id bigint not null, amount bigint not null, primary key (id))
+          - create table px_audit.note (id bigint not null, body varchar(64) not null, primary key (id))
+        createdIndices: []

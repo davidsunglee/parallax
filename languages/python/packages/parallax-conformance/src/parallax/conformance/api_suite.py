@@ -181,6 +181,7 @@ RECIPES: Final[list[Recipe]] = [
             "    index,\n"
             "    rel,\n"
             ")\n"
+            "from parallax.postgres import PostgresBinding, PostgresLocation, PostgresTable\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext\n"
         ),
     ),
@@ -256,6 +257,13 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="declare-a-read-only-entity",
         title="Declare an entity Parallax only reads",
         snippet=_sources(Supplier, guide_recipes.rename_a_supplier),
+    ),
+    Recipe(
+        recipe_id="place-the-model-with-a-binding",
+        title="Place a model's tables with a Database Binding, typed or from YAML",
+        snippet=_sources(
+            guide_recipes.the_shops_binding, guide_recipes.the_shops_binding_as_configured
+        ),
     ),
     Recipe(
         recipe_id="create-tables-from-the-model",
@@ -680,9 +688,9 @@ RECIPES: Final[list[Recipe]] = [
         title="Import what Model evolution uses",
         snippet=(
             "from collections.abc import Callable\n"
+            "from dataclasses import dataclass\n"
             "\n"
             "from parallax.core import (\n"
-            "    POSTGRES,\n"
             "    Attr,\n"
             "    ConcreteSubtype,\n"
             "    DomainModel,\n"
@@ -703,6 +711,7 @@ RECIPES: Final[list[Recipe]] = [
             "    evolve,\n"
             "    schema_delta,\n"
             ")\n"
+            "from parallax.evolution.operations import SequenceRelocated, TableRelocated\n"
             "from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole\n"
             "from parallax.snapshot import Database, ScopedDatabase, connect\n"
         ),
@@ -719,7 +728,9 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="describe-a-model-change",
         title="Describe the change from the deployed model to the next release",
         snippet=_sources(
-            guide_evolution_recipes.GiftCardPayment, guide_evolution_recipes.changes_since
+            guide_evolution_recipes.GiftCardPayment,
+            guide_evolution_recipes.Deployed,
+            guide_evolution_recipes.changes_since,
         ),
     ),
     Recipe(
@@ -734,6 +745,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="roll-out-a-release",
         title="Migrate the database once, then publish the release in every process",
         snippet=_sources(guide_evolution_recipes.migrate, guide_evolution_recipes.adopt),
+    ),
+    Recipe(
+        recipe_id="report-what-a-release-moves",
+        title="Report each table and sequence a binding change moves",
+        snippet=_sources(guide_evolution_recipes.moves_in),
     ),
     Recipe(
         recipe_id="read-through-the-overlap-window",

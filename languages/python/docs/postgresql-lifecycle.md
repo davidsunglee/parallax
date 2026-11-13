@@ -938,7 +938,8 @@ connection's own parameters and runs no SQL, on every connection the pool
 creates — initial capacity, growth, replacements, and on-demand connections
 alike. Everything else a string, an environment, a service file or a server
 default establishes is preserved: the time zone, a stronger default isolation, a
-read-only session, a search path, statement and lock timeouts. Parallax owns
+read-only session, a search path, which places no modeled table because every statement
+names its schema, statement and lock timeouts. Parallax owns
 autocommit, physical-close semantics, row shape, and its own codecs, and does
 not restore caller settings it did not change. Scoped principal execution is the
 one deliberate session mutation and is restored as described above.
@@ -978,9 +979,10 @@ any writer, Parallax or not, with a `DatabaseError` whose `category` is
 `23P01` and the exclusion's name for an overlap. The exclusion is checked as each
 statement runs, not at commit, and a statement that conflicts with a row another
 transaction hasn't committed yet waits for that transaction first. The fingerprint is
-derived from the table and its columns, so the names change only when those do; take
-them from the `create table` statement that provisioning the same model from `ABSENT`
-returns.
+derived from the table's physical name, as its binding places it, and its columns, never
+from its schema, so the names change only when those do; take them from the
+`create table` statement that provisioning the same model from `ABSENT` under the same
+binding returns.
 
 ### The `btree_gist` prerequisite
 

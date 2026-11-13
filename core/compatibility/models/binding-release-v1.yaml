@@ -1,0 +1,35 @@
+# The first release of a model whose deployment binding changes between
+# releases. Invoice draws keys from the `invoiceNumbers` allocator and sits
+# wherever the binding default places it; Refund is the Entity a binding maps
+# explicitly; Entry and Statement are each placed by their own Entity
+# Namespace, and Statement is the only Entity of `archive`. The release-binding
+# evolution cases pair this model with its grown (v2) and shrunk (v3) releases
+# under bindings that grow, shrink, or move their defaults.
+entities:
+  - name: Invoice
+    namespace: parallax.compatibility
+    table: invoice
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: invoiceNumbers }
+      - { name: total, type: int64 }
+  - name: Refund
+    namespace: parallax.compatibility
+    table: refund
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: invoiceId, type: int64 }
+  - name: Entry
+    namespace: audit
+    table: entry
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: note, type: string, maxLength: 64 }
+  - name: Statement
+    namespace: archive
+    table: statement
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: period, type: string, maxLength: 16 }

@@ -687,6 +687,13 @@ _EVOLUTION_ENDPOINT = (
 )
 """Why an evolution endpoint pair is unmirrored, shared by every one of them."""
 
+_BINDING_RELEASE = (
+    "endpoint-only model: one release of a model whose binding changes between releases, an "
+    "end of a described evolution no developer surface builds or executes; the binding "
+    "publication API stories declare their releases in classes of their own"
+)
+"""Why each release of the binding-release endpoint family is unmirrored."""
+
 _BUFFERED_SEQUENCE_TWIN = (
     "no mirror authored; its Bitemporal, versioned and unversioned Entities repeat the "
     "mirrored `position`, `account` and `wallet` declarations, and its Document arm the "
@@ -736,6 +743,9 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "placement fixture only a case binding can place, which the binding cases read "
             "and write directly"
         ),
+        "binding-release-v1": _BINDING_RELEASE,
+        "binding-release-v2": _BINDING_RELEASE,
+        "binding-release-v3": _BINDING_RELEASE,
         "binding-temporal-ledgers": (
             "no mirror authored; its two Transaction-Time owners declaring one table name are "
             "a provisioning fixture only a case binding can place, and its declarations "

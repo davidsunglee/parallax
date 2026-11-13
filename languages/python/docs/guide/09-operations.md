@@ -62,6 +62,10 @@ def open_the_shop_database(
 time. `connect` opens the runtime, and the root it returns is what you share across the
 process and close at the end. Each setting here has a section of its own:
 
+- **Placement.** The `binding` says which schema each of the model's tables and
+  sequences lives in. `connect` checks that it places the model before it opens anything,
+  but never that those schemas or tables exist or that the login may use them; see
+  [Database bindings](02-modeling.md#database-bindings).
 - **The pool.** `PoolOptions` bounds how many connections the root keeps and opens;
   `max_size` is one of its fields, and the lifecycle guide describes the rest.
   `OnDemandOptions` keeps no connection between operations: pass
@@ -101,6 +105,11 @@ The lifecycle guide also covers the decisions a deployment makes once:
 - [Temporal constraints](../postgresql-lifecycle.md#temporal-constraints): the key
   names, checks and exclusion generated temporal tables carry, the `btree_gist`
   prerequisite, and adopting them on a table that existed before them.
+- Schemas and grants: create every schema your binding names and grant the service's
+  role access to it before running the statements that create its tables; Parallax does
+  neither. Moving a table or sequence the database already holds needs a coordinated
+  migration behind a replacement root
+  ([Changing a binding](07-model-evolution.md#changing-a-binding)).
 - Clocks: every server writing one database stamps Transaction Time from its own clock,
   so keep their clocks synchronized. A clock behind stored history makes writes retry
   until it catches up ([Writing](04-writing.md#transaction-time-only-entities)).

@@ -1,0 +1,19 @@
+# The shrunk release of binding-release-v1: it removes Refund, the Entity its
+# binding maps explicitly, and Statement, the last Entity of the `archive`
+# namespace. The binding that places this release drops both keys with them.
+entities:
+  - name: Invoice
+    namespace: parallax.compatibility
+    table: invoice
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: invoiceNumbers }
+      - { name: total, type: int64 }
+  - name: Entry
+    namespace: audit
+    table: entry
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: note, type: string, maxLength: 64 }

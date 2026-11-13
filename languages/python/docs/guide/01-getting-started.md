@@ -139,6 +139,12 @@ first try, run them in `psql` or any SQL client connected to an empty database a
 creating the schema the binding names. They name every table schema-qualified, as the
 binding passed to `evolve` places it.
 
+The binding says where this deployment keeps each table: the model names its tables but
+not their schema. `PostgresBinding(default=PostgresLocation(schema="shop"))` keeps every
+table in schema `shop`, so the first statement creates `shop.customer`.
+[Database bindings](02-modeling.md#database-bindings) explains the rest of what a binding
+can say.
+
 When your model changes later, `evolve` compares the model you deployed before with the
 new one, so keep a copy of each model you deploy. Exporting it as a descriptor with
 `parallax.descriptor.export_yaml`, from the `parallax-descriptor` distribution, is one
@@ -168,9 +174,10 @@ def add_and_find_a_customer(adapter: PostgresAdapter, binding: PostgresBinding) 
 <!-- /example -->
 
 To run it, create the tables first, as the previous section shows, then call
-`add_and_find_a_customer(configure_the_database(conninfo, password))` with a connection
-string such as `host=localhost dbname=shop user=shop`. It returns the customer it read
-back. The rest of this chapter walks through it.
+`add_and_find_a_customer(configure_the_database(conninfo, password), binding)` with a
+connection string such as `host=localhost dbname=shop user=shop` and the binding you
+created the tables under, such as `PostgresBinding(default=PostgresLocation(schema="shop"))`.
+It returns the customer it read back. The rest of this chapter walks through it.
 
 ### Connect
 

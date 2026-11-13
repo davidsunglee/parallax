@@ -1,0 +1,58 @@
+# Owners REMOVED together with their binding entries (m-model-evolution,
+# m-database-binding): the release removes Refund, which the earlier binding
+# maps explicitly, and Statement, the last Entity of the `archive` namespace,
+# and the later binding drops both keys. An owner only one endpoint holds was
+# removed, not relocated, so the evolution reports the two logical removals
+# with their authoring coordination and no relocation; publication judges the
+# same pair by relocation alone.
+tags: [m-model-evolution, m-database-binding, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/binding-release-v1.yaml
+    later: models/binding-release-v3.yaml
+    earlierBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        namespaces:
+          archive: { schema: px_archive }
+          audit: { schema: px_audit }
+        entities:
+          parallax.compatibility.Refund: { schema: px_refunds }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        namespaces:
+          archive: { database: px_archive }
+          audit: { database: px_audit }
+        entities:
+          parallax.compatibility.Refund: { database: px_refunds }
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        namespaces:
+          audit: { schema: px_audit }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        namespaces:
+          audit: { database: px_audit }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - { kind: EntityRemoved, entity: archive.Statement }
+      - { kind: EntityRemoved, entity: parallax.compatibility.Refund }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: EntityRemoved, entity: archive.Statement }
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation: { kind: EntityRemoved, entity: parallax.compatibility.Refund }
+        reasons: [AuthoringSurfaceChangeRequired]

@@ -7,15 +7,17 @@ but it never changes your database itself. This chapter starts with editions, th
 successive models a process serves, and how a transaction uses them. It then describes
 a change between two models, generates the migration for it, and rolls the new model out
 to running processes, including the window when two editions run against one database.
+It ends with changing a [Database Binding](02-modeling.md#database-bindings), which rolls
+out the same way unless it moves something the database already holds.
 
 The examples use the shop model from [Modeling](02-modeling.md) and these imports:
 
 <!-- example: model-evolution-imports -->
 ```python
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from parallax.core import (
-    POSTGRES,
     Attr,
     ConcreteSubtype,
     DomainModel,
@@ -36,6 +38,7 @@ from parallax.evolution import (
     evolve,
     schema_delta,
 )
+from parallax.evolution.operations import SequenceRelocated, TableRelocated
 from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, connect
 ```
@@ -44,7 +47,7 @@ from parallax.snapshot import Database, ScopedDatabase, connect
 ## Model Editions
 
 Each model a root serves is a Model Edition, named by a string you choose, such as a
-release number or a commit hash. `connect(adapter, model)`, as in
+release number or a commit hash. `connect(adapter, model, binding=binding)`, as in
 [Getting started](01-getting-started.md#connect), serves one edition, with a generated
 name, for as long as the root is open. To be able to serve a later edition without
 reconnecting, prepare the model yourself and hand the root a `ServingModel` that holds
@@ -67,12 +70,13 @@ def edition_of_a_transaction(db: ScopedDatabase) -> str:
 ```
 <!-- /example -->
 
-`prepare_model` returns a `ModelSelection`: the model and its edition, with everything
-Parallax derives from the model, such as how each entity's rows are read and how its
-writes are planned, worked out in advance. If the model can't be prepared, it raises
-there, before anything serves it, rather than on a later request. The Serving Model holds
-the one selection the root serves at any moment, and only code holding the Serving Model
-can replace it: holding the root doesn't let you change the model it serves.
+`prepare_model` returns a `ModelSelection`: the model, its binding and its edition, with
+everything Parallax derives from them, such as where each table is and how each entity's
+rows are read and its writes planned, worked out in advance. If the model can't be
+prepared, it raises there, before anything serves it, rather than on a later request.
+The Serving Model holds the one selection the root serves at any moment, and only code
+holding the Serving Model can replace it: holding the root doesn't let you change the
+model it serves.
 
 Every execution adopts the selection held when it starts, and keeps it to the end:
 
@@ -99,10 +103,13 @@ The shop's second release accepts gift cards. It adds a concrete subtype to the
 model lists every class it serves, a family's root included, and a concrete subtype it
 leaves out is not part of it, so release 1's model is the same list without
 `GiftCardPayment`.
-`evolve(earlier, later)` describes what changes between two `DomainModel`s. It compares
-their entities, attributes and relationships, not your Python classes. The earlier model is the one you deployed last, so keep a copy of it at each deployment.
-`export_yaml`, from the `parallax-descriptor` distribution, writes a model as a descriptor,
-and `domain_model_from_yaml` reads one back:
+`evolve(earlier, later, earlier_binding=..., later_binding=...)` describes what changes
+between two `DomainModel`s, each placed by its binding. It compares their entities,
+attributes and relationships, not your Python classes, and where their bindings put each
+table and sequence. The earlier model and binding are the ones you deployed last, so keep
+a copy of both at each deployment. `export_yaml`, from the `parallax-descriptor`
+distribution, writes a model as a descriptor, `domain_model_from_yaml` reads one back,
+and a binding's `to_yaml` and `from_yaml` do the same for it:
 
 <!-- example: describe-a-model-change -->
 ```python
@@ -110,21 +117,34 @@ class GiftCardPayment(Payment, inheritance=ConcreteSubtype(tag_value="gift-card"
     card_number: Attr[str] = attr(max_length=19)
 
 
-def changes_since(deployed: str, release: DomainModel, binding: PostgresBinding) -> Evolution:
-    """What changes between the model deployed last, kept as a descriptor, and
-    ``release``, both placed by ``binding``."""
+@dataclass(frozen=True)
+class Deployed:
+    """What a database was last migrated to, kept beside it as text: the model's
+    descriptor and its binding's YAML."""
+
+    model: str
+    binding: str
+
+
+def changes_since(deployed: Deployed, release: DomainModel, binding: PostgresBinding) -> Evolution:
+    """What changes between the model and binding deployed last and ``release``,
+    placed by ``binding``."""
     return evolve(
-        domain_model_from_yaml(deployed), release, earlier_binding=binding, later_binding=binding
+        domain_model_from_yaml(deployed.model),
+        release,
+        earlier_binding=PostgresBinding.from_yaml(deployed.binding),
+        later_binding=binding,
     )
 ```
 <!-- /example -->
 
-`deployed` is the descriptor's YAML text, not a file path. `domain_model_from_yaml`
-builds from it a `DomainModel` with no entity classes, which is all `evolve` needs.
+`Deployed` holds the descriptor's and the binding's YAML text, not file paths.
+`domain_model_from_yaml` builds from the descriptor a `DomainModel` with no entity
+classes, which is all `evolve` needs.
 
-`evolve` reads only the two models. It never looks at a database, so the description is
-the same wherever you compute it, for example in a release check before you deploy. It
-answers three questions.
+`evolve` reads only the two models and their bindings. It never looks at a database, so
+the description is the same wherever you compute it, for example in a release check
+before you deploy. It answers three questions.
 
 **What changes?** `operations` lists each change as an Evolution Operation named in the
 terms you modeled in: an entity, an attribute, a relationship, an index. Gift cards are
@@ -164,11 +184,12 @@ earlier edition does with such a row.
 
 ## Generating the schema change
 
-`schema_delta(evolution, POSTGRES)` turns a `UnilateralEvolution` into the PostgreSQL
-statements that bring a database from the earlier model to the later one. It accepts
-only a `UnilateralEvolution`, so your type checker refuses a call that might hand it a
-Coordinated one. `evolve(ABSENT, ...)` is always unilateral and typed that way, which is
-why [Getting started](01-getting-started.md#create-the-tables) passes it straight in.
+`schema_delta(evolution)` turns a `UnilateralEvolution` into the statements, for the
+later binding's backend, that bring a database from the earlier model to the later one.
+It accepts only a `UnilateralEvolution`, so your type checker refuses a call that might
+hand it a Coordinated one. `evolve(ABSENT, ...)` is always unilateral and typed that
+way, which is why [Getting started](01-getting-started.md#create-the-tables) passes it
+straight in.
 Between two models the type is only known at run time, so a release check refuses a
 coordinated change first:
 
@@ -178,7 +199,9 @@ class CoordinationRequiredError(Exception):
     """A release whose change a live database can't take without coordinated work."""
 
 
-def migration_for(deployed: str, release: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
+def migration_for(
+    deployed: Deployed, release: DomainModel, binding: PostgresBinding
+) -> tuple[str, ...]:
     """The statements that bring the database from the deployed model to ``release``."""
     evolution = changes_since(deployed, release, binding)
     if isinstance(evolution, CoordinatedEvolution):
@@ -187,10 +210,11 @@ def migration_for(deployed: str, release: DomainModel, binding: PostgresBinding)
 ```
 <!-- /example -->
 
-For gift cards the migration is one statement,
-`alter table payment add column card_number varchar(19)`, because the family's subtypes
-share one table. Provisioning a new database is the same call with `ABSENT` as the
-earlier model, as [Create the tables](01-getting-started.md#create-the-tables) shows.
+Under a binding whose default schema is `px`, the gift cards' migration is one
+statement, `alter table px.payment add column card_number varchar(19)`, because the
+family's subtypes share one table. Provisioning a new database is the same call with
+`ABSENT` as the earlier model, as
+[Create the tables](01-getting-started.md#create-the-tables) shows.
 
 Parallax never runs these statements. You run them with whatever already runs your
 migrations, for three reasons: generating them stays a pure computation, schema changes
@@ -227,14 +251,14 @@ then every running process publishes the new edition:
 <!-- example: roll-out-a-release -->
 ```python
 def migrate(
-    deployed: str,
+    deployed: Deployed,
     release: DomainModel,
     binding: PostgresBinding,
     run_migration: Callable[[tuple[str, ...]], None],
-) -> str:
-    """Once per database: migrate it to ``release``, and return the descriptor to keep."""
+) -> Deployed:
+    """Once per database: migrate it to ``release``, and return what to keep as deployed."""
     run_migration(migration_for(deployed, release, binding))
-    return export_yaml(release)
+    return Deployed(export_yaml(release), binding.to_yaml())
 
 
 def adopt(
@@ -246,9 +270,9 @@ def adopt(
 ```
 <!-- /example -->
 
-`run_migration` is your migration tool. `migrate` returns the release's descriptor only
-once the migration has run, so the model you keep as deployed is always the one the
-database has.
+`run_migration` is your migration tool. `migrate` returns what to keep as deployed, the
+release's descriptor and binding, only once the migration has run, so the model and
+binding you keep are always the ones the database has.
 
 `adopt` prepares the release before it publishes anything, so a release that can't be
 prepared raises with the earlier edition still serving. `publish` replaces the held
@@ -306,6 +330,90 @@ A read of `CardPayment` alone never reaches a gift-card row, because it selects 
 tagged `card`. Once the process adopts release 2, the same read through `Payment` returns
 the gift card as a `GiftCardPayment`.
 
+## Changing a binding
+
+A selection is prepared from a model and its binding together, so a binding change rolls
+out like a model change: `migrate` creates what the new binding places and `adopt`
+publishes it, with no restart and no new root, provided nothing the database already
+holds moves. These binding changes roll out that way:
+
+- a new entity placed by an existing default or namespace entry;
+- a new namespace's entry, shipped in the release that adds that namespace's first
+  entities;
+- a new entry for a new entity or sequence;
+- removing an entity together with its entry, or a namespace's last entity together with
+  that namespace's entry, since a binding naming something the model doesn't declare is
+  refused;
+- a new default, once every existing table and sequence the old default placed has an
+  entry keeping it where it is.
+
+Before the migration runs, your deployment creates each schema the new binding names
+that doesn't exist yet, and grants your application's role access to it: Parallax
+creates no schema and grants nothing. Preparing and publishing check that the binding
+places the model, never that a schema or table exists or that your role may use it, so a
+release published before its migration is served anyway, and its first statement that
+reaches a missing table fails with a `DatabaseError`.
+
+A binding change that puts an existing table in another schema or under another name, or
+an existing sequence anywhere else, is a relocation. `evolve` reports each one as a
+`TableRelocated` or `SequenceRelocated` operation, whose `earlier` and `later` give both
+places, coordinated with `DATABASE_MIGRATION_REQUIRED`, so `migration_for` refuses it. A
+release check can report what it moves:
+
+<!-- example: report-what-a-release-moves -->
+```python
+def moves_in(evolution: Evolution) -> list[str]:
+    """Each table and sequence a release moves, from where to where."""
+    moves: list[str] = []
+    for operation in evolution.operations:
+        if isinstance(operation, TableRelocated):
+            moved = operation.mapping_owner.canonical
+        elif isinstance(operation, SequenceRelocated):
+            moved = f"sequence {operation.allocator}"
+        else:
+            continue
+        earlier, later = (
+            ".".join((*placed.qualifier, placed.name))
+            for placed in (operation.earlier, operation.later)
+        )
+        moves.append(f"{moved}: {earlier} -> {later}")
+    return moves
+```
+<!-- /example -->
+
+`publish` refuses a candidate that relocates anything the selection it replaces holds, with
+a `UsageError` whose `code` is `PUBLICATION_RELOCATION_REFUSED` and whose message names
+each move, and the held selection keeps serving. It refuses one prepared for another
+backend in the same way. Changing an entity's `table=` relocates its table too, unless its
+binding entry gives the old physical name: then the change is the model's alone, publishes
+like any other, and needs no statement.
+
+Parallax generates nothing that moves or renames a table or copies data. Relocating is a
+coordinated migration that you run behind a replacement root:
+
+1. Stop everything serving the old placement, because no process can publish the move.
+2. Move the objects, for example with `alter table px.orders set schema sales`, and grant
+   your application's role access where they now are.
+3. Serve the new binding from new roots, each with a `ServingModel` prepared under it, as
+   `connect_serving` does, and keep the new binding as deployed.
+
+A move between schemas that keeps each table's name keeps every name Parallax derives
+from the table: those of a temporal table's key, checks and exclusion, and of the indexes
+your model declares, which come from the table's own name and never its schema, and which
+`set schema` moves with it. A new physical table name changes those derived names. Before
+the replacement roots serve, rename each constraint and index the table carries to the name
+the new binding derives, which the statements that provision the release from `ABSENT`
+under that binding show, and update the records you keep from `created_indices`.
+Otherwise a uniqueness violation names an index your records don't know, and Parallax
+doesn't recognize a temporal table's overlap as its own conflict, so it stops retrying it.
+Renaming the table alone doesn't do this, and neither does an updatable view under the old
+name: such a bridge view is a technique your deployment may use while old processes
+drain, not something Parallax generates or relies on.
+
+Across a fleet, each process publishes a binding change for itself, as it does an edition,
+so every object the new binding places must exist before the first process publishes it.
+Until a process publishes, its executions keep the placement its selection carries.
+
 ## How it works →
 
 - [Model evolution](../../../../docs/concepts/model-evolution.md) explains, in domain
@@ -314,6 +422,10 @@ the gift card as a `GiftCardPayment`.
   Operations, classification, Behavioral Impacts and Overlap-Visible Operations, and
   [schema delta](../../../../core/spec/m-schema-delta.md) defines the generated
   statements and what an application applying them must do.
+- [Database binding](../../../../core/spec/m-database-binding.md#relocation-between-two-resolved-bindings)
+  defines relocation, which publication refuses and evolution coordinates, and
+  [ADR 0093](../../../../docs/adr/0093-a-database-binding-places-each-prepared-selection-and-publication-never-relocates.md)
+  records why a binding changes through publication but never moves what survives.
 - [Execution](../../../../core/spec/m-execution.md#model-editions) defines Model
   Editions, the Serving Model and adoption, and the
   [Python execution binding](../../spec/execution.md#models-roots-and-scopes) records

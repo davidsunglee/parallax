@@ -11,6 +11,7 @@ Python-specific spelling and public semantics live in the
 | Value Object | A frozen structured value used in an entity | [Declarations](spec/declarations.md) |
 | Domain Model | An explicit set of accepted model declarations | [Declarations](spec/declarations.md) |
 | Descriptor Frontend | The optional descriptor interchange boundary | [Declarations](spec/declarations.md) |
+| Database Binding | The core [Database Binding](../../GLOSSARY.md), authored as `PostgresBinding` from typed values, JSON, or YAML, and required by `prepare_model`, `connect` with a Domain Model, and `evolve` | [Execution](spec/execution.md#models-roots-and-scopes) |
 | Object Query | The typed query built from entity expressions | [Queries and results](spec/queries-and-results.md) |
 | Snapshot | The typed result envelope over published entity values | [Queries and results](spec/queries-and-results.md) |
 | Wire | Canonical serialized input or output at an explicit boundary | [Queries and results](spec/queries-and-results.md) |
