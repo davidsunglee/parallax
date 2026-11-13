@@ -267,7 +267,7 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
     """
     groups = project_table_groups(candidate)
     document_groups = _document_groups(candidate, groups, project_join_endpoints(candidate))
-    documents_by_table = {document.group.table: document for document in document_groups}
+    documents_by_owner = {document.group.mapping_owner: document for document in document_groups}
     first_owners: dict[Table, InheritanceTableGroup] = {}
     multiply_owned: set[Table] = set()
     issues: list[MetamodelIssue] = []
@@ -291,7 +291,7 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
     for group in groups:
         if group.table in multiply_owned:
             continue
-        column_issues = _column_issues(group, documents_by_table.get(group.table))
+        column_issues = _column_issues(group, documents_by_owner.get(group.mapping_owner))
         issues.extend(column_issues)
     issues.extend(_override_issues(document_groups))
     issues.extend(_index_issues(candidate, document_groups))
