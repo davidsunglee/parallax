@@ -119,6 +119,8 @@ from parallax.conformance.guide_recipes import (
     run_a_summer_sale,
     shipments_to,
     table_statements,
+    the_shops_binding,
+    the_shops_binding_as_configured,
     total_of_every_order,
     tracked_deliveries_for,
     what_each_orders_customer_spent,
@@ -172,7 +174,7 @@ from parallax.core.internal.unit_work import (
     WRITE_INSTRUCTION_INVALID,
     WritePreconditionError,
 )
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, PostgresBinding
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -249,6 +251,27 @@ def test_the_generated_statements_create_tables_the_first_program_runs_against(
 
     assert type(customer) is Customer
     assert (customer.id, customer.name, customer.email) == (1, "Ada Lovelace", "ada@example.com")
+
+
+def test_the_shops_binding_reads_alike_from_yaml_and_keeps_customers_in_their_own_schema(
+    profile_run: Any,
+) -> None:
+    binding = the_shops_binding()
+    assert the_shops_binding_as_configured() == binding
+    assert PostgresBinding.from_yaml(binding.to_yaml()) == binding
+    assert table_statements(DomainModel(Customer, Order), binding)[0].startswith(
+        "create table crm.customer_master ("
+    )
+    profile_run.reset(model_of(DomainModel(Customer, Order)), {}, binding)
+
+    adapter = configure_the_database(profile_run.connection_info, profile_run.credentials.secret)
+    add_and_find_a_customer(adapter, binding)
+
+    with contextlib.closing(profile_run.control()) as control:
+        assert control.execute("select id, name from crm.customer_master", ()) == [
+            (1, "Ada Lovelace")
+        ]
+        assert control.execute("select count(*) from shop.orders", ()) == [(0,)]
 
 
 def test_a_relationship_filter_returns_matching_customers_with_every_order(
@@ -2302,6 +2325,8 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             run_a_summer_sale,
             shipments_to,
             table_statements,
+            the_shops_binding,
+            the_shops_binding_as_configured,
             total_of_every_order,
             tracked_deliveries_for,
             what_each_orders_customer_spent,

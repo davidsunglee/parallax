@@ -1,0 +1,77 @@
+# A default change that pins NOTHING (m-model-evolution, m-database-binding,
+# m-pk-gen): one model, and a later binding whose default moves from `px` to
+# `px_next`. Every owner and allocator the default alone placed moves with it,
+# so Invoice's table and the `invoiceNumbers` sequence each relocate, tables
+# before sequences, with structured earlier and later locations. Owners placed
+# by a namespace default or their own entry stay where they were.
+tags: [m-model-evolution, m-database-binding, m-pk-gen, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/binding-release-v1.yaml
+    later: models/binding-release-v1.yaml
+    earlierBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        namespaces:
+          archive: { schema: px_archive }
+          audit: { schema: px_audit }
+        entities:
+          parallax.compatibility.Refund: { schema: px_refunds }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        namespaces:
+          archive: { database: px_archive }
+          audit: { database: px_audit }
+        entities:
+          parallax.compatibility.Refund: { database: px_refunds }
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px_next }
+        namespaces:
+          archive: { schema: px_archive }
+          audit: { schema: px_audit }
+        entities:
+          parallax.compatibility.Refund: { schema: px_refunds }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px_next }
+        namespaces:
+          archive: { database: px_archive }
+          audit: { database: px_audit }
+        entities:
+          parallax.compatibility.Refund: { database: px_refunds }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: TableRelocated
+        entity: parallax.compatibility.Invoice
+        earlier: { qualifier: [px], name: invoice }
+        later: { qualifier: [px_next], name: invoice }
+      - kind: SequenceRelocated
+        sequence: invoiceNumbers
+        earlier: { qualifier: [px], name: invoiceNumbers }
+        later: { qualifier: [px_next], name: invoiceNumbers }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: TableRelocated
+          entity: parallax.compatibility.Invoice
+          earlier: { qualifier: [px], name: invoice }
+          later: { qualifier: [px_next], name: invoice }
+        reasons: [DatabaseMigrationRequired]
+      - operation:
+          kind: SequenceRelocated
+          sequence: invoiceNumbers
+          earlier: { qualifier: [px], name: invoiceNumbers }
+          later: { qualifier: [px_next], name: invoiceNumbers }
+        reasons: [DatabaseMigrationRequired]

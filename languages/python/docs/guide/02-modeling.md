@@ -9,8 +9,9 @@ every problem found, before anything touches the database. [Errors](08-errors.md
 describes those issues.
 
 This chapter starts with a plain entity and adds one idea per section: relationships,
-value objects, inheritance, history, optimistic locking and storage layout. Every
-example belongs to one small shop domain. The chapter uses these imports:
+value objects, inheritance, history, optimistic locking and storage layout, and ends with
+where a deployment keeps the tables. Every example belongs to one small shop domain. The
+chapter uses these imports:
 
 <!-- example: modeling-imports -->
 ```python
@@ -44,6 +45,7 @@ from parallax.core import (
     index,
     rel,
 )
+from parallax.postgres import PostgresBinding, PostgresLocation, PostgresTable
 from parallax.snapshot import ScopedDatabase, TxnContext
 ```
 <!-- /example -->
@@ -109,20 +111,9 @@ to choose another.
 
 `table=` names the table's default physical name and nothing more: the class header has
 no schema option, because where a table lives is a fact of each deployment, not of the
-model. `namespace=`, which [Reading](03-reading.md#the-wire-api) shows, qualifies an
-entity's canonical name and places nothing by itself.
-
-### Database bindings
-
-A `parallax.postgres.PostgresBinding` places one model's tables and sequences in schemas
-of the database the adapter connects to. It has a `default` location, a location per
-exact entity namespace (`namespaces`), and per-entity and per-sequence overrides
-(`entities`, `sequences`) that may also rename the physical table or sequence; anything an
-entry leaves out comes from the namespace, then the default. Every statement Parallax
-generates or runs names its tables schema-qualified as the binding places them, so no
-`search_path` placement applies. `prepare_model`, `connect` with a `DomainModel`, and
-`evolve` each require a binding; a `ServingModel`'s selections already carry theirs. The
-same binding round-trips through `to_json`/`from_json` and `to_yaml`/`from_yaml`.
+model. A [Database Binding](#database-bindings) places it. `namespace=`, which
+[Reading](03-reading.md#the-wire-api) shows, qualifies an entity's canonical name and
+places nothing by itself.
 
 The strings in `index(...)`, `join=`, `reverse_of=` and `order_by=` name Python
 attributes, never columns or canonical names.
@@ -497,6 +488,89 @@ The Document layout can suit an entity with many optional or nested attributes t
 rarely filter on. Moving an existing entity from one layout to the other is a schema and
 data migration that you run yourself.
 
+## Database bindings
+
+The model says what each table is called by default; a Database Binding says where one
+deployment keeps it. The same `DomainModel` can therefore serve a tenant per schema, or
+an existing database whose tables have other names, without changing a class. A
+`parallax.postgres.PostgresBinding` places a model's tables and sequences in schemas of
+the database the adapter's connection string selects:
+
+<!-- example: place-the-model-with-a-binding -->
+```python
+def the_shops_binding() -> PostgresBinding:
+    """Where production keeps the shop's tables: every table in schema ``shop``,
+    except customers, which an older system keeps as ``crm.customer_master``."""
+    return PostgresBinding(
+        default=PostgresLocation(schema="shop"),
+        entities={"Customer": PostgresTable(schema="crm", name="customer_master")},
+    )
+
+
+def the_shops_binding_as_configured() -> PostgresBinding:
+    """The same binding, read from the deployment's configuration."""
+    return PostgresBinding.from_yaml(
+        """\
+format_version: 1
+backend: postgres
+default: {schema: shop}
+entities:
+  Customer: {schema: crm, table: customer_master}
+"""
+    )
+```
+<!-- /example -->
+
+A binding has four parts, each keyed by what the model declares:
+
+- `default`, the schema for every table and sequence nothing more specific places;
+- `namespaces`, a schema per entity namespace, matched exactly: `audit` never covers
+  `audit.billing`;
+- `entities`, an override per entity that owns a table, keyed by its canonical name
+  (`Customer`, or `audit.Entry` for a namespaced one), which may give a schema, a
+  physical table name, or both;
+- `sequences`, an override per `Sequence(...)` key-generation name, which entities
+  declaring the same name share. This version of Parallax creates no database sequence
+  and allocates no key from one; a binding fixes only where each sequence belongs.
+
+A table's schema comes from its entity's own entry, then its namespace's, then the
+default, and its name from its entry, or else its `table=`. A table-per-hierarchy family
+has one table, placed by its root; each concrete subtype stored in a table of its own is
+placed on its own. A sequence's schema comes from its own entry or the default, never
+from a table that draws keys from it, and its name from its entry, or else the
+key-generation name. Every statement Parallax generates or runs names
+each table schema-qualified as the binding places it, and quotes each part on its own,
+so neither a `search_path` nor the connection's current schema places anything.
+
+`PostgresBinding` refuses a malformed binding with a `BindingError` listing every
+problem, at the path the YAML or JSON document would spell it. `prepare_model`, `connect`
+with a `DomainModel`, and `evolve` each require a binding, and resolve it against the
+model before anything opens: a key naming nothing the model declares, a table nothing
+places, or two tables or sequences placed on one object raise `BindingError` there. Two
+entities may declare the same `table=` when the binding places them in different
+schemas. Resolving a binding checks no database: Parallax creates no schema and grants
+nothing, so your deployment creates every schema a binding names and grants your
+application's role access to it before the tables are created there.
+
+`to_yaml` and `to_json` write a binding as a versioned document that `from_yaml` and
+`from_json` read back equal. A MariaDB binding document has the same sections with
+`database` in place of `schema`; Parallax's reference harness runs the corpus's MariaDB
+bindings, such as
+[this one](../../../../core/compatibility/bindings/accepted/mariadb-every-section.yaml),
+against a real MariaDB server as proof that the format carries across backends. Parallax
+for Python has no MariaDB adapter, and `PostgresBinding` refuses a `backend: mariadb`
+document.
+
+An application written before bindings existed calls `connect(adapter, model)` or
+`prepare_model(model, edition=...)`, which now raise `UsageError` with the code
+`binding-required`. Its tables were found through the connection's `search_path`,
+usually in `public`. To keep serving them where they are, pass a binding naming that
+schema, such as `PostgresBinding(default=PostgresLocation(schema="public"))`, to each of
+those calls and to `evolve`, as `earlier_binding` and `later_binding`. A
+`ServingModel`'s selections already carry their binding, so `connect` with one takes
+none. [Model evolution](07-model-evolution.md#changing-a-binding) covers changing a
+binding once you deploy it.
+
 ## How it works →
 
 - The [Python declarations binding](../../spec/declarations.md) records how classes,
@@ -504,6 +578,10 @@ data migration that you run yourself.
 - [Metamodel](../../../../core/spec/m-metamodel.md) and
   [model formation](../../../../core/spec/m-model-formation.md) define what a model
   declares and how it is checked.
+- [Database binding](../../../../core/spec/m-database-binding.md) defines how a binding
+  places a model and what it refuses, and
+  [ADR 0093](../../../../docs/adr/0093-a-database-binding-places-each-prepared-selection-and-publication-never-relocates.md)
+  records why placement is neither model, adapter, nor root configuration.
 - [Relationships](../../../../core/spec/m-relationship.md),
   [value objects](../../../../core/spec/m-value-object.md) and
   [inheritance](../../../../core/spec/m-inheritance.md) define each building block.

@@ -37,7 +37,14 @@ from parallax.core import (
     attr,
 )
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresEndpoint, PostgresRole
+from parallax.postgres import (
+    PostgresAdapter,
+    PostgresBinding,
+    PostgresEndpoint,
+    PostgresLocation,
+    PostgresRole,
+    PostgresTable,
+)
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -137,6 +144,8 @@ __all__ = [
     "run_a_summer_sale",
     "shipments_to",
     "table_statements",
+    "the_shops_binding",
+    "the_shops_binding_as_configured",
     "total_of_every_order",
     "tracked_deliveries_for",
     "what_each_orders_customer_spent",
@@ -152,6 +161,28 @@ def table_statements(model: DomainModel, binding: PostgresBinding) -> tuple[str,
     binding's schemas and run these with your migration tool.
     """
     return schema_delta(evolve(ABSENT, model, later_binding=binding)).statements
+
+
+def the_shops_binding() -> PostgresBinding:
+    """Where production keeps the shop's tables: every table in schema ``shop``,
+    except customers, which an older system keeps as ``crm.customer_master``."""
+    return PostgresBinding(
+        default=PostgresLocation(schema="shop"),
+        entities={"Customer": PostgresTable(schema="crm", name="customer_master")},
+    )
+
+
+def the_shops_binding_as_configured() -> PostgresBinding:
+    """The same binding, read from the deployment's configuration."""
+    return PostgresBinding.from_yaml(
+        """\
+format_version: 1
+backend: postgres
+default: {schema: shop}
+entities:
+  Customer: {schema: crm, table: customer_master}
+"""
+    )
 
 
 def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:

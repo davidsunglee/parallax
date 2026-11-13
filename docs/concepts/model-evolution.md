@@ -209,6 +209,26 @@ edition can make. Within that agreement they may still differ:
 A Coordinated Evolution has no overlap-visible operations because it never goes through
 this path.
 
+## Placement changes are relocations
+
+Each side of an Evolution is a model under its
+[Database Binding](../../core/spec/m-database-binding.md), so the description also
+compares where the two sides keep each table and sequence. One that both sides hold but
+place differently is a **relocation**: a coordinated operation naming both places
+([Relocation](../../core/spec/m-database-binding.md#relocation-between-two-resolved-bindings)).
+Publication refuses a candidate with the same relocations, so "does this need a
+migration?" and "can a running process publish this?" always agree. A binding change
+that only places new tables, drops the entries of removed ones, or pins what an old
+default placed moves nothing, and rolls out like any unilateral change. A declared table
+rename the binding masks, by keeping the physical name, is a change to the model alone.
+
+A Schema Delta never creates a location, moves or renames a table, or copies data.
+Creating schemas and granting access belong to the deployment. A relocation is a
+coordinated migration that the application runs behind a replacement root, reconciling
+derived constraint and index names when a physical table name changes. Why placement
+changes through publication but never moves what survives is recorded in
+[ADR 0093](../adr/0093-a-database-binding-places-each-prepared-selection-and-publication-never-relocates.md).
+
 ## Common use cases
 
 - **Adding a feature.** A new Entity, a nullable Attribute, a new subtype or an index:
@@ -231,3 +251,4 @@ this path.
 - [Describing a change](../../languages/python/docs/guide/07-model-evolution.md#describing-a-change)
 - [Generating the schema change](../../languages/python/docs/guide/07-model-evolution.md#generating-the-schema-change)
 - [Rolling out a new model](../../languages/python/docs/guide/07-model-evolution.md#rolling-out-a-new-model)
+- [Changing a binding](../../languages/python/docs/guide/07-model-evolution.md#changing-a-binding)

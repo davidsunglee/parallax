@@ -8,11 +8,17 @@ contract owners; this index does not add requirements.
 | Descriptor | Serialized model input, distinct from the runtime model view | [Descriptor](core/spec/m-descriptor.md) |
 | Metamodel Interface | Language-neutral view of accepted model declarations | [Metamodel](core/spec/m-metamodel.md) |
 | Entity Identity | Namespace/name identity of a declaration, not a row's primary key | [Metamodel](core/spec/m-metamodel.md) |
+| Entity Namespace | The dotted lowercase qualifier of an Entity Identity; a Database Binding may select a location by it, but it places nothing | [Metamodel](core/spec/m-metamodel.md) |
 | Attribute / Relationship Identity | A member's declaration identity | [Metamodel](core/spec/m-metamodel.md) |
 | Neutral Type / Neutral Value | Portable logical types and their managed values | [Core](core/spec/m-core.md) |
 | Model Formation | Validation and composition of model declarations | [Formation](core/spec/m-model-formation.md) |
 | Inheritance Family | One closed tree of entity declarations | [Inheritance](core/spec/m-inheritance.md) |
 | Storage Layout | Mapping from logical members to physical storage | [Storage](core/spec/m-storage-layout.md) |
+| Mapping Owner | The one Entity whose declaration owns a table: a standalone Entity, a table-per-hierarchy root, or a table-per-concrete-subtype concrete subtype | [Storage](core/spec/m-storage-layout.md) |
+| Logical Allocator | A model-wide key-generation identity that equal keys share deliberately, placed apart from the tables drawing keys from it | [Key generation](core/spec/m-pk-gen.md#logical-allocators) |
+| Database Binding | One deployment's placement of a model's tables and sequences, distinct from Entity identity, the model's declared names, and adapter connectivity | [Database binding](core/spec/m-database-binding.md) |
+| Resolved Binding / Physical Table / Physical Sequence | A Database Binding resolved against one model, and the qualifier and raw local name it gives each Mapping Owner's table and each Logical Allocator's sequence | [Database binding](core/spec/m-database-binding.md#resolving-a-binding-against-a-model) |
+| Relocation | A table or sequence two resolved bindings both hold but place differently: refused by publication, coordinated by evolution | [Database binding](core/spec/m-database-binding.md#relocation-between-two-resolved-bindings) |
 | Value Object | A structured value embedded in an entity | [Value objects](core/spec/m-value-object.md) |
 | Predicate | The portable selection algebra | [Predicates](core/spec/m-predicate.md) |
 | Object Query | An authored read, including its result and traversal choices | [Queries](core/spec/m-object-query.md) |
@@ -55,7 +61,7 @@ contract owners; this index does not add requirements.
 | Execution Activity | An observable unit of execution work | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
 | Single statement / Returning insert / Ordered invocation / Grouped insert | The call shapes execution presents a sequence of Planned Steps in: one statement alone, an insert answering the keys the database allocated, contiguous count-only effects in one ordered transport invocation, and contiguous single-entry inserts in one multi-row statement | [Execution](core/spec/m-execution.md) |
 | Flush | The activity spanning one flush of a unit-of-work buffer, and of a predicate-selected write executing after it, from planning through every Database Call and affected-row enforcement | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
-| Model Edition / Serving Model | Model evolution identity and the published model holder | [Execution](core/spec/m-execution.md) |
+| Model Edition / Serving Model | Model evolution identity, which implies no placement or physical identity, and the published model holder | [Execution](core/spec/m-execution.md) |
 | Conformance Slice | An exact corpus claim, not a package or implementation layer | [Slices](core/spec/slices.md) |
 | Behavioral Module / Enforcement Scope / Artifact | Portable behavior, checked source boundary, and shipped package | [Modules](core/spec/modules.md) |
 

@@ -165,6 +165,116 @@
       "valueObject": {}
     }
   },
+  "models/binding-release-v1.yaml": {
+    "archive.Statement": {
+      "attribute": {
+        "id": "id",
+        "period": "period"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "audit.Entry": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Invoice": {
+      "attribute": {
+        "id": "id",
+        "total": "total"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Refund": {
+      "attribute": {
+        "id": "id",
+        "invoiceId": "invoice_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/binding-release-v2.yaml": {
+    "archive.Statement": {
+      "attribute": {
+        "id": "id",
+        "period": "period"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "audit.Entry": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "audit.Note": {
+      "attribute": {
+        "body": "body",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "billing.Charge": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Credit": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Invoice": {
+      "attribute": {
+        "id": "id",
+        "total": "total"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Refund": {
+      "attribute": {
+        "id": "id",
+        "invoiceId": "invoice_id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/binding-release-v3.yaml": {
+    "audit.Entry": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Invoice": {
+      "attribute": {
+        "id": "id",
+        "total": "total"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/binding-temporal-ledgers.yaml": {
     "parallax.compatibility.AuditHandle": {
       "attribute": {

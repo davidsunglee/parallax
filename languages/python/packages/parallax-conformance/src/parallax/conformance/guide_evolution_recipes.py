@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from parallax.conformance.guide_models import Payment
 from parallax.core import (
@@ -14,11 +15,13 @@ from parallax.core import (
 )
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import CoordinatedEvolution, Evolution, evolve, schema_delta
+from parallax.evolution.operations import SequenceRelocated, TableRelocated
 from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, connect
 
 __all__ = [
     "CoordinationRequiredError",
+    "Deployed",
     "GiftCardPayment",
     "adopt",
     "changes_since",
@@ -26,6 +29,7 @@ __all__ = [
     "edition_of_a_transaction",
     "migrate",
     "migration_for",
+    "moves_in",
     "payments_this_edition_can_read",
 ]
 
@@ -48,11 +52,23 @@ class GiftCardPayment(Payment, inheritance=ConcreteSubtype(tag_value="gift-card"
     card_number: Attr[str] = attr(max_length=19)
 
 
-def changes_since(deployed: str, release: DomainModel, binding: PostgresBinding) -> Evolution:
-    """What changes between the model deployed last, kept as a descriptor, and
-    ``release``, both placed by ``binding``."""
+@dataclass(frozen=True)
+class Deployed:
+    """What a database was last migrated to, kept beside it as text: the model's
+    descriptor and its binding's YAML."""
+
+    model: str
+    binding: str
+
+
+def changes_since(deployed: Deployed, release: DomainModel, binding: PostgresBinding) -> Evolution:
+    """What changes between the model and binding deployed last and ``release``,
+    placed by ``binding``."""
     return evolve(
-        domain_model_from_yaml(deployed), release, earlier_binding=binding, later_binding=binding
+        domain_model_from_yaml(deployed.model),
+        release,
+        earlier_binding=PostgresBinding.from_yaml(deployed.binding),
+        later_binding=binding,
     )
 
 
@@ -60,7 +76,9 @@ class CoordinationRequiredError(Exception):
     """A release whose change a live database can't take without coordinated work."""
 
 
-def migration_for(deployed: str, release: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
+def migration_for(
+    deployed: Deployed, release: DomainModel, binding: PostgresBinding
+) -> tuple[str, ...]:
     """The statements that bring the database from the deployed model to ``release``."""
     evolution = changes_since(deployed, release, binding)
     if isinstance(evolution, CoordinatedEvolution):
@@ -69,14 +87,14 @@ def migration_for(deployed: str, release: DomainModel, binding: PostgresBinding)
 
 
 def migrate(
-    deployed: str,
+    deployed: Deployed,
     release: DomainModel,
     binding: PostgresBinding,
     run_migration: Callable[[tuple[str, ...]], None],
-) -> str:
-    """Once per database: migrate it to ``release``, and return the descriptor to keep."""
+) -> Deployed:
+    """Once per database: migrate it to ``release``, and return what to keep as deployed."""
     run_migration(migration_for(deployed, release, binding))
-    return export_yaml(release)
+    return Deployed(export_yaml(release), binding.to_yaml())
 
 
 def adopt(
@@ -85,6 +103,24 @@ def adopt(
     """In every running process, once the migration has run: serve ``release`` from now on."""
     current = serving.current()
     serving.publish(prepare_model(release, binding=binding, edition=edition), expected=current)
+
+
+def moves_in(evolution: Evolution) -> list[str]:
+    """Each table and sequence a release moves, from where to where."""
+    moves: list[str] = []
+    for operation in evolution.operations:
+        if isinstance(operation, TableRelocated):
+            moved = operation.mapping_owner.canonical
+        elif isinstance(operation, SequenceRelocated):
+            moved = f"sequence {operation.allocator}"
+        else:
+            continue
+        earlier, later = (
+            ".".join((*placed.qualifier, placed.name))
+            for placed in (operation.earlier, operation.later)
+        )
+        moves.append(f"{moved}: {earlier} -> {later}")
+    return moves
 
 
 def payments_this_edition_can_read(db: ScopedDatabase, order_id: int) -> list[Payment]:

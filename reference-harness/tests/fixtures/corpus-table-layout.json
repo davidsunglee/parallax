@@ -567,6 +567,376 @@
       "table": "ledger"
     }
   },
+  "models/binding-release-v1.yaml": {
+    "archive.Statement": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "archive.Statement"
+          ],
+          "column": "id",
+          "contributor": "attribute:archive.Statement.id",
+          "declaringOwner": "archive.Statement",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "archive.Statement"
+          ],
+          "column": "period",
+          "contributor": "attribute:archive.Statement.period",
+          "declaringOwner": "archive.Statement",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "statement"
+    },
+    "audit.Entry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "id",
+          "contributor": "attribute:audit.Entry.id",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "note",
+          "contributor": "attribute:audit.Entry.note",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "entry"
+    },
+    "parallax.compatibility.Invoice": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Invoice.id",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "total",
+          "contributor": "attribute:parallax.compatibility.Invoice.total",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "invoice"
+    },
+    "parallax.compatibility.Refund": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Refund"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Refund.id",
+          "declaringOwner": "parallax.compatibility.Refund",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Refund"
+          ],
+          "column": "invoice_id",
+          "contributor": "attribute:parallax.compatibility.Refund.invoiceId",
+          "declaringOwner": "parallax.compatibility.Refund",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "refund"
+    }
+  },
+  "models/binding-release-v2.yaml": {
+    "archive.Statement": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "archive.Statement"
+          ],
+          "column": "id",
+          "contributor": "attribute:archive.Statement.id",
+          "declaringOwner": "archive.Statement",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "archive.Statement"
+          ],
+          "column": "period",
+          "contributor": "attribute:archive.Statement.period",
+          "declaringOwner": "archive.Statement",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "statement"
+    },
+    "audit.Entry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "id",
+          "contributor": "attribute:audit.Entry.id",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "note",
+          "contributor": "attribute:audit.Entry.note",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "entry"
+    },
+    "audit.Note": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "audit.Note"
+          ],
+          "column": "id",
+          "contributor": "attribute:audit.Note.id",
+          "declaringOwner": "audit.Note",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "audit.Note"
+          ],
+          "column": "body",
+          "contributor": "attribute:audit.Note.body",
+          "declaringOwner": "audit.Note",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "note"
+    },
+    "billing.Charge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "billing.Charge"
+          ],
+          "column": "id",
+          "contributor": "attribute:billing.Charge.id",
+          "declaringOwner": "billing.Charge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "billing.Charge"
+          ],
+          "column": "amount",
+          "contributor": "attribute:billing.Charge.amount",
+          "declaringOwner": "billing.Charge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "charge"
+    },
+    "parallax.compatibility.Credit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Credit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Credit.id",
+          "declaringOwner": "parallax.compatibility.Credit",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Credit"
+          ],
+          "column": "amount",
+          "contributor": "attribute:parallax.compatibility.Credit.amount",
+          "declaringOwner": "parallax.compatibility.Credit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "credit"
+    },
+    "parallax.compatibility.Invoice": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Invoice.id",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "total",
+          "contributor": "attribute:parallax.compatibility.Invoice.total",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "invoice"
+    },
+    "parallax.compatibility.Refund": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Refund"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Refund.id",
+          "declaringOwner": "parallax.compatibility.Refund",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Refund"
+          ],
+          "column": "invoice_id",
+          "contributor": "attribute:parallax.compatibility.Refund.invoiceId",
+          "declaringOwner": "parallax.compatibility.Refund",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "refund"
+    }
+  },
+  "models/binding-release-v3.yaml": {
+    "audit.Entry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "id",
+          "contributor": "attribute:audit.Entry.id",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "audit.Entry"
+          ],
+          "column": "note",
+          "contributor": "attribute:audit.Entry.note",
+          "declaringOwner": "audit.Entry",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "entry"
+    },
+    "parallax.compatibility.Invoice": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Invoice.id",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Invoice"
+          ],
+          "column": "total",
+          "contributor": "attribute:parallax.compatibility.Invoice.total",
+          "declaringOwner": "parallax.compatibility.Invoice",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "invoice"
+    }
+  },
   "models/binding-temporal-ledgers.yaml": {
     "parallax.compatibility.AuditHandle": {
       "columns": [

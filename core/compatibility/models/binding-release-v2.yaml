@@ -1,0 +1,50 @@
+# The grown release of binding-release-v1: it keeps every v1 Entity and adds
+# one beside each kind of placement. Credit takes the binding default, Note
+# joins the existing `audit` namespace, and Charge is the first Entity of a new
+# `billing` namespace, whose binding key ships in the same release.
+entities:
+  - name: Invoice
+    namespace: parallax.compatibility
+    table: invoice
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: invoiceNumbers }
+      - { name: total, type: int64 }
+  - name: Refund
+    namespace: parallax.compatibility
+    table: refund
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: invoiceId, type: int64 }
+  - name: Entry
+    namespace: audit
+    table: entry
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: note, type: string, maxLength: 64 }
+  - name: Statement
+    namespace: archive
+    table: statement
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: period, type: string, maxLength: 16 }
+  - name: Credit
+    namespace: parallax.compatibility
+    table: credit
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: amount, type: int64 }
+  - name: Note
+    namespace: audit
+    table: note
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: body, type: string, maxLength: 64 }
+  - name: Charge
+    namespace: billing
+    table: charge
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: amount, type: int64 }
