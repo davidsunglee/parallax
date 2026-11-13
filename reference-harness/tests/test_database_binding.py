@@ -105,6 +105,13 @@ def test_the_reader_reproduces_every_sidecar(fixture: _Fixture) -> None:
         assert not _schema_valid(parse_binding_text(fixture.text, fixture.fmt))
 
 
+@pytest.mark.parametrize("scalar", ["!!bool maybe", "!!timestamp later"])
+def test_a_tagged_scalar_the_loader_cannot_convert_is_malformed_text(scalar: str) -> None:
+    with pytest.raises(BindingRejection) as raised:
+        parse_binding_text(f"default: {{ schema: {scalar} }}\n", "yaml")
+    assert raised.value.issues == (BindingIssue((), "binding-syntax-invalid"),)
+
+
 def test_the_fixtures_cover_both_readers_and_both_outcomes() -> None:
     assert {(f.outcome, f.expected["reader"]) for f in _FIXTURES} == {
         (outcome, reader) for outcome in ("accepted", "rejected") for reader in LOCATION_KEYS

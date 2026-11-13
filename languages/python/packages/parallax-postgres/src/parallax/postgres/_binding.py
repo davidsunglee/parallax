@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from parallax.core.internal.metamodel import EntityIdentity
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import yaml
 
 __all__ = ["PostgresBinding", "PostgresLocation", "PostgresSequence", "PostgresTable"]
 
@@ -174,8 +177,12 @@ class PostgresBinding:
         """This binding as canonical, byte-deterministic YAML text."""
         import yaml
 
-        return yaml.safe_dump(
-            self.to_document(), sort_keys=False, allow_unicode=True, default_flow_style=False
+        return yaml.dump(
+            self.to_document(),
+            Dumper=_yaml_dumper(),
+            sort_keys=False,
+            allow_unicode=True,
+            default_flow_style=False,
         )
 
     def __hash__(self) -> int:
@@ -195,6 +202,23 @@ class PostgresBinding:
         )
 
 
+@functools.cache
+def _yaml_dumper() -> type[yaml.SafeDumper]:
+    import yaml
+
+    class _BindingDumper(yaml.SafeDumper):
+        pass
+
+    def represent_text(_dumper: yaml.SafeDumper, text: str) -> yaml.ScalarNode:
+        # PyYAML folds a NEL into a space in every scalar style except double-quoted,
+        # where it escapes it.
+        style = '"' if "\x85" in text else None
+        return yaml.ScalarNode("tag:yaml.org,2002:str", text, style=style)
+
+    _BindingDumper.add_representer(str, represent_text)
+    return _BindingDumper
+
+
 def _decoded(
     text: str | bytes,
     decode: Callable[[str], object],
@@ -204,7 +228,9 @@ def _decoded(
     try:
         source = text if isinstance(text, str) else text.decode("utf-8")
         document = decode(source)
-    except (UnicodeDecodeError, error) as exc:
+    # PyYAML's scalar constructors raise these, not a YAMLError, for a scalar its
+    # tag cannot convert, such as `!!int invalid` or the date `2026-02-30`.
+    except (ValueError, LookupError, AttributeError, error) as exc:
         raise BindingError(
             BINDING_DEFINITION_REJECTED,
             (BindingIssue(BINDING_SYNTAX_INVALID, (), message=f"not well-formed {format_name}"),),
