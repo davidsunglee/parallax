@@ -43,6 +43,7 @@ from parallax.core.internal.unit_work import UnitOfWork
 from parallax.snapshot import connect
 from parallax.snapshot._inspection import snapshot_state_of
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import FIXED, PERSON
@@ -99,7 +100,7 @@ def _after_reinsertion(count: int, body: Callable[[Any], None], *reads: Read) ->
         tx.find(mm.Person.where(mm.Person.id == -1)).results()
         body(tx)
 
-    with connect(port, PERSON, clock=FixedClock(FIXED)) as root:
+    with connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:
         root.using_database_login().transact(run)
 
 
@@ -217,7 +218,7 @@ def test_a_streamed_reads_unresolved_sources_hold_nothing_of_the_unit_of_work() 
             assert isinstance(unit.source_authority, SourceAuthority)
             del first, objects, unresolved, unit
 
-    with connect(port, PERSON, clock=FixedClock(FIXED)) as root:
+    with connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:
         root.using_database_login().transact(run)
     assert seen == [(1, True, False)]
 
@@ -261,7 +262,7 @@ def _positions_read(count: int, body: Callable[[Any, list[Any]], None], *script:
     def run(tx: Any) -> None:
         body(tx, tx.find(_CURRENT).results())
 
-    with connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)) as root:
+    with connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:
         root.using_database_login().transact(run)
 
 
@@ -312,7 +313,7 @@ def _temporal_read_holds_nothing_for_continuation(delivery: str) -> None:
         _amended(tx, published[:_WRITTEN])
         held.append(_held_for_continuation())
 
-    with connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)) as root:
+    with connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:
         root.using_database_login().transact(run)
     # Each written object's changed state has one origin, and the rows its
     # write produced are held for it alone.

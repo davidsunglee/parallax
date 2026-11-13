@@ -654,7 +654,7 @@ class _RefusingDb:
 
     dialect = "postgres"
 
-    def reset(self) -> None:
+    def reset(self, qualifiers: object) -> None:
         raise AssertionError("a read refused pre-SQL must never provision a database")
 
     def query(self, sql: str, binds: list[Any] | None = None) -> list[dict[str, Any]]:

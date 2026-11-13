@@ -49,6 +49,7 @@ from parallax.snapshot._inspection import (
     snapshot_state_of,
 )
 from tests._support import snapshot_models as sm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -364,7 +365,9 @@ def test_a_value_a_typed_insert_took_stands_at_no_read_pin() -> None:
             pin_of(balance)
         refusals.append(refusal.value)
 
-    root = own_root(Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE))
+    root = own_root(
+        Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, binding=TEST_BINDING)
+    )
     root.using_database_login().transact(fn)
     (refusal,) = refusals
     assert refusal.code == "snapshot-node-required"
@@ -472,7 +475,9 @@ def _streamed_root(database: Any, query: Any) -> Any:
 def test_a_deep_narrowed_path_is_inspected_as_it_was_included(read: Any) -> None:
     path = _NARROWED_TO_ANIMAL.toys.maker
     with ScriptedAdapter(*deep.family_reads()) as port:
-        database = own_root(Database.connect(port, deep.FAMILY)).using_database_login()
+        database = own_root(
+            Database.connect(port, deep.FAMILY, binding=TEST_BINDING)
+        ).using_database_login()
         root = read(database, _keeper_query().include(path))
 
     assert [maker.id for maker in cast("tuple[Any, ...]", view(root, path))] == [100]
@@ -486,7 +491,7 @@ def test_a_deep_narrowed_path_is_inspected_as_it_was_included(read: Any) -> None
 
 
 def test_only_a_node_with_a_narrowed_view_holds_the_edition_s_keys() -> None:
-    selection = prepare_model(deep.FAMILY, edition="narrowed")
+    selection = prepare_model(deep.FAMILY, edition="narrowed", binding=TEST_BINDING)
     with ScriptedAdapter(*deep.family_reads()) as port:
         database = own_root(Database.connect(port, ServingModel(selection)))
         root = _found_root(
@@ -516,8 +521,8 @@ def _animal_reads(*kinds: str) -> tuple[Read, ...]:
 
 
 def test_a_retained_node_answers_under_the_edition_that_published_it() -> None:
-    wide = prepare_model(deep.FAMILY, edition="wide")
-    narrow = prepare_model(_DOG_ONLY, edition="narrow")
+    wide = prepare_model(deep.FAMILY, edition="wide", binding=TEST_BINDING)
+    narrow = prepare_model(_DOG_ONLY, edition="narrow", binding=TEST_BINDING)
     serving = ServingModel(wide)
     query = _keeper_query().include(_NARROWED_TO_ANIMAL)
     with ScriptedAdapter(*_animal_reads("dog", "cat"), *_animal_reads("dog")) as port:
@@ -541,7 +546,9 @@ def test_a_retained_node_answers_under_the_edition_that_published_it() -> None:
 )
 def test_a_selection_outside_the_model_is_an_unloaded_view(path: Any) -> None:
     with ScriptedAdapter(*_animal_reads("dog")) as port:
-        database = own_root(Database.connect(port, _DOG_ONLY)).using_database_login()
+        database = own_root(
+            Database.connect(port, _DOG_ONLY, binding=TEST_BINDING)
+        ).using_database_login()
         root = _found_root(database, _keeper_query().include(_NARROWED_TO_ANIMAL))
 
     assert is_view_loaded(root, _NARROWED_TO_ANIMAL) is True
@@ -562,7 +569,7 @@ def _read_narrowed_under(selection: ModelSelection) -> Any:
 
 
 def test_a_retained_narrowed_node_does_not_keep_its_model_alive() -> None:
-    selection = prepare_model(_DOG_ONLY, edition="retired")
+    selection = prepare_model(_DOG_ONLY, edition="retired", binding=TEST_BINDING)
     prepared = read_projection(selection)
     root = _read_narrowed_under(selection)
 
@@ -636,7 +643,9 @@ def test_a_concrete_sharing_its_local_name_is_read_by_its_qualified_key() -> Non
     with ScriptedAdapter(
         Read(rows=[{"id": 1}]), Read(rows=hound_rows), Read(rows=hound_rows[:1])
     ) as port:
-        database = own_root(Database.connect(port, _KENNEL)).using_database_login()
+        database = own_root(
+            Database.connect(port, _KENNEL, binding=TEST_BINDING)
+        ).using_database_login()
         root = _found_root(database, Kennel.where(Kennel.id == 1).include(alpha, both))
 
     assert [type(hound) for hound in cast("tuple[Any, ...]", view(root, alpha))] == [AlphaPack]
@@ -696,7 +705,9 @@ def test_a_root_segment_reads_the_relationship_a_differently_spelled_class_serve
         Read(rows=[{"id": 2, "parent_id": 1}]),
         Read(rows=[{"id": 1}]),
     ) as port:
-        database = own_root(Database.connect(port, _RESPELLED)).using_database_login()
+        database = own_root(
+            Database.connect(port, _RESPELLED, binding=TEST_BINDING)
+        ).using_database_login()
         loaded = database.find(query.include(Parent.children))
         unloaded = database.find(query).result()
 

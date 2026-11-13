@@ -25,14 +25,14 @@ when:
       note: the reading unit of work's first delivery — two pages, the second short of the size it asked for
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ?
           binds: [3]
         - sql:
-            postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+            postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
           binds: { postgres: [2, 2, 3, 3, 3], mariadb: [2, 2, 3] }
-      referenceSql: select id, owner, balance, version from account
+      referenceSql: select id, owner, balance, version from px.account
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -48,8 +48,8 @@ when:
       note: the writing unit of work observes account 2 before gating on it
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -63,8 +63,8 @@ when:
       note: the gated update advancing the OBSERVED version 1 -> 2; the group COMMITS after this, its last step, while the reader is still open
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
-            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["999.00", 2, 2, 1]
     - uow: reader
       objectQuery:
@@ -77,14 +77,14 @@ when:
       note: the SAME delivery again MUST deliver the same roots — account 2 still 250.00 at version 1 across both pages; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ?
           binds: [3]
         - sql:
-            postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+            postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
           binds: { postgres: [2, 2, 3, 3, 3], mariadb: [2, 2, 3] }
-      referenceSql: select id, owner, balance, version from account
+      referenceSql: select id, owner, balance, version from px.account
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -99,8 +99,8 @@ when:
       note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "999.00", version: 2 }

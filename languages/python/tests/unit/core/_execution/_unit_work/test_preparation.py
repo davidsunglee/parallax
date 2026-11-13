@@ -9,6 +9,7 @@ from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.internal import inheritance
+from tests._support.bindings import TEST_BINDING
 from tests._support.mirrored_models import ACCOUNT_MODEL
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -31,7 +32,7 @@ def test_every_entity_is_prepared_once_over_its_member_selection() -> None:
 
 
 def test_a_prepared_model_prepares_writes_against_its_own_model() -> None:
-    selection = prepare_model(ACCOUNT_MODEL, edition="test")
+    selection = prepare_model(ACCOUNT_MODEL, edition="test", binding=TEST_BINDING)
     write = write_projection(selection)
 
     assert write.preparation.meta is write.model.meta

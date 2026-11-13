@@ -92,6 +92,7 @@ from parallax.core.internal.unit_work import (
 from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import WireDatabaseView
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -820,7 +821,9 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     # it asked the boundary to begin, so the failure is noted with that edition.
     never_began = deadlock()
     port = ScriptedAdapter(Transact(begin=never_began))
-    serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
+    serving = ServingModel(
+        prepare_model(ACCOUNT, edition="adopted-before-begin", binding=TEST_BINDING)
+    )
     with pytest.raises(DatabaseError) as excinfo:
         scope(port, serving).transact(_must_not_run_callback, itself)
     assert excinfo.value is never_began
@@ -890,8 +893,8 @@ def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> No
 # afresh, and a failure is noted with the edition of the attempt that failed   #
 # last.                                                                        #
 # --------------------------------------------------------------------------- #
-_A = prepare_model(ACCOUNT, edition="a")
-_B = prepare_model(ACCOUNT, edition="b")
+_A = prepare_model(ACCOUNT, edition="a", binding=TEST_BINDING)
+_B = prepare_model(ACCOUNT, edition="b", binding=TEST_BINDING)
 
 
 def test_an_unpublished_serving_model_reports_one_edition_across_attempts_and_invocations() -> None:

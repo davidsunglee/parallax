@@ -34,8 +34,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into sample(id, label, profile) values (?, ?, ?)
-        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+        postgres: insert into px.sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into px.sample(id, label, profile) values (?, ?, ?)
       binds:
         - 100
         - Solveig
@@ -56,24 +56,25 @@ then:
             - { kind: home, active: true, price: '19.99', issued: '2026-02-01' }
             - { kind: work, active: false, price: '5.00', issued: '2026-03-01' }
   tableState:
-    sample:
-      - id: 100
-        label: Solveig
-        profile:
-          entries:
-            - { kind: home, active: true, price: '19.99', issued: '2026-02-01' }
-            - { kind: work, active: false, price: '5.00', issued: '2026-03-01' }
-          origin: { since: '2020-03-01', city: Oslo }
-          token: '123e4567-e89b-12d3-a456-426614174000'
-          instant: '2026-01-15T09:30:00.000000Z'
-          clock: '09:30:00'
-          day: '2026-01-15'
-          blob: '0a1b'
-          amount: '10.25'
-          text: alpha
-          measure: 2.25
-          ratio: 1.5
-          big: 100
-          small: 10
-          flag: true
+    px:
+      sample:
+        - id: 100
+          label: Solveig
+          profile:
+            entries:
+              - { kind: home, active: true, price: '19.99', issued: '2026-02-01' }
+              - { kind: work, active: false, price: '5.00', issued: '2026-03-01' }
+            origin: { since: '2020-03-01', city: Oslo }
+            token: '123e4567-e89b-12d3-a456-426614174000'
+            instant: '2026-01-15T09:30:00.000000Z'
+            clock: '09:30:00'
+            day: '2026-01-15'
+            blob: '0a1b'
+            amount: '10.25'
+            text: alpha
+            measure: 2.25
+            ratio: 1.5
+            big: 100
+            small: 10
+            flag: true
   databaseCalls: 1

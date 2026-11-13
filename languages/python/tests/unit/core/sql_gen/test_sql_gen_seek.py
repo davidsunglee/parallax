@@ -44,6 +44,7 @@ from parallax.core.internal.sql_gen._inheritance import (
 )
 from parallax.core.internal.sql_gen._planning import SharedSourceRef
 from parallax.descriptor import _records
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_nonempty_template as compile_template
@@ -161,7 +162,7 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
     )
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
-        "t0.id parallax_seek_0 from orders t0"
+        "t0.id parallax_seek_0 from px.orders t0"
     )
     assert compiled.result_contract.coordinate_ordinals == (7,)
     (row,) = deliver(
@@ -299,7 +300,7 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
 
     assert statement.sql.count("for share") == 1
     assert (
-        ")) u join orders t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
+        ")) u join px.orders t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (1, 1, 2, 2, 2)
 
@@ -310,9 +311,9 @@ def test_seek_null_tail_shared_lock_uses_the_dialects_placement() -> None:
     mariadb = _lowered(ORDERS, node, shared_lock=True, dialect=_MARIADB)
 
     assert postgres.sql.count("for share of t0") == 1
-    assert ")) u join orders t0" in postgres.sql
+    assert ")) u join px.orders t0" in postgres.sql
     assert mariadb.sql.count("for share of t0") == 2
-    assert ")) u join orders t0" not in mariadb.sql
+    assert ")) u join px.orders t0" not in mariadb.sql
     assert mariadb.sql.endswith("order by u.parallax_seek_0 asc limit ?")
 
 
@@ -328,7 +329,7 @@ def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity
     )
 
     assert statement.sql.count("for share") == 1
-    assert ")) u join payment t0 on u.id = t0.id order by t0.id asc" in statement.sql
+    assert ")) u join px.payment t0 on u.id = t0.id order by t0.id asc" in statement.sql
     assert statement.binds == (1, 1, "card", 2, "card", 2, 2)
 
 
@@ -361,7 +362,7 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
     statement = compiled.statement
     branch = (
         "select t0.id, t0.maker, t0.dealer_id, t0.seats, "
-        "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 from traversal_car t0 where "
+        "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 from px.traversal_car t0 where "
     )
     assert statement.sql == (
         "select t0.id, t0.maker, t0.dealer_id, t0.seats, "
@@ -370,7 +371,7 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
         "or (t0.dealer_id = ? and (t0.id > ? or t0.id is null))) "
         "order by t0.dealer_id asc, t0.id asc limit ?) union all ("
         f"{branch}t0.dealer_id is null order by t0.dealer_id asc, t0.id asc limit ?)) "
-        "u join traversal_car t0 on u.id = t0.id "
+        "u join px.traversal_car t0 on u.id = t0.id "
         "order by t0.dealer_id asc, t0.id asc limit ? for share of t0"
     )
     assert statement.sql.count("for share") == 1
@@ -408,7 +409,7 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
 
     assert statement.sql.count("for share") == 1
     assert (
-        ")) u join position t0 on u.pos_id = t0.pos_id and u.thru_z = t0.thru_z "
+        ")) u join px.position t0 on u.pos_id = t0.pos_id and u.thru_z = t0.thru_z "
         "and u.out_z = t0.out_z order by t0.thru_z asc, "
         "t0.pos_id asc limit ? for share of t0"
     ) in statement.sql
@@ -533,7 +534,7 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
         f"not {alias}.tags is null, {alias}.tags{occurrences}, {coordinates} from ((select "
     )
     assert compiled.statement.sql.endswith(
-        (") u join mx_tph_columns t0 on u.id = t0.id" if shared_lock else ") u")
+        (") u join px.mx_tph_columns t0 on u.id = t0.id" if shared_lock else ") u")
         + (
             " order by t0.holder_id asc, t0.id asc limit ?"
             if shared_lock
@@ -720,11 +721,13 @@ def test_each_continuing_branch_joins_its_own_shared_sources_beneath_the_root_lo
         shared_lock=True,
     )
     statement = compiled.statement
-    joined = "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and "
+    joined = (
+        "from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id where t1.name = ? and "
+    )
     assert statement.sql.count(joined) == 2
     assert f"{joined}t0.shipped_on is null order by" in statement.sql
     assert statement.sql.endswith(
-        ") u join order_item t0 on u.id = t0.id "
+        ") u join px.order_item t0 on u.id = t0.id "
         "order by t0.shipped_on asc, t0.id asc limit ? for share of t0"
     )
     february = dt.date(2024, 2, 15)
@@ -768,7 +771,7 @@ def test_both_continuing_branches_of_a_family_page_keep_the_tag_guard_after_the_
     reuse = record_plan_reuse(monkeypatch)
     statement = _lowered(PAYMENT, node)
     branch = (
-        "select t0.id, t0.amount, t0.card_network, t0.id parallax_seek_0 from payment t0 where "
+        "select t0.id, t0.amount, t0.card_network, t0.id parallax_seek_0 from px.payment t0 where "
     )
     assert statement.sql == (
         "select u.id, u.amount, u.card_network, u.parallax_seek_0 from (("
@@ -805,7 +808,7 @@ def test_both_continuing_branches_of_a_union_render_its_branch_roots_through_fre
     statement = _lowered(TRAVERSAL, node)
     for table in ("traversal_bike", "traversal_car"):
         branch = (
-            f"from {table} t0 left join traversal_dealer t1 on t1.id = t0.dealer_id "
+            f"from px.{table} t0 left join px.traversal_dealer t1 on t1.id = t0.dealer_id "
             "where t1.name = ?"
         )
         assert statement.sql.count(branch) == 2
@@ -957,7 +960,7 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     # override stay those direct compilation of the current page derives.
     template = compile_template(
         read_planning.plan(cold, model, projection=_PROJECTION).root,
-        model,
+        bound_model(model),
         dialect,
         shared_lock=shared_lock,
     )
@@ -1001,7 +1004,9 @@ def test_an_unpaged_template_renders_its_compiled_read_without_inputs() -> None:
         ORDERS,
     )
     template = compile_template(
-        read_planning.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(node, ORDERS, projection=_PROJECTION).root,
+        bound_model(ORDERS),
+        POSTGRES,
     )
 
     assert template.render() is template.compiled
@@ -1013,11 +1018,13 @@ def test_a_page_template_refuses_missing_current_inputs() -> None:
     continued = plan.after(ContinuationCoordinate((1,)), limit=2)
     first = compile_template(
         read_planning.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root,
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
     )
     after = compile_template(
-        read_planning.plan(continued, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(continued, ORDERS, projection=_PROJECTION).root,
+        bound_model(ORDERS),
+        POSTGRES,
     )
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="current page cap"):

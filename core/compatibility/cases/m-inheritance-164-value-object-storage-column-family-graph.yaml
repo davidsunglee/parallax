@@ -12,9 +12,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, not t0."variantProfile" is null, t0."variantProfile" from variant_record t0
-        mariadb: select t0.id, t0.kind, not t0.`variantProfile` is null, t0.`variantProfile` from variant_record t0
-  referenceSql: select id, kind from variant_record
+        postgres: select t0.id, t0.kind, not t0."variantProfile" is null, t0."variantProfile" from px.variant_record t0
+        mariadb: select t0.id, t0.kind, not t0.`variantProfile` is null, t0.`variantProfile` from px.variant_record t0
+  referenceSql: select id, kind from px.variant_record
   graph:
     VariantRecord:
       - { id: 2, profile: { label: variant-profile }, _type: compatibility.overlap.VariantNote }

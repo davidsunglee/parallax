@@ -19,8 +19,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into sample(id, label, profile) values (?, ?, ?)
-        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+        postgres: insert into px.sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into px.sample(id, label, profile) values (?, ?, ?)
       binds:
         - 101
         - Kavi
@@ -28,11 +28,12 @@ then:
           flag: null
           entries: []
   tableState:
-    sample:
-      - id: 101
-        label: Kavi
-        profile:
-          flag: null
-          text: only-this
-          entries: []
+    px:
+      sample:
+        - id: 101
+          label: Kavi
+          profile:
+            flag: null
+            text: only-this
+            entries: []
   databaseCalls: 1

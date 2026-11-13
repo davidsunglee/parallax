@@ -25,14 +25,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: update pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
       binds: [5, ticket_seq]
     - sql:
-        postgres: insert into ticket(id, tier) values (?, ?)
-        mariadb: insert into ticket(id, tier) values (?, ?)
+        postgres: insert into px.ticket(id, tier) values (?, ?)
+        mariadb: insert into px.ticket(id, tier) values (?, ?)
       binds: [1000, gold]
   tableState:
-    ticket:
-      - { id: 1000, tier: gold }
+    px:
+      ticket:
+        - { id: 1000, tier: gold }
   databaseCalls: 2

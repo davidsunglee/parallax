@@ -23,7 +23,13 @@ from parallax.core import (
     ServingModel,
 )
 from parallax.core.internal.db_port import DatabaseAdapter
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
+from parallax.postgres import (
+    OnDemandOptions,
+    PoolOptions,
+    PostgresAdapter,
+    PostgresBinding,
+    PostgresEndpoint,
+)
 from parallax.snapshot import ScopedDatabase, connect
 
 __all__ = [
@@ -104,7 +110,7 @@ class ClosedBothWays:
 
 
 def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
-    adapter: DatabaseAdapter, model: DomainModel, serving: ServingModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding, serving: ServingModel
 ) -> ClosedBothWays:
     """Both model forms, and the two equivalent ways to give a runtime back.
 
@@ -117,7 +123,7 @@ def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
     explicit ``close`` are the same call, and a handle that gets neither holds a
     pool and its maintenance threads for the life of the process.
     """
-    with connect(adapter, model) as scoped_root:
+    with connect(adapter, model, binding=binding) as scoped_root:
         scoped = scoped_root.using_database_login()
         scoped_rows = len(account_balances(scoped))
     explicit_root = connect(adapter, serving)
@@ -136,7 +142,7 @@ class RetentionShape:
 
 
 def one_configuration_opens_independent_runtimes(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> RetentionShape:
     """Two handles from one configuration own two runtimes.
 
@@ -146,10 +152,10 @@ def one_configuration_opens_independent_runtimes(
     each handle owns the one it was given — which is why closing the first below
     leaves the second serving.
     """
-    with connect(adapter, model) as first_root:
+    with connect(adapter, model, binding=binding) as first_root:
         first = first_root.using_database_login()
         first_rows = len(account_balances(first))
-        second_root = connect(adapter, model)
+        second_root = connect(adapter, model, binding=binding)
     with second_root:
         second = second_root.using_database_login()
         return RetentionShape(first_rows, len(account_balances(second)))
@@ -188,7 +194,7 @@ class RoutedBalances:
 
 
 def each_scope_reads_where_its_policy_says(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> RoutedBalances:
     """Three scopes over one root, each reading where its routing says.
 
@@ -201,7 +207,7 @@ def each_scope_reads_where_its_policy_says(
     of the three derivations opens anything, and writable transactions use the
     writer whatever the scope says.
     """
-    with connect(adapter, model) as root:
+    with connect(adapter, model, binding=binding) as root:
         db = root.using_database_login()
         return RoutedBalances(
             from_reader=account_balances(db),
@@ -315,7 +321,7 @@ class PoolReading:
 
 
 def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> PoolReading:
     """Watch one runtime's pool from composition to close.
 
@@ -326,7 +332,7 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
     next page asks for one.
     """
     provider = PoolWatchingProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as root:
+    with connect(adapter, model, binding=binding, lifecycle_provider=provider) as root:
         db = root.using_database_login()
         watch = provider.watch
         assert watch is not None
@@ -343,6 +349,7 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
 async def pooled_database(
     adapter: DatabaseAdapter,
     model: DomainModel,
+    binding: PostgresBinding,
     *,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
 ) -> AsyncGenerator[ScopedDatabase]:
@@ -366,7 +373,9 @@ async def pooled_database(
     the module once and then forks, and a pool created before the fork would
     hand the same sockets to every worker.
     """
-    root = await asyncio.to_thread(connect, adapter, model, lifecycle_provider=lifecycle_provider)
+    root = await asyncio.to_thread(
+        connect, adapter, model, binding=binding, lifecycle_provider=lifecycle_provider
+    )
     try:
         yield root.using_database_login()
     finally:

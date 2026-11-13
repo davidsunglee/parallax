@@ -67,6 +67,7 @@ from time import perf_counter_ns
 from types import CodeType, TracebackType
 from typing import Any, Final, Literal, cast
 
+from parallax.conformance.bindings import DEFAULT_BINDING
 from parallax.core import Entity
 from parallax.core.internal import document_codec
 from parallax.core.internal.base import detach_json_container
@@ -328,7 +329,7 @@ def _response_driver(case: lowering_support.ResponseCase, handle: ScopedDatabase
 
 def _model_driver(classes: Sequence[type[Entity]]) -> Driver:
     def prepare() -> object:
-        return prepare_model(DomainModel(*classes), edition=MODEL_EDITION)
+        return prepare_model(DomainModel(*classes), edition=MODEL_EDITION, binding=DEFAULT_BINDING)
 
     def run() -> None:
         prepare()

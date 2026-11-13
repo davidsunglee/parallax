@@ -18,8 +18,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from folder t0 where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) or exists (select 1 from receipt t2 where t2.folder_id = t0.id))
-  referenceSql: select id, name from folder where id in (select folder_id from invoice) or id in (select folder_id from receipt)
+        postgres: select t0.id, t0.name from px.folder t0 where (exists (select 1 from px.invoice t1 where t1.folder_id = t0.id) or exists (select 1 from px.receipt t2 where t2.folder_id = t0.id))
+  referenceSql: select id, name from px.folder where id in (select folder_id from px.invoice) or id in (select folder_id from px.receipt)
   rows:
     - { id: 100, name: Alpha }
     - { id: 101, name: Beta }

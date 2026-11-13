@@ -6,12 +6,12 @@ shape: error
 then:
   statements:
     - sql:
-        postgres: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
       binds: [1, Motor, "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
       binds: [1, Motor, "2024-06-01T00:00:00.000000Z", infinity, "2024-06-01T00:00:00.000000Z", infinity]
   errorClass: uniqueViolation
   nativeCode:

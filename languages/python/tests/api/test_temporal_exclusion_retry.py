@@ -35,12 +35,12 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     TransactionAttemptFinished,
 )
-from parallax.core.internal import storage_layout
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.errors import retry_notes
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
@@ -99,11 +99,9 @@ def _member(entity: type[Any], name: str) -> str:
 
 
 def _exclusion(entity: type[Any]) -> str:
-    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(
-        EntityIdentity(_NAMESPACE, entity.__name__)
-    )
-    assert layout is not None and layout.temporal_constraints is not None
-    return layout.temporal_constraints.exclusion_name
+    table = bound_model(model_of(_MODEL)).table(EntityIdentity(_NAMESPACE, entity.__name__))
+    assert table.temporal_constraints is not None
+    return table.temporal_constraints.exclusion_name
 
 
 def _db(
@@ -117,6 +115,7 @@ def _db(
             _MODEL,
             clock=ScriptedClock(list(instants)),
             lifecycle_provider=provider,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
 
@@ -124,7 +123,7 @@ def _db(
 def _log_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(entity, 'label')} from {_TABLES[entity]} order by in_z, out_z"
+        f"{_member(entity, 'label')} from px.{_TABLES[entity]} order by in_z, out_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
@@ -133,7 +132,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, "
-        f"({_member(entity, 'amount')})::int from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"({_member(entity, 'amount')})::int from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
@@ -147,7 +146,7 @@ def _overlaps(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     )
     table = _TABLES[entity]
     sql = (
-        f"select a.id from {table} a join {table} b on a.id = b.id and a.ctid < b.ctid "
+        f"select a.id from px.{table} a join px.{table} b on a.id = b.id and a.ctid < b.ctid "
         f"and tstzrange(a.in_z, a.out_z) && tstzrange(b.in_z, b.out_z){valid}"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
@@ -220,7 +219,7 @@ def test_a_reinsertion_behind_a_terminated_milestone_is_retried_at_a_fresh_insta
 ) -> None:
     # The object was known from January until its termination in May. A clock
     # at March would reopen it inside that history; the retry reopens it in June.
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     seeded = _db(profile_run, [_JAN, _MAY])
     seeded.transact(lambda tx: _insert(tx, entity, "typed", "seeded" if entity in _LOGS else 100))
     seeded.transact(lambda tx: _terminate(tx, _find(tx, entity, "typed"), "typed"))
@@ -272,7 +271,7 @@ def test_an_insert_partly_over_current_coverage_exhausts_its_bound_as_the_origin
 ) -> None:
     # [June, December) ends elsewhere than the stored [March, September), so
     # only the exclusion refuses it, and every attempt is refused again.
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, [_JAN]).transact(
         lambda tx: _insert(tx, entity, "typed", 100, valid_from=_MAR, until=_SEP)
     )
@@ -320,7 +319,7 @@ def _attempted_once(
 def test_a_duplicate_current_insert_is_a_key_violation_never_retried(
     profile_run: Any, entity: type[Any], representation: _Representation
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, [_JAN]).transact(lambda tx: _insert(tx, entity, "typed", "seeded"))
     error, attempts = _attempted_once(
         profile_run, entity, lambda tx: _insert(tx, entity, representation, "again")
@@ -335,11 +334,11 @@ def test_a_duplicate_current_insert_is_a_key_violation_never_retried(
 def test_a_check_violation_is_never_retried(
     profile_run: Any, entity: type[Any], representation: _Representation
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     control = profile_run.control()
     try:
         control.execute_write(
-            f"alter table {_TABLES[entity]} add constraint te_label_check "
+            f"alter table px.{_TABLES[entity]} add constraint te_label_check "
             f"check (({_member(entity, 'label')}) <> 'refused')",
             [],
         )
@@ -360,17 +359,17 @@ def test_another_exclusions_violation_is_never_retried(
 ) -> None:
     # A second exclusion on the same table reports the same native kind under
     # a name the table's layout never compiled.
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     control = profile_run.control()
     try:
         control.execute_write(
-            f"alter table {_TABLES[entity]} add constraint te_one_current_label "
+            f"alter table px.{_TABLES[entity]} add constraint te_one_current_label "
             f"exclude using gist (({_member(entity, 'label')}) with =, "
             "tstzrange(in_z, out_z) with &&)",
             [],
         )
         control.execute_write(
-            f"insert into {_TABLES[entity]} (id, {_label_column(entity)}, in_z, out_z) "
+            f"insert into px.{_TABLES[entity]} (id, {_label_column(entity)}, in_z, out_z) "
             f"values (2, {_label_value(entity)}, '{_JAN.isoformat()}', 'infinity')",
             [],
         )
@@ -404,7 +403,7 @@ def test_a_replacement_racing_an_insert_into_its_gap_is_retried_over_it(
     # opens. A peer's uncommitted [April, May) is invisible to the replacement's
     # read, so its opening waits on the peer and is refused once the peer
     # commits; the retry reads the peer's row and replaces it too.
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, [_JAN]).transact(
         lambda tx: _insert(tx, entity, "typed", 100, valid_from=_JAN, until=_MAR)
     )
@@ -460,7 +459,7 @@ def _raw_span_insert(
         else ("amount", str(amount))
     )
     return (
-        f"insert into {_TABLES[entity]} (id, {member}, from_z, thru_z, in_z, out_z) values "
+        f"insert into px.{_TABLES[entity]} (id, {member}, from_z, thru_z, in_z, out_z) values "
         f"(1, {value}, '{valid_from.isoformat()}', '{until.isoformat()}', "
         f"'{known.isoformat()}', 'infinity')"
     )
@@ -567,7 +566,7 @@ def _two_ranges(profile_run: Any, *, split: bool = False) -> None:
     """Span 1 stored over [January, March) and [May, December), with [March,
     May) a gap; ``split`` stores the first range as [January, February) and
     [February, March)."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     ranges = [(_JAN, _FEB), (_FEB, _MAR)] if split else [(_JAN, _MAR)]
     control = profile_run.control()
     try:
@@ -628,7 +627,7 @@ def test_two_first_inserts_overlap_only_when_their_windows_do(
     second_until: dt.datetime,
     overlapping: bool,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     outcomes, failures = _race(
         profile_run,
         isolation,

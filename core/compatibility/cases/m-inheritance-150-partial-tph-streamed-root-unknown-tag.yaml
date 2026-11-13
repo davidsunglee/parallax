@@ -17,14 +17,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 order by t0.id asc limit ?
-        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 order by t0.id asc limit ?
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from px.beast t0 order by t0.id asc limit ?
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from px.beast t0 order by t0.id asc limit ?
       binds: [3]
     - sql:
-        postgres: select u.id, u.kind, u.name, u.keeper_id, u.howl, u.parallax_seek_0 from ((select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
-        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from beast t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+        postgres: select u.id, u.kind, u.name, u.keeper_id, u.howl, u.parallax_seek_0 from ((select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from px.beast t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from px.beast t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl, t0.id parallax_seek_0 from px.beast t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
       binds: { postgres: [2, 2, 3, 3, 3], mariadb: [2, 2, 3] }
-  referenceSql: select id, kind, name, keeper_id, howl from beast
+  referenceSql: select id, kind, name, keeper_id, howl from px.beast
   graph:
     Beast:
       - { id: 1, name: Akela, keeperId: 10, howl: aroo, _type: parallax.compatibility.Wolf }

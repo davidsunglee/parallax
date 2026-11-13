@@ -44,6 +44,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -77,7 +78,7 @@ def _orders_query() -> Any:
 
 
 def _db(adapter: Any, model: Any = ACCOUNT) -> Database[Any]:
-    return connect(adapter, model, clock=FixedClock(FIXED))
+    return connect(adapter, model, clock=FixedClock(FIXED), binding=TEST_BINDING)
 
 
 def _account_query() -> Any:
@@ -130,7 +131,7 @@ def test_two_handles_from_one_configuration_own_two_independent_runtimes() -> No
 def test_a_model_that_could_never_be_served_costs_no_resource() -> None:
     adapter = RefusingAdapter()
     with pytest.raises(Exception, match="snapshot-class-backed-model-required"):
-        connect(adapter, "not a model")  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
+        connect(adapter, "not a model", binding=TEST_BINDING)  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
 
 
 # --------------------------------------------------------------------------- #
@@ -244,7 +245,11 @@ def test_an_empty_read_still_holds_and_returns_one_connection_without_a_call() -
     provider = RecordingLifecycleProvider()
     adapter = ScriptedAdapter()
     with connect(
-        adapter, DORMANT_POSITION_COLUMNS, clock=FixedClock(FIXED), lifecycle_provider=provider
+        adapter,
+        DORMANT_POSITION_COLUMNS,
+        clock=FixedClock(FIXED),
+        lifecycle_provider=provider,
+        binding=TEST_BINDING,
     ) as _root_db:
         assert _root_db.using_database_login().find(_prototypes()).results() == []
 
@@ -495,7 +500,7 @@ class _NeverAcquires(ConnectsAsItself):
 
 def test_a_refused_query_reaches_no_runtime_at_all() -> None:
     with pytest.raises(Exception, match="snapshot-class-backed-model-required"):
-        connect(_NeverAcquires(), "not a model")  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
+        connect(_NeverAcquires(), "not a model", binding=TEST_BINDING)  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
 
 
 def test_a_model_that_cannot_be_prepared_opens_no_runtime_at_all(
@@ -513,7 +518,7 @@ def test_a_model_that_cannot_be_prepared_opens_no_runtime_at_all(
     monkeypatch.setattr(database_module, "prepare_model", refuse)
 
     with pytest.raises(RuntimeError, match="cannot be prepared"):
-        connect(_NeverAcquires(), ACCOUNT, clock=FixedClock(FIXED))
+        connect(_NeverAcquires(), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
 
 
 def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
@@ -533,14 +538,20 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
     adapter = ScriptedAdapter()
 
     with pytest.raises(RuntimeError, match="cannot be composed"):
-        connect(adapter, ACCOUNT, clock=FixedClock(FIXED))
+        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
 
     assert adapter.closes == 1
 
 
 def test_omitted_options_and_a_whole_record_none_are_the_built_in_record() -> None:
     omitted = _db(ScriptedAdapter(Transact()))
-    explicit = connect(ScriptedAdapter(Transact()), ACCOUNT, options=None, clock=FixedClock(FIXED))
+    explicit = connect(
+        ScriptedAdapter(Transact()),
+        ACCOUNT,
+        options=None,
+        clock=FixedClock(FIXED),
+        binding=TEST_BINDING,
+    )
     assert omitted.using_database_login().transact(lambda tx: tx.options) == TxnOptions()
     assert explicit.using_database_login().transact(lambda tx: tx.options) == TxnOptions()
 
@@ -576,12 +587,19 @@ def test_an_invalid_record_opens_no_runtime_at_all() -> None:
     # what this pins is that a caller building the record beside the call
     # spends no runtime on it either.
     with pytest.raises(ValueError, match="max_retries"):
-        connect(_NeverAcquires(), ACCOUNT, options=TxnOptions(retry=RetryPolicy(max_retries=-1)))
+        connect(
+            _NeverAcquires(),
+            ACCOUNT,
+            options=TxnOptions(retry=RetryPolicy(max_retries=-1)),
+            binding=TEST_BINDING,
+        )
 
 
 def test_the_direct_constructor_takes_the_same_record() -> None:
     adapter = ScriptedAdapter(Transact())
     options = TxnOptions(isolation="serializable")
-    db = Database(adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED))
+    db = Database(
+        adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED), binding=TEST_BINDING
+    )
     assert db.using_database_login().transact(lambda tx: tx.options) is options
     assert adapter.calls == [BeginCall("serializable"), CommitCall()]

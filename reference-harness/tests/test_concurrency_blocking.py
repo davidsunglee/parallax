@@ -27,8 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
 _REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
-_UPDATE = {"postgres": "update account set balance = ? where id = ?"}
-_DELETE = {"postgres": "delete from account where id = ?"}
+_UPDATE = {"postgres": "update px.account set balance = ? where id = ?"}
+_DELETE = {"postgres": "delete from px.account where id = ?"}
 
 
 def _entry(sql: dict[str, str], binds: list[Any]) -> dict[str, Any]:
@@ -93,7 +93,7 @@ def test_schema_accepts_a_blocking_statement_step_on_the_error_shape() -> None:
         "then": {
             "errorClass": "deadlock",
             "nativeCode": {"postgres": "40001"},
-            "tableState": {"account": [{"id": 1}]},
+            "tableState": {"px": {"account": [{"id": 1}]}},
         },
         "tags": ["m-batch-write", "concurrency"],
     }

@@ -42,6 +42,7 @@ from parallax.core.internal.unit_work import RetainedObservation
 from parallax.snapshot import ScopedDatabase, Snapshot, WireEntity, connect
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 __all__ = [
@@ -107,18 +108,21 @@ def grace() -> mm.Account:
 
 
 # The m-unit-work-001 goldens in canonical SQL as the port receives them.
-INSERT_SQL = "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+INSERT_SQL = "insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)"
 
 
 # `Account` declares an explicit version, so a participating find of one takes
 # the shared lock only under the `locking` preference; the default `optimistic`
 # preference resolves it to the Optimistic strategy, whose gate is the authority.
 FIND_SQL_LOCKED = (
-    "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0"
+    "select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ? for "
+    "share of t0"
 )
 
 
-FIND_SQL_UNLOCKED = "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
+FIND_SQL_UNLOCKED = (
+    "select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?"
+)
 
 
 def deadlock() -> DatabaseError:
@@ -128,7 +132,9 @@ def deadlock() -> DatabaseError:
 def account_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     # The spec §8 module-level `connect` is the classmethod's alias, so this
     # covers both spellings.
-    return own_root(connect(adapter, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
+    return own_root(
+        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def db_for(
@@ -138,7 +144,13 @@ def db_for(
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
 ) -> ScopedDatabase:
     return own_root(
-        connect(adapter, meta, clock=FixedClock(FIXED), lifecycle_provider=lifecycle_provider)
+        connect(
+            adapter,
+            meta,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=lifecycle_provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 

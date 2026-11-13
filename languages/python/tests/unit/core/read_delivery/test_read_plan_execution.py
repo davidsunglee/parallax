@@ -33,14 +33,15 @@ from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.temporal_read import Pin, TimeInterval, ranked_axes, temporal_facet_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
 from tests.unit.core import _shared_coverage_support as shared
 
-_TEMPORAL = CatalogedModel(shared.MODEL)
-_DOCUMENT = CatalogedModel(corpus_model("document-layout"))
+_TEMPORAL = CatalogedModel(shared.MODEL, TEST_BINDING)
+_DOCUMENT = CatalogedModel(corpus_model("document-layout"), TEST_BINDING)
 
 
 @dataclass
@@ -260,7 +261,7 @@ def test_warm_milestone_plans_reuse_ordering_with_current_ranges_and_independent
             assert port.calls == [
                 ReadCall(
                     "select t0.id, t0.amount, t0.label, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
-                    "from share_cols t0 where t0.from_z < ? and t0.thru_z > ? and t0.out_z = ? "
+                    "from px.share_cols t0 where t0.from_z < ? and t0.thru_z > ? and t0.out_z = ? "
                     "order by t0.id asc, t0.from_z asc, t0.in_z asc",
                     (shared.day(3), shared.day(1), INFINITY),
                     read_only=True,
@@ -542,7 +543,7 @@ def test_a_malformed_discarded_root_is_refused_before_any_root_is_converted(
 
 
 def test_transaction_time_coverage_is_single_instant_write_support() -> None:
-    model = CatalogedModel(corpus_model("balance"))
+    model = CatalogedModel(corpus_model("balance"), TEST_BINDING)
     entity = target(model.meta, "Balance")
     query = read_planning.plan_coverage_read(entity, model=model.meta, key="id", terms=((1, ()),))
     plan = ReadPlanCache().plan_acquisition(

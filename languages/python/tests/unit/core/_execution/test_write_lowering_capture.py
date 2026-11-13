@@ -37,6 +37,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.db_port import ScriptedAdapter, Write
 from tests._support.managed_rows import managed_row_of
 from tests.unit.core._execution._write_step_support import (
@@ -83,7 +84,7 @@ def _streamed(
         hooks["capture_revision"] = captures.revision
         if inserts:
             hooks["capture_insert"] = captures.insert
-    return sum(1 for _ in stream_physical(steps, preparer, meta, POSTGRES, **hooks))
+    return sum(1 for _ in stream_physical(steps, preparer, bound_model(meta), POSTGRES, **hooks))
 
 
 def test_each_grouped_insert_entry_is_handed_over_as_its_payload_is_prepared() -> None:
@@ -100,7 +101,9 @@ def test_each_grouped_insert_entry_is_handed_over_as_its_payload_is_prepared() -
 def test_a_reused_payload_is_handed_over_without_preparing_anything() -> None:
     planned = insert(1)
     (entry,) = planned.entries
-    reused = entry.with_prepared(build_write_planner(POSITION_META).payloads.row(POSITION, entry))
+    reused = entry.with_prepared(
+        build_write_planner(bound_model(POSITION_META)).payloads.row(POSITION, entry)
+    )
     steps = (type(planned)(entity=POSITION, entries=(reused,)),)
     preparer = RecordingPreparer(ScriptedAdapter(), steps)
     captures = _Captures(preparer)
@@ -148,8 +151,8 @@ def test_the_executor_relays_the_hooks_to_the_statements_it_executes() -> None:
     captures = _Captures()
     executor = WriteStepExecutor(
         port,
-        payloads=build_write_planner(POSITION_META).payloads,
-        meta=POSITION_META,
+        payloads=build_write_planner(bound_model(POSITION_META)).payloads,
+        resolved=bound_model(POSITION_META),
         recoverable=lambda _: None,
     )
     with open_flush() as flush:
@@ -173,14 +176,16 @@ def test_every_entry_of_an_insert_lowered_alone_is_handed_over() -> None:
     entries = (*insert(1).entries, *insert(2).entries)
     steps = (PlannedInsert(entity=POSITION, entries=entries),)
     captures = _Captures()
-    assert _streamed(steps, build_write_planner(POSITION_META).payloads, captures) == 1
+    assert _streamed(steps, build_write_planner(bound_model(POSITION_META)).payloads, captures) == 1
     assert [subject for _kind, subject, _payload, _ in captures.seen] == list(entries)
 
 
 def test_inserts_are_not_handed_over_where_only_revisions_are_captured() -> None:
     steps = (insert(1), revision(3))
     captures = _Captures()
-    _streamed(steps, build_write_planner(POSITION_META).payloads, captures, inserts=False)
+    _streamed(
+        steps, build_write_planner(bound_model(POSITION_META)).payloads, captures, inserts=False
+    )
     assert [(kind, subject) for kind, subject, _payload, _ in captures.seen] == [
         ("revision", steps[1])
     ]
@@ -230,7 +235,9 @@ def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_i
         predecessor_document_is_object=True,
     )
     captures = _Captures()
-    _streamed((opened, revised), build_write_planner(_NOTES).payloads, captures, _NOTES)
+    _streamed(
+        (opened, revised), build_write_planner(bound_model(_NOTES)).payloads, captures, _NOTES
+    )
     (inserted, document, _), (revision_kind, patched, _) = (
         (kind, payload, prepared) for kind, _subject, payload, prepared in captures.seen
     )

@@ -16,6 +16,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.internal import storage_layout
 from parallax.core.internal.base import InternalError
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
     WRITE_RESULT_INTEGRITY_VIOLATED,
@@ -29,7 +30,6 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.diagnostics import qualified_type
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.write_plan.payload import PatchedDocument, WritePayloadPreparer
 from parallax.core.internal.write_plan.plan import EffectSpan
@@ -62,14 +62,14 @@ class WriteStepExecutor:
     returning.
     """
 
-    __slots__ = ("_connection", "_meta", "_ordered", "_payloads", "_recoverable")
+    __slots__ = ("_connection", "_ordered", "_payloads", "_recoverable", "_resolved")
 
     def __init__(
         self,
         connection: DatabaseConnection,
         *,
         payloads: WritePayloadPreparer,
-        meta: Metamodel,
+        resolved: ResolvedBinding,
         recoverable: Callable[[DatabaseError], None],
     ) -> None:
         """``recoverable`` receives each statement failure recognized as a
@@ -81,7 +81,7 @@ class WriteStepExecutor:
         # lifetime, and everything this executes runs on this connection.
         self._ordered = connection.ordered_write_transport
         self._payloads = payloads
-        self._meta = meta
+        self._resolved = resolved
 
     def execute(
         self,
@@ -138,7 +138,7 @@ class WriteStepExecutor:
         cursor = LoweringCursor(
             steps,
             self._payloads,
-            self._meta,
+            self._resolved,
             self._connection.dialect,
             effect_spans=effect_spans,
             capture_insert=capture_insert,
@@ -173,7 +173,7 @@ class WriteStepExecutor:
         """Lower, execute, and enforce ``step`` alone as one call of
         ``flush``, exactly as :meth:`execute` runs a step alone, and answer the
         affected-row count the driver reported once enforcement accepted it."""
-        cursor = LoweringCursor((step,), self._payloads, self._meta, self._connection.dialect)
+        cursor = LoweringCursor((step,), self._payloads, self._resolved, self._connection.dialect)
         return self._run_single(step, cursor.lowered(step), flush)
 
     def _run_ordered(
@@ -339,27 +339,33 @@ class WriteStepExecutor:
             return allocated_keys(step, rows)
 
     def _recognize(self, step: PlannedStep, error: DatabaseError) -> None:
-        if recoverable_conflict(step, error, self._meta, self._connection.dialect):
+        if recoverable_conflict(step, error, self._resolved, self._connection.dialect):
             self._recoverable(error)
 
 
 def recoverable_conflict(
-    step: PlannedStep, error: DatabaseError, meta: Metamodel, dialect: Dialect
+    step: PlannedStep, error: DatabaseError, resolved: ResolvedBinding, dialect: Dialect
 ) -> bool:
     """Whether ``error``, raised by the statement ``step`` lowered to, is a
     recoverable temporal conflict.
 
-    It is exactly a violation of the exclusion constraint of the Table the
-    statement wrote, recognized by the dialect's exclusion-violation kind and
-    by the one constraint name that Table's layout compiled — never by the
-    native code alone or by any message text. A replay plans afresh against
-    whatever coverage a concurrent writer committed.
+    It is exactly a violation of the exclusion constraint of the physical table
+    the statement wrote, recognized by the dialect's exclusion-violation kind,
+    by that table, and by the one exclusion name its resolution derived — never
+    by the native code alone or by any message text. A replay plans afresh
+    against whatever coverage a concurrent writer committed.
     """
     if error.constraint_name is None or not dialect.reports_exclusion_violation(error.native_code):
         return False
-    view = storage_layout.storage_layout_facet_of(meta).entity(step.entity)
-    constraints = None if view is None else view.layout.temporal_constraints
-    return constraints is not None and error.constraint_name == constraints.exclusion_name
+    view = storage_layout.storage_layout_facet_of(resolved.meta).entity(step.entity)
+    table = None if view is None else resolved.table(view.layout.mapping_owner)
+    constraints = None if table is None else table.temporal_constraints
+    return (
+        table is not None
+        and constraints is not None
+        and error.constraint_table == table.physical
+        and error.constraint_name == constraints.exclusion_name
+    )
 
 
 def _run_ordered_invocation(

@@ -37,10 +37,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_memo alter column body type varchar(128), alter column body drop not null
+          - alter table px.evolution_memo alter column body type varchar(128), alter column body drop not null
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_memo modify body varchar(128)
+          - alter table px.evolution_memo modify body varchar(128)
         createdIndices: []

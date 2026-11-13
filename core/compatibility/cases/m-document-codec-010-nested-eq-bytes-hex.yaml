@@ -14,14 +14,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
-        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where json_value(t0.profile, ?) = ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where json_value(t0.profile, ?) = ?
       binds:
         postgres: [blob, '0a1b']
         mariadb: ['$.blob', '0a1b']
   referenceSql:
-    postgres: select id, label from sample where profile ->> 'blob' = '0a1b'
-    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.blob')), 'null') = '0a1b'
+    postgres: select id, label from px.sample where profile ->> 'blob' = '0a1b'
+    mariadb: select id, label from px.sample where nullif(json_unquote(json_extract(profile, '$.blob')), 'null') = '0a1b'
   rows:
     - { id: 1, label: Ada }
   databaseCalls: 1

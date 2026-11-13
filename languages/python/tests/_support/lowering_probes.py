@@ -42,6 +42,7 @@ from parallax.core.internal.write_plan.plan import (
     TemporalWriteOwnership,
 )
 from parallax.core.internal.write_plan.steps import PlannedStep
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -60,7 +61,7 @@ def lowered_steps(
     """Each of ``steps`` paired with the one statement it lowers to alone, in
     order, each lowered only when it is asked for."""
     for step in steps:
-        yield step, lowered(step, payloads, meta, dialect)
+        yield step, lowered(step, payloads, bound_model(meta), dialect)
 
 
 def lower_instruction(
@@ -109,7 +110,7 @@ def _stream(
     ownership: TemporalWriteOwnership,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
-    planner = build_write_planner(model)
+    planner = build_write_planner(bound_model(model))
     prepared = _prepared(instruction, model)
     if isinstance(prepared, PreparedPredicateInstruction):
         assert observation is None  # a readless predicate write observes nothing
@@ -138,7 +139,7 @@ def _stream(
                 )
             )
         )
-    return list(lowered_steps(steps, LayoutPayloadPreparer(model), model, dialect))
+    return list(lowered_steps(steps, LayoutPayloadPreparer(bound_model(model)), model, dialect))
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedInstruction:

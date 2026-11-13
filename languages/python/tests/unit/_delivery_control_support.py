@@ -173,7 +173,7 @@ class GuardedPort(ConnectsAsItself):
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        if "from person t0" in sql:
+        if "from px.person t0" in sql:
             keys = sorted(cast("list[int]", cast("ArrayBind", binds[0]).values))
             return projected_rows(
                 sql, ({"id": key, "name": f"person-{key:06d}"} for key in keys), document_reads

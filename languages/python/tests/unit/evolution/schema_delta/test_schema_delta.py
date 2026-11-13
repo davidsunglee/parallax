@@ -25,11 +25,12 @@ from types import ModuleType
 import pytest
 
 from parallax.core.internal.base import STRING
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import (
     POSTGRES,
     Dialect,
 )
-from parallax.core.internal.metamodel import Column, EntityIdentity, Table
+from parallax.core.internal.metamodel import Column, EntityIdentity
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.storage_layout import ColumnSlot
 from parallax.descriptor._ingest import ingest_document
@@ -40,11 +41,11 @@ from parallax.evolution.internal.model_evolution import (
     CoordinatedEvolution,
     EntityAdded,
     UnilateralEvolution,
-    evolve_metamodels,
+    evolve_resolved,
 )
 from parallax.evolution.internal.schema_delta import (
-    PhysicalLocation,
     SchemaDelta,
+    SchemaTarget,
     schema_delta,
 )
 from parallax.evolution.internal.schema_delta._order import order
@@ -59,6 +60,7 @@ from parallax.evolution.internal.schema_delta._physical import (
 )
 from parallax.evolution.internal.schema_delta._plan import plan
 from parallax.evolution.internal.schema_delta._render import render
+from tests._support.bindings import binding_for, bound_model, physical_table, resolved_table
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._document_layout_support import document_model
 from tests.unit._inheritance_family_support import (
@@ -77,8 +79,8 @@ _DOCUMENT = document_model()
 
 
 def _delta(model: AcceptedMetamodel, dialect: Dialect = POSTGRES) -> SchemaDelta:
-    """The whole provisioning delta for ``model``."""
-    return schema_delta(evolve_metamodels(ABSENT, model), dialect)
+    """The whole provisioning delta for ``model`` bound for ``dialect``."""
+    return schema_delta(evolve_resolved(ABSENT, ResolvedBinding(model, binding_for(dialect))))
 
 
 def _statements(model: AcceptedMetamodel, dialect: Dialect = POSTGRES) -> list[str]:
@@ -88,7 +90,7 @@ def _statements(model: AcceptedMetamodel, dialect: Dialect = POSTGRES) -> list[s
 def _tables(model: AcceptedMetamodel) -> dict[str, str]:
     """Each ``create table`` statement of ``model``, keyed by its Table name."""
     return {
-        statement.split(" ")[2]: statement
+        statement.split(" ")[2].removeprefix("px."): statement
         for statement in _statements(model)
         if statement.startswith("create table ")
     }
@@ -101,7 +103,7 @@ def _storage_layout_ddl(table: str) -> str:
 def test_provisioning_quote_reserved_and_order_columns() -> None:
     (ddl,) = _statements(_MODELS["grade"])
     assert ddl == (
-        'create table grade (id bigint not null, "order" integer not null, '
+        'create table px.grade (id bigint not null, "order" integer not null, '
         "label varchar(32) not null, primary key (id))"
     )
 
@@ -110,7 +112,7 @@ def test_provisioning_map_value_objects_to_jsonb() -> None:
     (ddl,) = [
         stmt
         for stmt in _statements(_MODELS["customer"])
-        if stmt.startswith("create table customer ")
+        if stmt.startswith("create table px.customer ")
     ]
     assert "address jsonb" in ddl
     assert "primary key (id)" in ddl
@@ -123,7 +125,7 @@ def test_provisioning_maps_each_scalar_collection_to_its_own_jsonb_column() -> N
     (document,) = _statements(_MODELS["scalar-collection-layout-twin-document"])
 
     assert columns == (
-        "create table collection_twin (id bigint not null, flags jsonb not null, "
+        "create table px.collection_twin (id bigint not null, flags jsonb not null, "
         "smalls jsonb not null, counts jsonb not null, ratios jsonb not null, "
         "scores jsonb not null, amounts jsonb not null, tags jsonb not null, "
         "blobs jsonb not null, days jsonb not null, clocks jsonb not null, "
@@ -131,7 +133,7 @@ def test_provisioning_maps_each_scalar_collection_to_its_own_jsonb_column() -> N
         "parts jsonb not null, primary key (id))"
     )
     assert document == (
-        "create table collection_twin (id bigint not null, payload jsonb not null, "
+        "create table px.collection_twin (id bigint not null, payload jsonb not null, "
         "primary key (id))"
     )
 
@@ -151,7 +153,7 @@ def test_provisioning_temporal_pk_is_business_key_plus_to_columns() -> None:
 
 def test_provisioning_constrains_each_temporal_table_inline_in_axis_order() -> None:
     assert _tables(_MODELS["balance"])["balance"] == (
-        "create table balance (bal_id bigint not null, acct_num varchar(32) not null, "
+        "create table px.balance (bal_id bigint not null, acct_num varchar(32) not null, "
         "val numeric(18, 2) not null, in_z timestamptz not null, out_z timestamptz not null, "
         "constraint pxc_pk_balance_5a0cda0c63759f8bdf9c06ee122888ed primary key (bal_id, out_z), "
         "constraint pxc_tx_balance_c54215aec2277be436e89b2c6506715d check (in_z < out_z), "
@@ -180,9 +182,9 @@ def test_a_delta_creating_no_temporal_table_needs_no_prerequisite() -> None:
 
 
 def test_the_prerequisite_is_caused_by_every_temporal_table_creation() -> None:
-    evolution = evolve_metamodels(ABSENT, _MODELS["rate"])
+    evolution = evolve_resolved(ABSENT, bound_model(_MODELS["rate"]))
     assert isinstance(evolution, UnilateralEvolution)
-    operations = order(plan(evolution, POSTGRES).operations)
+    operations = order(plan(evolution).operations)
     extension = operations[0]
     assert isinstance(extension, CreateExtension)
     dependents = [
@@ -196,7 +198,7 @@ def test_the_prerequisite_is_caused_by_every_temporal_table_creation() -> None:
         for cause in evolution.operations
         if any(cause in dependent.caused_by for dependent in dependents)
     )
-    assert location_of(extension) == PhysicalLocation(extension="btree_gist")
+    assert location_of(extension) == SchemaTarget(extension="btree_gist")
 
 
 def test_a_shared_table_excludes_overlap_by_the_root_key_never_the_tag() -> None:
@@ -242,18 +244,18 @@ def test_a_surviving_temporal_table_gains_no_check() -> None:
     position = _RECORDS["position"]
     earlier = formed(balance)
     later = formed(dataclasses.replace(balance, entities=(*balance.entities, *position.entities)))
-    evolution = evolve_metamodels(earlier, later)
+    evolution = evolve_resolved(bound_model(earlier), bound_model(later))
     assert isinstance(evolution, UnilateralEvolution)
-    statements = schema_delta(evolution, POSTGRES).statements
-    assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == ["position"]
+    statements = schema_delta(evolution).statements
+    assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == ["px.position"]
     assert [ddl.split(" ")[2] for ddl in statements if " exclude using gist " in ddl] == [
-        "position"
+        "px.position"
     ]
     assert statements[0] == "create extension if not exists btree_gist"
     assert not [ddl for ddl in statements if "balance" in ddl and "create table" in ddl]
-    unchanged = evolve_metamodels(later, later)
+    unchanged = evolve_resolved(bound_model(later), bound_model(later))
     assert isinstance(unchanged, UnilateralEvolution)
-    assert schema_delta(unchanged, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+    assert schema_delta(unchanged) == SchemaDelta(statements=(), created_indices=())
 
 
 def _owning_shared(name: str) -> AcceptedMetamodel:
@@ -278,21 +280,21 @@ def test_an_earlier_table_of_another_mapping_owner_is_never_carried_forward() ->
     # owner, so an equal declared name held by another owner is not its survivor.
     later_owner = EntityIdentity("parallax.test", "Zither")
     evolution = UnilateralEvolution(
-        earlier=_owning_shared("Anvil"),
-        later=_owning_shared(later_owner.name),
+        earlier=bound_model(_owning_shared("Anvil")),
+        later=bound_model(_owning_shared(later_owner.name)),
         operations=(EntityAdded(later_owner),),
         behavioral_impacts=(),
         overlap_visible_operations=(),
     )
-    (created,) = plan(evolution, POSTGRES).operations
+    (created,) = plan(evolution).operations
     assert isinstance(created, CreateTable)
-    assert created.table == Table("shared")
+    assert created.table.physical == physical_table("shared")
     assert created.caused_by == (EntityAdded(later_owner),)
 
 
 def test_creating_a_table_delegates_its_check_spelling_to_the_dialect() -> None:
     operation = CreateTable(
-        table=Table(name="Span"),
+        table=resolved_table(EntityIdentity("parallax.test", "Span"), "Span"),
         columns=(),
         primary_key=(),
         interval_checks=(
@@ -301,7 +303,7 @@ def test_creating_a_table_delegates_its_check_spelling_to_the_dialect() -> None:
         caused_by=(),
     )
     assert render(operation, POSTGRES) == (
-        'create table "Span" (constraint pxc_tx_span_0 check ("Begins" < "order"))'
+        'create table px."Span" (constraint pxc_tx_span_0 check ("Begins" < "order"))'
     )
 
 
@@ -309,7 +311,7 @@ def test_provisioning_create_the_shared_table_once() -> None:
     # Payment (abstract root) is tableless; its concrete subtypes share ONE table,
     # so exactly one `create table payment` is emitted (not one per subtype).
     tables = _statements(_MODELS["payment"])
-    payment_tables = [ddl for ddl in tables if ddl.startswith("create table payment ")]
+    payment_tables = [ddl for ddl in tables if ddl.startswith("create table px.payment ")]
     assert len(payment_tables) == 1
 
 
@@ -320,7 +322,7 @@ def test_provisioning_tph_merges_the_whole_family_plus_the_tag_column() -> None:
     # its own Discriminator tier, immediately after the identity slots.
     (ddl,) = [stmt for stmt in _statements(_MODELS["payment"]) if "payment" in stmt]
     assert ddl == (
-        "create table payment (id bigint not null, kind varchar(32) not null, "
+        "create table px.payment (id bigint not null, kind varchar(32) not null, "
         "amount numeric(18, 2) not null, card_network varchar(16), "
         "tendered numeric(18, 2), primary key (id))"
     )
@@ -341,13 +343,13 @@ def test_provisioning_tpcs_creates_one_table_per_concrete_with_its_own_ancestry(
     # Table-per-concrete-subtype: no shared table, no tag column — each concrete's
     # OWN table physically carries its full ancestry-derived chain.
     tables = _statements(_MODELS["document"])
-    (invoice,) = [t for t in tables if t.startswith("create table invoice ")]
+    (invoice,) = [t for t in tables if t.startswith("create table px.invoice ")]
     assert invoice == (
-        "create table invoice (id bigint not null, title varchar(64) not null, "
+        "create table px.invoice (id bigint not null, title varchar(64) not null, "
         "folder_id bigint, currency varchar(3) not null, "
         "amount_due numeric(18, 2) not null, primary key (id))"
     )
-    (memo,) = [t for t in tables if t.startswith("create table memo ")]
+    (memo,) = [t for t in tables if t.startswith("create table px.memo ")]
     assert "currency" not in memo  # Memo does not descend from FinancialDocument
     assert "kind" not in invoice and "kind" not in memo
 
@@ -361,9 +363,9 @@ def test_provisioning_tpcs_temporal_pk_includes_the_root_declared_axes() -> None
     # the business key alone, or a second milestone for the same id could not be
     # stored.
     tables = _statements(_MODELS["rate"])
-    (deposit,) = [t for t in tables if t.startswith("create table deposit_rate ")]
+    (deposit,) = [t for t in tables if t.startswith("create table px.deposit_rate ")]
     assert "primary key (id, thru_z, out_z)" in deposit
-    (loan,) = [t for t in tables if t.startswith("create table loan_rate ")]
+    (loan,) = [t for t in tables if t.startswith("create table px.loan_rate ")]
     assert "primary key (id, thru_z, out_z)" in loan
     # Quote (models/quote.yaml): the audit-only (single-axis) TPCS counterpart.
     (spot,) = [t for t in _statements(_MODELS["quote"]) if t.startswith("create table ")]
@@ -383,12 +385,12 @@ def test_provisioning_tph_temporal_pk_includes_the_root_declared_axes() -> None:
 def test_provisioning_render_the_structured_column_last_and_not_null() -> None:
     marker, person = _statements(_DOCUMENT)
     assert person == (
-        "create table person (id bigint not null, payload jsonb not null, primary key (id))"
+        "create table px.person (id bigint not null, payload jsonb not null, primary key (id))"
     )
     # An Entity with no document-resident member still gets the column: the
     # layout is root-owned and every governed row carries a document.
     assert marker == (
-        "create table marker (id bigint not null, payload jsonb not null, primary key (id))"
+        "create table px.marker (id bigint not null, payload jsonb not null, primary key (id))"
     )
     assert "default" not in person
 
@@ -399,7 +401,7 @@ def test_provisioning_standalone_slots_carry_declared_nullability() -> None:
     # physical primary key selects it. The one top-level document occupies a
     # single `jsonb` column after every scalar tier.
     assert _storage_layout_ddl("layout_profile") == (
-        "create table layout_profile (id bigint not null, label varchar(32) not null, "
+        "create table px.layout_profile (id bigint not null, label varchar(32) not null, "
         "note varchar(64), contact jsonb not null, primary key (id))"
     )
 
@@ -411,7 +413,7 @@ def test_provisioning_tph_requires_family_wide_but_not_subtype_only_slots() -> N
     # the sibling variant's rows, so both physical columns must permit NULL. The
     # framework-owned discriminator is never nullable.
     assert _storage_layout_ddl("layout_payment") == (
-        "create table layout_payment (id bigint not null, kind varchar(32) not null, "
+        "create table px.layout_payment (id bigint not null, kind varchar(32) not null, "
         "amount numeric(18, 2) not null, card_network varchar(16), "
         "tendered numeric(18, 2), primary key (id))"
     )
@@ -423,11 +425,11 @@ def test_provisioning_tpcs_tables_repeat_ancestry_and_may_reuse_a_column() -> No
     # physical column spelling in structurally different tables, so each keeps its
     # declared non-null answer.
     assert _storage_layout_ddl("layout_audit") == (
-        "create table layout_audit (id bigint not null, title varchar(64) not null, "
+        "create table px.layout_audit (id bigint not null, title varchar(64) not null, "
         "detail varchar(32) not null, primary key (id))"
     )
     assert _storage_layout_ddl("layout_survey") == (
-        "create table layout_survey (id bigint not null, title varchar(64) not null, "
+        "create table px.layout_survey (id bigint not null, title varchar(64) not null, "
         "detail varchar(32) not null, primary key (id))"
     )
 
@@ -456,7 +458,9 @@ def test_provisioning_enforces_a_unique_secondary_index_as_its_own_statement() -
     ]
     assert created.unique and created.physical_table.name == "tag"
     (statement,) = [text for text in delta.statements if text.startswith("create unique index ")]
-    assert statement == (f"create unique index {created.physical_index_name.value} on tag (name)")
+    assert statement == (
+        f"create unique index {created.physical_index_name.value} on px.tag (name)"
+    )
     assert "unique" not in _tables(_MODELS["error-cases"])["widget"]
 
 
@@ -520,7 +524,8 @@ def test_a_temporal_descendant_index_is_named_over_the_roots_axis_end_attributes
         "pxi_root_tbl_leaf_leaf_code_uq_81dcabcdf97f6ddb8fe4864a7f38b96d"
     )
     assert delta.statements[-1] == (
-        f"create unique index {created.physical_index_name.value} on root_tbl (code, thru_z, out_z)"
+        f"create unique index {created.physical_index_name.value} on px.root_tbl (code, thru_z, "
+        "out_z)"
     )
 
 
@@ -549,10 +554,10 @@ def test_provisioning_tpcs_creates_each_index_on_every_table_carrying_its_member
         ("memo", "doc_code_uq", True),
     ]
     assert [text.split(" on ")[1] for text in delta.statements if " index " in text] == [
-        "invoice (code)",
-        "invoice (currency)",
-        "invoice (invoice_no)",
-        "memo (code)",
+        "px.invoice (code)",
+        "px.invoice (currency)",
+        "px.invoice (invoice_no)",
+        "px.memo (code)",
     ]
     assert "unique" not in _tables(tpcs_family_with_indices_at_every_level())["memo"]
 
@@ -587,9 +592,9 @@ def test_provisioning_creates_every_unique_index_over_one_column() -> None:
 def test_equal_endpoints_produce_an_empty_delta() -> None:
     # An empty Unilateral Evolution asks for nothing, so the answer is a delta
     # with no statement rather than an absent one.
-    evolution = evolve_metamodels(_MODELS["grade"], _MODELS["grade"])
+    evolution = evolve_resolved(bound_model(_MODELS["grade"]), bound_model(_MODELS["grade"]))
     assert isinstance(evolution, UnilateralEvolution)
-    assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+    assert schema_delta(evolution) == SchemaDelta(statements=(), created_indices=())
 
 
 @pytest.mark.parametrize("stem", ["temporal-authored-index", "evolution-temporality-index-v2"])
@@ -597,9 +602,9 @@ def test_equal_temporal_editions_produce_an_empty_delta(stem: str) -> None:
     # Both editions are compiled under the current derivation, so equal models ask
     # for nothing even though a table an earlier release provisioned may hold its
     # authored indices without the axis ends: that adoption is a manual migration.
-    evolution = evolve_metamodels(_MODELS[stem], _MODELS[stem])
+    evolution = evolve_resolved(bound_model(_MODELS[stem]), bound_model(_MODELS[stem]))
     assert isinstance(evolution, UnilateralEvolution)
-    assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+    assert schema_delta(evolution) == SchemaDelta(statements=(), created_indices=())
 
 
 def _index_statements(model: AcceptedMetamodel) -> list[str]:
@@ -613,18 +618,20 @@ def test_gaining_a_temporal_profile_is_compared_through_fresh_provisioning() -> 
     # Transaction-Time edition's columns and names both carry the axis end.
     earlier = _MODELS["evolution-temporality-index-v1"]
     later = _MODELS["evolution-temporality-index-v2"]
-    assert isinstance(evolve_metamodels(earlier, later), CoordinatedEvolution)
+    assert isinstance(
+        evolve_resolved(bound_model(earlier), bound_model(later)), CoordinatedEvolution
+    )
     assert _index_statements(earlier) == [
         "create index pxi_evolution_permit_parallax_1ab67ebbc572f820f39b577291e6d6ff "
-        "on evolution_permit (holder)",
+        "on px.evolution_permit (holder)",
         "create unique index pxi_evolution_permit_parallax_fbc1252e35f802b190be2f1bb52d5c4d "
-        "on evolution_permit (serial)",
+        "on px.evolution_permit (serial)",
     ]
     assert _index_statements(later) == [
         "create index pxi_evolution_permit_parallax_8a8ee15abcae9cb0ec132d95dbc0e7a9 "
-        "on evolution_permit (holder, out_z)",
+        "on px.evolution_permit (holder, out_z)",
         "create unique index pxi_evolution_permit_parallax_cbac874d569a83df2664ead818b52a73 "
-        "on evolution_permit (serial, out_z)",
+        "on px.evolution_permit (serial, out_z)",
     ]
 
 
@@ -654,16 +661,16 @@ def test_a_temporal_index_alteration_creates_its_end_keyed_target_before_droppin
     # unilateral: the target, ending with both axis ends, is created under a new
     # name before the earlier definition fresh provisioning created is dropped.
     earlier, later = _bitemporal_permit(unique=False), _bitemporal_permit(unique=True)
-    evolution = evolve_metamodels(earlier, later)
+    evolution = evolve_resolved(bound_model(earlier), bound_model(later))
     assert isinstance(evolution, UnilateralEvolution)
     (held,) = _delta(earlier).created_indices
-    delta = schema_delta(evolution, POSTGRES)
+    delta = schema_delta(evolution)
     (created,) = delta.created_indices
     assert created.physical_index_name != held.physical_index_name
     assert delta.statements == (
-        f"create unique index {created.physical_index_name.value} on permit "
+        f"create unique index {created.physical_index_name.value} on px.permit "
         "(serial, thru_z, out_z)",
-        f"drop index {held.physical_index_name.value}",
+        f"drop index px.{held.physical_index_name.value}",
     )
 
 
@@ -673,15 +680,17 @@ def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -
     # unilateral AND holds no value; the same contraction over a Column a shape
     # stores is not a Unilateral Evolution at all, so it never reaches the
     # generator and the case never has to refuse it.
-    rowless = evolve_metamodels(
-        _MODELS["evolution-rowless-domain-v1"], _MODELS["evolution-rowless-domain-v2"]
+    rowless = evolve_resolved(
+        bound_model(_MODELS["evolution-rowless-domain-v1"]),
+        bound_model(_MODELS["evolution-rowless-domain-v2"]),
     )
     assert isinstance(rowless, UnilateralEvolution)
-    assert schema_delta(rowless, POSTGRES).statements == (
-        "alter table evolution_registry alter column caption type varchar(32)",
+    assert schema_delta(rowless).statements == (
+        "alter table px.evolution_registry alter column caption type varchar(32)",
     )
-    stored = evolve_metamodels(
-        _MODELS["evolution-widened-domain-v2"], _MODELS["evolution-widened-domain-v1"]
+    stored = evolve_resolved(
+        bound_model(_MODELS["evolution-widened-domain-v2"]),
+        bound_model(_MODELS["evolution-widened-domain-v1"]),
     )
     assert not isinstance(stored, UnilateralEvolution)
 
@@ -724,7 +733,9 @@ def test_a_scalar_multiplicity_change_never_reaches_the_generator() -> None:
         _MODELS["evolution-rowless-collection-v2"],
     )
     for earlier, later in (stored, stored[::-1], rowless, rowless[::-1]):
-        assert isinstance(evolve_metamodels(earlier, later), CoordinatedEvolution)
+        assert isinstance(
+            evolve_resolved(bound_model(earlier), bound_model(later)), CoordinatedEvolution
+        )
 
 
 def test_no_model_statement_is_idempotent() -> None:
@@ -764,7 +775,7 @@ def test_a_delta_retains_neither_the_model_nor_the_layouts_it_resolved() -> None
     # long as a caller holds the statements, which is the shape this repository
     # has had to restore by hand before.
     model = _MODELS["error-cases"]
-    delta = schema_delta(evolve_metamodels(ABSENT, model), POSTGRES)
+    delta = schema_delta(evolve_resolved(ABSENT, bound_model(model)))
     held = list(_reachable(delta))
     assert delta.statements and delta.created_indices
     assert not any(item is model for item in held)
@@ -775,14 +786,16 @@ def test_a_delta_retains_neither_the_model_nor_the_layouts_it_resolved() -> None
 # Two arms no generated delta here observes: the member a table creation or   #
 # an added column addresses, and where a refusal would report it.             #
 # --------------------------------------------------------------------------- #
-_TABLE = Table(name="widget")
+_TABLE = resolved_table(EntityIdentity("parallax.test", "Widget"), "widget")
 _LABEL = PhysicalColumn(Column(name="label"), STRING, 8, nullable=False)
 
 
 def test_adding_a_column_addresses_that_column() -> None:
     operation = AddColumn(table=_TABLE, column=_LABEL, caused_by=())
     assert member_key(operation) == "label"
-    assert location_of(operation) == PhysicalLocation(table=_TABLE, column=Column(name="label"))
+    assert location_of(operation) == SchemaTarget(
+        table=_TABLE.physical, column=Column(name="label")
+    )
 
 
 def test_creating_a_table_addresses_no_member() -> None:
@@ -794,4 +807,4 @@ def test_creating_a_table_addresses_no_member() -> None:
         caused_by=(),
     )
     assert member_key(operation) == ""
-    assert location_of(operation) == PhysicalLocation(table=_TABLE)
+    assert location_of(operation) == SchemaTarget(table=_TABLE.physical)

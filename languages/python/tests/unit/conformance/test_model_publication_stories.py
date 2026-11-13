@@ -33,16 +33,17 @@ from parallax.core.internal.execution import (
     ModelSelection,
     ServingModel,
 )
-from parallax.core.internal.metamodel import EntityIdentity, IndexIdentity, Table
+from parallax.core.internal.metamodel import EntityIdentity, IndexIdentity
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
 from parallax.snapshot import Database, connect
+from tests._support.bindings import TEST_BINDING, physical_table
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
-_ALTER = "alter table account add column nickname varchar(64)"
-_ORDERED = ("alter table t add column a int", "create index i on t (a)", "analyze t")
+_ALTER = "alter table px.account add column nickname varchar(64)"
+_ORDERED = ("alter table px.t add column a int", "create index i on px.t (a)", "analyze t")
 _ROLLOUT_INDEX = CreatedIndex(
     physical_index_name=PhysicalIndexName("pxi_account_nickname_0"),
-    physical_table=Table(name="account"),
+    physical_table=physical_table("account"),
     logical_index_identity=IndexIdentity(
         EntityIdentity("parallax.compatibility", "Account"), "accountNickname"
     ),
@@ -134,7 +135,12 @@ def test_the_same_update_run_backwards_is_not_a_live_publication_path() -> None:
     # Evolution: there is no delta to apply and no moment at which one
     # publication would make the two editions agree, so the host refuses before
     # any statement is generated.
-    backwards = evolve(NICKNAMED_ACCOUNT_MODEL, ACCOUNT_MODEL)
+    backwards = evolve(
+        NICKNAMED_ACCOUNT_MODEL,
+        ACCOUNT_MODEL,
+        earlier_binding=TEST_BINDING,
+        later_binding=TEST_BINDING,
+    )
     with pytest.raises(stories.UnpublishableUpdateError, match="Coordinated Evolution"):
         stories.unilateral(backwards)
 
@@ -162,7 +168,7 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
 
     with pytest.raises(TypeError, match="takes a Domain Model"):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(
-            port, port, unpreparable
+            port, port, unpreparable, TEST_BINDING
         )
 
     ((serving, a, root),) = connected
@@ -211,7 +217,7 @@ def test_the_generated_delta_that_did_not_apply_publishes_nothing() -> None:
     port = _RefusingPort(RuntimeError("relation is locked"))
     with pytest.raises(stories.UnpublishableUpdateError):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(
-            port, port, NICKNAMED_ACCOUNT_MODEL
+            port, port, NICKNAMED_ACCOUNT_MODEL, TEST_BINDING
         )
 
     assert port.writes == []
@@ -224,7 +230,7 @@ def test_the_delta_s_index_provenance_is_what_the_applying_host_is_handed_back()
     # Index, so the provenance is graded over a delta constructed here.
     port = _AccountPort()
     delta = SchemaDelta(
-        ("create unique index pxi_account_nickname_0 on account (nickname)",), (_ROLLOUT_INDEX,)
+        ("create unique index pxi_account_nickname_0 on px.account (nickname)",), (_ROLLOUT_INDEX,)
     )
     assert stories.apply_schema_delta(port, delta) == (_ROLLOUT_INDEX,)
     assert port.writes == list(delta.statements)

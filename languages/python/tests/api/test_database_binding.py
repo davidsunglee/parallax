@@ -190,11 +190,10 @@ def test_an_omitted_part_is_not_an_invalid_one() -> None:
     [
         (PostgresBinding.from_json, '{"format_version": 1,'),
         (PostgresBinding.from_yaml, "a: ["),
-        (PostgresBinding.from_yaml, "default: { schema: 2026-02-30 }"),
         (PostgresBinding.from_yaml, "default: { schema: !!bool maybe }"),
         (PostgresBinding.from_yaml, "default: { schema: !!timestamp later }"),
     ],
-    ids=["json", "yaml", "yaml-impossible-date", "yaml-tagged-bool", "yaml-tagged-timestamp"],
+    ids=["json", "yaml", "yaml-tagged-bool", "yaml-tagged-timestamp"],
 )
 def test_malformed_text_is_a_definition_refusal(
     door: Callable[[str], PostgresBinding], text: str
@@ -203,3 +202,21 @@ def test_malformed_text_is_a_definition_refusal(
         door(text)
     assert raised.value.issues == (BindingIssue("binding-syntax-invalid", ()),)
     assert raised.value.__cause__ is not None
+
+
+@pytest.mark.parametrize("scalar", ["1.5", "-2e3", ".nan", "-.inf", "0o17", "0x1F", "12", "true"])
+def test_a_yaml_core_number_or_boolean_is_no_name(scalar: str) -> None:
+    with pytest.raises(BindingError) as raised:
+        PostgresBinding.from_yaml(
+            f"format_version: 1\nbackend: postgres\ndefault: {{ schema: {scalar} }}\n"
+        )
+    assert _issues(raised) == [("binding-value-invalid", ("default", "schema"))]
+
+
+@pytest.mark.parametrize("scalar", ["yes", "off", "1_000", "1:30", "2026-02-30", "0b101", "+.5x"])
+def test_every_other_plain_yaml_scalar_is_the_name_written(scalar: str) -> None:
+    binding = PostgresBinding.from_yaml(
+        f"format_version: 1\nbackend: postgres\ndefault: {{ schema: {scalar} }}\n"
+    )
+    assert binding.default == PostgresLocation(schema=scalar)
+    assert PostgresBinding.from_yaml(binding.to_yaml()) == binding

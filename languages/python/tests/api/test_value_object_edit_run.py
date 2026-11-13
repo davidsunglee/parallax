@@ -37,6 +37,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, TEST_SCHEMA, bound_model
 from tests._support.root_ownership import own_root
 
 _CUSTOMER = MODELS["customer"]
@@ -54,10 +55,10 @@ state every assertion below weighs its own stored document against."""
 def _connect_and_seed(
     profile_run: Any, observed: LifecycleObservation | None = None
 ) -> ScopedDatabase:
-    profile_run.reset(model_of(_CUSTOMER), {})
+    profile_run.reset(model_of(_CUSTOMER), {}, TEST_BINDING)
     provider = None if observed is None else observed.provider
     db = own_root(
-        connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider)
+        connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider, binding=TEST_BINDING)
     ).using_database_login()
     db.transact(
         lambda tx: tx.insert(
@@ -76,8 +77,8 @@ def _connect_and_seed(
 
 
 def _stored_address(profile_run: Any) -> object:
-    state = engine.read_table_state(profile_run.port, model_of(_CUSTOMER))
-    (row,) = state["customer"]
+    state = engine.read_table_state(profile_run.port, bound_model(model_of(_CUSTOMER)))
+    (row,) = state[TEST_SCHEMA]["customer"]
     return row["address"]
 
 

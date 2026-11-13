@@ -28,6 +28,7 @@ from parallax.core import LATEST, UsageError
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _BALANCE = MODELS["balance"]
@@ -68,9 +69,9 @@ def _seed_branch(db: ScopedDatabase, *, id: int = 1) -> None:
 def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
     profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
-    profile_run.reset(model_of(_BALANCE), {})
+    profile_run.reset(model_of(_BALANCE), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]), binding=TEST_BINDING)
     ).using_database_login()
     _seed_balance(db)
 
@@ -96,9 +97,9 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
     # authors anything -- the earlier of the two points staleness surfaces at,
     # and the one no gate and no lock can cover, because it happened before the
     # transaction started.
-    profile_run.reset(model_of(_BALANCE), {})
+    profile_run.reset(model_of(_BALANCE), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I3]))
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I3]), binding=TEST_BINDING)
     ).using_database_login()
     _seed_balance(db)
 
@@ -112,7 +113,9 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
     # configuration: reusing configuration opens an independent runtime, so its
     # transaction runs on a connection of its own exactly as another process's
     # would, and closing it leaves the handle under test working.
-    with connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I2])) as _root_peer:
+    with connect(
+        profile_run.port, _BALANCE, clock=ScriptedClock([_I2]), binding=TEST_BINDING
+    ) as _root_peer:
         peer = _root_peer.using_database_login()
         peer.transact(concurrent_write)
 
@@ -134,9 +137,9 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
     # a milestone whose Transaction-Time coordinate is finite, and that view is
     # read-only in either mode. The copy derived from it carries the same pin, so
     # the refusal lands at the verb, before any DML.
-    profile_run.reset(model_of(_BALANCE), {})
+    profile_run.reset(model_of(_BALANCE), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]), binding=TEST_BINDING)
     ).using_database_login()
     _seed_balance(db)
     _node, edge = render_balance_milestone(db, id=1)
@@ -158,9 +161,9 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
 def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
     profile_run: Any, concurrency: ConcurrencyPreference
 ) -> None:
-    profile_run.reset(model_of(_BRANCH), {})
+    profile_run.reset(model_of(_BRANCH), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
+        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I2]), binding=TEST_BINDING)
     ).using_database_login()
     _seed_branch(db)
 
@@ -193,9 +196,9 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
     # form displayed, but its Transaction-Time axis reads that rectangle's
     # CURRENT milestone, whose edge is the concurrent writer's -- so the
     # comparison refuses the stale submit before it authors anything.
-    profile_run.reset(model_of(_BRANCH), {})
+    profile_run.reset(model_of(_BRANCH), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
+        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I3]), binding=TEST_BINDING)
     ).using_database_login()
     _seed_branch(db)
 
@@ -207,7 +210,9 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     # An independent second session commits a REAL chaining update first, and is
     # released with the choreography that needed it.
-    with connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I2])) as _root_peer:
+    with connect(
+        profile_run.port, _BRANCH, clock=ScriptedClock([_I2]), binding=TEST_BINDING
+    ) as _root_peer:
         peer = _root_peer.using_database_login()
         peer.transact(concurrent_write)
 

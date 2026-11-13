@@ -30,16 +30,16 @@ when:
       databaseCalls: 2
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? for share of t0
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? lock in share mode
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ? for share of t0
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ? lock in share mode
           binds: [3]
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id is null order by t0.id asc limit ?)) u join account t0 on u.id = t0.id order by t0.id asc limit ? for share of t0
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ? lock in share mode
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id is null order by t0.id asc limit ?)) u join px.account t0 on u.id = t0.id order by t0.id asc limit ? for share of t0
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ? lock in share mode
           binds:
             postgres: [2, 2, 3, 3, 3]
             mariadb: [2, 2, 3]
-      referenceSql: select id, owner, balance, version from account
+      referenceSql: select id, owner, balance, version from px.account
       expectRows:
       - { id: 1, owner: Ada, balance: "100.00", version: 1 }
       - { id: 2, owner: Linus, balance: "250.00", version: 1 }

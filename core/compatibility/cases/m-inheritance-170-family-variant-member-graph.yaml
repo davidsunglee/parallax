@@ -9,9 +9,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.grade from graded_record t0
-        mariadb: select t0.id, t0.kind, t0.grade from graded_record t0
-  referenceSql: select id, kind, grade from graded_record
+        postgres: select t0.id, t0.kind, t0.grade from px.graded_record t0
+        mariadb: select t0.id, t0.kind, t0.grade from px.graded_record t0
+  referenceSql: select id, kind, grade from px.graded_record
   graph:
     GradedRecord:
       - { id: 1, familyVariant: gold, _type: compatibility.overlap.GradedNote }

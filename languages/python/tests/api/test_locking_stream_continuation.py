@@ -22,6 +22,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import TablePerConcreteSubtype
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 
@@ -85,9 +86,9 @@ def _name(entity: type[Any]) -> str:
 
 
 def _seeded(profile_run: Any, provider: RecordingLifecycleProvider | None = None) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=provider)
+        connect(profile_run.port, _MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
     ).using_database_login()
 
     def seed(tx: TxnContext) -> None:
@@ -101,7 +102,7 @@ def _seeded(profile_run: Any, provider: RecordingLifecycleProvider | None = None
     # of dropping it during Read Committed's concurrent-update recheck.
     with closing(profile_run.control()) as control:
         for table in _TABLES.values():
-            control.execute_write(f"analyze {table}", [])
+            control.execute_write(f"analyze px.{table}", [])
     return db
 
 
@@ -134,7 +135,7 @@ def _peer_update(entity: type[Any], *, move: bool = False) -> str:
         assignments += ", version = version + 1"
     if move:
         assignments += ", position = 45"
-    return f"update {_TABLES[entity]} set {assignments} where id = 4"
+    return f"update px.{_TABLES[entity]} set {assignments} where id = 4"
 
 
 def _behind_updater(

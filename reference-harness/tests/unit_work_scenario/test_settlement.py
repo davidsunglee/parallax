@@ -33,26 +33,27 @@ from .conftest import COMPATIBILITY_ROOT, RefusingProvider, assert_judged
 
 _SETTLED = "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
 
-_ACCOUNT_FIND = "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
-_ACCOUNTS_FIND = "select t0.id, t0.owner, t0.balance, t0.version from account t0"
+_ACCOUNT_FIND = "select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?"
+_ACCOUNTS_FIND = "select t0.id, t0.owner, t0.balance, t0.version from px.account t0"
 _ANIMAL_FIND = (
     "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
-    "t0.bark_volume, t0.tusk_length from animal t0"
+    "t0.bark_volume, t0.tusk_length from px.animal t0"
 )
 _RATE_UNION_FIND = (
     "select t0.id, t0.amount, t0.grade, cast(null as decimal(18, 2)) spread, t0.from_z, "
-    "t0.thru_z, t0.in_z, t0.out_z, 'DepositRate' family_variant from deposit_rate t0 "
+    "t0.thru_z, t0.in_z, t0.out_z, 'DepositRate' family_variant from px.deposit_rate t0 "
     "where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? union all select t0.id, "
     "t0.amount, cast(null as varchar(8)) grade, t0.spread, t0.from_z, t0.thru_z, t0.in_z, "
-    "t0.out_z, 'LoanRate' family_variant from loan_rate t0 where t0.from_z <= ? and "
+    "t0.out_z, 'LoanRate' family_variant from px.loan_rate t0 where t0.from_z <= ? and "
     "t0.thru_z > ? and t0.out_z = ?"
 )
 _DEPOSIT_RATE_FIND = (
     "select t0.id, t0.amount, t0.grade, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
-    "from deposit_rate t0 where t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"
+    "from px.deposit_rate t0 where t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"
 )
 _BALANCE_FIND = (
-    "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ?"
+    "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 "
+    "where t0.bal_id = ?"
 )
 
 
@@ -238,7 +239,7 @@ def test_a_settled_golden_must_open_its_predicate_with_a_bound_key() -> None:
     # other bind as its key. Here the leading predicate names a SET.
     case = _multi_object_settled_case()
     case.when["scenario"][1]["statements"][1]["sql"]["postgres"] = (
-        "update account set balance = ?, version = ? where id in (?) and version = ?"
+        "update px.account set balance = ?, version = ? where id in (?) and version = ?"
     )
     with pytest.raises(CaseFailure, match="does not open with a bound key equality"):
         assert_unit_work_scenario(case, RefusingProvider())
@@ -379,7 +380,7 @@ def _versioned_settled_case(
     with the golden advancing from — and, under optimistic concurrency, gating
     on — *version*."""
     gated = concurrency == "optimistic"
-    sql = "update account set balance = ?, version = ? where id = ?"
+    sql = "update px.account set balance = ?, version = ? where id = ?"
     binds: Any = ["175.00", version + 1, 1, version] if gated else ["175.00", version + 1, 1]
     gated_sql = f"{sql} and version = ?" if gated else sql
     statement: dict[str, Any] = {"sql": {"postgres": gated_sql}, "binds": binds}
@@ -442,8 +443,8 @@ def _reserved_version_column_case(*, advance: int) -> Case:
         if attribute.get("optimisticLocking")
     )
     version["column"] = "order"
-    find = 'select t0.id, t0.owner, t0.balance, t0."order" from account t0 where t0.id = ?'
-    update = 'update account set balance = ?, "order" = ? where id = ? and "order" = ?'
+    find = 'select t0.id, t0.owner, t0.balance, t0."order" from px.account t0 where t0.id = ?'
+    update = 'update px.account set balance = ?, "order" = ? where id = ? and "order" = ?'
     raw: dict[str, Any] = {
         "model": "models/account.yaml",
         "tags": ["m-unit-work"],
@@ -489,7 +490,7 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
     """A `uow` group whose one find observes Accounts 1 and 2, and whose write
     step buffers an update of each — the mixed multi-object flush the buffered
     keyed form equally expresses, settling both against that one find."""
-    update = "update account set balance = ?, version = ? where id = ? and version = ?"
+    update = "update px.account set balance = ?, version = ? where id = ? and version = ?"
     raw: dict[str, Any] = {
         "model": "models/account.yaml",
         "tags": ["m-unit-work"],
@@ -569,7 +570,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                     "statements": [
                         {
                             "sql": {
-                                "postgres": "update animal set bark_volume = ? "
+                                "postgres": "update px.animal set bark_volume = ? "
                                 "where id = ? and kind = ?"
                             },
                             "binds": [9, 1, tag],
@@ -694,7 +695,7 @@ def _settled_close_case(
                     "statements": [
                         {
                             "sql": {
-                                "postgres": "update deposit_rate set out_z = ? "
+                                "postgres": "update px.deposit_rate set out_z = ? "
                                 "where id = ? and thru_z = ? and out_z = ? and in_z = ?"
                             },
                             "binds": [at, 1, valid_end, "infinity", tx_start],
@@ -752,7 +753,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                     "statements": [
                         {
                             "sql": {
-                                "postgres": "update balance set out_z = ? where bal_id = ? "
+                                "postgres": "update px.balance set out_z = ? where bal_id = ? "
                                 "and out_z = ? and in_z = ?"
                             },
                             "binds": [

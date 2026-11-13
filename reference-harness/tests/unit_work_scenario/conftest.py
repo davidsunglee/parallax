@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from reference_harness.case import Case, discover_cases, load_case
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 
 COMPATIBILITY_ROOT = Path(__file__).resolve().parents[3] / "core" / "compatibility"
@@ -75,7 +76,7 @@ class Ddl:
 
 @dataclass(frozen=True)
 class Fixtures:
-    table: str
+    table: PhysicalTable
 
 
 @dataclass(frozen=True)
@@ -179,13 +180,16 @@ class ScriptedProvider:
 
     # --- provisioning ------------------------------------------------------
 
-    def reset(self) -> None:
+    def reset(self, qualifiers: Collection[tuple[str, ...]]) -> None:
+        del qualifiers
         self.chronology.append(Reset())
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         self.chronology.append(Ddl(len(list(statements))))
 
-    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+    def load(
+        self, table: PhysicalTable, columns: Sequence[str], rows: Sequence[Sequence[Any]]
+    ) -> None:
         self.chronology.append(Fixtures(table))
 
     # --- the autocommit connection -----------------------------------------
@@ -263,13 +267,15 @@ class RefusingProvider:
     def __init__(self, dialect: str = "postgres") -> None:
         self.dialect = dialect
 
-    def reset(self) -> None:
+    def reset(self, qualifiers: Collection[tuple[str, ...]]) -> None:
         raise DatabaseRefused("reset")
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         raise DatabaseRefused("apply_ddl")
 
-    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
+    def load(
+        self, table: PhysicalTable, columns: Sequence[str], rows: Sequence[Sequence[Any]]
+    ) -> None:
         raise DatabaseRefused("load")
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:

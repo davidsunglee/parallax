@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.internal.base import NeutralType
+from parallax.core.internal.database_binding import (
+    ResolvedBinding,
+    SequenceRelocated,
+    TableRelocated,
+)
 from parallax.core.internal.metamodel import (
     AsOfAxisLocation,
     AttributeIdentity,
@@ -16,7 +21,6 @@ from parallax.core.internal.metamodel import (
     EntityLocation,
     IndexIdentity,
     IndexLocation,
-    Metamodel,
     ModelLocation,
     ModelLocationKey,
     Multiplicity,
@@ -96,6 +100,7 @@ __all__ = [
     "InheritanceChanged",
     "JoinChanged",
     "LockingFallback",
+    "LogicalOperation",
     "MaximumLengthChanged",
     "MultiplicityChanged",
     "NullabilityChanged",
@@ -116,9 +121,11 @@ __all__ = [
     "ScalarAdmissibility",
     "SelectionFacts",
     "SelectionScope",
+    "SequenceRelocated",
     "StorageChanged",
     "StorageContainerChanged",
     "StorageLayoutChanged",
+    "TableRelocated",
     "TemporalAxisFacts",
     "TransactionTimeGated",
     "TypeChanged",
@@ -601,7 +608,7 @@ class DeclarationOrderChanged:
     later: tuple[DeclarationIdentity, ...]
 
 
-type EvolutionOperation = (
+type LogicalOperation = (
     EntityAdded
     | EntityRemoved
     | EntityAltered
@@ -626,10 +633,16 @@ type EvolutionOperation = (
     | IndexAltered
     | DeclarationOrderChanged
 )
-"""Any operation an evolution reports."""
+"""Any operation the logical comparison of two models reports."""
+
+type EvolutionOperation = LogicalOperation | TableRelocated | SequenceRelocated
+"""Any operation an evolution reports, logical or a relocation.
+
+A relocation is a surviving table or sequence whose physical object moved
+between the two bindings."""
 
 
-def _model_location(operation: EvolutionOperation) -> ModelLocation:
+def _model_location(operation: LogicalOperation) -> ModelLocation:
     """The Model Location ``operation`` describes.
 
     A :class:`DeclarationOrderChanged` describes its owning collection, so its
@@ -677,7 +690,7 @@ _DECLARATION_ORDER_RANK: Final[dict[DeclarationCollection, int]] = {
 }
 
 
-def canonical_operation_key(operation: EvolutionOperation) -> tuple[int, ModelLocationKey, int]:
+def canonical_operation_key(operation: LogicalOperation) -> tuple[int, ModelLocationKey, int]:
     """The inspection-order key: canonical Model Location, with every
     declaration-order operation sorted after every declaration operation and
     then by its collection.
@@ -986,12 +999,12 @@ class UnilateralEvolution:
 
     A complete difference a live tenant may apply through the schema path.
 
-    ``earlier`` is ``None`` only for the fresh-provisioning evolution from
-    :data:`ABSENT`.
+    ``earlier`` and ``later`` are each model under its binding; ``earlier`` is
+    ``None`` only for the fresh-provisioning evolution from :data:`ABSENT`.
     """
 
-    earlier: Metamodel | None
-    later: Metamodel
+    earlier: ResolvedBinding | None
+    later: ResolvedBinding
     operations: tuple[EvolutionOperation, ...]
     behavioral_impacts: tuple[BehavioralImpact, ...]
     overlap_visible_operations: tuple[EvolutionOperation, ...]
@@ -1002,11 +1015,12 @@ class CoordinatedEvolution:
     """A model change that needs code, data or rollout coordination before it is applied.
 
     A complete difference whose application needs authoring, data, or rollout
-    coordination. ``coordination_requirements`` is nonempty.
+    coordination. ``coordination_requirements`` is nonempty. ``earlier`` and
+    ``later`` are each model under its binding.
     """
 
-    earlier: Metamodel
-    later: Metamodel
+    earlier: ResolvedBinding
+    later: ResolvedBinding
     operations: tuple[EvolutionOperation, ...]
     behavioral_impacts: tuple[BehavioralImpact, ...]
     coordination_requirements: tuple[CoordinationRequirement, ...]

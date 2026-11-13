@@ -20,6 +20,7 @@ from parallax.evolution import (
     evolve,
     schema_delta,
 )
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -139,7 +140,11 @@ class PublishedUpdate:
 
 
 def a_running_service_publishes_an_evolved_model_without_restarting(
-    adapter: DatabaseAdapter, schema: DatabaseConnection, candidate: DomainModel, /
+    adapter: DatabaseAdapter,
+    schema: DatabaseConnection,
+    candidate: DomainModel,
+    binding: PostgresBinding,
+    /,
 ) -> PublishedUpdate:
     """Prepare, apply, publish — in that order — with the service still serving.
 
@@ -157,9 +162,10 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
 
     ``candidate`` is the later edition the update publishes: the earlier model
     with ``NicknamedAccount``'s ``nickname`` added, which the write after the
-    publication names.
+    publication names. ``binding`` places both editions' tables, unchanged
+    between them.
     """
-    serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
+    serving = ServingModel(prepare_model(ACCOUNT_MODEL, binding=binding, edition="2026-09-a"))
     database = connect(adapter, serving)
     db = database.using_database_login()
     before = db.transact(lambda tx: tx.edition)
@@ -169,15 +175,15 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # runs BEFORE any schema work. A candidate that cannot be prepared raises
     # here, with the database untouched and `a` still the selection every
     # execution adopts.
-    b = prepare_model(candidate, edition="2026-09-b")
+    b = prepare_model(candidate, binding=binding, edition="2026-09-b")
 
     # An Evolution is described between the two Domain Models the selections
     # were prepared from, which each selection carries.
-    evolution = unilateral(evolve(a.model, b.model))
+    evolution = unilateral(evolve(a.model, b.model, earlier_binding=binding, later_binding=binding))
     # The statements are applied exactly as given — never reordered,
     # deduplicated, or made idempotent — because a delta states what must happen
     # to a database at the earlier edition rather than reconciling an unknown one.
-    delta = schema_delta(evolution, schema.dialect)
+    delta = schema_delta(evolution)
     created_indices = apply_schema_delta(schema, delta)
 
     # Only now. Publication ASSERTS that the physical schema already satisfies

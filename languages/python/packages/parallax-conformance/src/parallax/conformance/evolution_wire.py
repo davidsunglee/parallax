@@ -18,6 +18,12 @@ from parallax.core.internal.base import (
     Timestamp,
     Uuid,
 )
+from parallax.core.internal.database_binding import (
+    PhysicalSequence,
+    PhysicalTable,
+    SequenceRelocated,
+    TableRelocated,
+)
 from parallax.core.internal.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -105,8 +111,8 @@ from parallax.evolution.internal.model_evolution import (
     WritesEnabled,
 )
 from parallax.evolution.internal.schema_delta import (
-    PhysicalLocation,
     SchemaDelta,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
 )
 
@@ -220,7 +226,7 @@ def schema_cell(delta: SchemaDelta) -> dict[str, Any]:
             "createdIndices": [
                 {
                     "physicalIndexName": created.physical_index_name.value,
-                    "physicalTable": created.physical_table.name,
+                    "physicalTable": physical_table(created.physical_table),
                     "logicalIndexIdentity": _index(created.logical_index_identity),
                     "unique": created.unique,
                 }
@@ -251,12 +257,17 @@ def unsupported_cell(error: UnsupportedSchemaEvolutionError) -> dict[str, Any]:
     }
 
 
-def _physical_location(location: PhysicalLocation) -> dict[str, str]:
+def physical_table(table: PhysicalTable | PhysicalSequence) -> dict[str, Any]:
+    """A physical table or sequence as its structured wire spelling."""
+    return {"qualifier": list(table.qualifier), "name": table.name}
+
+
+def _physical_location(location: SchemaTarget) -> dict[str, Any]:
     if location.extension is not None:
         return {"extension": location.extension}
     if location.table is None:  # pragma: no cover - every location names one of the two
         raise ValueError("a physical location names a Table or an extension")
-    spelled = {"table": location.table.name}
+    spelled: dict[str, Any] = {"table": physical_table(location.table)}
     if location.column is not None:
         spelled["column"] = location.column.name
     if location.index is not None:
@@ -363,6 +374,8 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
             }
         case IndexAdded() | IndexRemoved() | IndexAltered():
             return _subject_operation(operation, "index", _index(operation.index))
+        case TableRelocated() | SequenceRelocated():
+            return _relocation(operation)
         case DeclarationOrderChanged():
             return {
                 "kind": type(operation).__name__,
@@ -373,6 +386,20 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
                 "earlier": [_declaration(item) for item in operation.earlier],
                 "later": [_declaration(item) for item in operation.later],
             }
+
+
+def _relocation(operation: TableRelocated | SequenceRelocated) -> dict[str, Any]:
+    subject = (
+        {"entity": _entity(operation.mapping_owner)}
+        if isinstance(operation, TableRelocated)
+        else {"sequence": operation.allocator}
+    )
+    return {
+        "kind": type(operation).__name__,
+        **subject,
+        "earlier": physical_table(operation.earlier),
+        "later": physical_table(operation.later),
+    }
 
 
 _SUBJECT_ALTERATIONS: Final = (

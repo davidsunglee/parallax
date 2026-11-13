@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from reference_harness import case_runner
-from reference_harness.case import Case, discover_cases, load_model
+from reference_harness.case import Case, Model, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_carried_document,
@@ -29,6 +29,7 @@ from reference_harness.case_runner import (
     _is_computed_marker,
     _write_column_order,
 )
+from reference_harness.database_binding import LOCATION_KEYS, PhysicalTable, resolve_binding
 from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.providers.mariadb import _statement_binds as mariadb_statement_binds
 from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
@@ -38,6 +39,13 @@ from reference_harness.write_plan import classify_write_row, tag, unit_resolving
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
 
 
 def _balance_model():
@@ -118,7 +126,7 @@ def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> N
 
 
 _WALLET_COLUMN_ARRAYS = (
-    "insert into wallet(id, owner, balance) select * from "
+    "insert into px.wallet(id, owner, balance) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
 )
 
@@ -313,32 +321,32 @@ def _stale_gate(raw: dict[str, Any]) -> None:
 
 def _close_shape(raw: dict[str, Any]) -> None:
     raw["then"]["statements"][1]["sql"]["postgres"] = (
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+        "update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
 
 
 def _rewritten_start(raw: dict[str, Any]) -> None:
     raw["then"]["statements"][1]["sql"]["postgres"] = (
-        "update balance set in_z = coalesce(in_z, out_z) where bal_id = ? and out_z = ? "
+        "update px.balance set in_z = coalesce(in_z, out_z) where bal_id = ? and out_z = ? "
         "and in_z = ?"
     )
 
 
 def _incomplete_address(raw: dict[str, Any]) -> None:
     raw["then"]["statements"][1]["sql"]["postgres"] = (
-        "update balance set in_z = in_z where bal_id = ? and ? is not null and in_z = ?"
+        "update px.balance set in_z = in_z where bal_id = ? and ? is not null and in_z = ?"
     )
 
 
 def _extra_predicate(raw: dict[str, Any]) -> None:
     raw["then"]["statements"][1]["sql"]["postgres"] = (
-        "update balance set in_z = in_z where bal_id = ? and out_z = ? and 1 = 0 and in_z = ?"
+        "update px.balance set in_z = in_z where bal_id = ? and out_z = ? and 1 = 0 and in_z = ?"
     )
 
 
 def _derived_source(raw: dict[str, Any]) -> None:
     raw["then"]["statements"][1]["sql"]["postgres"] = (
-        "update balance set in_z = in_z from (values (1, 'infinity')) as fake(bal_id, out_z) "
+        "update px.balance set in_z = in_z from (values (1, 'infinity')) as fake(bal_id, out_z) "
         "where fake.bal_id = ? and fake.out_z = ? and balance.in_z = ?"
     )
 
@@ -554,7 +562,7 @@ def test_write_column_order_places_every_domain_slot_before_the_temporal_slots()
         "out_z",
     )
     (opening, _close) = case.golden_statements("postgres")
-    assert opening.startswith("insert into spot_quote(id, price, symbol, in_z, out_z)")
+    assert opening.startswith("insert into px.spot_quote(id, price, symbol, in_z, out_z)")
 
 
 def test_write_column_order_refuses_a_rowless_family_position() -> None:
@@ -593,12 +601,13 @@ def test_table_observation_reads_a_shared_table_once_over_every_slot() -> None:
     provider = _RecordingReadProvider()
     rows = read_table(
         cast("Any", provider),
-        table_layout(case, "payment"),
+        table_layout(case, PhysicalTable(("px",), "payment")),
+        PhysicalTable(("px",), "payment"),
         declared_contributors(case.model),
     )
     assert rows == []
     assert provider.queries == [
-        "select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0"
+        "select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from px.payment t0"
     ]
 
 
@@ -611,7 +620,8 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     documents = _RecordingReadProvider([{"id": 1, "name": "Ada", "address": '{"city": "Rome"}'}])
     (document_row,) = read_table(
         cast("Any", documents),
-        table_layout(customer_case, "customer"),
+        table_layout(customer_case, PhysicalTable(("px",), "customer")),
+        PhysicalTable(("px",), "customer"),
         declared_contributors(customer),
     )
     assert document_row["address"] == {"city": "Rome"}
@@ -621,7 +631,8 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     binaries = _RecordingReadProvider([{"id": 1, "payload": b"\xde\xad\xbe\xef"}])
     (binary_row,) = read_table(
         cast("Any", binaries),
-        table_layout(scalars_case, "scalar_thing"),
+        table_layout(scalars_case, PhysicalTable(("px",), "scalar_thing")),
+        PhysicalTable(("px",), "scalar_thing"),
         declared_contributors(scalars),
     )
     assert binary_row["payload"] == "deadbeef"
@@ -630,7 +641,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
 def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
     case = _write_case_by_id("m-inheritance-007")
     with pytest.raises(CaseFailure):
-        table_layout(case, "not_a_table")
+        table_layout(case, PhysicalTable(("px",), "not_a_table"))
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:
@@ -640,8 +651,8 @@ def test_multi_attribute_audit_update_chains_all_new_values() -> None:
     # new value (Family B — a milestone always writes the whole row).
     case = _write_case_by_id("m-temporal-write-004")
     close, chain = case.golden_statements("postgres")[1], case.golden_statements("postgres")[2]
-    assert close == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")
+    assert close == "update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    assert chain.startswith("insert into px.balance(bal_id, acct_num, val, in_z, out_z)")
     # The chained INSERT binds carry BOTH corrected attributes (acct B, value 250.00).
     assert case.statement_binds(2)[:3] == [1, "B", "250.00"]
     # Must not raise: ① (the update row carrying both new attributes) cross-checks ②.
@@ -720,10 +731,10 @@ def test_fk_delete_ordering_deletes_child_before_parent() -> None:
     assert mutations == ["insert", "insert", "delete", "delete"]
     sqls = [s["sql"]["postgres"] for s in case.then["statements"]]
     # The child delete (order_item) precedes the parent delete (orders).
-    assert sqls[2] == "delete from order_item where id = ?"
-    assert sqls[3] == "delete from orders where id = ?"
-    assert sqls.index("delete from order_item where id = ?") < sqls.index(
-        "delete from orders where id = ?"
+    assert sqls[2] == "delete from px.order_item where id = ?"
+    assert sqls[3] == "delete from px.orders where id = ?"
+    assert sqls.index("delete from px.order_item where id = ?") < sqls.index(
+        "delete from px.orders where id = ?"
     )
     # Must not raise: each delete ①'s pk value appears in its DELETE binds.
     _assert_write_input_columns(case, "postgres")
@@ -737,7 +748,7 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
     # membership check accepted both).
     case = _write_case_by_id("m-batch-write-003")
     assert case.golden_statements("postgres") == [
-        "delete from wallet where id = any(cast(? as bigint[]))"
+        "delete from px.wallet where id = any(cast(? as bigint[]))"
     ]
     # As authored (one array [1, 2, 3] == the pk order) it passes.
     _assert_write_input_columns(case, "postgres")
@@ -752,7 +763,9 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
     # The expanded `in (?, …)` form a dialect without arrays spells binds the same
     # keys one by one, under the same exact-order discipline.
     expanded = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
-    expanded.then["statements"][0]["sql"]["postgres"] = "delete from wallet where id in (?, ?, ?)"
+    expanded.then["statements"][0]["sql"]["postgres"] = (
+        "delete from px.wallet where id in (?, ?, ?)"
+    )
     expanded.then["statements"][0]["binds"] = [1, 2, 3]
     _assert_write_input_columns(expanded, "postgres")
     expanded.then["statements"][0]["binds"] = [3, 2, 1]
@@ -761,7 +774,7 @@ def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
 
     # A list bound where the statement compares no array is not read as keys.
     unspread = copy.deepcopy(expanded)
-    unspread.then["statements"][0]["sql"]["postgres"] = "delete from wallet where id in (?)"
+    unspread.then["statements"][0]["sql"]["postgres"] = "delete from px.wallet where id in (?)"
     unspread.then["statements"][0]["binds"] = [[1, 2, 3]]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(unspread, "postgres")
@@ -780,7 +793,7 @@ def test_tph_insert_writes_tag_from_tag_value() -> None:
     # derived tag (its bind is the tagValue).
     case = _write_case_by_id("m-inheritance-007")
     (insert,) = case.golden_statements("postgres")
-    assert insert == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+    assert insert == "insert into px.payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     assert case.statement_binds(0) == [10, "card", "200.00", "Mastercard"]
     assert "kind" not in case.write_sequence[0]["rows"][0]  # kind is derived, not authored
     _assert_write_input_columns(case, "postgres")
@@ -821,7 +834,7 @@ def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
     # chain), and the routing oracle confirms the write hits `invoice`, not a shared table.
     case = _write_case_by_id("m-inheritance-010")
     (insert,) = case.golden_statements("postgres")
-    assert insert == "insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)"
+    assert insert == "insert into px.invoice(id, title, currency, amount_due) values (?, ?, ?, ?)"
     assert "kind" not in insert and "payment" not in insert
     _assert_write_input_columns(case, "postgres")
 
@@ -839,7 +852,7 @@ def test_tph_update_carries_tag_guard_after_pk() -> None:
     # binds the subtype's tagValue right after the pk, and the SET never touches `kind`.
     case = _write_case_by_id("m-inheritance-008")
     (update,) = case.golden_statements("postgres")
-    assert update == "update payment set amount = ? where id = ? and kind = ?"
+    assert update == "update px.payment set amount = ? where id = ? and kind = ?"
     assert case.statement_binds(0) == ["130.00", 1, "card"]
     _assert_write_input_columns(case, "postgres")
 
@@ -848,7 +861,7 @@ def test_tph_delete_carries_tag_guard_after_pk() -> None:
     # m-inheritance-009: the delete is keyed `where id = ? and kind = ?`, binds [2, card].
     case = _write_case_by_id("m-inheritance-009")
     (delete,) = case.golden_statements("postgres")
-    assert delete == "delete from payment where id = ? and kind = ?"
+    assert delete == "delete from px.payment where id = ? and kind = ?"
     assert case.statement_binds(0) == [2, "card"]
     _assert_write_input_columns(case, "postgres")
 
@@ -860,7 +873,7 @@ def test_tph_optlock_composition_binds_gate_last_after_tag_guard() -> None:
     case = _write_case_by_id("m-inheritance-084")
     (update,) = case.golden_statements("postgres")
     assert update == (
-        "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
+        "update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?"
     )
     assert case.statement_binds(0) == ["Coupe", 6, 1, "car", 5]
     _assert_write_input_columns(case, "postgres")
@@ -871,7 +884,7 @@ def test_tph_update_missing_tag_guard_is_rejected() -> None:
     # MUST fail the cross-check: the concrete subtype's rows are indistinguishable in the
     # shared table without it.
     case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
-    case.then["statements"][0]["sql"]["postgres"] = "update payment set amount = ? where id = ?"
+    case.then["statements"][0]["sql"]["postgres"] = "update px.payment set amount = ? where id = ?"
     case.then["statements"][0]["binds"] = ["130.00", 1]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -894,8 +907,8 @@ def test_tph_tag_guard_is_read_under_each_dialects_own_quoting() -> None:
     # bare-name one is — and the tag still binds right after the pk.
     case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
     case.then["statements"][0]["sql"] = {
-        "postgres": 'update payment set amount = ? where "id" = ? and "kind" = ?',
-        "mariadb": "update payment set amount = ? where `id` = ? and `kind` = ?",
+        "postgres": 'update px.payment set amount = ? where "id" = ? and "kind" = ?',
+        "mariadb": "update px.payment set amount = ? where `id` = ? and `kind` = ?",
     }
     _assert_write_input_columns(case, "postgres")
     _assert_write_input_columns(case, "mariadb")
@@ -910,7 +923,7 @@ def test_tpcs_delete_targets_concrete_table() -> None:
     # m-inheritance-085: the delete hits the concrete subtype's own table, no tag guard.
     case = _write_case_by_id("m-inheritance-085")
     (delete,) = case.golden_statements("postgres")
-    assert delete == "delete from invoice where id = ?"
+    assert delete == "delete from px.invoice where id = ?"
     assert "kind" not in delete
     _assert_write_input_columns(case, "postgres")
 
@@ -919,7 +932,7 @@ def test_tpcs_write_routed_to_wrong_table_is_rejected() -> None:
     # A table-per-concrete-subtype write MUST target the subtype's own table. Routing an
     # Invoice delete to a different table MUST fail the routing oracle.
     case = copy.deepcopy(_write_case_by_id("m-inheritance-085"))
-    case.then["statements"][0]["sql"]["postgres"] = "delete from receipt where id = ?"
+    case.then["statements"][0]["sql"]["postgres"] = "delete from px.receipt where id = ?"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 
@@ -931,14 +944,14 @@ def test_tpcs_routing_is_read_under_each_dialects_own_quoting() -> None:
     # spelling of the subtype's own table routes and a sibling's does not.
     case = copy.deepcopy(_write_case_by_id("m-inheritance-085"))
     case.then["statements"][0]["sql"] = {
-        "postgres": 'delete from "invoice" where id = ?',
-        "mariadb": "delete from `invoice` where id = ?",
+        "postgres": 'delete from "px"."invoice" where id = ?',
+        "mariadb": "delete from `px`.`invoice` where id = ?",
     }
     _assert_write_input_columns(case, "postgres")
     _assert_write_input_columns(case, "mariadb")
 
     sibling = copy.deepcopy(case)
-    sibling.then["statements"][0]["sql"]["postgres"] = 'delete from "receipt" where id = ?'
+    sibling.then["statements"][0]["sql"]["postgres"] = 'delete from "px"."receipt" where id = ?'
     with pytest.raises(CaseFailure, match="target its own table"):
         _assert_write_input_columns(sibling, "postgres")
 
@@ -968,7 +981,7 @@ def _customer_insert_case(address, sql: str, binds: list) -> Case:
             },
             "then": {
                 "statements": [{"sql": {"postgres": sql}, "binds": binds}],
-                "tableState": {"customer": [{"id": 1, "name": "Ada", "address": address}]},
+                "tableState": {"px": {"customer": [{"id": 1, "name": "Ada", "address": address}]}},
             },
         }
     )
@@ -991,7 +1004,7 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
             },
             "then": {
                 "statements": [{"sql": {"postgres": sql}, "binds": binds}],
-                "tableState": {"customer": [{"id": 1, "name": "Ada", "address": address}]},
+                "tableState": {"px": {"customer": [{"id": 1, "name": "Ada", "address": address}]}},
             },
         }
     )
@@ -1015,7 +1028,7 @@ def test_marker_shaped_value_object_insert_binds_the_whole_document(document) ->
     # a DB-computed column and its literal bind was skipped, misaligning the binds.)
     case = _customer_insert_case(
         document,
-        "insert into customer(id, name, address) values (?, ?, ?)",
+        "insert into px.customer(id, name, address) values (?, ?, ?)",
         [1, "Ada", document],
     )
     _assert_write_input_columns(case, "postgres")
@@ -1030,7 +1043,7 @@ def test_marker_shaped_value_object_update_replaces_whole_document(document) -> 
     # `col = col + ?` self-advance.
     case = _customer_update_case(
         document,
-        "update customer set address = ? where id = ?",
+        "update px.customer set address = ? where id = ?",
         [document, 1],
     )
     _assert_write_input_columns(case, "postgres")
@@ -1043,7 +1056,7 @@ def test_scalar_attribute_marker_still_classifies_as_computed() -> None:
     # the address document) supply binds.
     case = _customer_insert_case(
         {"street": "Main", "phones": []},
-        "insert into customer(id, name, address) values (coalesce(max(id), ?) + ?, ?, ?)",
+        "insert into px.customer(id, name, address) values (coalesce(max(id), ?) + ?, ?, ?)",
         [0, 1, "Ada", {"street": "Main", "phones": []}],
     )
     case.raw["when"]["writeSequence"][0]["rows"][0]["id"] = {"computed": "maxPlusOne"}
@@ -1096,7 +1109,7 @@ def test_increment_marker_matches_exact_schema_shape() -> None:
 
 def test_temporal_ddl_primary_key_spans_the_as_of_to_column() -> None:
     model = _balance_model()
-    _prerequisite, create, _index = ddl_for(model, "postgres")
+    _prerequisite, create, _index = px_ddl(model, "postgres")
     # The business key alone (bal_id) is not unique across milestones; the
     # physical primary key MUST include the as-of end_column (out_z), which is
     # also the column every close-update and Latest predicate pins.
@@ -1185,7 +1198,7 @@ def test_a_carried_document_admits_a_key_the_write_input_names_nowhere() -> None
             "charterCode": "NB-118",
             "manifest": {"cargo": "timber", "sealNumber": "S-4021"},
         },
-        "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+        "insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
     )
 
 
@@ -1198,7 +1211,7 @@ def test_a_carried_array_grades_element_by_element_and_admits_an_unknown_key() -
         case,
         {"stops": [{"port": "Bergen"}, {"port": "Tromso"}]},
         {"stops": [{"port": "Bergen", "berth": "7"}, {"port": "Tromso"}]},
-        "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+        "insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
     )
 
 
@@ -1209,7 +1222,7 @@ def test_a_carried_array_of_a_different_length_is_refused() -> None:
             case,
             {"stops": [{"port": "Bergen"}, {"port": "Tromso"}]},
             {"stops": [{"port": "Bergen"}]},
-            "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+            "insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
         )
 
 
@@ -1220,5 +1233,5 @@ def test_a_carried_array_element_whose_named_value_differs_is_refused() -> None:
             case,
             {"stops": [{"port": "Bergen"}]},
             {"stops": [{"port": "Oslo"}]},
-            "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+            "insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
         )

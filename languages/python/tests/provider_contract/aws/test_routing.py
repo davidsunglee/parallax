@@ -23,6 +23,7 @@ from parallax.core.internal.db_port import (
     RoutePolicy,
 )
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import LAYOUTS, MODEL, READS, SEEDED, Ledger
 from tests.provider_contract.aws._aws_support import (
@@ -63,7 +64,7 @@ def test_a_writable_transaction_from_a_reader_defaulted_scope_runs_on_the_writer
     aws_run: Any,
 ) -> None:
     seeded(aws_run)
-    db = own_root(connect(aws_run.adapter(), MODEL)).using_database_login()
+    db = own_root(connect(aws_run.adapter(), MODEL, binding=TEST_BINDING)).using_database_login()
     placed: list[set[str]] = []
 
     def body(tx: TxnContext) -> None:
@@ -86,7 +87,7 @@ def _isolation(connection: DatabaseConnection) -> object:
 
 
 def _write(connection: DatabaseConnection) -> object:
-    return connection.execute_write("insert into rv_ledger (id, memo) values (9, 'refused')", [])
+    return connection.execute_write("insert into px.rv_ledger (id, memo) values (9, 'refused')", [])
 
 
 @pytest.mark.parametrize("policy", ["writer_only", "reader_only"])
@@ -139,7 +140,9 @@ def test_every_read_shape_and_layout_reads_from_the_instances_its_scopes_policy_
     aws_run: Any, shape: str, layout: str, policy: RoutePolicy, route: str
 ) -> None:
     seeded(aws_run)
-    db = own_root(connect(aws_run.adapter(), MODEL, read_policy=policy)).using_database_login()
+    db = own_root(
+        connect(aws_run.adapter(), MODEL, read_policy=policy, binding=TEST_BINDING)
+    ).using_database_login()
     before = {name: activity(aws_run, name) for name in ("writer", "reader")}
 
     assert READS[shape](db, LAYOUTS[layout]) == SEEDED

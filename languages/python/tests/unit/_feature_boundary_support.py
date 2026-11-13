@@ -43,6 +43,7 @@ from parallax.core.internal.metamodel import Multiplicity, TablePerConcreteSubty
 from parallax.core.internal.object_query._fluent import typed_read_query
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
+from tests._support.bindings import TEST_BINDING
 
 __all__ = ["CASES", "WINDOW_DESCRIPTIONS", "Case", "Driver", "driver_for", "workload_digest"]
 
@@ -184,7 +185,7 @@ class _PredicateDriver:
     def __init__(self, shape: str, *, cold_plan: bool) -> None:
         self._query: AuthoredQuery = typed_read_query(Holder.where(_predicate(shape)))
         self._selected: SelectedReadModel = read_projection(
-            prepare_model(_MODEL, edition="feature-boundary")
+            prepare_model(_MODEL, edition="feature-boundary", binding=TEST_BINDING)
         )
         self._cold_plan = cold_plan
         self._cache = ReadPlanCache()

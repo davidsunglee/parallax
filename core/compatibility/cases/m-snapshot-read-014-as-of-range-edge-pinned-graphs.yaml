@@ -18,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ? order by t0.id asc, t0.in_z asc
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from px.invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ? order by t0.id asc, t0.in_z asc
       binds: [1000, "2024-05-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
-  referenceSql: "select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz order by id asc, in_z asc"
+  referenceSql: "select id, invoice_id, amount, in_z, out_z from px.invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz order by id asc, in_z asc"
   graphs:
     - pin: { transaction-time: "2024-01-01T00:00:00.000000Z" }
       graph:

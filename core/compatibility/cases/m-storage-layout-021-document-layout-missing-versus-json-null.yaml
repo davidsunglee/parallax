@@ -12,14 +12,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0 where jsonb_extract_path_text(t0.payload, ?) is null
-        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0 where json_value(t0.payload, ?) is null
+        postgres: select t0.id, not t0.payload is null, t0.payload from px.traveler t0 where jsonb_extract_path_text(t0.payload, ?) is null
+        mariadb: select t0.id, not t0.payload is null, t0.payload from px.traveler t0 where json_value(t0.payload, ?) is null
       binds:
         postgres: [note]
         mariadb: ['$.note']
   referenceSql:
-    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from traveler where payload ->> 'note' is null
-    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where json_value(payload, '$.note') is null
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from px.traveler where payload ->> 'note' is null
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from px.traveler where json_value(payload, '$.note') is null
   rows:
     - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
     - { id: 3, display_name: Cyd, score: null, joined_on: null, note: null }

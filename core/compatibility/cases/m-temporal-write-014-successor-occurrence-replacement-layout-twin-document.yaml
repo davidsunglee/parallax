@@ -30,12 +30,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: update write_twin_log set out_z = ? where id = ? and out_z = ?
-        mariadb: update write_twin_log set out_z = ? where id = ? and out_z = ?
+        postgres: update px.write_twin_log set out_z = ? where id = ? and out_z = ?
+        mariadb: update px.write_twin_log set out_z = ? where id = ? and out_z = ?
       binds: ["2026-06-01T00:00:00.000000Z", 5, infinity]
     - sql:
-        postgres: insert into write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
-        mariadb: insert into write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        postgres: insert into px.write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into px.write_twin_log(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 5
         - "2026-06-01T00:00:00.000000Z"
@@ -46,24 +46,25 @@ then:
           marks:
             - { code: X }
   tableState:
-    write_twin_log:
-      - id: 5
-        in_z: "2026-01-01T00:00:00.000000Z"
-        out_z: "2026-06-01T00:00:00.000000Z"
-        payload:
-          label: voyager
-          spec:
-            title: Ore Run
-            origin: { country: "NO" }
-          marks:
-            - { code: X }
-      - id: 5
-        in_z: "2026-06-01T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          label: voyager
-          spec:
-            title: Coal Run
-          marks:
-            - { code: X }
+    px:
+      write_twin_log:
+        - id: 5
+          in_z: "2026-01-01T00:00:00.000000Z"
+          out_z: "2026-06-01T00:00:00.000000Z"
+          payload:
+            label: voyager
+            spec:
+              title: Ore Run
+              origin: { country: "NO" }
+            marks:
+              - { code: X }
+        - id: 5
+          in_z: "2026-06-01T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            label: voyager
+            spec:
+              title: Coal Run
+            marks:
+              - { code: X }
   databaseCalls: 3

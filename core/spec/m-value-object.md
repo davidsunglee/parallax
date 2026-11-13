@@ -90,8 +90,9 @@ Attribute, or a table-per-hierarchy tag in the same physical table. Model
 Formation rejects that ambiguity as `storage-layout-column-collision` within
 `m-storage-layout`'s uniquely owned strategy-specific Table boundary; a storage
 or materialization consumer never chooses one member from a duplicate raw
-column key. A second independent owner of the Table is the separate
-`storage-layout-table-mapping-collision` and is rejected before this claim set.
+column key. Two independent owners declaring one table name are each their own
+claim set; whether they share a physical table is decided when a Database
+Binding resolves the model (`m-database-binding`).
 
 The document's physical key and the occurrence's rendered graph key retain
 distinct provenance. A graph renders the decoded value under the occurrence's

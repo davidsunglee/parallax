@@ -20,13 +20,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
-        mariadb: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
+        postgres: select t0.id, t0.target_id, not t0.details is null, t0.details from px.profile_owner t0
+        mariadb: select t0.id, t0.target_id, not t0.details is null, t0.details from px.profile_owner t0
     - sql:
-        postgres: select t0.id from profile_target t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id from profile_target t0 where t0.id in (?)
+        postgres: select t0.id from px.profile_target t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id from px.profile_target t0 where t0.id in (?)
       binds: { postgres: [[10]], mariadb: [10] }
-  referenceSql: select id, target_id, details from profile_owner
+  referenceSql: select id, target_id, details from px.profile_owner
   graph:
     ProfileOwner:
       - { id: 1, targetId: 10, profile: { label: owner-profile }, details: { id: 10 } }

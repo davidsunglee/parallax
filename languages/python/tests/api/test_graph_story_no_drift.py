@@ -80,6 +80,7 @@ from parallax.snapshot import (
     TxnContext,
     is_view_loaded,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
@@ -185,7 +186,7 @@ _ORDER_ITEM_61_ROW: MappingRow = {
     "shipped_on": None,
 }
 
-_ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)"
+_ORDER_ITEM_INSERT = "insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)"
 
 # Policy 2 and its single coverage at the pin the rectangle-split story takes —
 # one rectangle open on both axes, which is what a bounded `updateUntil` splits
@@ -468,7 +469,9 @@ def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> ScopedDataba
     # A story's clock is a FACTORY precisely so this consumer drives its own
     # script rather than one `test_story_run.py` already advanced.
     clock = story.clock() if story.clock is not None else None
-    return own_root(Database.connect(port, MODELS[story.model], clock=clock)).using_database_login()
+    return own_root(
+        Database.connect(port, MODELS[story.model], clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _db(
@@ -592,9 +595,11 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_to_one_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_order, _reread = story.run(
-        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
+        own_root(
+            Database.connect(port, MODELS[story.model], binding=TEST_BINDING)
+        ).using_database_login()
     )
-    assert [sql for sql, _binds in port.writes] == ["update orders set name = ? where id = ?"]
+    assert [sql for sql, _binds in port.writes] == ["update px.orders set name = ? where id = ?"]
     assert snapshot.result().order is loaded_order
     assert loaded_order.name == "Ada"
 
@@ -608,7 +613,9 @@ def test_the_loaded_empty_composition_story_keeps_an_empty_view_across_its_inser
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_empty_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot = story.run(
-        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
+        own_root(
+            Database.connect(port, MODELS[story.model], binding=TEST_BINDING)
+        ).using_database_login()
     )
     order = snapshot.result()
     assert [(sql, binds) for sql, binds in port.writes] == [
@@ -626,7 +633,9 @@ def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert()
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_an_unloaded_relationship_absent]
     port = _WritingCannedPort(_responses_for(story.run))
     order = story.run(
-        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
+        own_root(
+            Database.connect(port, MODELS[story.model], binding=TEST_BINDING)
+        ).using_database_login()
     ).result()
     assert [(sql, binds) for sql, binds in port.writes] == [
         (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
@@ -800,7 +809,7 @@ class _RecordingDatabase(ScopedDatabase):
         clock: Clock | None = None,
         group_finds: bool = False,
     ) -> None:
-        root = own_root(Database(port.open(), model, clock=clock))
+        root = own_root(Database(port.open(), model, clock=clock, binding=TEST_BINDING))
         scoped = cast("Any", root.using_database_login())
         object.__setattr__(self, "_execution", scoped._execution)
         object.__setattr__(self, "_root", root)
@@ -886,7 +895,9 @@ _EXTRA_CAPTURED_READS = {"m-snapshot-read-017": 1}
 def _wire_twin(story: graph_stories.GraphStory, captured: _CapturedRead) -> Snapshot[Any]:
     port = _ReplayPort(captured.responses)
     clock = story.clock() if story.clock is not None else None
-    model = ServingModel(prepare_model(MODELS[story.model], edition=captured.snapshot.edition))
+    model = ServingModel(
+        prepare_model(MODELS[story.model], edition=captured.snapshot.edition, binding=TEST_BINDING)
+    )
     db = own_root(Database.connect(port, model, clock=clock)).using_database_login()
     if captured.participating:
         direct = cast(
@@ -970,7 +981,7 @@ def _assert_authored_observation(
 
 def _reset_audit_story(story: graph_stories.GraphStory, profile_run: Any) -> None:
     case = corpus_case(story.case_id)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     apply_given_apply(case, profile_run.port)
 
 
@@ -1126,5 +1137,7 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
 
 
 def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> None:
-    db = own_root(Database.connect(_CannedPort(), MODELS["rate"])).using_database_login()
+    db = own_root(
+        Database.connect(_CannedPort(), MODELS["rate"], binding=TEST_BINDING)
+    ).using_database_login()
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

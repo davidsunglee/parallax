@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ._declared_contributor import DeclaredContributor
 from .case import Entity, Model, temporal_corruption_refusal
+from .database_binding import PhysicalTable, Placement
 from .ddl_builder import declared_contributors
 from .document_codec import encode_leaf, is_document
 from .inheritance import assert_no_abstract_fixture_rows
@@ -102,6 +103,7 @@ def _load_entity(
     entity: Entity,
     view: EntityLayoutView,
     db: DatabaseProvider,
+    table: PhysicalTable,
     declarations: Mapping[ColumnContributor, DeclaredContributor],
     corruptions: Sequence[Mapping[str, Any]],
 ) -> set[int]:
@@ -130,7 +132,7 @@ def _load_entity(
         applied |= _corrupt_row(entity, view, columns, cells, row, corruptions)
         tuples.append(cells)
 
-    db.load(view.layout.table, columns, tuples)
+    db.load(table, columns, tuples)
     return applied
 
 
@@ -297,9 +299,13 @@ def _refuse_temporal_corruptions(model: Model, corruptions: Sequence[Mapping[str
 
 
 def load_model(
-    model: Model, db: DatabaseProvider, corruptions: Sequence[Mapping[str, Any]] = ()
+    model: Model,
+    db: DatabaseProvider,
+    placement: Placement,
+    corruptions: Sequence[Mapping[str, Any]] = (),
 ) -> None:
-    """Insert every row-owning entity's fixture rows into its table via the provider.
+    """Insert every row-owning entity's fixture rows into the table *placement*
+    resolves for its mapping owner, via the provider.
 
     Fixture rows are keyed to row-owning entities only; an abstract inheritance
     node is rowless (m-inheritance), so a fixture keyed to one is refused before
@@ -318,7 +324,8 @@ def load_model(
         view = layout.entity(entity.canonical_name)
         if view is None:
             continue
-        applied |= _load_entity(entity, view, db, declarations, corruptions)
+        table = placement.table(view.layout.mapping_owner)
+        applied |= _load_entity(entity, view, db, table, declarations, corruptions)
     unapplied = [entry for position, entry in enumerate(corruptions) if position not in applied]
     if unapplied:
         raise ValueError(

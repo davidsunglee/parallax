@@ -40,6 +40,7 @@ from parallax.core.internal.base import (
     Numeric,
     StructuredDocument,
 )
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.dialect import (
     POSTGRES,
     ColumnDdl,
@@ -86,6 +87,39 @@ def test_identifier_quoting(dialect: Dialect) -> None:
     assert dialect.qualified("t0", "constraint") == 't0."constraint"'
     assert dialect.qualified("t0", "id") == "t0.id"
     assert dialect.qualified("t0", "order") == 't0."order"'
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_quoting_doubles_an_embedded_quote_character(dialect: Dialect) -> None:
+    assert dialect.quote('say "hi"') == '"say ""hi"""'
+    assert dialect.quote('"') == '""""'
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_a_table_renders_each_component_quoted_alone(dialect: Dialect) -> None:
+    assert dialect.render_table(PhysicalTable(("px",), "account")) == "px.account"
+    assert dialect.render_table(PhysicalTable(("legacy.crm",), "Customer")) == (
+        '"legacy.crm"."Customer"'
+    )
+    assert dialect.render_table(PhysicalTable(("px",), "order")) == 'px."order"'
+    assert dialect.render_table(PhysicalTable(("px",), 'a"b')) == 'px."a""b"'
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_an_identifier_is_refused_only_when_the_database_cannot_hold_it(dialect: Dialect) -> None:
+    limit = dialect.max_identifier_bytes
+    assert dialect.identifier_issue("account") is None
+    assert dialect.identifier_issue("a" * limit) is None
+    assert dialect.identifier_issue("é" * (limit // 2)) is None
+    assert dialect.identifier_issue("") is not None
+    assert dialect.identifier_issue("a\x00b") is not None
+    assert dialect.identifier_issue("a" * (limit + 1)) is not None
+    assert dialect.identifier_issue("é" * (limit // 2 + 1)) is not None
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_index_names_are_unique_per_schema(dialect: Dialect) -> None:
+    assert dialect.index_name_scope == "qualifier"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
@@ -379,8 +413,6 @@ def test_error_classification(dialect: Dialect) -> None:
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_identifier_byte_limit_is_declared(dialect: Dialect) -> None:
-    # Only a DERIVED identifier has to fit a budget, so the limit is a fact about
-    # the database rather than a rule applied to authored names here.
     assert dialect.max_identifier_bytes == 63
 
 
@@ -527,9 +559,14 @@ def test_postgres_indexes_an_unbounded_string(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_drop_index_names_the_index_alone(dialect: Dialect) -> None:
-    assert dialect.drop_index("widget", PhysicalIndexName("pxi_widget_label_0")) == (
-        "drop index pxi_widget_label_0"
+def test_drop_index_names_the_index_in_its_tables_schema(dialect: Dialect) -> None:
+    widget = PhysicalTable(("tenant_acme",), "widget")
+    assert dialect.drop_index(widget, PhysicalIndexName("pxi_widget_label_0")) == (
+        "drop index tenant_acme.pxi_widget_label_0"
+    )
+    quoted = PhysicalTable(("Tenant.Acme",), "widget")
+    assert dialect.drop_index(quoted, PhysicalIndexName("order")) == (
+        'drop index "Tenant.Acme"."order"'
     )
 
 

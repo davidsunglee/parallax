@@ -43,6 +43,7 @@ from parallax.conformance.provision import (
     database_authorization,
     reset_database,
 )
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from tests._support.aws_environment import AwsTestEnvironment, PublishedEnvironment
 
 if TYPE_CHECKING:
@@ -100,10 +101,10 @@ _STATEMENT_TIMEOUT = "select current_setting('statement_timeout')"
 _SET_TIMEOUT = "select set_config('statement_timeout', ?, false)"
 _ANSWER = "select 1"
 _RESET_STATE = (
-    "select n.oid, n.nspacl::text, c.relname, c.oid, c.relacl::text "
+    "select n.nspname, n.oid, n.nspacl::text, c.relname, c.oid, c.relacl::text "
     "from pg_namespace n left join pg_class c "
     "on c.relnamespace = n.oid and c.relkind in ('r', 'p') "
-    "where n.nspname = 'public' order by c.relname"
+    "where n.nspname = any(?) order by n.nspname, c.relname"
 )
 
 
@@ -228,6 +229,7 @@ class AwsRun:
         self._ledger = RuntimeLedger()
         self._sessions: dict[str, DriverControl] = {}
         self._administration: DriverControl | None = None
+        self._owned: frozenset[str] = frozenset()
 
     @classmethod
     def open(cls, published: PublishedEnvironment, identity: RunIdentity) -> AwsRun:
@@ -393,19 +395,24 @@ class AwsRun:
     def authorization(self, selector: str) -> PostgresRole:
         return database_authorization(selector)
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the run database's schema and fixtures on the writer, then wait
-        until every instance sees the recreated schema, tables, and grants."""
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        """Reset the run database's bound schemas and fixtures on the writer, then
+        wait until every instance sees the recreated schemas, tables, and grants."""
         if self._administration is None:
             raise CloudRunError("the run has not started")
         administration = self._administration
-        reset_database(administration, model, fixtures)
+        self._owned = reset_database(
+            administration, ResolvedBinding(model, binding), fixtures, owned=self._owned
+        )
+        schemas = sorted({"public", *self._owned})
         # Names can still match the previous reset while a reader has not replayed its DROP.
-        expected = administration.execute(_RESET_STATE, [])
+        expected = administration.execute(_RESET_STATE, [schemas])
         for instance in self.environment.instances:
             inspected = self.session(instance.host)
             self.wait_until(
-                lambda inspected=inspected: inspected.execute(_RESET_STATE, []) == expected,
+                lambda inspected=inspected: inspected.execute(_RESET_STATE, [schemas]) == expected,
                 f"{instance.identifier} to see the reset schema and grants",
             )
 

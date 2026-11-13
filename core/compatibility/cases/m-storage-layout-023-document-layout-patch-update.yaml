@@ -33,8 +33,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into traveler(id, payload) values (?, ?)
-        mariadb: insert into traveler(id, payload) values (?, ?)
+        postgres: insert into px.traveler(id, payload) values (?, ?)
+        mariadb: insert into px.traveler(id, payload) values (?, ?)
       binds:
         - 6
         - displayName: Frida
@@ -48,23 +48,24 @@ then:
           tags:
             - { label: scout }
     - sql:
-        postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
-        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+        postgres: update px.traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+        mariadb: update px.traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
       binds:
         postgres: ['{displayName}', Dagny, '{score}', 21, 6]
         mariadb: ['$.displayName', Dagny, '$.score', 21, 6]
   tableState:
-    traveler:
-      - id: 6
-        payload:
-          displayName: Dagny
-          score: 21
-          joinedOn: '2026-04-01'
-          note: west wing
-          address:
-            city: Alta
-            geo:
-              country: "NO"
-          tags:
-            - { label: scout }
+    px:
+      traveler:
+        - id: 6
+          payload:
+            displayName: Dagny
+            score: 21
+            joinedOn: '2026-04-01'
+            note: west wing
+            address:
+              city: Alta
+              geo:
+                country: "NO"
+            tags:
+              - { label: scout }
   databaseCalls: 3

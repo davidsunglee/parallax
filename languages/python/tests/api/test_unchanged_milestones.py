@@ -24,6 +24,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -103,7 +104,13 @@ _SPEC = {"title": "s"}
 
 def _db(profile_run: Any, *instants: dt.datetime, **options: Any) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), **options)
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock(list(instants)),
+            **options,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -124,7 +131,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {members} "
-        f"from {_TABLES[entity]} order by from_z, in_z"
+        f"from px.{_TABLES[entity]} order by from_z, in_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -133,7 +140,7 @@ def _log_rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     members = ", ".join(_member(entity, name) for name in ("amount", "spec"))
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{members} from {_TABLES[entity]} order by in_z"
+        f"{members} from px.{_TABLES[entity]} order by in_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -198,7 +205,7 @@ def _update(
 
 
 def _seed_log(profile_run: Any, entity: type[Any]) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, _S1).transact(
         lambda tx: tx.insert(entity(id=1, amount=100, spec=Spec(title="s")))
     )
@@ -247,7 +254,7 @@ _AMOUNTS = {"mixed": (100, 180, 100), "all-equal": (100, 100, 100), "all-changed
 
 
 def _seed_spans(profile_run: Any, entity: type[Any], amounts: tuple[int, int, int]) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     windows = ((_JAN, _APR, "a"), (_MAY, _AUG, "b"), (_AUG, _DEC, "c"))
     for instant, amount, (start, end, label) in zip((_S1, _S2, _S3), amounts, windows, strict=True):
         _db(profile_run, instant).transact(
@@ -345,7 +352,7 @@ _STRUCTURED: dict[str, tuple[dict[str, object], bool]] = {
 def test_nullable_and_structured_assignments_compare_their_whole_values(
     profile_run: Any, entity: type[Any], representation: _Representation, case: str
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, _S1).transact(
         lambda tx: tx.insert(
             entity(id=1, amount=100, label=None, spec=Spec(title="s"), marks=(Mark(code="m"),)),
@@ -377,7 +384,7 @@ def test_nullable_and_structured_assignments_compare_their_whole_values(
 def test_an_unchanged_rectangle_the_attempt_opened_is_neither_split_nor_revised(
     profile_run: Any, entity: type[Any], representation: _Representation
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
 
     def fn(tx: TxnContext) -> None:
         inserted = entity(id=1, amount=100, label="a", spec=None, marks=())
@@ -520,7 +527,11 @@ def test_losing_any_rectangle_after_the_flush_read_rolls_back_every_effect(
     interleaving = AfterCoverageRead(_TABLES[entity], peer_patch, nth=2)
     ours = own_root(
         connect(
-            profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock([_TA]),
+            lifecycle_provider=interleaving,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
 
@@ -544,16 +555,16 @@ def test_an_audit_trigger_sees_the_guard_and_changes_no_outcome(
     table = _TABLES[entity]
     control = profile_run.control()
     try:
-        control.execute_write("create table umw_audit (kept boolean not null)", [])
-        control.execute_write("grant select on umw_audit to public", [])
+        control.execute_write("create table px.umw_audit (kept boolean not null)", [])
+        control.execute_write("grant select on px.umw_audit to public", [])
         control.execute_write(
             "create function umw_on_update() returns trigger language plpgsql security definer "
-            "as $body$ begin insert into umw_audit (kept) values (old.in_z = new.in_z and "
+            "as $body$ begin insert into px.umw_audit (kept) values (old.in_z = new.in_z and "
             "old.out_z = new.out_z); return new; end $body$",
             [],
         )
         control.execute_write(
-            f"create trigger umw_updated after update on {table} "
+            f"create trigger umw_updated after update on px.{table} "
             "for each row execute function umw_on_update()",
             [],
         )
@@ -563,5 +574,5 @@ def test_an_audit_trigger_sees_the_guard_and_changes_no_outcome(
     _db(profile_run, _TA).transact(
         lambda tx: _update(tx, _log_find(tx, entity, "typed"), "typed", {"amount": 100})
     )
-    assert list(profile_run.port.execute("select kept from umw_audit", [])) == [(True,)]
+    assert list(profile_run.port.execute("select kept from px.umw_audit", [])) == [(True,)]
     assert _log_rows(profile_run, entity) == [(_S1, None, 100, _SPEC)]

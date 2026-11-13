@@ -1,0 +1,55 @@
+# Two owners declare the table name `ledger`; the case binding places the audit
+# ledger in its own schema. Each insert reaches its own owner's table, under the
+# same key, and each table keeps exactly its own fixture rows beside it.
+model: models/binding-ledgers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.AuditLedger: { schema: px_audit }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.AuditLedger: { database: px_audit }
+tags: [m-database-binding, m-batch-write, m-sql, write-sequence, binding, slice-snapshot-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.SalesLedger
+      statements: 1
+      rows:
+        - { id: 3, amount: "30.00" }
+    - mutation: insert
+      entity: parallax.compatibility.AuditLedger
+      statements: 1
+      rows:
+        - { id: 3, note: closed }
+then:
+  statements:
+    - sql:
+        postgres: insert into px.ledger(id, amount) values (?, ?)
+        mariadb: insert into px.ledger(id, amount) values (?, ?)
+      binds: [3, "30.00"]
+    - sql:
+        postgres: insert into px_audit.ledger(id, note) values (?, ?)
+        mariadb: insert into px_audit.ledger(id, note) values (?, ?)
+      binds: [3, closed]
+  tableState:
+    px:
+      ledger:
+        - { id: 1, amount: "10.00" }
+        - { id: 2, amount: "20.00" }
+        - { id: 3, amount: "30.00" }
+    px_audit:
+      ledger:
+        - { id: 1, note: opened }
+        - { id: 2, note: reviewed }
+        - { id: 3, note: closed }
+  databaseCalls: 2

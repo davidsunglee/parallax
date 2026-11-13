@@ -75,6 +75,13 @@ from .case_assertions import (
     write_value_equal,
 )
 from .case_preflight import preflight_case_literals
+from .database_binding import (
+    BINDING_REJECTED_RULES,
+    BindingRejection,
+    PhysicalTable,
+    normalize_binding,
+    resolve_binding,
+)
 from .ddl_builder import (
     ddl_for,
     declared_contributors,
@@ -116,13 +123,14 @@ from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RU
 from .relationship import validate_relationship_declarations, validate_relationship_types
 from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
+from .sql_tables import physical_table_of
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
 from .storage_layout import (
     validate_storage_layout,
 )
-from .table_state import assert_table_state, read_table, table_layout
+from .table_state import assert_table_state, read_entity_table
 from .temporal_selection_validate import normalize_authored_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
 from .unit_work_scenario import assert_unit_work_scenario
@@ -186,6 +194,7 @@ ALL_REJECTED_RULES = (
     | KEYED_WRITE_REJECTED_RULES
     | PREDICATE_WRITE_REJECTED_RULES
     | WRITE_PERSISTENCE_REJECTED_RULES
+    | BINDING_REJECTED_RULES
 )
 
 
@@ -309,18 +318,20 @@ def _assert_rejected_shape(case: Case) -> None:
             f"{case.rejected_rule!r} is not a known rule"
         )
     # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
-    # EXACTLY ONE of `objectQuery` / `write` / `model` (the normative "exactly
+    # EXACTLY ONE of `objectQuery` / `write` / `model` / `binding` (the normative "exactly
     # one invalid input" rule, m-case-format Rejected cases). This guard is a
     # defense-in-depth mirror of the schema's `oneOf`
     # (compatibility-case.schema.json rejected branch): it keeps the constraint
     # enforced even if some future caller reaches the runner without schema
     # validation, and `_assert_rejected` dispatches on the single member
     # present.
-    present = [member for member in ("objectQuery", "write", "model") if member in case.when]
+    present = [
+        member for member in ("objectQuery", "write", "model", "binding") if member in case.when
+    ]
     if len(present) != 1:
         raise CaseFailure(
             f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
-            f"when.objectQuery / when.write / when.model (one invalid input); found "
+            f"when.objectQuery / when.write / when.model / when.binding (one invalid input); found "
             f"{present or 'none'}."
         )
 
@@ -606,7 +617,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     pk_column = pk_attr["column"]
 
     declarations = declared_contributors(case.model)
-    actual_rows = read_table(db, table_layout(case, entity.table), declarations)
+    actual_rows = read_entity_table(case, db, entity.canonical_name, declarations)
     # Assumes target starts empty; row count equals ids allocated from initialValue
     # (a pre-seeded table would mismatch loudly, not silently).
     count = len(actual_rows)
@@ -622,7 +633,7 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
     registry = _pk_sequence_registry(case.model, entity)
     name_column = next(a for a in registry.attributes if a.get("primaryKey"))["column"]
     counter_column = _pk_sequence_counter_column(registry)
-    reg_rows = read_table(db, table_layout(case, registry.table), declarations)
+    reg_rows = read_entity_table(case, db, registry.canonical_name, declarations)
     reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
     if reg_row is None:
         raise CaseFailure(f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}")
@@ -656,10 +667,11 @@ class _DocumentAssignment(NamedTuple):
 
 
 def _assert_rejected(case: Case) -> None:
-    """Assert one of the three rejected inputs is refused before SQL.
+    """Assert one of the four rejected inputs is refused before SQL.
 
     A rejected case carries exactly one schema-valid ``when.objectQuery``,
-    ``when.write``, or inline ``when.model`` and names the violated rule in
+    ``when.write``, inline ``when.model``, or dialect-keyed ``when.binding`` and
+    names the violated rule in
     ``then.rejectedRule``. A query runs ``validate_object_query``, Inheritance's
     ``validate_query_inheritance``, and the back-reference rule over its Include
     Paths, resolved against the position the query itself names.
@@ -683,8 +695,11 @@ def _assert_rejected(case: Case) -> None:
     Inheritance's ``validate_family``, and Storage Layout’s
     ``validate_storage_layout``, including standalone Table ownership and Column
     claims, then defining-join type equality and each relationship declaration's
-    own coherence. The referenced top-level model
-    remains valid and loadable.
+    own coherence. An inline model those rules accept is then resolved under the
+    case binding, so a binding-resolution refusal such as equal declared names
+    in one location is graded there. A ``when.binding`` is read by every dialect
+    it names and resolved against the top-level model. The referenced top-level
+    model remains valid and loadable.
 
     The raised rule must match exactly. No rejected variant reaches dialect
     selection, provisioning, SQL emission, or database execution.
@@ -733,20 +748,13 @@ def _assert_rejected(case: Case) -> None:
             _assert_bare_row_members_declared(case, entity, write)
             validate_write(entity, write)
         elif "model" in case.when:
-            inline_model = derive_temporal_structure(case.when["model"])
-            inline_entities = inline_model.get("entities")
-            if not isinstance(inline_entities, list):
-                inline_entity = inline_model.get("entity")
-                inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
-            validate_foundations(inline_entities)
-            validate_shared_allocators(inline_entities)
-            validate_family(inline_model)
-            validate_storage_layout(inline_entities)
-            validate_relationship_types(inline_entities)
-            validate_relationship_declarations(inline_entities)
+            _validate_rejected_model(case)
+        elif "binding" in case.when:
+            _validate_rejected_binding(case)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(
-                f"{case.path.name}: rejected case needs when.objectQuery / when.write / when.model"
+                f"{case.path.name}: rejected case needs when.objectQuery / when.write / "
+                f"when.model / when.binding"
             )
     except RejectionError as exc:
         if exc.rule != expected:
@@ -759,6 +767,70 @@ def _assert_rejected(case: Case) -> None:
         f"{case.path.name}: expected a pre-SQL rejection ({expected!r}) but model-aware "
         f"validation ACCEPTED the input."
     )
+
+
+_BINDING_DIALECTS: Final = ("postgres", "mariadb")
+
+
+def _validate_rejected_model(case: Case) -> None:
+    """Run every formation rule over the inline ``when.model``, then resolve the
+    model it describes under the case binding."""
+    inline_model = derive_temporal_structure(case.when["model"])
+    inline_entities = inline_model.get("entities")
+    if not isinstance(inline_entities, list):
+        inline_entity = inline_model.get("entity")
+        inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
+    validate_foundations(inline_entities)
+    validate_shared_allocators(inline_entities)
+    validate_family(inline_model)
+    validate_storage_layout(inline_entities)
+    validate_relationship_types(inline_entities)
+    validate_relationship_declarations(inline_entities)
+    accepted = Model(path=case.path, descriptor=inline_model)
+    _refuse_binding(
+        case,
+        accepted,
+        {dialect: case.binding_document(dialect) for dialect in _BINDING_DIALECTS},
+    )
+
+
+def _validate_rejected_binding(case: Case) -> None:
+    """Read and resolve every dialect's ``when.binding`` against the case model."""
+    bindings = case.when["binding"]
+    documents = {dialect: bindings[dialect] for dialect in _BINDING_DIALECTS if dialect in bindings}
+    if not documents:
+        raise CaseFailure(f"{case.path.name}: when.binding names no dialect's binding")
+    _refuse_binding(case, case.model, documents)
+
+
+def _refuse_binding(case: Case, model: Model, documents: Mapping[str, Any]) -> None:
+    """Read each dialect's binding in *documents* and resolve *model* under it,
+    raising the one binding issue every dialect refuses it with.
+
+    A dialect accepting the binding, dialects disagreeing, or a refusal of more
+    than one issue is a case defect: a rejected case isolates one rule.
+    """
+    rules: dict[str, str] = {}
+    for dialect, document in documents.items():
+        try:
+            resolve_binding(model, normalize_binding(document, dialect), dialect)
+        except BindingRejection as exc:
+            codes = sorted({issue.code for issue in exc.issues})
+            if len(codes) != 1:
+                raise CaseFailure(
+                    f"{case.path.name}: the {dialect} binding raised {codes!r}; a rejected "
+                    f"case isolates exactly one rule"
+                ) from exc
+            rules[dialect] = codes[0]
+            continue
+        raise CaseFailure(
+            f"{case.path.name}: the {dialect} binding was read and resolved, but the case "
+            f"expects it rejected pre-SQL"
+        )
+    if len(set(rules.values())) != 1:
+        raise CaseFailure(f"{case.path.name}: the dialects refuse the binding differently: {rules}")
+    rule = next(iter(rules.values()))
+    raise RejectionError(rule, f"every dialect's binding refused with {rule}")
 
 
 def _rejected_default_root(case: Case) -> Entity:
@@ -1858,7 +1930,9 @@ def _assert_milestone_guard(
         a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time"
     )
     in_z = transaction_time["start_column"]
-    if not is_milestone_guard_statement(statement, entity, dialect):
+    if not is_milestone_guard_statement(
+        statement, entity, case.entity_table(entity.canonical_name, dialect), dialect
+    ):
         raise CaseFailure(
             f"{case.path.name}: a one-statement Transaction-Time-Only update is the guard that "
             f"keeps its milestone — `set {in_z} = {in_z}` on the milestone's address, gated on "
@@ -2175,7 +2249,7 @@ def _prior_steps_for_key(
 
 
 def _setup_predecessor_insert(
-    case: Case, table: str, statement: str, dialect: str
+    case: Case, table: PhysicalTable, statement: str, dialect: str
 ) -> exp.Insert | None:
     failure = f"{case.path.name}: setup predecessor requires one plain INSERT with bound VALUES."
     try:
@@ -2188,8 +2262,7 @@ def _setup_predecessor_insert(
     target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
     if not isinstance(target, exp.Table) or not isinstance(target.this, exp.Identifier):
         raise CaseFailure(failure)
-    name = target.name if target.this.quoted else target.name.lower()
-    if name != table:
+    if physical_table_of(target) != table:
         # Multi-table mutations can address aliases instead of physical table names.
         if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete)) or list(
             tree.find_all(exp.Table)
@@ -2200,7 +2273,6 @@ def _setup_predecessor_insert(
         isinstance(tree, exp.Insert)
         and isinstance(tree.this, exp.Schema)
         and isinstance(tree.expression, exp.Values)
-        and not target.db
         and not target.catalog
     ):
         raise CaseFailure(failure)
@@ -2211,8 +2283,12 @@ def _setup_predecessor_insert(
 
 def _setup_insert_rows(case: Case, entity: Entity, dialect: str) -> Iterator[dict[str, Any]]:
     failure = f"{case.path.name}: setup predecessor INSERT needs distinct columns and bound VALUES."
+    view = case.model.storage_layout.entity(entity.canonical_name)
+    if view is None:
+        raise CaseFailure(failure)
+    table = case.placement(dialect).table(view.layout.mapping_owner)
     for entry in case.apply:
-        insert = _setup_predecessor_insert(case, entity.table, entry["sql"], dialect)
+        insert = _setup_predecessor_insert(case, table, entry["sql"], dialect)
         if insert is None:
             continue
         columns = insert.this.expressions
@@ -3307,16 +3383,23 @@ def _assert_evolution_schema(case: Case, db: DatabaseProvider) -> None:
     delta = cell.get("delta")
     if not isinstance(delta, dict):
         return
-    tables = [layout.table for layout in case.model.storage_layout.tables]
+    later = case.placement(db.dialect, case.model, "laterBinding")
+    earlier = (
+        None
+        if case.earlier_model is None
+        else case.placement(db.dialect, case.earlier_model, "earlierBinding")
+    )
+    qualifiers = later.qualifiers | (frozenset() if earlier is None else earlier.qualifiers)
+    tables = list(later.tables.values())
 
-    db.reset()
-    if case.earlier_model is not None:
-        db.apply_ddl(ddl_for(case.earlier_model, db.dialect))
+    db.reset(qualifiers)
+    if case.earlier_model is not None and earlier is not None:
+        db.apply_ddl(ddl_for(case.earlier_model, earlier))
     db.apply_ddl([str(statement) for statement in delta.get("statements") or []])
     applied = db.catalog(tables)
 
-    db.reset()
-    db.apply_ddl(ddl_for(case.model, db.dialect))
+    db.reset(qualifiers)
+    db.apply_ddl(ddl_for(case.model, later))
     provisioned = db.catalog(tables)
 
     if applied != provisioned:
@@ -3336,9 +3419,17 @@ def _assert_created_indices(case: Case, delta: dict[str, Any], applied: Catalog)
     here, and the catalog comparison alone could not tell, because both sides
     would have been truncated the same way.
     """
-    held = {(table.name, index.name): index for table in applied.tables for index in table.indices}
+    held = {
+        (PhysicalTable(table.qualifier, table.name), index.name): index
+        for table in applied.tables
+        for index in table.indices
+    }
     for entry in delta.get("createdIndices") or []:
-        key = (str(entry["physicalTable"]), str(entry["physicalIndexName"]))
+        physical = entry["physicalTable"]
+        key = (
+            PhysicalTable(tuple(physical["qualifier"]), str(physical["name"])),
+            str(entry["physicalIndexName"]),
+        )
         index = held.get(key)
         if index is None:
             raise CaseFailure(

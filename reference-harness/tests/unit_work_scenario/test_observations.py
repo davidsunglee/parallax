@@ -158,8 +158,8 @@ def test_a_find_runs_its_own_golden_and_grades_its_expectRows(corpus_case: CaseL
 
     assert _sql(db) == [
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on "
-        "from orders t0 where t0.id = ?",
-        "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 "
+        "from px.orders t0 where t0.id = ?",
+        "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 "
         "where t0.order_id = any(cast(? as bigint[])) order by t0.id desc",
     ]
 
@@ -210,7 +210,7 @@ def test_a_finds_reference_oracle_runs_on_the_reader_the_golden_used(
 
     queries = [call for call in _calls(db) if isinstance(call, Queried)]
     assert [call.session for call in queries] == [None, None]
-    assert queries[1].sql.startswith("select id, owner, balance from wallet")
+    assert queries[1].sql.startswith("select id, owner, balance from px.wallet")
 
 
 def test_a_find_whose_reference_oracle_disagrees_is_refused(corpus_case: CaseLoader) -> None:

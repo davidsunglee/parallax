@@ -60,6 +60,7 @@ from parallax.core.internal.sql_gen._inheritance import ReadResultContract
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_read
@@ -69,7 +70,7 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._transact_support import db_for
 
 _META = model_of(ORDERS_MODEL)
-_MODEL = CatalogedModel(_META)
+_MODEL = CatalogedModel(_META, TEST_BINDING)
 
 
 def _reaches(root: object, target: object) -> bool:
@@ -673,7 +674,7 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
     for distinct in (
         _key(_name_query("order-1")),
         _key(_query(), edition="edition-b"),
-        _key(_query(), model=CatalogedModel(_META)),
+        _key(_query(), model=CatalogedModel(_META, TEST_BINDING)),
         _key(_query(), dialect=replace(POSTGRES)),
         _key(_query(), preference="locking"),
     ):
@@ -854,7 +855,7 @@ def _balance_as_of(day: int) -> ResolvedObjectQuery:
     )
 
 
-_BALANCE_MODEL = CatalogedModel(_BALANCE)
+_BALANCE_MODEL = CatalogedModel(_BALANCE, TEST_BINDING)
 
 
 def _membership(width: int, *, op: str = "in") -> ResolvedObjectQuery:
@@ -1069,7 +1070,7 @@ def test_editions_and_exact_models_are_isolated_without_invalidating_each_other(
 
     first = _plan(cache, query)
     next_edition = _plan(cache, query, edition="edition-b")
-    next_model = _plan(cache, query, edition="edition-b", model=CatalogedModel(_META))
+    next_model = _plan(cache, query, edition="edition-b", model=CatalogedModel(_META, TEST_BINDING))
 
     assert _root(next_edition)[1] is not _root(first)[1]
     assert _root(next_model)[1] is not _root(next_edition)[1]
@@ -1287,7 +1288,7 @@ def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
     plan = _plan(
         ReadPlanCache(0),
         query,
-        model=CatalogedModel(projection_support.MATRIX_META),
+        model=CatalogedModel(projection_support.MATRIX_META, TEST_BINDING),
     )
 
     root, _converter = _root(plan)
@@ -1483,6 +1484,7 @@ def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_pl
         adapter,
         ORDERS_MODEL,
         read_plan_cache_capacity=capacity,
+        binding=TEST_BINDING,
     ) as root:
         database = root.using_database_login()
         database.find(Order.where(Order.id == 1)).result()
@@ -1492,7 +1494,7 @@ def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_pl
 
 
 def test_a_root_composed_without_a_capacity_bounds_its_cache_by_the_default() -> None:
-    with Database.connect(ScriptedAdapter(), ORDERS_MODEL) as root:
+    with Database.connect(ScriptedAdapter(), ORDERS_MODEL, binding=TEST_BINDING) as root:
         statistics = root._resources.planner._statistics()
 
     assert statistics.capacity == _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY
@@ -1513,6 +1515,7 @@ def test_public_capacity_validation_precedes_adapter_runtime_open(capacity: obje
             cast("Any", adapter),
             ORDERS_MODEL,
             read_plan_cache_capacity=cast("Any", capacity),
+            binding=TEST_BINDING,
         )
     assert not adapter.opened
 
@@ -1583,7 +1586,7 @@ def test_capacity_requires_a_nonnegative_built_in_integer(capacity: object) -> N
 
 
 _DORMANT_META = model_of(DORMANT_POSITION_COLUMNS)
-_DORMANT = CatalogedModel(_DORMANT_META)
+_DORMANT = CatalogedModel(_DORMANT_META, TEST_BINDING)
 _TO_EMPTY_ANCESTRY: Final[Mapping[str, object]] = {
     "target": "Prototype",
     "predicate": {"true": {}},
@@ -1632,8 +1635,8 @@ def test_direct_and_template_compilation_share_the_empty_read_outcome() -> None:
         projection=read_planning.ReadProjectionRequest("all", True),
     )
 
-    direct = _compile_module.compile_read(root, _DORMANT_META, POSTGRES)
-    template = _compile_module.compile_template(root, _DORMANT_META, POSTGRES)
+    direct = _compile_module.compile_read(root, bound_model(_DORMANT_META), POSTGRES)
+    template = _compile_module.compile_template(root, bound_model(_DORMANT_META), POSTGRES)
 
     assert direct is template is EMPTY_READ
     assert direct.read_shape.variant == "empty"
@@ -1717,7 +1720,7 @@ def test_a_model_composing_a_concrete_under_the_position_plans_it_apart() -> Non
         ),
     )
     later_meta = formed(replace(dormant, entities=(*dormant.entities, mockup)))
-    later = CatalogedModel(later_meta)
+    later = CatalogedModel(later_meta, TEST_BINDING)
     document: Mapping[str, object] = {"target": "Prototype", "predicate": {"true": {}}}
     cache = ReadPlanCache()
 
@@ -1754,7 +1757,7 @@ def _seeded_render(
     meta: Metamodel, seed: ResolvedObjectQuery, current: ResolvedObjectQuery
 ) -> tuple[CompiledRead, CompiledRead, ReadPlanCache]:
     """``current`` rendered from a cache ``seed`` prepared, and planned cold."""
-    model = CatalogedModel(meta)
+    model = CatalogedModel(meta, TEST_BINDING)
     cache = ReadPlanCache()
     _plan(cache, seed, model=model)
     rendered = _root(_plan(cache, current, model=model))[0]
@@ -2080,7 +2083,7 @@ def _seeded_policy(
     seed: ResolvedObjectQuery, current: ResolvedObjectQuery
 ) -> tuple[_read_plan.ReadPlan, _read_plan.ReadPlan]:
     """``current`` planned from a cache ``seed`` prepared, and planned cold."""
-    model = CatalogedModel(_POLICY)
+    model = CatalogedModel(_POLICY, TEST_BINDING)
     cache = ReadPlanCache()
     _plan(cache, seed, model=model)
     rendered = _plan(cache, current, model=model)
@@ -2134,7 +2137,9 @@ def test_bitemporal_coordinates_render_into_relationship_perspectives_and_every_
 def test_a_temporal_template_refuses_a_query_without_its_finite_selection() -> None:
     cache = ReadPlanCache()
     plan = _plan(
-        cache, _policy_read({"asOf": _at(20)}, {"asOf": _at(21)}), model=CatalogedModel(_POLICY)
+        cache,
+        _policy_read({"asOf": _at(20)}, {"asOf": _at(21)}),
+        model=CatalogedModel(_POLICY, TEST_BINDING),
     )
     prepared = plan.prepared_fetch(0)
     assert isinstance(prepared, tuple)
@@ -2214,7 +2219,7 @@ def test_the_cache_retains_neither_later_render_inputs_nor_source_associations()
 
 
 def test_the_cache_retains_no_later_temporal_query_or_its_coordinates() -> None:
-    model = CatalogedModel(_POLICY)
+    model = CatalogedModel(_POLICY, TEST_BINDING)
     cache = ReadPlanCache()
     _plan(cache, _policy_read({"asOf": _at(10)}, {"asOf": _at(11)}), model=model)
     later = _policy_read({"asOf": _at(20)}, {"asOf": _at(21)})
@@ -2243,12 +2248,12 @@ def test_direct_compilation_and_write_reads_bind_their_values_concretely() -> No
 
     direct = compile_read(
         read_planning.plan(paged, _CORPUS_ORDERS, projection=_ROW_PROJECTION).root,
-        _CORPUS_ORDERS,
+        bound_model(_CORPUS_ORDERS),
         POSTGRES,
     )
     target = compile_read(
         read_planning.plan_target_read(order, model=_CORPUS_ORDERS, key="id", key_value=7),
-        _CORPUS_ORDERS,
+        bound_model(_CORPUS_ORDERS),
         POSTGRES,
         result_form="row",
         shared_lock=True,
@@ -2260,7 +2265,7 @@ def test_direct_compilation_and_write_reads_bind_their_values_concretely() -> No
             model=_CORPUS_ORDERS,
             resolution=NoRootSelections(),
         ),
-        _CORPUS_ORDERS,
+        bound_model(_CORPUS_ORDERS),
         POSTGRES,
         order,
     )

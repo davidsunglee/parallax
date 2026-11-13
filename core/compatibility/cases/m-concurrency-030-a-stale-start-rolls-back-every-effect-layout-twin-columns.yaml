@@ -115,76 +115,77 @@ then:
         shortfall: failedPrecondition
     control: { outcome: committed }
   tableState:
-    sequence_span:
-      - id: 1
-        amount: 100
-        label: a
-        memo: { note: n1 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: infinity
-      - id: 2
-        amount: 100
-        label: b
-        memo: { note: n2 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2024-11-03T00:00:00.000000Z"
-      - id: 2
-        amount: 100
-        label: b
-        memo: { note: n2 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-02-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 2
-        amount: 155
-        label: b
-        memo: { note: n2 }
-        from_z: "2024-02-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 2
-        amount: 100
-        label: b
-        memo: { note: n2 }
-        from_z: "2024-04-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-      - id: 3
-        amount: 100
-        label: c
-        memo: { note: n3 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: infinity
-      - id: 3
-        amount: 200
-        label: c
-        memo: { note: n3 }
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-15T00:00:00.000000Z"
-        out_z: infinity
-      - id: 4
-        amount: 90
-        label: d
-        memo: { note: n4 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2023-12-15T00:00:00.000000Z"
-      - id: 4
-        amount: 100
-        label: d
-        memo: { note: n4 }
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-15T00:00:00.000000Z"
-        out_z: infinity
+    px:
+      sequence_span:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+        - id: 2
+          amount: 100
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2024-11-03T00:00:00.000000Z"
+        - id: 2
+          amount: 100
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-02-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+        - id: 2
+          amount: 155
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-02-01T00:00:00.000000Z"
+          thru_z: "2024-04-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+        - id: 2
+          amount: 100
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-04-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+        - id: 3
+          amount: 100
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+        - id: 3
+          amount: 200
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: infinity
+        - id: 4
+          amount: 90
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2023-12-15T00:00:00.000000Z"
+        - id: 4
+          amount: 100
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: infinity

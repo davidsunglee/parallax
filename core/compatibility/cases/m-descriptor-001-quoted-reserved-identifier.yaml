@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0."order", t0.label from grade t0 where t0."order" > ?
-        mariadb: select t0.id, t0.`order`, t0.label from grade t0 where t0.`order` > ?
+        postgres: select t0.id, t0."order", t0.label from px.grade t0 where t0."order" > ?
+        mariadb: select t0.id, t0.`order`, t0.label from px.grade t0 where t0.`order` > ?
       binds: [1]
   rows:
     - { id: 2, order: 2, label: mid }

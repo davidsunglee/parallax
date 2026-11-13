@@ -1642,19 +1642,23 @@ def test_compiling_a_tableless_branch_concrete_refuses_rather_than_inventing_a_t
         )
 
 
-def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings() -> None:
+def test_two_owners_of_one_declared_name_compile_two_layouts() -> None:
     first = identity("Alpha")
     second = identity("Beta")
     metadata = _unvalidated(
         Declaration(identity=first, container=Table("shared"), attributes=(key(first),)),
         Declaration(identity=second, container=Table("shared"), attributes=(key(second),)),
     )
-    with pytest.raises(RuntimeError, match="has multiple mapping owners"):
-        storage_layout_compile.compile_facet(
-            metadata,
-            inheritance_compile.compile_facet(metadata),
-            relationship_compile.compile_facet(metadata),
-        )
+    facet = storage_layout_compile.compile_facet(
+        metadata,
+        inheritance_compile.compile_facet(metadata),
+        relationship_compile.compile_facet(metadata),
+    )
+    assert [(layout.mapping_owner, layout.table) for layout in facet.tables] == [
+        (first, Table("shared")),
+        (second, Table("shared")),
+    ]
+    assert facet.table(first) is not facet.table(second)
 
 
 def test_layout_values_and_sequences_are_immutable() -> None:

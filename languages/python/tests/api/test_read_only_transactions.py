@@ -29,6 +29,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.execution import ReadOnlyTxnOptions, RetryPolicy
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 
 _ACCOUNT = MODELS["account"]
 
@@ -100,13 +101,14 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
 def test_the_read_only_usage_guide_story_runs_against_a_real_database(profile_run: Any) -> None:
     _seeded(profile_run)
     report = read_only_stories.reads_run_in_one_read_only_transaction_at_a_chosen_isolation(
-        profile_run.port, _ACCOUNT
+        profile_run.port, _ACCOUNT, TEST_BINDING
     )
     assert report.options == ReadOnlyTxnOptions(retry=RetryPolicy(), isolation="repeatable_read")
     assert report.balance == report.reread_balance == Decimal("250.00")
@@ -125,7 +127,7 @@ def test_each_entrypoint_runs_in_its_own_mode_whatever_the_session_defaults_to(
     seen: list[dict[str, str | None]] = []
     configured = profile_run.configured(settings={"default_transaction_read_only": "on"})
     probed = DecoratingAdapter(configured, lambda conn: _AccessModeProbe(conn, seen))
-    with connect(probed, _ACCOUNT) as database:
+    with connect(probed, _ACCOUNT, binding=TEST_BINDING) as database:
         db = database.using_database_login()
         read = db.read_only(lambda rtx: rtx.find(Account.where(Account.id == 2)).result())
 

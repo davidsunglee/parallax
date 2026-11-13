@@ -33,11 +33,11 @@ from reference_harness.storage_layout import DocumentMember
 _COMPATIBILITY_ROOT = Path(__file__).resolve().parents[2] / "core" / "compatibility"
 
 _WALLET = (
-    "update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) "
+    "update px.wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) "
     "with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord"
 )
 _DOCUMENT = (
-    "update tag_ledger t set payload = jsonb_set(jsonb_set(t.payload, ?, v.c4), ?, v.c5), "
+    "update px.tag_ledger t set payload = jsonb_set(jsonb_set(t.payload, ?, v.c4), ?, v.c5), "
     "version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), "
     "cast(? as jsonb[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, c5, ord) "
     "where t.id = v.c1 and t.version = v.c2 returning v.ord"
@@ -63,14 +63,14 @@ def _case(model: str) -> Case:
 
 def test_a_grouped_effect_reads_back_as_the_lone_updates_it_applies() -> None:
     assert ungrouped_effect(_WALLET, [[1, 2], ["111.00", "222.00"]]) == [
-        ("update wallet set balance = ? where id = ?", ["111.00", 1]),
-        ("update wallet set balance = ? where id = ?", ["222.00", 2]),
+        ("update px.wallet set balance = ? where id = ?", ["111.00", 1]),
+        ("update px.wallet set balance = ? where id = ?", ["222.00", 2]),
     ]
 
 
 def test_document_paths_keep_their_shared_binds_beside_each_rows_values() -> None:
     lone = (
-        "update tag_ledger set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
+        "update px.tag_ledger set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
         "?, cast(? as jsonb)), version = ? where id = ? and version = ?"
     )
     assert ungrouped_effect(_DOCUMENT, _DOCUMENT_BINDS) == [
@@ -80,7 +80,7 @@ def test_document_paths_keep_their_shared_binds_beside_each_rows_values() -> Non
 
 
 _CLOSE = (
-    "update coverage_span t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+    "update px.coverage_span t set out_z = v.c3 from unnest(cast(? as bigint[]), "
     "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) "
     "where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? returning v.ord"
 )
@@ -94,17 +94,17 @@ _CLOSE_BINDS: list[object] = [
 
 def test_a_grouped_delete_reads_back_as_the_lone_deletes_it_applies() -> None:
     statement = (
-        "delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
+        "delete from px.account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
         "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
     )
     assert ungrouped_effect(statement, [[1, 2], [1, 4]]) == [
-        ("delete from account where id = ? and version = ?", [1, 1]),
-        ("delete from account where id = ? and version = ?", [2, 4]),
+        ("delete from px.account where id = ? and version = ?", [1, 1]),
+        ("delete from px.account where id = ? and version = ?", [2, 4]),
     ]
 
 
 def test_a_grouped_close_reads_back_as_each_milestones_lone_close() -> None:
-    lone = "update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?"
+    lone = "update px.coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?"
     assert ungrouped_effect(_CLOSE, _CLOSE_BINDS) == [
         (lone, ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", "infinity"]),
         (lone, ["2024-10-01T00:00:00.000000Z", 2, "infinity", "infinity"]),
@@ -113,14 +113,14 @@ def test_a_grouped_close_reads_back_as_each_milestones_lone_close() -> None:
 
 def test_a_grouped_guard_reads_back_as_its_self_assigning_lone_guard() -> None:
     statement = (
-        "update balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
+        "update px.balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
         "cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.bal_id = v.c1 "
         "and t.out_z = ? and t.in_z = v.c2 returning v.ord"
     )
     rows = ungrouped_effect(statement, [[1], ["2024-01-01T00:00:00.000000Z"], "infinity"])
     assert rows == [
         (
-            "update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?",
+            "update px.balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?",
             [1, "infinity", "2024-01-01T00:00:00.000000Z"],
         )
     ]
@@ -146,7 +146,7 @@ def test_each_milestone_source_array_is_typed_by_the_column_it_addresses() -> No
 def test_a_grouped_delete_source_is_typed_by_the_column_it_compares() -> None:
     case = _case("account")
     statement = (
-        "delete from account t using unnest(cast(? as int[]), cast(? as int[])) with "
+        "delete from px.account t using unnest(cast(? as int[]), cast(? as int[])) with "
         "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
     )
     (mismatch,) = array_cast_mismatches(case, statement, [[1, 2], [1, 4]])
@@ -155,23 +155,23 @@ def test_a_grouped_delete_source_is_typed_by_the_column_it_compares() -> None:
 
 def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
     statement = (
-        "update payment t set amount = v.c2 from unnest(cast(? as bigint[]), "
+        "update px.payment t set amount = v.c2 from unnest(cast(? as bigint[]), "
         "cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
         "and t.kind = ? returning v.ord"
     )
     rows = ungrouped_effect(statement, [[1, 2], ["5.00", "6.00"], "card"])
     assert rows is not None
     assert [binds for _, binds in rows] == [["5.00", 1, "card"], ["6.00", 2, "card"]]
-    assert rows[0][0] == "update payment set amount = ? where id = ? and kind = ?"
+    assert rows[0][0] == "update px.payment set amount = ? where id = ? and kind = ?"
 
 
 @pytest.mark.parametrize(
     "statement",
     [
-        "update wallet set balance = ? where id = ?",
-        "insert into wallet(id) select * from unnest(cast(? as bigint[]))",
-        "delete from wallet where id in (?, ?)",
-        "delete from wallet where id = ?",
+        "update px.wallet set balance = ? where id = ?",
+        "insert into px.wallet(id) select * from unnest(cast(? as bigint[]))",
+        "delete from px.wallet where id in (?, ?)",
+        "delete from px.wallet where id = ?",
     ],
 )
 def test_any_other_statement_is_left_alone(statement: str) -> None:

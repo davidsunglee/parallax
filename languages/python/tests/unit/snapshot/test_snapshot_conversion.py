@@ -89,6 +89,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.model_capabilities import graph_construction_for, prepared_view_keys_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
@@ -192,7 +193,7 @@ def _recorded(
 ) -> _Projection:
     builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
     prepared, cells = bound_cells(
-        CatalogedModel(model), compiled, driver_row(compiled, row), singleton=proved
+        CatalogedModel(model, TEST_BINDING), compiled, driver_row(compiled, row), singleton=proved
     )
     index, _resolved, _document = prepared.record_row(cells, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
@@ -210,7 +211,7 @@ def _bound(
     model: Metamodel, entity: str, cells: Mapping[str, object]
 ) -> tuple[ReadRowConverter, Row]:
     """``entity``'s read, bound, beside ``cells`` as its positional row."""
-    return bound_cells(CatalogedModel(model), compiled_read(model, entity), cells)
+    return bound_cells(CatalogedModel(model, TEST_BINDING), compiled_read(model, entity), cells)
 
 
 def _occurrence(node: _Projection, name: str) -> Any:
@@ -1108,7 +1109,7 @@ def _hull_family() -> Metamodel:
 HULL = _hull_family()
 _HULL_TO_SKIFF = compile_read(
     oa.TrueNode(),
-    HULL,
+    bound_model(HULL),
     POSTGRES,
     target(HULL, "Hull"),
     narrow_to=(target(HULL, "Skiff").identity,),

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from parallax.conformance._replication import LazyReplication, ReplicationPair
 from parallax.conformance.provision import Provisioner
+from parallax.core.internal.database_binding import DatabaseBinding
 from parallax.core.internal.db_port import (
     AccessMode,
     DatabaseConnection,
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
     )
     from parallax.conformance._lifecycle_observation import LifecycleObservation
     from parallax.core.internal.db_port import DatabaseAdapter
-    from parallax.core.internal.entity import DomainModel
     from parallax.core.internal.execution import ServingModel, TxnOptions
     from parallax.core.internal.unit_work import Clock
 
@@ -165,10 +165,11 @@ class ProvisionedRun(ProfileRun):
         return self._replication.pair()
 
     def reset(  # pragma: no cover - exercised by the Docker-backed lanes
-        self, model: Metamodel, fixtures: Mapping[str, object]
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
     ) -> None:
-        """Reset the schema, apply the model-derived DDL, and load the fixtures."""
-        self._provisioner.reset(model, fixtures)
+        """Reset the bound schemas, apply ``model``'s DDL under ``binding``, and
+        load the fixtures."""
+        self._provisioner.reset(model, fixtures, binding)
 
     def control(self, *, autocommit: bool = True) -> DriverControl:  # pragma: no cover - Docker
         """A separately owned second session to the same database (provider `peer`).
@@ -179,7 +180,7 @@ class ProvisionedRun(ProfileRun):
 
     def interleaved_execution(  # pragma: no cover - Docker
         self,
-        model: DomainModel | ServingModel,
+        model: ServingModel,
         *,
         observation: LifecycleObservation,
         options: TxnOptions | None = None,

@@ -16,9 +16,9 @@ when:
               greaterThan: {path: barkVolume, value: 5}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.pet_id from traversal_collar t0 left join traversal_pet t1 on t1.id = t0.pet_id where not case when not t1.id is null and t1.kind = ? then t1.bark_volume > ? else false end'}
+  - sql: {postgres: 'select t0.id, t0.pet_id from px.traversal_collar t0 left join px.traversal_pet t1 on t1.id = t0.pet_id where not case when not t1.id is null and t1.kind = ? then t1.bark_volume > ? else false end'}
     binds: [dog, 5]
-  referenceSql: select id, pet_id from traversal_collar where pet_id is null or pet_id in (select id from traversal_pet where kind <> 'dog')
+  referenceSql: select id, pet_id from px.traversal_collar where pet_id is null or pet_id in (select id from px.traversal_pet where kind <> 'dog')
   rows:
   - {id: 12, pet_id: 3}
   - {id: 13, pet_id: null}

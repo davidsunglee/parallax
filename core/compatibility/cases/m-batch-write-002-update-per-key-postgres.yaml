@@ -15,13 +15,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
+        postgres: update px.wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
       binds:
         - [1, 2]
         - ["111.00", "222.00"]
   tableState:
-    wallet:
-      - { id: 1, owner: Ada, balance: "111.00" }
-      - { id: 2, owner: Linus, balance: "222.00" }
-      - { id: 3, owner: Grace, balance: "10.00" }
+    px:
+      wallet:
+        - { id: 1, owner: Ada, balance: "111.00" }
+        - { id: 2, owner: Linus, balance: "222.00" }
+        - { id: 3, owner: Grace, balance: "10.00" }
   databaseCalls: 2

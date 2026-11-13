@@ -30,6 +30,7 @@ from parallax.snapshot import (
     connect,
 )
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import BeginCall, CommitCall, Read, ReadCall, ScriptedAdapter, Transact
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -47,7 +48,13 @@ _QUERY = mm.Account.where(mm.Account.id == 7)
 
 def _locking_db(port: ScriptedAdapter) -> ScopedDatabase:
     return own_root(
-        connect(port, ACCOUNT, options=TxnOptions(concurrency="locking"), clock=FixedClock(FIXED))
+        connect(
+            port,
+            ACCOUNT,
+            options=TxnOptions(concurrency="locking"),
+            clock=FixedClock(FIXED),
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 

@@ -33,12 +33,13 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
 )
+from tests._support.bindings import bound_model
 
 _ACCOUNT_META: Final = models.load_models()["account"]
 _ACCOUNT: Final = entity_by_name(_ACCOUNT_META, "Account")
 assert _ACCOUNT is not None
 _ID: Final = AttributeIdentity(_ACCOUNT.identity, "id")
-_PAYLOADS: Final = build_write_planner(_ACCOUNT_META).payloads
+_PAYLOADS: Final = build_write_planner(bound_model(_ACCOUNT_META)).payloads
 
 
 def _delete(key: int) -> PlannedStep:
@@ -51,7 +52,9 @@ def _delete(key: int) -> PlannedStep:
 
 
 def _simulated(*allocated: tuple[object, ...]) -> SimulatedWriteSteps:
-    return SimulatedWriteSteps(_PAYLOADS, _ACCOUNT_META, POSTGRES, allocated_results=allocated)
+    return SimulatedWriteSteps(
+        _PAYLOADS, bound_model(_ACCOUNT_META), POSTGRES, allocated_results=allocated
+    )
 
 
 def _deletes(*keys: int) -> tuple[PlannedStep, ...]:
@@ -63,7 +66,7 @@ def test_steps_that_fail_to_lower_keep_none_of_their_statements_and_answer_no_ke
     failure = ValueError("the second close cannot be prepared")
     simulated = SimulatedWriteSteps(
         _FailingPreparer(steps[1], failure),
-        _POSITION_META,
+        bound_model(_POSITION_META),
         POSTGRES,
         allocated_results=[(42,)],
     )
@@ -117,7 +120,7 @@ class _FailingPreparer(LayoutPayloadPreparer):
     __slots__ = ("failing", "failure")
 
     def __init__(self, failing: PlannedStep, failure: Exception) -> None:
-        super().__init__(_POSITION_META)
+        super().__init__(bound_model(_POSITION_META))
         assert isinstance(failing, PlannedClose)
         self.failing = failing
         self.failure = failure

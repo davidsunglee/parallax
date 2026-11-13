@@ -28,6 +28,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.internal.db_port import Returned
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
@@ -37,7 +38,7 @@ _CASE_ID = "m-execution-lifecycle-001"
 
 def _seeded(profile_run: Any) -> Any:
     case = corpus_case(_CASE_ID)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     return profile_run.port
 
 
@@ -59,7 +60,12 @@ class _Declining:
 def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
     db = own_root(
-        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
+        connect(
+            _seeded(profile_run),
+            MODELS["account"],
+            lifecycle_provider=recorder,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
     account = db.find(Account.where(Account.id == 2)).result()
@@ -109,7 +115,12 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
 def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
     db = own_root(
-        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
+        connect(
+            _seeded(profile_run),
+            MODELS["account"],
+            lifecycle_provider=recorder,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     db.find(Account.where(Account.id == 2)).result()
     db.find(Account.where(Account.id == 2)).result()
@@ -127,7 +138,12 @@ def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any
 def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) -> None:
     provider = _Declining()
     db = own_root(
-        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=provider)
+        connect(
+            _seeded(profile_run),
+            MODELS["account"],
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
     assert db.find(Account.where(Account.id == 2)).result().balance == Decimal("250.00")
@@ -138,7 +154,7 @@ def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) 
 def test_the_joined_usage_guide_story_runs_against_a_real_database(profile_run: Any) -> None:
     port = _seeded(profile_run)
     shape = execution_lifecycle_stories.a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-        port, MODELS["account"]
+        port, MODELS["account"], TEST_BINDING
     )
     # One outermost operation is one root, however many joined calls it makes,
     # and a joined call runs no attempt of its own.
@@ -147,5 +163,5 @@ def test_the_joined_usage_guide_story_runs_against_a_real_database(profile_run: 
     assert shape.joined_parent_is_the_attempt
     assert shape.balance == Decimal("251.00")
     # The joined body's write committed with the outer boundary.
-    stored = own_root(connect(port, MODELS["account"])).using_database_login()
+    stored = own_root(connect(port, MODELS["account"], binding=TEST_BINDING)).using_database_login()
     assert stored.find(Account.where(Account.id == 2)).result().balance == Decimal("251.00")

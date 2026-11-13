@@ -14,14 +14,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as bigint) > ?
-        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(json_value(t0.profile, ?) as signed) > ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as bigint) > ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where cast(json_value(t0.profile, ?) as signed) > ?
       binds:
         postgres: [small, 0]
         mariadb: ['$.small', 0]
   referenceSql:
-    postgres: select id, label from sample where (profile ->> 'small')::bigint > 0
-    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.small')), 'null') + 0 > 0
+    postgres: select id, label from px.sample where (profile ->> 'small')::bigint > 0
+    mariadb: select id, label from px.sample where nullif(json_unquote(json_extract(profile, '$.small')), 'null') + 0 > 0
   rows:
     - { id: 1, label: Ada }
   databaseCalls: 1

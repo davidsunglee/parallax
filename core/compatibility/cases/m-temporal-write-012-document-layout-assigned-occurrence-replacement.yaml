@@ -15,7 +15,7 @@ compileEligibility:
   note: "single-connection concurrency/locking intent (given.apply)"
 given:
   apply:
-    - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+    - sql: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 8
         - "2026-01-01T00:00:00.000000Z"
@@ -47,12 +47,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
-        mariadb: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+        postgres: update px.voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+        mariadb: update px.voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
       binds: ["2026-06-01T00:00:00.000000Z", 8, infinity, "2026-01-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
-        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        postgres: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 8
         - "2026-06-01T00:00:00.000000Z"
@@ -65,29 +65,30 @@ then:
           legs:
             - port: Bergen
   tableState:
-    voyage:
-      - id: 8
-        in_z: "2026-01-01T00:00:00.000000Z"
-        out_z: "2026-06-01T00:00:00.000000Z"
-        payload:
-          title: Island Run
-          crew: 3
-          charterCode: NB-204
-          manifest:
-            cargo: ore
-            sealNumber: S-9930
-          legs:
-            - port: Oslo
-              berth: B7
-      - id: 8
-        in_z: "2026-06-01T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          title: Island Run
-          crew: 3
-          charterCode: NB-204
-          manifest:
-            cargo: salt
-          legs:
-            - port: Bergen
+    px:
+      voyage:
+        - id: 8
+          in_z: "2026-01-01T00:00:00.000000Z"
+          out_z: "2026-06-01T00:00:00.000000Z"
+          payload:
+            title: Island Run
+            crew: 3
+            charterCode: NB-204
+            manifest:
+              cargo: ore
+              sealNumber: S-9930
+            legs:
+              - port: Oslo
+                berth: B7
+        - id: 8
+          in_z: "2026-06-01T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            title: Island Run
+            crew: 3
+            charterCode: NB-204
+            manifest:
+              cargo: salt
+            legs:
+              - port: Bergen
   databaseCalls: 3

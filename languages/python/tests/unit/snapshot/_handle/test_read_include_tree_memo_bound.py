@@ -3,7 +3,7 @@
 ADR 0012 and the *Projection capability and retained shape* rule bound what a
 Typed result holds by the includes clause and the model. The tree keeps the Wire
 renderer's plans and the continuation answers they are built from in a memo it
-fills on first use, which is inside that bound only while its key domain is
+fills on px.first use, which is inside that bound only while its key domain is
 closed over the plan's positions and the model's concretes. Rendering ten times
 the roots reaches the same plans of the same tree many more times; if any answer
 were keyed by anything a root carries, the tree would be larger after the larger
@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from parallax.conformance.budget import BudgetContract
 from parallax.snapshot import Database
+from tests._support.bindings import TEST_BINDING
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import closure
 
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
 def _tree_after_projecting(roots: int) -> Closure:
     port = control_support.GuardedPort(roots)
-    root = Database(port.open(), control_support.GUARDED_MODEL)
+    root = Database(port.open(), control_support.GUARDED_MODEL, binding=TEST_BINDING)
     try:
         result = root.using_database_login().find(
             control_support.guarded_query(control_support.GUARD_WIDTHS[-1])

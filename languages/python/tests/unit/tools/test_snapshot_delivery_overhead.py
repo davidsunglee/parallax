@@ -21,6 +21,7 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
 from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.provision import Provisioner
+from parallax.core.internal.database_binding import DatabaseBinding
 from parallax.core.internal.db_port import Password
 from parallax.core.internal.metamodel import Metamodel
 from production_origins import ORIGINS_FIELD
@@ -304,8 +305,10 @@ class _FakeProvisioner:
         self.connection_info = "postgresql://fake"
         self.credentials = Password("fake-secret")
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        del fixtures
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        del fixtures, binding
         self.resets.append(type(model).__name__)
 
     def close(self) -> None:

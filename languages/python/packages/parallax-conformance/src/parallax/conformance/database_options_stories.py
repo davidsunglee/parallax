@@ -13,6 +13,7 @@ from parallax.core import (
     UsageError,
 )
 from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -40,7 +41,7 @@ class ResolvedOptions:
 
 
 def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> ResolvedOptions:
     """A root configured once, a call that overrides one field, and a joining
     call held to the override rather than to the root.
@@ -55,7 +56,7 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
     root = TxnOptions(isolation="repeatable_read", retry=RetryPolicy(max_retries=2))
-    with connect(adapter, model, options=root) as database:
+    with connect(adapter, model, binding=binding, options=root) as database:
         db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
 
@@ -97,7 +98,7 @@ class ResolvedRetryPolicies:
 
 
 def a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> ResolvedRetryPolicies:
     """A root tuned once, a call that replaces the whole policy, and a joining
     call compared with the policy of the transaction it joins.
@@ -108,7 +109,7 @@ def a_tuned_retry_policy_is_inherited_until_a_call_replaces_it_whole(
     to the active one; the same bound with another backoff is a different policy.
     """
     tuned = RetryPolicy(max_retries=3, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05))
-    with connect(adapter, model, options=TxnOptions(retry=tuned)) as database:
+    with connect(adapter, model, binding=binding, options=TxnOptions(retry=tuned)) as database:
         db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options.retry)
 

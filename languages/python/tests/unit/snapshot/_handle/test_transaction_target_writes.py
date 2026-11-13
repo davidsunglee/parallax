@@ -56,12 +56,12 @@ type _Representation = Literal["typed", "wire"]
 
 _REPRESENTATIONS = pytest.mark.parametrize("representation", ["typed", "wire"])
 
-_GATED = "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
-_GATED_BALANCE = "update account set balance = ?, version = ? where id = ? and version = ?"
-_GATED_OWNER = "update account set owner = ?, version = ? where id = ? and version = ?"
-_UNGATED_BALANCE = "update account set balance = ?, version = ? where id = ?"
-_GATED_DELETE = "delete from account where id = ? and version = ?"
-_UNGATED_DELETE = "delete from account where id = ?"
+_GATED = "update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+_GATED_BALANCE = "update px.account set balance = ?, version = ? where id = ? and version = ?"
+_GATED_OWNER = "update px.account set owner = ?, version = ? where id = ? and version = ?"
+_UNGATED_BALANCE = "update px.account set balance = ?, version = ? where id = ?"
+_GATED_DELETE = "delete from px.account where id = ? and version = ?"
+_UNGATED_DELETE = "delete from px.account where id = ?"
 
 
 _ACCOUNT_ONE = {
@@ -151,7 +151,7 @@ def test_a_locking_target_write_reads_its_row_under_the_shared_lock_once() -> No
     assert _calls(port) == [
         ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
-            "update account set owner = ?, balance = ?, version = ? where id = ?",
+            "update px.account set owner = ?, balance = ?, version = ? where id = ?",
             ("Bo", Decimal("150.00"), 4, 1),
         ),
     ]
@@ -186,7 +186,7 @@ def test_a_locking_target_write_refuses_a_stale_or_missing_start_at_the_call(
 
     account_db(port).transact(fn, concurrency="locking")
     assert [type(call) for call in _calls(port)] == [ReadCall, WriteCall]
-    assert cast("WriteCall", _calls(port)[1]).sql.startswith("insert into account")
+    assert cast("WriteCall", _calls(port)[1]).sql.startswith("insert into px.account")
 
 
 def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -> None:
@@ -203,7 +203,7 @@ def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -
     assert _calls(port) == [
         ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
-            "update account set owner = ?, balance = ?, version = ? where id = ?",
+            "update px.account set owner = ?, balance = ?, version = ? where id = ?",
             ("Bo", Decimal("150.00"), 4, 1),
         ),
     ]
@@ -605,7 +605,7 @@ def test_a_typed_replacement_of_a_read_value_leaves_its_read_only_members_unwrit
     db_for(DomainModel(entity), port).transact(fn)
     write = _calls(port)[-1]
     assert write == WriteCall(
-        "update ledger set note = ?, version = ? where id = ? and version = ?",
+        "update px.ledger set note = ?, version = ? where id = ? and version = ?",
         ("changed", 4, 1, 3),
     )
 

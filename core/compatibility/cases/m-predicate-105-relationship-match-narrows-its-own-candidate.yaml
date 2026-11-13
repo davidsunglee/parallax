@@ -14,9 +14,9 @@ when:
               greaterThan: {path: seats, value: 2}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))', mariadb: 'select t0.id, t0.vehicle_id from traversal_parking t0 where (exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))'}
+  - sql: {postgres: 'select t0.id, t0.vehicle_id from px.traversal_parking t0 where (exists (select 1 from px.traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from px.traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))', mariadb: 'select t0.id, t0.vehicle_id from px.traversal_parking t0 where (exists (select 1 from px.traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) or exists (select 1 from px.traversal_car t2 where t2.id = t0.vehicle_id and t2.seats > ?))'}
     binds: [2]
-  referenceSql: select id, vehicle_id from traversal_parking where vehicle_id in (select id from traversal_car where seats > 2)
+  referenceSql: select id, vehicle_id from px.traversal_parking where vehicle_id in (select id from px.traversal_car where seats > 2)
   rows:
   - {id: 30, vehicle_id: 5}
   databaseCalls: 1

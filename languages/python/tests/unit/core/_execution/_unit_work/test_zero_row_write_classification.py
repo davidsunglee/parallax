@@ -64,6 +64,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
@@ -87,7 +88,7 @@ def _locking_policy(
     observations = (
         None if observed is None else {key: VersionObservation(observed_version=observed)}
     )
-    plan = build_write_planner(model).finalize(
+    plan = build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),

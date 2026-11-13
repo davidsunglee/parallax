@@ -44,10 +44,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_casket add column seal varchar(32)
+          - alter table px.evolution_casket add column seal varchar(32)
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_casket add column seal varchar(32)
+          - alter table px.evolution_casket add column seal varchar(32)
         createdIndices: []

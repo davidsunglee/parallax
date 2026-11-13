@@ -24,8 +24,8 @@ when:
       note: the reading unit of work observes account 2 (250.00, version 1)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -40,8 +40,8 @@ when:
       note: the writing unit of work observes the same row before gating on it
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -55,8 +55,8 @@ when:
       note: the gated update advancing the OBSERVED version 1 -> 2; the group COMMITS after this, its last step, while the reader is still open
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
-            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["999.00", 2, 2, 1]
     - uow: reader
       objectQuery:
@@ -69,8 +69,8 @@ when:
       note: the SAME find again MUST observe 250.00 at version 1, unchanged by the peer's committed write; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "250.00", version: 1 }
@@ -84,8 +84,8 @@ when:
       note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: "999.00", version: 2 }

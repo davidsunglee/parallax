@@ -34,7 +34,7 @@ def test_the_aborting_port_passes_reads_and_writes_through() -> None:
     port = write_connection(inner, rollback=True)
     assert port.execute("select 1", []) == [(1,)]
     assert port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
-    assert port.execute_write("update account set balance = ?", [1]) == 1
+    assert port.execute_write("update px.account set balance = ?", [1]) == 1
     assert inner.reads and inner.writes
 
 
@@ -52,9 +52,9 @@ def test_absorbing_rollback_ends_a_rollback_step_quietly() -> None:
     inner = FakeWritePort()
     port = write_connection(inner, rollback=True)
     with absorbing_rollback():
-        committed(port.transaction(lambda conn: conn.execute_write("delete from account", [])))
+        committed(port.transaction(lambda conn: conn.execute_write("delete from px.account", [])))
         raise AssertionError("the abort ends the step before this line")
-    assert inner.writes == [("delete from account", [])]
+    assert inner.writes == [("delete from px.account", [])]
 
 
 def test_absorbing_rollback_lets_every_other_failure_through() -> None:

@@ -107,12 +107,22 @@ API that reads and writes plain mappings instead of your classes, is one such pl
 the canonical name, so `customer_id` is stored in a `customer_id` column. Use `column=`
 to choose another.
 
-`table=` names the table and nothing more: the class header has no schema option. Neither
-the generated statements nor Parallax's queries name a schema, so PostgreSQL finds the
-tables through the connection's `search_path`; set it on the login or in the connection
-string to keep the tables somewhere other than `public`. `namespace=`, which
-[Reading](03-reading.md#the-wire-api) shows, has nothing to do with it: it qualifies an
-entity's canonical name.
+`table=` names the table's default physical name and nothing more: the class header has
+no schema option, because where a table lives is a fact of each deployment, not of the
+model. `namespace=`, which [Reading](03-reading.md#the-wire-api) shows, qualifies an
+entity's canonical name and places nothing by itself.
+
+### Database bindings
+
+A `parallax.postgres.PostgresBinding` places one model's tables and sequences in schemas
+of the database the adapter connects to. It has a `default` location, a location per
+exact entity namespace (`namespaces`), and per-entity and per-sequence overrides
+(`entities`, `sequences`) that may also rename the physical table or sequence; anything an
+entry leaves out comes from the namespace, then the default. Every statement Parallax
+generates or runs names its tables schema-qualified as the binding places them, so no
+`search_path` placement applies. `prepare_model`, `connect` with a `DomainModel`, and
+`evolve` each require a binding; a `ServingModel`'s selections already carry theirs. The
+same binding round-trips through `to_json`/`from_json` and `to_yaml`/`from_yaml`.
 
 The strings in `index(...)`, `join=`, `reverse_of=` and `order_by=` name Python
 attributes, never columns or canonical names.

@@ -100,6 +100,7 @@ from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnConte
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit.memory_instruments import (
     Seam,
@@ -428,7 +429,7 @@ def _draining(namespace: _Namespace, total: int, *, retaining: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        with Database.connect(_GeneratingPort(total), ORDERS_MODEL) as root:
+        with Database.connect(_GeneratingPort(total), ORDERS_MODEL, binding=TEST_BINDING) as root:
             database = root.using_database_login()
             held: list[Any] = []
             with namespace.opener(database, _BATCH) as stream:
@@ -453,7 +454,9 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        with Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL) as root:
+        with Database.connect(
+            _GeneratingPort(total, fanout), ORDERS_MODEL, binding=TEST_BINDING
+        ) as root:
             database = root.using_database_login()
             with namespace.opener(database, batch_size) as stream:
                 for position, _root in enumerate(stream):
@@ -468,7 +471,9 @@ def _projecting_paused(total: int, *, batch_size: int, fanout: int, at: int) -> 
     """A Typed delivery projecting each current root and retaining no output."""
 
     def seam(sample: Callable[[], None]) -> None:
-        with Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL) as root:
+        with Database.connect(
+            _GeneratingPort(total, fanout), ORDERS_MODEL, binding=TEST_BINDING
+        ) as root:
             database = root.using_database_login()
             with database.stream(_query(), batch_size=batch_size) as stream:
                 for position, published in enumerate(stream):
@@ -485,7 +490,9 @@ def _paused_over(terms: int, total: int, *, batch_size: int, fanout: int, at: in
     authored keys, so the term count varies while everything else holds."""
 
     def seam(sample: Callable[[], None]) -> None:
-        with Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL) as root:
+        with Database.connect(
+            _GeneratingPort(total, fanout), ORDERS_MODEL, binding=TEST_BINDING
+        ) as root:
             database = root.using_database_login()
             with database.stream(_ordered(terms), batch_size=batch_size) as stream:
                 for position, _root in enumerate(stream):
@@ -509,7 +516,9 @@ def _advancing(namespace: _Namespace, total: int, *, batch_size: int, fanout: in
     """
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        with Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL) as root:
+        with Database.connect(
+            _GeneratingPort(total, fanout), ORDERS_MODEL, binding=TEST_BINDING
+        ) as root:
             database = root.using_database_login()
             with namespace.opener(database, batch_size) as stream:
                 roots = iter(stream)
@@ -532,7 +541,7 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        with Database.connect(_WritingPort(total), ACCOUNT_MODEL) as root:
+        with Database.connect(_WritingPort(total), ACCOUNT_MODEL, binding=TEST_BINDING) as root:
             database = root.using_database_login()
 
             def body(tx: TxnContext) -> None:
@@ -600,7 +609,7 @@ def _published_kinds(namespace: _Namespace) -> frozenset[str]:
     both answer is how many published nodes are alive, which is what the census
     counts over whichever names this returns.
     """
-    with Database.connect(_GeneratingPort(_BATCH), ORDERS_MODEL) as root:
+    with Database.connect(_GeneratingPort(_BATCH), ORDERS_MODEL, binding=TEST_BINDING) as root:
         database = root.using_database_login()
         with namespace.opener(database, _BATCH) as stream:
             for published in stream:

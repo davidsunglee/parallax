@@ -16,10 +16,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_folio add column strokes jsonb
+          - alter table px.evolution_folio add column strokes jsonb
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_folio add column strokes json
+          - alter table px.evolution_folio add column strokes json
         createdIndices: []

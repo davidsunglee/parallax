@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Final, Literal
 
 from parallax.core.internal.base import ParallaxError
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 
 __all__ = [
@@ -67,9 +68,10 @@ class DatabaseError(ParallaxError):
 
     Carries the neutral :data:`Category` (``None`` when the native code did not
     classify), the preserved native code (Postgres SQLSTATE), the driver
-    message, and the name of the violated constraint when the driver reported
-    one. Above-seam code reasons over :attr:`category` (or the call-site
-    predicate properties) and never sees a driver exception type.
+    message, and the name of the violated constraint and the physical table it
+    belongs to when the driver reported them. Above-seam code reasons over
+    :attr:`category` (or the call-site predicate properties) and never sees a
+    driver exception type.
 
     ``violated_index`` is accepted as a spelling of ``constraint_name``; naming
     two different constraints raises :class:`ValueError`, and an empty name is
@@ -80,6 +82,7 @@ class DatabaseError(ParallaxError):
     native_code: str | None
     message: str
     constraint_name: str | None
+    constraint_table: PhysicalTable | None
 
     def __init__(
         self,
@@ -89,6 +92,7 @@ class DatabaseError(ParallaxError):
         message: str,
         violated_index: PhysicalIndexName | None = None,
         constraint_name: str | None = None,
+        constraint_table: PhysicalTable | None = None,
     ) -> None:
         indexed = None if violated_index is None else violated_index.value
         if indexed is not None and constraint_name is not None and indexed != constraint_name:
@@ -100,6 +104,7 @@ class DatabaseError(ParallaxError):
         self.native_code = native_code
         self.message = message
         self.constraint_name = (constraint_name if constraint_name is not None else indexed) or None
+        self.constraint_table = constraint_table
         code = native_code if native_code is not None else "no-sqlstate"
         label = category if category is not None else "uncategorized"
         super().__init__("database-statement-failed", f"{label} [{code}]: {message}")
@@ -139,6 +144,7 @@ def classify_error(
     message: str,
     *,
     constraint_name: str | None = None,
+    constraint_table: PhysicalTable | None = None,
 ) -> DatabaseError:
     """Build the neutral :class:`DatabaseError` for a raised driver exception.
 
@@ -147,9 +153,10 @@ def classify_error(
     only assembles the neutral error. A driver exception with no native code (a
     connection failure with no SQLSTATE) yields an uncategorized error.
 
-    ``constraint_name`` is whatever structured name the adapter read off the
-    driver's own diagnostics, uninterpreted. The error keeps it whatever the
-    category; only a unique violation also reads it as its violated Index.
+    ``constraint_name`` and ``constraint_table`` are whatever the adapter read
+    off the driver's own structured diagnostics, uninterpreted. The error keeps
+    them whatever the category; only a unique violation also reads the name as
+    its violated Index.
     """
     category = as_category(dialect.classify(native_code)) if native_code is not None else None
     return DatabaseError(
@@ -157,4 +164,5 @@ def classify_error(
         native_code=native_code,
         message=message,
         constraint_name=constraint_name,
+        constraint_table=constraint_table,
     )

@@ -20,7 +20,7 @@ when:
       note: both deletes settle against the row this step's own resolving read published, and the second says what the first already said, so ONE DELETE is emitted
       statements:
         - sql:
-            postgres: delete from order_item where id = ?
+            postgres: delete from px.order_item where id = ?
           binds: [21]
     - objectQuery:
         target: parallax.compatibility.OrderItem
@@ -31,7 +31,7 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.id = ?
           binds: [21]
       expectRows: []
 then:

@@ -40,6 +40,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.postgres._connection import IncompatibleSessionError
+from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend, named_backend
 
 _BACKEND = "select pg_backend_pid() as pid"
@@ -753,7 +754,7 @@ def _undesignated_pipeline(target: Any) -> object:
     return target.execute_pipeline((PipelineStatement(_BACKEND),))
 
 
-_GRADE_WRITE = 'insert into grade (id, "order", label) values (?, ?, ?)'
+_GRADE_WRITE = 'insert into px.grade (id, "order", label) values (?, ?, ?)'
 
 
 def _count_only_write(target: Any) -> object:
@@ -767,7 +768,7 @@ def _row_producing_write(target: Any) -> object:
 def _ordered_write(target: Any) -> object:
     transport = target.ordered_write_transport
     assert transport is not None
-    statement = _CanonicalWrite('insert into grade (id, "order", label) values (?, ?, ?)')
+    statement = _CanonicalWrite('insert into px.grade (id, "order", label) values (?, ?, ?)')
     result = transport((statement,))
     assert isinstance(result, OrderedWriteResultInterrupted)
     raise result.error
@@ -797,7 +798,7 @@ def test_an_undesignated_first_submission_over_an_ended_session_is_never_sent_ag
     # Without read intent a submission may have had an effect, so whatever
     # happens to it happens once: no replacement is taken for it, and no row
     # the write would have made exists afterwards.
-    profile_run.reset(*_grade_model())
+    profile_run.reset(*_grade_model(), TEST_BINDING)
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
     try:
         _over_an_ended_session(profile_run, runtime)
@@ -815,7 +816,7 @@ def test_an_undesignated_first_submission_over_an_ended_session_is_never_sent_ag
 
         assert isinstance(context.cleanup_result, Invalidated)
         _disposed_once(before, after, checkouts=1)
-        assert profile_run.port.execute("select id from grade where id = 97", []) == []
+        assert profile_run.port.execute("select id from px.grade where id = 97", []) == []
         with _context(runtime) as later:
             assert _backend_pid(later)
     finally:
@@ -887,21 +888,21 @@ def test_a_finite_timestamp_still_decodes_beside_the_unbounded_one(profile_run: 
 
 @pytest.mark.adapter_smoke
 def test_two_scopes_hold_isolated_transactions(profile_run: Any) -> None:
-    profile_run.reset(*_grade_model())
+    profile_run.reset(*_grade_model(), TEST_BINDING)
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2))
     try:
         with _context(runtime) as writer, _context(runtime) as reader:
 
             def insert(conn: Any) -> None:
                 conn.execute_write(
-                    'insert into grade (id, "order", label) values (?, ?, ?)',
+                    'insert into px.grade (id, "order", label) values (?, ?, ?)',
                     [99, 99, "z"],
                 )
                 # The other scope's transaction cannot see uncommitted work.
-                assert reader.execute("select id from grade where id = 99", []) == []
+                assert reader.execute("select id from px.grade where id = 99", []) == []
 
             writer.transaction(insert)
-            assert reader.execute("select id from grade where id = 99", []) == [(99,)]
+            assert reader.execute("select id from px.grade where id = 99", []) == [(99,)]
     finally:
         runtime.close()
 

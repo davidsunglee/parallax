@@ -41,6 +41,7 @@ from parallax.core.internal.write_plan import (
     VersionObservation,
     WritePlan,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import observed_buffer, plan_steps
@@ -63,7 +64,7 @@ def _plan_under(
     concurrency: ConcurrencyPreference,
     tx_instant: TransactionInstant | None,
 ) -> WritePlan:
-    return build_write_planner(model).finalize(
+    return build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=actor,
             transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
@@ -77,7 +78,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
     return [
         statement
         for _step, statement in lowered_steps(
-            plan_steps(plan), LayoutPayloadPreparer(model), model, POSTGRES
+            plan_steps(plan), LayoutPayloadPreparer(bound_model(model)), model, POSTGRES
         )
     ]
 
@@ -154,13 +155,18 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
     )
     prepared = prepare_typed_write(predicate, write_preparation_of(_WALLET))
     assert isinstance(prepared, PreparedPredicateInstruction)
-    planner = build_write_planner(_WALLET)
+    planner = build_write_planner(bound_model(_WALLET))
     subject, login = (
         planner.predicate_step(prepared, actor_identity=actor, transaction_instant=inert_instant())
         for actor in (_SUBJECT, _LOGIN)
     )
     assert subject == login
-    statement = lowered(subject, LayoutPayloadPreparer(_WALLET), _WALLET, POSTGRES)
+    statement = lowered(
+        subject,
+        LayoutPayloadPreparer(bound_model(_WALLET)),
+        bound_model(_WALLET),
+        POSTGRES,
+    )
     rendered = repr(subject) + f"{statement.sql}{statement.binds!r}"
     assert _SUBJECT.value not in rendered
     assert _LOGIN.value not in rendered

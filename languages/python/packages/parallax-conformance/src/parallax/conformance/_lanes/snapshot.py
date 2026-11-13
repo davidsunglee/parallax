@@ -36,6 +36,7 @@ from parallax.conformance._mechanism.envelope import (
 )
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import (
+    case_binding,
     case_entity,
     case_serving_model,
 )
@@ -144,7 +145,7 @@ def compile_scenario(
                         entries,
                         model,
                         prepare,
-                        dialect,
+                        case_binding(case),
                         concurrency,
                         entry_instant(entries[0]),
                         rollback=step.get("rollback") is True,
@@ -245,6 +246,7 @@ def run_scenario(
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         case_document.concurrency(case),
         case_format.transaction_keywords(case),
         case_format.database_options(case),

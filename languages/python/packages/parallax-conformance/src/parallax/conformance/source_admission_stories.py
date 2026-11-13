@@ -8,6 +8,7 @@ from parallax.conformance.story_models import Account
 from parallax.core import DomainModel, UsageError
 from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.core.internal.unit_work import WRITE_EVIDENCE_UNAVAILABLE
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -29,7 +30,7 @@ class ReviewedWriteReport:
 
 
 def a_reviewed_value_is_written_under_the_version_its_review_saw(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> ReviewedWriteReport:
     """Credit an account a caller reviewed in an earlier read-only transaction.
 
@@ -40,7 +41,7 @@ def a_reviewed_value_is_written_under_the_version_its_review_saw(
     The write states instead the version the review saw through ``amend_if``,
     which fails as a precondition if anyone changed the account since.
     """
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         query = Account.where(Account.id == _TARGET_ID)
         reviewed = db.read_only(lambda rtx: rtx.find(query).result())

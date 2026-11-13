@@ -18,8 +18,9 @@ from parallax.core import UsageError
 from parallax.core._execution._adoption import AdoptedExecution, ExecutionBoundary
 from parallax.core.internal.execution import ServingModel, prepare_model
 from parallax.core.internal.read_delivery import InvalidDataError
+from tests._support.bindings import TEST_BINDING
 
-_A = prepare_model(MODELS["account"], edition="a")
+_A = prepare_model(MODELS["account"], edition="a", binding=TEST_BINDING)
 
 
 def _adopted() -> AdoptedExecution:
@@ -74,7 +75,9 @@ def test_a_hand_frozen_stored_data_refusal_takes_the_note() -> None:
 
 
 def test_each_boundary_a_failure_leaves_adds_its_own_note_innermost_first() -> None:
-    inner = AdoptedExecution(ServingModel(prepare_model(MODELS["account"], edition="b")))
+    inner = AdoptedExecution(
+        ServingModel(prepare_model(MODELS["account"], edition="b", binding=TEST_BINDING))
+    )
     inner.adopt()
     failure = RuntimeError("nested")
     with pytest.raises(RuntimeError):

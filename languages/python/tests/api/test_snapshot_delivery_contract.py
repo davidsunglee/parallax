@@ -10,6 +10,7 @@ from parallax.conformance import case_format, engine, provision
 from parallax.conformance.case_format import default_cases_dir
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 
 
 def _seeded(profile_run: Any) -> None:
@@ -17,6 +18,7 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
@@ -33,11 +35,11 @@ def test_a_leading_null_under_a_dropped_constraint_is_never_lost_at_a_page_bound
     profile_run: Any, batch_size: int
 ) -> None:
     _seeded(profile_run)
-    _write(profile_run, "alter table orders alter column active drop not null")
-    _write(profile_run, "update orders set active = null where id = 42")
+    _write(profile_run, "alter table px.orders alter column active drop not null")
+    _write(profile_run, "update px.orders set active = null where id = 42")
     query = Order.where(Order.all).order_by(Order.active.asc())
 
-    with connect(profile_run.port, ORDERS_MODEL) as root:
+    with connect(profile_run.port, ORDERS_MODEL, binding=TEST_BINDING) as root:
         db = root.using_database_login()
         with db.stream(query, batch_size=batch_size) as stream:
             roots = list(stream.checked())
@@ -55,15 +57,15 @@ def test_moving_an_authored_sort_key_can_skip_or_duplicate_a_root(
     _seeded(profile_run)
     query = Order.where(Order.all).order_by(Order.qty.asc())
 
-    with connect(profile_run.port, ORDERS_MODEL) as root:
+    with connect(profile_run.port, ORDERS_MODEL, binding=TEST_BINDING) as root:
         db = root.using_database_login()
         with db.stream(query, batch_size=1) as stream:
             roots = iter(stream)
             delivered = [next(roots).id]
             if movement == "ahead-to-behind":
-                _write(profile_run, "update orders set qty = 1 where id = 2")
+                _write(profile_run, "update px.orders set qty = 1 where id = 2")
             else:
-                _write(profile_run, "update orders set qty = 100 where id = 1")
+                _write(profile_run, "update px.orders set qty = 100 where id = 1")
             delivered.extend(item.id for item in roots)
 
     if movement == "ahead-to-behind":
@@ -82,7 +84,7 @@ def test_a_postgres_locking_stream_continues_and_retains_write_authority(
     _seeded(profile_run)
     query = Order.where(Order.all).order_by(Order.sku.asc())
 
-    with connect(profile_run.port, ORDERS_MODEL) as root:
+    with connect(profile_run.port, ORDERS_MODEL, binding=TEST_BINDING) as root:
         db = root.using_database_login()
 
         def deliver_and_update(tx: Any) -> list[int]:

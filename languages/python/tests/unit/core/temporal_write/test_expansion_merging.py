@@ -57,6 +57,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -156,7 +157,7 @@ def _expansion(
         guards=guards,
         ownership=ownership,
         audit=audit or AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
-        payloads=payloads or _CountingPayloads(LayoutPayloadPreparer(meta)),
+        payloads=payloads or _CountingPayloads(LayoutPayloadPreparer(bound_model(meta))),
     )
 
 
@@ -313,7 +314,7 @@ def test_unknown_content_outside_the_replaced_members_keeps_the_parts_apart() ->
     meta = _DOCUMENT
     first = _span(meta, _JAN, _APR, 100, document='{"amount": 100, "label": "a", "ledger": 1}')
     second = _span(meta, _APR, _JUL, 200, document='{"amount": 200, "label": "a", "ledger": 2}')
-    payloads = _CountingPayloads(LayoutPayloadPreparer(meta))
+    payloads = _CountingPayloads(LayoutPayloadPreparer(bound_model(meta)))
     settled = _settle(
         _expansion(
             meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), payloads=payloads
@@ -371,7 +372,7 @@ def test_stored_document_content_decides_whether_parts_merge(
 
 @_LAYOUTS
 def test_a_cheap_difference_on_one_side_leaves_the_other_side_to_merge(meta: Metamodel) -> None:
-    payloads = _CountingPayloads(LayoutPayloadPreparer(meta))
+    payloads = _CountingPayloads(LayoutPayloadPreparer(bound_model(meta)))
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
         _expansion(
@@ -877,7 +878,7 @@ def test_the_merged_rows_statements_store_the_addresses_its_effects_name(
     meta: Metamodel,
 ) -> None:
     owned = OpenedRows(frozenset({_endpoint(_APR)}))
-    payloads = _CountingPayloads(LayoutPayloadPreparer(meta))
+    payloads = _CountingPayloads(LayoutPayloadPreparer(bound_model(meta)))
     first = _span(meta, _FEB, _APR, 100, tx_start=_NOW)
     second = _span(meta, _APR, _JUL, 200)
     settled = _settle(
@@ -892,7 +893,7 @@ def test_the_merged_rows_statements_store_the_addresses_its_effects_name(
         second,
     )
     prepared = len(payloads.rows)
-    statements = [lowered(step, payloads, meta, POSTGRES) for step in settled.steps]
+    statements = [lowered(step, payloads, bound_model(meta), POSTGRES) for step in settled.steps]
     removal, close, merged, tail = statements
     # The removal and the close address the rows the unit removes and closes.
     assert removal.sql.startswith("delete from")

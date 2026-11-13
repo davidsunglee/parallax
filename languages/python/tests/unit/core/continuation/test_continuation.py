@@ -473,7 +473,7 @@ def test_a_page_captures_one_hidden_cell_per_continuation_order_term() -> None:
     assert compiled.result_contract.coordinate_ordinals == (7, 8)
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
-        "t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0"
+        "t0.sku parallax_seek_0, t0.id parallax_seek_1 from px.orders t0"
     )
 
 
@@ -565,7 +565,7 @@ def test_a_document_resident_sort_key_seeks_through_the_extraction_seam() -> Non
     statement = _lowered(DOCUMENT_LAYOUT, node)
     assert statement.sql.endswith(
         "cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_0, "
-        "t0.id parallax_seek_1 from traveler t0 "
+        "t0.id parallax_seek_1 from px.traveler t0 "
         "where (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? "
         "or jsonb_extract_path_text(t0.payload, ?) is null "
         "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "

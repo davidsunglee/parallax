@@ -116,6 +116,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedUpdate,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import CountingClock
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -146,7 +147,9 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 def _simulated(meta: Metamodel = _ACCOUNT) -> SimulatedWriteSteps:
     """Step execution recording the statements each span of ``meta``'s writes
     lowers to, and running none."""
-    return SimulatedWriteSteps(build_write_planner(meta).payloads, meta, POSTGRES)
+    return SimulatedWriteSteps(
+        build_write_planner(bound_model(meta)).payloads, bound_model(meta), POSTGRES
+    )
 
 
 def _kinds(simulated: SimulatedWriteSteps) -> list[str]:
@@ -183,7 +186,7 @@ def _run[T](
         execute_write_steps=steps or _simulated(resolved_meta),
         execute_counted_step=counted or NO_COUNTED_STEPS,
         acquire_rows=rows or HeldRows(resolved_meta),
-        planner=build_write_planner(resolved_meta),
+        planner=build_write_planner(bound_model(resolved_meta)),
         actor_identity=TEST_ACTOR_IDENTITY,
         flush_opening=opening,
     )
@@ -1700,7 +1703,7 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
         "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
     )
     destroy = KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG)
-    plan = build_write_planner(_PREDICATED).finalize(
+    plan = build_write_planner(bound_model(_PREDICATED)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),

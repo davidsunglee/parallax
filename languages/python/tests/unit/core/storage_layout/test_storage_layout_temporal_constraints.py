@@ -10,7 +10,10 @@ import pytest
 from parallax.core.internal import storage_layout
 from parallax.core.internal.metamodel import Column, Metamodel, Table, TemporalDimension
 from parallax.core.internal.storage_layout import PhysicalTemporalAxis, TableLayout
-from parallax.core.internal.storage_layout._temporal import constraint_name
+from parallax.core.internal.storage_layout._temporal import (
+    constraint_name,
+    temporal_constraint_names,
+)
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 
 _INTERVAL = (("lt", (Column("in_z"), Column("out_z"))),)
@@ -30,11 +33,8 @@ def _names(model: Metamodel) -> dict[str, tuple[str, str | None]]:
     for layout in storage_layout.storage_layout_facet_of(model).tables:
         constraints = layout.temporal_constraints
         if constraints is not None:
-            valid = constraints.valid_axis
-            named[layout.table.name] = (
-                constraints.transaction_axis.interval_check_name,
-                None if valid is None else valid.interval_check_name,
-            )
+            names = temporal_constraint_names(layout.table.name, constraints)
+            named[layout.table.name] = (names.transaction_check, names.valid_check)
     return named
 
 
@@ -53,7 +53,10 @@ def test_a_transaction_time_table_carries_one_interval_check() -> None:
     axis = constraints.transaction_axis
     assert axis.declaration.dimension is TemporalDimension.TRANSACTION_TIME
     assert (axis.start.column, axis.end.column) == (Column("in_z"), Column("out_z"))
-    assert axis.interval_check_name == "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
+    assert (
+        temporal_constraint_names("balance", constraints).transaction_check
+        == "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
+    )
     _selects_own_slots(layout, axis)
 
 
@@ -162,14 +165,12 @@ def test_the_fingerprint_hashes_the_complete_encoding() -> None:
         b"\x00\x00\x00\x05out_z"
     )
     fingerprint = hashlib.sha256(encoding).hexdigest()[:32]
-    assert constraint_name(Table("balance"), "tx", _INTERVAL) == f"pxc_tx_balance_{fingerprint}"
+    assert constraint_name("balance", "tx", _INTERVAL) == f"pxc_tx_balance_{fingerprint}"
 
 
 def test_operand_group_boundaries_reach_the_fingerprint() -> None:
-    one_group = constraint_name(Table("t"), "tx", _INTERVAL)
-    two_groups = constraint_name(
-        Table("t"), "tx", (("lt", (Column("in_z"),)), ("lt", (Column("out_z"),)))
-    )
+    one_group = constraint_name("t", "tx", _INTERVAL)
+    two_groups = constraint_name("t", "tx", (("lt", (Column("in_z"),)), ("lt", (Column("out_z"),))))
     assert one_group != two_groups
 
 
@@ -195,7 +196,7 @@ def test_operand_group_boundaries_reach_the_fingerprint() -> None:
 def test_only_the_readable_prefix_bends_to_the_63_byte_budget(
     table: str, kind: str, expected: str
 ) -> None:
-    name = constraint_name(Table(table), kind, _INTERVAL)
+    name = constraint_name(table, kind, _INTERVAL)
     assert name == expected
     assert len(name.encode("utf-8")) <= 63
 
@@ -205,9 +206,10 @@ def _keys(model: Metamodel) -> dict[str, tuple[str, str, tuple[str, ...]]]:
     for layout in storage_layout.storage_layout_facet_of(model).tables:
         constraints = layout.temporal_constraints
         if constraints is not None:
+            names = temporal_constraint_names(layout.table.name, constraints)
             named[layout.table.name] = (
-                constraints.primary_key_name,
-                constraints.exclusion_name,
+                names.primary_key,
+                names.exclusion,
                 tuple(slot.column.name for slot in constraints.logical_key),
             )
     return named

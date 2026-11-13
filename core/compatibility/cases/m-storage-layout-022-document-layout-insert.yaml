@@ -38,8 +38,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into traveler(id, payload) values (?, ?)
-        mariadb: insert into traveler(id, payload) values (?, ?)
+        postgres: insert into px.traveler(id, payload) values (?, ?)
+        mariadb: insert into px.traveler(id, payload) values (?, ?)
       binds:
         - 4
         - displayName: Dag
@@ -53,37 +53,38 @@ then:
           tags:
             - { label: guide }
     - sql:
-        postgres: insert into traveler(id, payload) values (?, ?)
-        mariadb: insert into traveler(id, payload) values (?, ?)
+        postgres: insert into px.traveler(id, payload) values (?, ?)
+        mariadb: insert into px.traveler(id, payload) values (?, ?)
       binds:
         - 5
         - displayName: Eli
           tags: []
     - sql:
-        postgres: insert into beacon(id, payload) values (?, ?)
-        mariadb: insert into beacon(id, payload) values (?, ?)
+        postgres: insert into px.beacon(id, payload) values (?, ?)
+        mariadb: insert into px.beacon(id, payload) values (?, ?)
       binds:
         - 12
         - {}
   tableState:
-    traveler:
-      - id: 4
-        payload:
-          displayName: Dag
-          score: 12
-          joinedOn: '2026-03-01'
-          note: east wing
-          address:
-            city: Tromso
-            geo:
-              country: "NO"
-          tags:
-            - { label: guide }
-      - id: 5
-        payload:
-          displayName: Eli
-          tags: []
-    beacon:
-      - id: 12
-        payload: {}
+    px:
+      traveler:
+        - id: 4
+          payload:
+            displayName: Dag
+            score: 12
+            joinedOn: '2026-03-01'
+            note: east wing
+            address:
+              city: Tromso
+              geo:
+                country: "NO"
+            tags:
+              - { label: guide }
+        - id: 5
+          payload:
+            displayName: Eli
+            tags: []
+      beacon:
+        - id: 12
+          payload: {}
   databaseCalls: 3

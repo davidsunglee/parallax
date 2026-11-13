@@ -11,7 +11,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.f32, t0.f64, encode(t0.payload, ?) payload_hex, t0.local_time, t0.external_id from scalar_thing t0
+        postgres: select t0.id, t0.f32, t0.f64, encode(t0.payload, ?) payload_hex, t0.local_time, t0.external_id from px.scalar_thing t0
       binds: [hex]
   rows:
     - id: 1

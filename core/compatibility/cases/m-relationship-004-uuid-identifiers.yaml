@@ -18,15 +18,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label from uuid_parent t0
-        mariadb: select t0.id, t0.label from uuid_parent t0
+        postgres: select t0.id, t0.label from px.uuid_parent t0
+        mariadb: select t0.id, t0.label from px.uuid_parent t0
     - sql:
-        postgres: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id = any(cast(? as uuid[])) order by t0.id asc
-        mariadb: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id in (?) order by t0.id asc
+        postgres: select t0.id, t0.parent_id from px.uuid_child t0 where t0.parent_id = any(cast(? as uuid[])) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id from px.uuid_child t0 where t0.parent_id in (?) order by t0.id asc
       binds:
         postgres: [['123e4567-e89b-12d3-a456-426614174000']]
         mariadb: ['123e4567-e89b-12d3-a456-426614174000']
-  referenceSql: select id, label from uuid_parent
+  referenceSql: select id, label from px.uuid_parent
   graph:
     UuidParent:
       - id: '123e4567-e89b-12d3-a456-426614174000'

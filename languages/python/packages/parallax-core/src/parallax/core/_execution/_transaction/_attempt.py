@@ -492,7 +492,7 @@ class TxnAttempt(_TxnAttemptBase):
         self._step_executor = WriteStepExecutor(
             connection,
             payloads=write.planner.payloads,
-            meta=write.model.meta,
+            resolved=write.model.resolved,
             recoverable=lifetime.recognize_conflict,
         )
         # The invocation's resolved record, shared by reference across every

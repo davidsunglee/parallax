@@ -1,0 +1,21 @@
+# Tables and sequences share one relation namespace per location on both
+# backends, so a sequence named like the badge table is refused.
+model: models/pk-sequence.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      sequences:
+        badge_seq: { sequence: badge }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      sequences:
+        badge_seq: { sequence: badge }
+then:
+  rejectedRule: binding-sequence-table-collision

@@ -29,30 +29,30 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc limit ?
-        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from px.order_item t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc limit ?
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from px.order_item t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
       binds: { postgres: [[11, 12, 421, 422], 4], mariadb: [11, 12, 421, 422, 4] }
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id in (?, ?)
       binds: { postgres: [[1, 42]], mariadb: [1, 42] }
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
-        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: { postgres: [[1, 42]], mariadb: [1, 42] }
     - sql:
-        postgres: select u.id, u.order_id, u.sku, u.quantity, u.shipped_on, u.parallax_seek_0 from ((select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
-        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from order_item t0 where t0.id in (?, ?, ?, ?) and t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+        postgres: select u.id, u.order_id, u.sku, u.quantity, u.shipped_on, u.parallax_seek_0 from ((select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from px.order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from px.order_item t0 where t0.id = any(cast(? as bigint[])) and t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.id parallax_seek_0 from px.order_item t0 where t0.id in (?, ?, ?, ?) and t0.id >= ? and t0.id > ? order by t0.id asc limit ?
       binds: { postgres: [[11, 12, 421, 422], 421, 421, 4, [11, 12, 421, 422], 4, 4], mariadb: [11, 12, 421, 422, 421, 421, 4] }
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id in (?)
       binds: { postgres: [[42]], mariadb: [42] }
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
-        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id in (?) order by t0.id desc
       binds: { postgres: [[42]], mariadb: [42] }
-  referenceSql: select id, order_id, sku, quantity, shipped_on from order_item where id in (11, 12, 421, 422)
+  referenceSql: select id, order_id, sku, quantity, shipped_on from px.order_item where id in (11, 12, 421, 422)
   graph:
     OrderItem:
       - id: 11

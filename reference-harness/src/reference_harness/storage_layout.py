@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from .database_binding import PhysicalTable, Placement
 from .inheritance import (
     ROLE_ROOT,
     STRATEGY_TPCS,
@@ -28,13 +29,11 @@ from .naming import default_column_name
 from .temporality import temporal_axes
 from .value_object_resolve import RejectionError
 
-STORAGE_LAYOUT_TABLE_MAPPING_COLLISION = "storage-layout-table-mapping-collision"
 STORAGE_LAYOUT_COLUMN_COLLISION = "storage-layout-column-collision"
 STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE = "storage-layout-document-member-column-override"
 STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER = "storage-layout-index-over-document-member"
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
-        STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
         STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
         STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
@@ -795,28 +794,7 @@ def _direct_roles(
 
 
 def _validate_groups(groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]) -> None:
-    first_owners: dict[str, _Group] = {}
-    multiply_owned: set[str] = set()
-    mapping_collision: tuple[_Group, _Group] | None = None
     for group in groups:
-        first = first_owners.get(group.table)
-        if first is None:
-            first_owners[group.table] = group
-            continue
-        multiply_owned.add(group.table)
-        if mapping_collision is None:
-            mapping_collision = (first, group)
-    if mapping_collision is not None:
-        first, later = mapping_collision
-        raise RejectionError(
-            STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
-            f"Table {later.table!r} is mapped by independent owners "
-            f"{first.mapping_owner!r} and {later.mapping_owner!r}; "
-            f"{first.mapping_owner!r} is the canonical first owner",
-        )
-    for group in groups:
-        if group.table in multiply_owned:
-            continue
         claimed: dict[str, ColumnContributor] = {}
         for column, contributor in _diagnostic_claims(
             group, roles_of_group.get(group.mapping_owner)
@@ -1597,14 +1575,13 @@ def compile_storage_layout(
     )
 
 
-def observed_table(layout: StorageLayout, table: str) -> TableLayout | None:
-    """The layout of the Table a case observation names by its declared name.
-
-    Corpus observations spell Tables by declared name, which names one Table
-    while independent owners cannot declare equal names. Every other lookup goes
-    through the mapping owner, :meth:`StorageLayout.table`.
-    """
-    return next((candidate for candidate in layout.tables if candidate.table == table), None)
+def observed_table(
+    layout: StorageLayout, placement: Placement, table: PhysicalTable
+) -> TableLayout | None:
+    """The layout of the Table *placement* puts at the physical *table* an
+    observation names, or absent where no mapping owner is placed there."""
+    owner = placement.owner_of(table)
+    return None if owner is None else layout.table(owner)
 
 
 def position_view(

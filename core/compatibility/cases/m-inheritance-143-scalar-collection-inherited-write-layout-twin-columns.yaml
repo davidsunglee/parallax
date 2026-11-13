@@ -31,8 +31,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.tag_asset(id, kind, tags, ports, numbers, codes) values (?, ?, ?, ?, ?, ?)
       binds:
         - 3
         - phone
@@ -41,28 +41,29 @@ then:
         - [x, x]
         - ["00"]
     - sql:
-        postgres: insert into tag_saw(id, tags, blades) values (?, ?, ?)
-        mariadb: insert into tag_saw(id, tags, blades) values (?, ?, ?)
+        postgres: insert into px.tag_saw(id, tags, blades) values (?, ?, ?)
+        mariadb: insert into px.tag_saw(id, tags, blades) values (?, ?, ?)
       binds:
         - 3
         - []
         - [a]
     - sql:
-        postgres: update tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
-        mariadb: update tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
+        postgres: update px.tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
+        mariadb: update px.tag_asset set ports = ?, numbers = ? where id = ? and kind = ?
       binds:
         - [9]
         - []
         - 1
         - phone
   tableState:
-    tag_asset:
-      - { id: 1, kind: phone, tags: [a, a], ports: [9], legs: null, numbers: [], codes: ["01ff"] }
-      - { id: 2, kind: desk, tags: [d], ports: null, legs: [l, r], numbers: null, codes: null }
-      - { id: 3, kind: phone, tags: [n], ports: [], legs: null, numbers: [x, x], codes: ["00"] }
-    tag_drill:
-      - { id: 1, tags: [t], bits: [8, 8] }
-    tag_saw:
-      - { id: 2, tags: [], blades: [rip] }
-      - { id: 3, tags: [], blades: [a] }
+    px:
+      tag_asset:
+        - { id: 1, kind: phone, tags: [a, a], ports: [9], legs: null, numbers: [], codes: ["01ff"] }
+        - { id: 2, kind: desk, tags: [d], ports: null, legs: [l, r], numbers: null, codes: null }
+        - { id: 3, kind: phone, tags: [n], ports: [], legs: null, numbers: [x, x], codes: ["00"] }
+      tag_drill:
+        - { id: 1, tags: [t], bits: [8, 8] }
+      tag_saw:
+        - { id: 2, tags: [], blades: [rip] }
+        - { id: 3, tags: [], blades: [a] }
   databaseCalls: 4

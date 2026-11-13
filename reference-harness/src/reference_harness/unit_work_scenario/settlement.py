@@ -46,6 +46,7 @@ from typing import Any
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure, rows_equal, write_value_equal
+from ..database_binding import PhysicalTable
 from ..temporality import Axis, temporal_axes
 from ..write_plan import (
     has_temporal_gate,
@@ -140,11 +141,13 @@ def _assert_flush_failure(
     """
     entity = failure.entity
     key = _identity_value(entity, failure.key)
+    table = case.entity_table(entity.canonical_name, dialect)
     if failure.error is not None:
         reached = [
             statement
             for step, statement, binds, _affected in executed
-            if step in failure.flushed_steps and _addresses(statement, binds, dialect, entity, key)
+            if step in failure.flushed_steps
+            and _addresses(statement, binds, dialect, entity, table, key)
         ]
         if reached:
             raise CaseFailure(
@@ -158,7 +161,7 @@ def _assert_flush_failure(
         for step, statement, binds, affected in executed
         if step in failure.flushed_steps
         and affected == 0
-        and _addresses(statement, binds, dialect, entity, key)
+        and _addresses(statement, binds, dialect, entity, table, key)
     ]
     if len(short) != 1:
         raise CaseFailure(
@@ -181,11 +184,13 @@ def _assert_flush_failure(
         )
 
 
-def _addresses(statement: str, binds: list[Any], dialect: str, entity: Entity, key: Any) -> bool:
+def _addresses(
+    statement: str, binds: list[Any], dialect: str, entity: Entity, table: PhysicalTable, key: Any
+) -> bool:
     address = statement_object(statement, binds, dialect)
     return (
         address is not None
-        and address.names_table(entity.table)
+        and address.names_table(table)
         and address.names_key_column(entity.identity_column)
         and write_value_equal(address.key, key)
     )
@@ -212,7 +217,7 @@ def _identity_value(entity: Entity, key: Mapping[str, Any]) -> Any:
 
 
 def assert_settled_state(
-    scenario: CompiledScenario, starting: Mapping[str, list[dict[str, Any]]]
+    scenario: CompiledScenario, starting: Mapping[PhysicalTable, list[dict[str, Any]]]
 ) -> None:
     """Assert a state-graded Scenario is consistent with the rows it starts from.
 
@@ -259,20 +264,24 @@ def _group(group_of: Mapping[int, str | None], submission: Submission) -> str:
     return label
 
 
-def _table_entity(case: Case, table: str) -> Entity:
+def _placed(case: Case, entity: Entity) -> PhysicalTable:
+    return case.entity_table(entity.canonical_name)
+
+
+def _table_entity(case: Case, table: PhysicalTable) -> Entity:
     """The concrete Entity whose rows *table* stores; a shared table's members
     share its key and axes."""
     for entity in case.model.entities:
-        if not entity.is_abstract and entity.table == table:
+        if not entity.is_abstract and _placed(case, entity) == table:
             return entity
     raise CaseFailure(
-        f"{case.path.name}: then.tableState names table {table!r}, which no entity maps."
+        f"{case.path.name}: then.tableState names table {str(table)!r}, which no entity maps."
     )
 
 
 def _assert_frame(
     case: Case,
-    table: str,
+    table: PhysicalTable,
     entity: Entity,
     before: list[dict[str, Any]],
     final: list[dict[str, Any]],
@@ -289,14 +298,14 @@ def _assert_frame(
         _identity(_identity_value(entity, submission.key))
         for submission in committed
         if submission.entity is not None
-        and submission.entity.table == table
+        and _placed(case, submission.entity) == table
         and submission.key is not None
     }
     abandoned = {
         _identity(_identity_value(entity, submission.key))
         for submission in submissions
         if submission.entity is not None
-        and submission.entity.table == table
+        and _placed(case, submission.entity) == table
         and submission.key is not None
     } - named
     for identity in {_identity(row.get(column)) for row in (*before, *final)} - named:
@@ -314,14 +323,14 @@ def _assert_frame(
             )
 
 
-def _predicate_table(case: Case, submission: Submission) -> str:
+def _predicate_table(case: Case, submission: Submission) -> PhysicalTable:
     target = submission.entry.get("target") or {}
-    return case.model.entity(str(target.get("entity", ""))).table
+    return _placed(case, case.model.entity(str(target.get("entity", ""))))
 
 
 def _assert_milestones(
     case: Case,
-    table: str,
+    table: PhysicalTable,
     axes: Mapping[str, Any],
     before: list[dict[str, Any]],
     final: list[dict[str, Any]],
@@ -381,7 +390,7 @@ def _survives_as(
 
 def _assert_no_overlap(
     case: Case,
-    table: str,
+    table: PhysicalTable,
     entity: Entity,
     axes: Mapping[str, Any],
     final: list[dict[str, Any]],
@@ -543,7 +552,7 @@ def _assert_overtaken(
     fate: UnitFate,
     failure: FlushFailure,
     closers: Sequence[Submission],
-    starting: Mapping[str, list[dict[str, Any]]],
+    starting: Mapping[PhysicalTable, list[dict[str, Any]]],
 ) -> None:
     """A Temporal Conflict needs a predecessor a write of the failing flush
     holds, not opened by its own group, whose Transaction-Time start the
@@ -579,12 +588,12 @@ def _assert_overtaken(
     identity = _identity(_identity_value(entity, failure.key))
     prior = {
         _instant(row.get(tx_start))
-        for row in starting.get(entity.table, [])
+        for row in starting.get(_placed(case, entity), [])
         if _identity(row.get(entity.identity_column)) == identity
     } | before
     current = [
         row
-        for row in case.expected_table_state.get(entity.table, [])
+        for row in case.expected_table_state.get(_placed(case, entity), [])
         if _identity(row.get(entity.identity_column)) == identity
         and _instant(row.get(tx_start)) in prior
         and (_instant(row.get(tx_end)) == _OPEN or _instant(row.get(tx_end)) in after)
@@ -638,7 +647,7 @@ def _recorded_predecessor(
         ]
     valid_from = submission.entry.get("validFrom")
     for query, rows in sources:
-        if not _reads_table(scenario.case, query, entity.table):
+        if not _reads_table(scenario.case, query, _placed(scenario.case, entity)):
             continue
         for row in rows:
             if _identity(row.get(entity.identity_column)) == identity and (
@@ -652,12 +661,12 @@ def _recorded_predecessor(
     return None
 
 
-def _reads_table(case: Case, query: Mapping[str, Any] | None, table: str) -> bool:
+def _reads_table(case: Case, query: Mapping[str, Any] | None, table: PhysicalTable) -> bool:
     target = (query or {}).get("target")
     if target is None:
         return True
     entity = case.model.entity(str(target))
-    return entity.is_abstract or entity.table == table
+    return entity.is_abstract or _placed(case, entity) == table
 
 
 def _beyond(

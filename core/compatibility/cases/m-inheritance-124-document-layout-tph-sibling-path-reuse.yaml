@@ -26,14 +26,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select p1.id, p1.kind, not p1.payload is null, p1.payload from (select * from payment_document t0 where t0.kind = ? offset 0) p1 where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, not p2.payload is null, p2.payload from (select * from payment_document t0 where t0.kind = ? offset 0) p2 where 1 = 0 or cast(jsonb_extract_path_text(p2.payload, ?) as decimal(18, 2)) > ?
-        mariadb: select p1.id, p1.kind, not p1.payload is null, p1.payload from (select * from payment_document t0 where t0.kind = ? limit ?) p1 where json_value(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, not p2.payload is null, p2.payload from (select * from payment_document t0 where t0.kind = ? limit ?) p2 where 1 = 0 or cast(json_value(p2.payload, ?) as decimal(18, 2)) > ?
+        postgres: select p1.id, p1.kind, not p1.payload is null, p1.payload from (select * from px.payment_document t0 where t0.kind = ? offset 0) p1 where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, not p2.payload is null, p2.payload from (select * from px.payment_document t0 where t0.kind = ? offset 0) p2 where 1 = 0 or cast(jsonb_extract_path_text(p2.payload, ?) as decimal(18, 2)) > ?
+        mariadb: select p1.id, p1.kind, not p1.payload is null, p1.payload from (select * from px.payment_document t0 where t0.kind = ? limit ?) p1 where json_value(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, not p2.payload is null, p2.payload from (select * from px.payment_document t0 where t0.kind = ? limit ?) p2 where 1 = 0 or cast(json_value(p2.payload, ?) as decimal(18, 2)) > ?
       binds:
         postgres: [card, detail, visa-4242, cash, detail, '10.00']
         mariadb: [card, 18446744073709551615, '$.detail', visa-4242, cash, 18446744073709551615, '$.detail', '10.00']
   referenceSql:
-    postgres: select id, kind, payload from payment_document where kind = 'card' and payload ->> 'detail' = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and (payload ->> 'detail')::decimal(18,2) > 10.00
-    mariadb: select id, kind, payload from payment_document where kind = 'card' and json_value(payload, '$.detail') = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and cast(json_value(payload, '$.detail') as decimal(18,2)) > 10.00
+    postgres: select id, kind, payload from px.payment_document where kind = 'card' and payload ->> 'detail' = 'visa-4242' union all select id, kind, payload from px.payment_document where kind = 'cash' and (payload ->> 'detail')::decimal(18,2) > 10.00
+    mariadb: select id, kind, payload from px.payment_document where kind = 'card' and json_value(payload, '$.detail') = 'visa-4242' union all select id, kind, payload from px.payment_document where kind = 'cash' and cast(json_value(payload, '$.detail') as decimal(18,2)) > 10.00
   rows:
     - { id: 1, detail: visa-4242, authorization_code: AUTH-7, _type: parallax.compatibility.CardPayment }
     - { id: 2, detail: "12.50", authorization_code: null, _type: parallax.compatibility.CashPayment }

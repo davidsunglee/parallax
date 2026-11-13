@@ -17,6 +17,7 @@ from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.errors import raises_code
@@ -53,11 +54,12 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
     profile_run: Any,
 ) -> None:
     case = _authority_case()
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
 
     shape = execution_authority_stories.scopes_capture_authority_and_share_the_root_lifetime(
         profile_run.port,
         MODELS["account"],
+        TEST_BINDING,
         profile_run.authorization("role-a"),
     )
 
@@ -69,7 +71,7 @@ def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
 
 def test_a_principal_whose_authorization_is_no_postgres_role_is_refused(profile_run: Any) -> None:
     with (
-        connect(profile_run.port, MODELS["account"]) as root,
+        connect(profile_run.port, MODELS["account"], binding=TEST_BINDING) as root,
         raises_code(UsageError, "principal-invalid") as refused,
     ):
         root.using_principal(_Principal("authority-api", "tenant"))
@@ -82,7 +84,7 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
     profile_run: Any, mode: _AuthorityMode
 ) -> None:
     case = _authority_case()
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     observed = LifecycleObservation()
     adapter = fault_injecting_adapter(
         profile_run.port,
@@ -90,7 +92,9 @@ def test_every_public_execution_path_runs_under_the_selected_authority(
         persistent=False,
     )
 
-    with connect(adapter, MODELS["account"], lifecycle_provider=observed.provider) as root:
+    with connect(
+        adapter, MODELS["account"], lifecycle_provider=observed.provider, binding=TEST_BINDING
+    ) as root:
         scoped = _scope(root, profile_run, mode)
         query = Account.where(Account.id == TARGET_ID)
 

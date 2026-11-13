@@ -27,14 +27,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: update audit_seq set next_val = next_val + ? where name = ?
+        postgres: update px.audit_seq set next_val = next_val + ? where name = ?
       binds: [1, entry_seq]
     - sql:
-        postgres: insert into audit_entry(id, note, in_z, out_z) values (?, ?, ?, ?)
+        postgres: insert into px.audit_entry(id, note, in_z, out_z) values (?, ?, ?, ?)
       binds: [1, opened, "2024-05-01T00:00:00.000000Z", infinity]
   tableState:
-    audit_seq:
-      - { name: entry_seq, next_val: 2 }
-    audit_entry:
-      - { id: 1, note: opened, in_z: "2024-05-01T00:00:00.000000Z", out_z: infinity }
+    px:
+      audit_seq:
+        - { name: entry_seq, next_val: 2 }
+      audit_entry:
+        - { id: 1, note: opened, in_z: "2024-05-01T00:00:00.000000Z", out_z: infinity }
   databaseCalls: 2

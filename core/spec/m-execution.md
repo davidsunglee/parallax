@@ -139,19 +139,34 @@ new attempt and a new snapshot.
 ## Model Editions
 
 A **Model Selection** is a fully prepared, process-local, immutable selection of
-one accepted model under one **Model Edition**, an opaque nonempty token compared
-only for equality. Preparation completes every fallible derivation the model
-determines before the selection can be served, so no such derivation fails on a
-request path. Preparation guarantees structural readiness, not
-schema readiness, valid stored data, or the success of a later operation.
+one accepted model, placed by one Database Binding, under one **Model
+Edition**, an opaque nonempty token compared only for equality. Preparation
+requires the binding — no connection default or search path stands in for an
+omitted one — and resolves it against the model (`m-database-binding`), so an
+invalid binding or one that cannot place the model is refused before anything
+is served or any runtime opens. Preparation completes every fallible derivation
+the model and binding determine before the selection can be served, so no such
+derivation fails on a request path; every statement a selection executes names
+its tables as that resolved binding places them. Preparation guarantees
+structural readiness, not schema readiness, object existence or access, valid
+stored data, or the success of a later operation.
+
+A root composed directly from a model takes that model's binding and prepares it
+once; a root composed from a Serving Model takes none, since each selection
+carries its own. Either way a binding for another backend than the runtime's
+dialect is refused before the runtime opens.
 
 A root's **Serving Model** holds its current selection. Reading it returns that
 exact selection with no compilation, I/O, or callback. Publishing a candidate
 replaces it atomically only when the held selection is the exact one the
 publisher expected, compared by identity rather than by edition, and a stale
 publication is refused, naming the expected and the held selection, leaving the
-current one in place. Holding a root confers no authority to change the model it
-serves.
+current one in place. Before that comparison, against the expected selection, a
+candidate prepared for another backend is refused, and so is one under which a
+table or sequence the expected selection also holds relocates
+(`m-database-binding` *Relocation*), naming each relocation: binding changes
+publish like model editions while nothing surviving moves. Holding a root
+confers no authority to change the model it serves.
 
 Every execution **adopts** a selection once and keeps it to completion:
 

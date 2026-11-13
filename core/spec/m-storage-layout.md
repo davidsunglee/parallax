@@ -161,9 +161,10 @@ which Columns exist.
 
 ## Physical table ownership and groups
 
-`Table(name)` is a name-only structural identity, not an owner-qualified
-declaration. Every accepted structural Table has exactly one independent
-physical mapping owner:
+`Table(name)` is a declared storage name, not a physical identity: it is the
+default local name a Database Binding gives the owner's physical table
+(`m-database-binding`). Every table this module lays out has exactly one
+independent mapping owner, and the mapping owner is the table's identity:
 
 - a standalone Entity is one owner of its declared Table;
 - one table-per-hierarchy root/family is one owner of its root-declared shared
@@ -174,7 +175,8 @@ physical mapping owner:
 Participants within one table-per-hierarchy family are contributors to their
 single family owner, not competing mapping owners. By contrast, two standalone
 Entities, two different TPH families, two TPCS concrete mappings, or any mixture
-of those forms are independent owners even when they name equal Table values.
+of those forms are independent owners even when they declare equal Table
+values; each lays out its own table.
 
 During validation, Storage Layout obtains one owner group per unambiguous
 standalone mapping, TPH family, or TPCS concrete mapping from Inheritance's
@@ -202,12 +204,12 @@ is document-resident. After validation the compiler consumes the real
 `RelationshipFacet` instead.
 
 Storage Layout visits owner groups in canonical mapping-owner Entity Identity
-order. The first owner of a structural Table establishes its mapping claim.
-Every later independent owner of that Table is rejected as
-`storage-layout-table-mapping-collision`; independent owners are never merged
-into one physical key, contributor applicability set, or eventual layout. After
-all Rule Sets succeed, each structural Table therefore has one owner group and
-the compiler publishes exactly one coherent layout for it.
+order. Independent owners are never merged into one physical key, contributor
+applicability set, or eventual layout, whatever names they declare: the
+compiler publishes exactly one coherent layout per mapping owner. Equal
+declared names are no formation defect; two owners resolving to one physical
+table is refused when a binding resolves the model
+(`binding-table-collision`, `m-database-binding`).
 
 Within a uniquely owned group, the declaration sequence is the one
 `m-inheritance` fixes: a standalone Entity's own declarations, a
@@ -622,14 +624,17 @@ Attributes it derives from them. It never includes the table-per-hierarchy
 discriminator, so a shared Table protects an object's history whatever concrete
 shape each row was written as, while a table-per-concrete-subtype family is
 protected per concrete Table, matching its physical key. `primaryKey` is the
-Table's own `primaryKeyIndex`, and `primaryKeyName` is the name it carries as a
-constraint; its Columns are unchanged.
+Table's own `primaryKeyIndex`; its Columns are unchanged.
+
+These definitions carry no names. A constraint's name is a fact of the physical
+table a Database Binding resolves for the mapping owner, derived once at
+resolution from the definitions here (`m-database-binding`).
 
 Rendering the checks, the key name, and the exclusion is `m-schema-delta`'s and
 `m-dialect`'s.
 
-Each constraint's compiled name — `primaryKeyName`, `exclusionName`, and each
-axis's interval check name — is:
+Each constraint's name — the primary key's, the exclusion's, and each axis's
+interval check's — is:
 
 ```text
 pxc_<kind>_<readable-table-prefix>_<fingerprint>
@@ -653,8 +658,9 @@ of semantics `eq` over the `logicalKey` Columns, then one group of semantics
 Transaction Time. Prefixing each group with its semantics and
 operand count keeps group boundaries in the digest, and the version field makes
 a later change to what is hashed produce different names by construction. The
-Table name is the raw physical name, never a quoted or schema-qualified
-spelling.
+Table name is the resolved physical table's raw local name, never its qualifier
+or a quoted or qualified spelling: a binding that overrides the local name
+changes every name, and a binding that only changes the location changes none.
 
 The **readable prefix** is the Table name with every maximal run of characters
 other than ASCII letters and digits replaced by one underscore, surrounding
@@ -664,8 +670,9 @@ whatever the Dialect, and the trim and empty-result rules apply again after the
 cut. The kind and the fingerprint are never truncated.
 
 Every input is a fact of the constraint's own physical definition. A change to
-the Table name or an operand Column changes the name; an unrelated Entity or Class
-name, another Table, compilation order, and the model edition do not. Physical
+the physical local table name or an operand Column changes the name; the
+declared Table name a binding overrides, the qualifier, an unrelated Entity or
+Class name, another Table, compilation order, and the model edition do not. Physical
 Index Names are `m-schema-delta`'s separate convention.
 
 ## Entity and position views
@@ -761,30 +768,12 @@ values preserve structural equality and immutable access.
 Arbitrary position views are statement-scoped and must not create an unbounded
 model-lifetime cache.
 
-## Layout, table-mapping, and physical-column Rule Set
+## Layout and physical-column Rule Set
 
 The Rule Set receives projected owner groups in canonical mapping-owner Entity
-Identity order and performs Table ownership validation before Column
-validation. For each structural Table, the first owner establishes the claim.
-Every later independent owner emits:
-
-```text
-storage-layout-table-mapping-collision
-```
-
-The Issue location is the later owner's mapping provenance: the
-`EntityLocation` of its standalone Entity, TPH root, or TPCS concrete Entity.
-Its related sequence contains the first owner's mapping provenance. Every owner
-after the first is compared with that same first owner, making diagnostics
-deterministic. Participants within one TPH family never enter this owner claim
-stream separately.
-
-A Table with competing owners does not proceed to Column validation. This keeps
-`storage-layout-table-mapping-collision` exclusive to independent physical
-mapping ownership and prevents secondary Column diagnostics from obscuring the
-unsound table boundary. It also guarantees that a compiled layout never combines
-independent model primary keys whose Entity DML supplies only owner-applicable
-slots.
+Identity order and validates each owner's Columns independently. Owners
+declaring equal Table names are not compared with each other here: physical
+table ownership is a resolution rule (`m-database-binding`).
 
 For every uniquely owned Table, physical Column claims share one registry. Their
 diagnostic encounter order is an explicit stable category pass over that
@@ -872,7 +861,7 @@ what must change; its related sequence contains the offending Attribute's
 ### Rule Set boundary
 
 This Rule Set receives only the Candidate Metamodel and owns exactly
-`storage-layout-table-mapping-collision`, `storage-layout-column-collision`,
+`storage-layout-column-collision`,
 `storage-layout-document-member-column-override`, and
 `storage-layout-index-over-document-member`. The Column
 collision code remains exclusive to distinct physical Column claims. The Rule

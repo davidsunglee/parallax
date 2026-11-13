@@ -67,6 +67,7 @@ from parallax.core.internal.write_plan.steps import (
     TemporalGate,
 )
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -113,7 +114,7 @@ def _plan(
     meta: Metamodel,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return build_write_planner(meta).finalize(
+    return build_write_planner(bound_model(meta)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_instant(),

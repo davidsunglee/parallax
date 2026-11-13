@@ -21,7 +21,7 @@ when:
       note: materialize a snapshot of order 3 with NO relationships included, so `items` is absent rather than empty
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = ?
           binds: [3]
       expectRows:
         - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }
@@ -34,7 +34,7 @@ when:
       note: commit an item for the very order whose `items` the view never included
       statements:
         - sql:
-            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+            postgres: insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
           binds: [31, 3, C-300, 7]
     - action: access
       "on": 0

@@ -21,6 +21,7 @@ import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 
 from .conftest import (
@@ -55,7 +56,12 @@ def test_a_scenario_provisions_before_its_first_step(corpus_case) -> None:
 
     # Schema and fixtures first, then the group's session — a step never runs
     # against a database the case's own `given` has not finished describing.
-    assert db.chronology[:4] == [Reset(), Ddl(2), Fixtures("account"), Opened(0)]
+    assert db.chronology[:4] == [
+        Reset(),
+        Ddl(2),
+        Fixtures(PhysicalTable(("px",), "account")),
+        Opened(0),
+    ]
 
 
 # --- grouped execution ------------------------------------------------------
@@ -229,7 +235,7 @@ def test_an_optimistic_conflict_the_failing_statement_does_not_gate_is_refused(
 ) -> None:
     case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     gated = case.when["scenario"][3]["statements"][1]
-    gated["sql"]["postgres"] = "update account set balance = ?, version = ? where id = ?"
+    gated["sql"]["postgres"] = "update px.account set balance = ?, version = ? where id = ?"
     gated["binds"] = ["300.00", 2, 2]
     with pytest.raises(CaseFailure, match="a gate's shortfall, but the statement"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
@@ -262,7 +268,7 @@ def test_a_temporal_conflict_whose_flush_executed_a_statement_on_its_object_is_r
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
-_GATED_UPDATE = "update account set balance = ?, version = ? where id = ? and version = ?"
+_GATED_UPDATE = "update px.account set balance = ?, version = ? where id = ? and version = ?"
 
 
 def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> None:
@@ -367,7 +373,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
     """
     from reference_harness.case import load_model
 
-    find = "select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?"
+    find = "select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?"
     raw: dict[str, Any] = {
         "model": "models/account.yaml",
         "tags": ["m-unit-work"],
@@ -380,7 +386,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                     "databaseCalls": 1,
                     "statements": [
                         {
-                            "sql": {"postgres": "update account set balance = ? where id = ?"},
+                            "sql": {"postgres": "update px.account set balance = ? where id = ?"},
                             "binds": ["249.00", 2],
                         }
                     ],
@@ -393,7 +399,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                     },
                     "databaseCalls": 1,
                     "statements": [{"sql": {"postgres": find}, "binds": [2]}],
-                    "referenceSql": "select * from account where id = 2",
+                    "referenceSql": "select * from px.account where id = 2",
                 },
             ]
         },

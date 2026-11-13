@@ -101,6 +101,7 @@ from parallax.snapshot._publication._wire import (
     stored_provenance_of,
 )
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.db_port import (
     ConnectsAsItself,
     ReadCall,
@@ -143,7 +144,9 @@ def _root_includes(identity: EntityIdentity) -> IncludeTree:
 
 def _published_directly(page: Page, model: Metamodel, includes: IncludeTree) -> tuple[object, ...]:
     """``page``'s roots published straight through the Wire root publisher."""
-    publisher = WireRootPublisher(model, wire_facts_for(CatalogedModel(model)), includes)
+    publisher = WireRootPublisher(
+        model, wire_facts_for(CatalogedModel(model, TEST_BINDING)), includes
+    )
     return tuple(publish_roots(page, publisher, model))
 
 
@@ -198,7 +201,7 @@ def _order_row(order_id: int = 1) -> MappingRow:
 
 
 def _wire_database(port: QueuePort) -> ScopedDatabase:
-    return own_root(Database.connect(port, ORDERS)).using_database_login()
+    return own_root(Database.connect(port, ORDERS, binding=TEST_BINDING)).using_database_login()
 
 
 def _entity(published: object) -> WireEntity:
@@ -304,7 +307,7 @@ def test_an_eager_wire_publication_releases_its_encoder(
 
 
 def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
-    cataloged = CatalogedModel(CUSTOMER_META)
+    cataloged = CatalogedModel(CUSTOMER_META, TEST_BINDING)
     publication = wire_publication(cataloged, wire_facts_for(cataloged), "edition")
     publication.release()
     publication.release()
@@ -340,7 +343,10 @@ def test_a_document_occurrence_publishes_the_members_the_document_held() -> None
         {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
     )
     root = _entity(
-        own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, CUSTOMER, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     address = _mapping(root["address"])
     geo = _mapping(address["geo"])
@@ -361,7 +367,7 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
             {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
         )
         root = _entity(
-            own_root(Database.connect(port, CUSTOMER))
+            own_root(Database.connect(port, CUSTOMER, binding=TEST_BINDING))
             .using_database_login()
             .wire.find(query)
             .result()
@@ -407,7 +413,10 @@ def test_only_an_entity_node_can_carry_provenance() -> None:
         {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 1}}}
     )
     root = _entity(
-        own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, CUSTOMER, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
@@ -425,7 +434,10 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
         {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 4}}}
     )
     root = _entity(
-        own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, CUSTOMER, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     assert root["address"] is None
 
@@ -439,7 +451,10 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
         {"target": "Customer", "predicate": {"eq": {"path": "Customer.id", "value": 3}}}
     )
     root = _entity(
-        own_root(Database.connect(port, CUSTOMER)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, CUSTOMER, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     assert _mapping(root["address"])["phones"] == []
 
@@ -451,7 +466,7 @@ def _converted_customer(
     source for the members stored under ``uncarrying``."""
     compiled = uncarried(compiled_read(CUSTOMER_META, "Customer"), *uncarrying)
     return convert_cells(
-        CatalogedModel(CUSTOMER_META),
+        CatalogedModel(CUSTOMER_META, TEST_BINDING),
         compiled,
         driver_row(compiled, cells),
         builder,
@@ -595,7 +610,7 @@ def test_typed_projection_matches_direct_wire_alias_and_cycle_boundaries() -> No
         Order.items.order,
     )
     database = own_root(
-        Database.connect(port, class_models.MODELS["orders"])
+        Database.connect(port, class_models.MODELS["orders"], binding=TEST_BINDING)
     ).using_database_login()
 
     projected = _entity(database.find(query).wire().result())
@@ -620,7 +635,9 @@ def test_a_typed_include_past_three_hops_executes_to_its_leaf(
     read: Callable[[ScopedDatabase], Any], leaves: Callable[[Any], list[int]]
 ) -> None:
     with ScriptedAdapter(*deep.deep_order_reads()) as port:
-        database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+        database = own_root(
+            Database.connect(port, _ORDER_CLASSES, binding=TEST_BINDING)
+        ).using_database_login()
         assert leaves(read(database)) == deep.LEAF_ITEMS
     assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
 
@@ -628,7 +645,9 @@ def test_a_typed_include_past_three_hops_executes_to_its_leaf(
 def test_a_typed_query_and_its_canonical_export_read_one_graph_past_three_hops() -> None:
     query = deep.deep_order_query()
     with ScriptedAdapter(*deep.deep_order_reads(), *deep.deep_order_reads()) as port:
-        database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+        database = own_root(
+            Database.connect(port, _ORDER_CLASSES, binding=TEST_BINDING)
+        ).using_database_login()
         typed = database.wire.find(query).result()
         canonical = database.wire.find(object_query_node(query, _ORDER_CLASSES)).result()
     assert typed == canonical
@@ -640,7 +659,9 @@ def test_a_typed_continuation_past_a_back_reference_is_refused_before_any_statem
     read: Callable[[ScopedDatabase], object],
 ) -> None:
     port = ScriptedAdapter()
-    database = own_root(Database.connect(port, _ORDER_CLASSES)).using_database_login()
+    database = own_root(
+        Database.connect(port, _ORDER_CLASSES, binding=TEST_BINDING)
+    ).using_database_login()
     with raises_code(UsageError, "deep-fetch-past-back-reference", match="back-reference"):
         read(database)
     assert [call for call in port.calls if isinstance(call, ReadCall)] == []
@@ -848,7 +869,13 @@ def _customer_wire(model: DomainModel, row: MappingRow) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
     query = deserialize_query({"target": "Customer", "predicate": {"true": {}}})
-    return own_root(connect(port, model)).using_database_login().wire.find(query).checked().result()
+    return (
+        own_root(connect(port, model, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .checked()
+        .result()
+    )
 
 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
@@ -892,12 +919,14 @@ def test_either_model_provenance_publishes_a_non_hydrating_record(provenance: st
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
     with raises_code(UsageError, "snapshot-class-backed-model-required"):
-        own_root(Database.connect(RefusingAdapter(), ORDERS)).using_database_login().find(
-            cast("Any", Gadget.where(Gadget.id == 1))
-        )
+        own_root(
+            Database.connect(RefusingAdapter(), ORDERS, binding=TEST_BINDING)
+        ).using_database_login().find(cast("Any", Gadget.where(Gadget.id == 1)))
     # The capability the same connection DOES hold is an executed read, not a
     # reachable namespace: the Wire lane needs no Entity Class, so it runs.
-    served = own_root(Database.connect(QueuePort([[_order_row()]]), ORDERS)).using_database_login()
+    served = own_root(
+        Database.connect(QueuePort([[_order_row()]]), ORDERS, binding=TEST_BINDING)
+    ).using_database_login()
     assert isinstance(served.wire, WireDatabaseView)
     published = served.wire.find(
         {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
@@ -960,7 +989,7 @@ def _guarded_publications(
 ) -> tuple[list[WireEntity], list[WireEntity]]:
     port = QueuePort([*responses, *responses])
     database = own_root(
-        Database.connect(port, class_models.MODELS["animal"])
+        Database.connect(port, class_models.MODELS["animal"], binding=TEST_BINDING)
     ).using_database_login()
     projected = [_entity(root) for root in database.find(cast("Any", query)).wire().results()]
     direct = [_entity(root) for root in database.wire.find(cast("Any", query)).results()]
@@ -1054,7 +1083,10 @@ def test_an_inheritance_participant_publishes_its_type() -> None:
     )
     query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
     root = _entity(
-        own_root(Database.connect(port, ANIMAL)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, ANIMAL, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     assert root["_type"] == "parallax.compatibility.Dog"
     assert root["barkVolume"] == 3
@@ -1096,7 +1128,10 @@ def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes
         }
     )
     roots = (
-        own_root(Database.connect(port, ANIMAL)).using_database_login().wire.find(query).results()
+        own_root(Database.connect(port, ANIMAL, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .results()
     )
     dog, cat = (_entity(root) for root in roots)
     # The guard admits only the Dog, so the Cat never sees the view at all — an
@@ -1128,7 +1163,10 @@ def test_a_temporal_end_publishes_the_canonical_infinity_literal() -> None:
         }
     )
     root = _entity(
-        own_root(Database.connect(port, INVOICE)).using_database_login().wire.find(query).result()
+        own_root(Database.connect(port, INVOICE, binding=TEST_BINDING))
+        .using_database_login()
+        .wire.find(query)
+        .result()
     )
     assert root["txStart"] == "2024-04-01T00:00:00.000000Z"
     assert root["txEnd"] == "infinity"
@@ -1167,7 +1205,7 @@ _HISTORY_QUERY: Mapping[str, object] = {
 def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_result() -> None:
     port = _history_port()
     roots = (
-        own_root(Database.connect(port, INVOICE))
+        own_root(Database.connect(port, INVOICE, binding=TEST_BINDING))
         .using_database_login()
         .wire.find(_HISTORY_QUERY)
         .results()
@@ -1223,7 +1261,11 @@ _VARIANT_MODEL = form_metamodel(
 
 def test_a_value_object_publishes_by_its_declared_name_beside_the_variant() -> None:
     compiled = compile_read(
-        TrueNode(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL), result_form="instance"
+        TrueNode(),
+        bound_model(_VARIANT_MODEL),
+        POSTGRES,
+        _root_of(_VARIANT_MODEL),
+        result_form="instance",
     )
     stored = {
         "id": 1,
@@ -1232,7 +1274,7 @@ def test_a_value_object_publishes_by_its_declared_name_beside_the_variant() -> N
         "archive_profile": StructuredDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())
-    prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL), compiled, stored)
+    prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL, TEST_BINDING), compiled, stored)
     ref, resolved, _document = prepared.record_row(row, builder, source=ROOT_LEVEL)
     (root,) = _published_directly(
         builder.finish((ref,), Pin()), _VARIANT_MODEL, _root_includes(resolved)
@@ -1323,7 +1365,7 @@ _POLICY_QUERY: Mapping[str, object] = {
 def _published_roots(
     model: DomainModel, port: QueuePort, query: Mapping[str, object], delivery: str
 ) -> list[WireEntity]:
-    db = own_root(Database.connect(port, model)).using_database_login()
+    db = own_root(Database.connect(port, model, binding=TEST_BINDING)).using_database_login()
     if delivery == "eager":
         return [_entity(root) for root in db.wire.find(query).results()]
     with db.wire.stream(query, batch_size=10) as stream:
@@ -1469,7 +1511,9 @@ def test_a_copy_of_a_wire_node_answers_as_the_node_does(copied: Callable[[object
 @pytest.mark.parametrize("delivery", ["eager", "streamed"])
 def test_a_deep_narrowed_wire_node_keeps_its_roots_pin_on_its_own_edge(delivery: str) -> None:
     db = own_root(
-        Database.connect(ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY)
+        Database.connect(
+            ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY, binding=TEST_BINDING
+        )
     ).using_database_login()
     if delivery == "eager":
         root = _entity(db.wire.find(deep.temporal_query()).result())
@@ -1508,7 +1552,7 @@ def _hydrated_branch() -> InvalidData[WireEntity]:
         "predicate": {"true": {}},
         "temporal": {"valid-time": {"asOf": "latest"}, "transaction-time": {"asOf": "latest"}},
     }
-    db = own_root(Database.connect(port, BRANCH)).using_database_login()
+    db = own_root(Database.connect(port, BRANCH, binding=TEST_BINDING)).using_database_login()
     published = db.wire.find(query).checked().result()
     assert isinstance(published, InvalidData)
     return published

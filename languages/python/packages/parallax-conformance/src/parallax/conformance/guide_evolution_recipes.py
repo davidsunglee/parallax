@@ -4,7 +4,6 @@ from collections.abc import Callable
 
 from parallax.conformance.guide_models import Payment
 from parallax.core import (
-    POSTGRES,
     Attr,
     ConcreteSubtype,
     DomainModel,
@@ -15,7 +14,7 @@ from parallax.core import (
 )
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import CoordinatedEvolution, Evolution, evolve, schema_delta
-from parallax.postgres import PostgresAdapter, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, connect
 
 __all__ = [
@@ -32,10 +31,11 @@ __all__ = [
 
 
 def connect_serving(
-    adapter: PostgresAdapter, model: DomainModel, edition: str
+    adapter: PostgresAdapter, model: DomainModel, binding: PostgresBinding, edition: str
 ) -> tuple[Database[PostgresRole], ServingModel]:
-    """A root serving ``edition`` of ``model``, through a Serving Model that can serve the next."""
-    serving = ServingModel(prepare_model(model, edition=edition))
+    """A root serving ``edition`` of ``model`` placed by ``binding``, through a
+    Serving Model that can serve the next."""
+    serving = ServingModel(prepare_model(model, binding=binding, edition=edition))
     return connect(adapter, serving), serving
 
 
@@ -48,35 +48,43 @@ class GiftCardPayment(Payment, inheritance=ConcreteSubtype(tag_value="gift-card"
     card_number: Attr[str] = attr(max_length=19)
 
 
-def changes_since(deployed: str, release: DomainModel) -> Evolution:
-    """What changes between the model deployed last, kept as a descriptor, and ``release``."""
-    return evolve(domain_model_from_yaml(deployed), release)
+def changes_since(deployed: str, release: DomainModel, binding: PostgresBinding) -> Evolution:
+    """What changes between the model deployed last, kept as a descriptor, and
+    ``release``, both placed by ``binding``."""
+    return evolve(
+        domain_model_from_yaml(deployed), release, earlier_binding=binding, later_binding=binding
+    )
 
 
 class CoordinationRequiredError(Exception):
     """A release whose change a live database can't take without coordinated work."""
 
 
-def migration_for(deployed: str, release: DomainModel) -> tuple[str, ...]:
+def migration_for(deployed: str, release: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
     """The statements that bring the database from the deployed model to ``release``."""
-    evolution = changes_since(deployed, release)
+    evolution = changes_since(deployed, release, binding)
     if isinstance(evolution, CoordinatedEvolution):
         raise CoordinationRequiredError(evolution.coordination_requirements)
-    return schema_delta(evolution, POSTGRES).statements
+    return schema_delta(evolution).statements
 
 
 def migrate(
-    deployed: str, release: DomainModel, run_migration: Callable[[tuple[str, ...]], None]
+    deployed: str,
+    release: DomainModel,
+    binding: PostgresBinding,
+    run_migration: Callable[[tuple[str, ...]], None],
 ) -> str:
     """Once per database: migrate it to ``release``, and return the descriptor to keep."""
-    run_migration(migration_for(deployed, release))
+    run_migration(migration_for(deployed, release, binding))
     return export_yaml(release)
 
 
-def adopt(serving: ServingModel, release: DomainModel, edition: str) -> None:
+def adopt(
+    serving: ServingModel, release: DomainModel, binding: PostgresBinding, edition: str
+) -> None:
     """In every running process, once the migration has run: serve ``release`` from now on."""
     current = serving.current()
-    serving.publish(prepare_model(release, edition=edition), expected=current)
+    serving.publish(prepare_model(release, binding=binding, edition=edition), expected=current)
 
 
 def payments_this_edition_can_read(db: ScopedDatabase, order_id: int) -> list[Payment]:

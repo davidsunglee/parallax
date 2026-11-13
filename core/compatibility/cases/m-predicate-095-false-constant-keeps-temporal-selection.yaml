@@ -14,8 +14,8 @@ when:
       valid-time: {asOf: latest}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where 1 = 0 and t0.thru_z = ? and t0.out_z = ?'}
+  - sql: {postgres: 'select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from px.policy t0 where 1 = 0 and t0.thru_z = ? and t0.out_z = ?'}
     binds: [infinity, infinity]
-  referenceSql: select id, name, from_z, thru_z, in_z, out_z from policy where 1 = 0
+  referenceSql: select id, name, from_z, thru_z, in_z, out_z from px.policy where 1 = 0
   rows: []
   databaseCalls: 1

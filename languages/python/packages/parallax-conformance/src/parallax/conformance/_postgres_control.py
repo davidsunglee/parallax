@@ -51,7 +51,6 @@ if TYPE_CHECKING:
         Row,
         TransactionOutcome,
     )
-    from parallax.core.internal.entity import DomainModel
     from parallax.core.internal.execution import ServingModel, TxnOptions
     from parallax.core.internal.unit_work import Clock
 
@@ -617,7 +616,7 @@ class PostgresInterleavedExecution:
     def __init__(
         self,
         adapter: ControlledAdapter,
-        model: DomainModel | ServingModel,
+        model: ServingModel,
         *,
         observation: LifecycleObservation,
         options: TxnOptions | None = None,
@@ -640,7 +639,7 @@ class PostgresInterleavedExecution:
     def open(  # pragma: no cover - opens a real session; the Docker lanes exercise it
         cls,
         conninfo: str,
-        model: DomainModel | ServingModel,
+        model: ServingModel,
         *,
         observation: LifecycleObservation,
         options: TxnOptions | None = None,

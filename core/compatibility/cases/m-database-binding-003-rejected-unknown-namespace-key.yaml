@@ -1,0 +1,22 @@
+# A namespace key names an exact Entity Namespace the model declares an Entity
+# in; `parallax` is only a prefix of the model's `parallax.compatibility`, and
+# namespace keys never match by prefix.
+model: models/wallet.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      namespaces:
+        parallax: { schema: px_parallax }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      namespaces:
+        parallax: { database: px_parallax }
+then:
+  rejectedRule: binding-namespace-unknown

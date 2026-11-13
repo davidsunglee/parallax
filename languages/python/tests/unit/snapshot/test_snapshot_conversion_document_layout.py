@@ -49,6 +49,7 @@ from parallax.core.internal.read_delivery._row_converter import bind
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.document_reads import folded_names
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read
@@ -75,7 +76,11 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     production read sequence, database aside: judged when its state is first
     needed, which a row judged as a proved level records it must equal."""
     compiled = compile_read(
-        oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
+        oa.TrueNode(),
+        bound_model(model),
+        POSTGRES,
+        entity(model, name),
+        result_form="instance",
     )
     deferred, proved = (
         _published(model, compiled, stored, proved=proved) for proved in (False, True)
@@ -89,7 +94,12 @@ def _published(
 ) -> _Converted:
     builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
     index = convert_cells(
-        CatalogedModel(model), compiled, stored, builder, source=ROOT_LEVEL, singleton=proved
+        CatalogedModel(model, TEST_BINDING),
+        compiled,
+        stored,
+        builder,
+        source=ROOT_LEVEL,
+        singleton=proved,
     )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
@@ -287,7 +297,7 @@ def test_an_occurrence_column_classifies_an_absent_required_member() -> None:
 def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     compiled = compile_read(
         oa.TrueNode(),
-        _TWIN_COLUMNS,
+        bound_model(_TWIN_COLUMNS),
         POSTGRES,
         entity(_TWIN_COLUMNS, "Person"),
         result_form="instance",
@@ -296,7 +306,9 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     folded[folded_names(compiled.statement.sql, compiled.document_reads).index("address")] = {
         "city": "Oslo"
     }
-    prepared = bind(CatalogedModel(_TWIN_COLUMNS), compiled.result_contract, compiled.projection)
+    prepared = bind(
+        CatalogedModel(_TWIN_COLUMNS, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
     builder = PageBuilder(ViewSchema.of())
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         index, *_ = prepared.record_row(tuple(folded), builder, source=ROOT_LEVEL)

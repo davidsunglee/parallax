@@ -53,6 +53,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.descriptor import domain_model_from_document, export_document
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -135,7 +136,7 @@ _M = [{"code": "m"}]
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -157,7 +158,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {members} "
-        f"from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -166,7 +167,7 @@ def _log_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     members = ", ".join(_member(entity, name) for name in ("label", "spec", "marks"))
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{members} from {_TABLES[entity]} order by in_z, out_z"
+        f"{members} from px.{_TABLES[entity]} order by in_z, out_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -174,7 +175,7 @@ def _log_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
 def _seeded_spans(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
     """Two rectangles of span 1 — [January, April) at T0 and [June, August) at
     T1 — with a gap between them and nothing after August."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _T1, *instants)
     db.transact(
         lambda tx: tx.insert(
@@ -412,7 +413,7 @@ def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
     control = profile_run.control()
     try:
         control.execute_write(
-            "update ttw_document_span set payload = jsonb_set(payload, '{spec,ledger}', '7') "
+            "update px.ttw_document_span set payload = jsonb_set(payload, '{spec,ledger}', '7') "
             "where from_z = ?",
             [_JAN],
         )
@@ -428,7 +429,7 @@ def test_an_unchanged_replacement_keeps_stored_content_no_member_declares(
         )
     )
     specs = profile_run.port.execute(
-        "select in_z, from_z, payload->'spec' from ttw_document_span "
+        "select in_z, from_z, payload->'spec' from px.ttw_document_span "
         "where out_z = 'infinity' and from_z < ? order by from_z",
         [_JUN],
     )
@@ -482,7 +483,7 @@ def test_a_transaction_time_target_chains_one_milestone_from_its_callers(
     concurrency: _Concurrency,
     representation: _Representation,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _T1, _TA, _TB)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1"))))
     db.transact(
@@ -603,7 +604,7 @@ def test_a_transaction_time_termination_closes_its_callers_milestone_and_chains_
     concurrency: _Concurrency,
     representation: _Representation,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _TA, _TB)
     db.transact(lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1"))))
 
@@ -627,7 +628,7 @@ def test_a_transaction_time_termination_closes_its_callers_milestone_and_chains_
 # --------------------------------------------------------------------------- #
 def _single(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
     """Span 1 as one rectangle [January, infinity) opened at T0."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, *instants)
     db.transact(
         lambda tx: tx.insert(
@@ -800,7 +801,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
     concurrency: _Concurrency,
     representation: _Representation,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _TA, _TB)
     bitemporal = entity in _SPANS
     bounds: dict[str, Any] = {"valid_from": _JAN} if bitemporal else {}
@@ -842,7 +843,7 @@ def test_a_temporal_target_of_an_object_this_attempt_inserted_is_refused_until_c
 # --------------------------------------------------------------------------- #
 def _two_rectangles(profile_run: Any, entity: type[Any]) -> None:
     """Span 1 as [January, June) opened at T0 and [June, infinity) at T1."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     seeder = _db(profile_run, _T0, _T1)
     seeder.transact(
         lambda tx: tx.insert(entity(id=1, amount=100, label="a"), valid_from=_JAN, until=_JUN)
@@ -903,6 +904,7 @@ def test_a_row_another_session_revises_after_the_flush_read_it_fails_by_whose_it
             _MODEL,
             clock=ScriptedClock([_TA, _TB]),
             lifecycle_provider=interleaving,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     attempts = 0
@@ -961,7 +963,11 @@ def test_a_peers_equal_patch_of_the_start_leaves_the_stated_milestone_standing(
     interleaving = AfterCoverageRead(_TABLES[entity], peer)
     ours = own_root(
         connect(
-            profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock([_TA]),
+            lifecycle_provider=interleaving,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     ours.transact(lambda tx: _span_patch(tx, entity, amount=150))
@@ -990,7 +996,11 @@ def test_a_later_row_lost_after_the_flush_read_rolls_back_without_retries(
     interleaving = AfterCoverageRead(_TABLES[entity], peer)
     ours = own_root(
         connect(
-            profile_run.port, _MODEL, clock=ScriptedClock([_TA]), lifecycle_provider=interleaving
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock([_TA]),
+            lifecycle_provider=interleaving,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     with raises_code(ConflictError, OPTIMISTIC_LOCK_CONFLICT):
@@ -1154,7 +1164,7 @@ def test_a_source_replacement_whose_evidence_fails_opens_nothing(
 # --------------------------------------------------------------------------- #
 def _seeded_later(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
     """Span 1 stored over [May, July) only."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, *instants)
     db.transact(
         lambda tx: tx.insert(
@@ -1319,7 +1329,7 @@ def test_a_historical_observation_restores_its_state_under_a_current_condition(
 def test_a_transaction_time_source_replacement_chains_its_complete_state(
     profile_run: Any, entity: type[Any], representation: _Representation
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _TA)
     db.transact(lambda tx: tx.insert(entity(id=1, label="a", spec=Spec(title="s1"), marks=())))
 
@@ -1370,13 +1380,17 @@ class _Reads:
             self.sql.append(event.statement.sql)
 
     def of(self, entity: type[Any]) -> list[str]:
-        return [sql for sql in self.sql if f"from {_TABLES[entity]} " in sql]
+        return [sql for sql in self.sql if f"from px.{_TABLES[entity]} " in sql]
 
 
 def _counted(profile_run: Any, reads: _Reads, *instants: dt.datetime) -> ScopedDatabase:
     return own_root(
         connect(
-            profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), lifecycle_provider=reads
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock(list(instants)),
+            lifecycle_provider=reads,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
 
@@ -1460,7 +1474,7 @@ def test_locking_targets_read_the_parts_their_acquired_starts_leave_in_one_state
 def test_a_transaction_time_target_reads_its_current_row_once(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, _T0).transact(
         lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1")))
     )
@@ -1484,7 +1498,7 @@ def test_a_locking_targets_invalid_stored_occurrence_fails_at_the_flush(
     column = (
         "payload = jsonb_set(payload, '{spec}', '[1]')" if entity in _DOCUMENT else "spec = '[1]'"
     )
-    profile_run.port.execute(f"update {_TABLES[entity]} set {column} where from_z = ?", [_JAN])
+    profile_run.port.execute(f"update px.{_TABLES[entity]} set {column} where from_z = ?", [_JAN])
     called: list[str] = []
 
     def fn(tx: TxnContext) -> None:
@@ -1537,7 +1551,7 @@ _PROVENANCES = pytest.mark.parametrize("provenance", ["class", "descriptor"])
 def _provenance_db(profile_run: Any, provenance: str, *instants: dt.datetime) -> ScopedDatabase:
     model = _MODEL if provenance == "class" else _DESCRIPTOR_MODEL
     return own_root(
-        connect(profile_run.port, model, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, model, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -1554,7 +1568,7 @@ def _wire_log_query(entity: type[Any]) -> dict[str, object]:
 def test_a_wire_read_milestone_conditions_a_later_transaction_time_target(
     profile_run: Any, entity: type[Any], provenance: str
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, _T0).transact(
         lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1")))
     )

@@ -9,12 +9,12 @@ shape: error
 then:
   statements:
     - sql:
-        postgres: insert into widget(id, label) values (?, ?)
-        mariadb: insert into widget(id, label) values (?, ?)
+        postgres: insert into px.widget(id, label) values (?, ?)
+        mariadb: insert into px.widget(id, label) values (?, ?)
       binds: [1, "first"]
     - sql:
-        postgres: insert into widget(id, label) values (?, ?)
-        mariadb: insert into widget(id, label) values (?, ?)
+        postgres: insert into px.widget(id, label) values (?, ?)
+        mariadb: insert into px.widget(id, label) values (?, ?)
       binds: [1, "dup"]
   errorClass: uniqueViolation
   nativeCode:

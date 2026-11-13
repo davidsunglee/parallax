@@ -64,6 +64,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter, Write, WriteCall
 from tests._support.errors import raises_code
@@ -164,7 +165,7 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
         step_executor(port, _ACCOUNT_META).execute((step,), allocates=False, flush=flush)
     assert port.calls == [
         WriteCall(
-            "delete from account where id = any(cast(? as bigint[]))",
+            "delete from px.account where id = any(cast(? as bigint[]))",
             (ArrayBind(INT64, [1, 2, 3]),),
         )
     ]
@@ -194,7 +195,7 @@ def _allocating_group() -> WriteGroup:
         write_preparation_of(meta),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    plan = build_write_planner(meta).finalize(
+    plan = build_write_planner(bound_model(meta)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
@@ -223,12 +224,15 @@ def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
 
 def test_an_allocating_insert_refused_by_its_tables_exclusion_is_recognized() -> None:
     layout = storage_layout.storage_layout_facet_of(model_of(_SPANS)).entity(Span.identity)
-    assert layout is not None and layout.layout.temporal_constraints is not None
+    assert layout is not None
+    table = bound_model(model_of(_SPANS)).table(layout.layout.mapping_owner)
+    assert table.temporal_constraints is not None
     refused = DatabaseError(
         category="constraintViolation",
         native_code="23P01",
         message="conflicting key value violates exclusion constraint",
-        constraint_name=layout.layout.temporal_constraints.exclusion_name,
+        constraint_name=table.temporal_constraints.exclusion_name,
+        constraint_table=table.physical,
     )
     recognized: list[DatabaseError] = []
     with pytest.raises(DatabaseError) as raised, open_flush() as flush:

@@ -162,21 +162,25 @@ def test_preflight_requires_canonical_expected_table_state() -> None:
             "when": {},
             "then": {
                 "tableState": {
-                    "reading": [
-                        {
-                            "id": 1,
-                            "amount": "10.5",
-                            "day": "2026-01-15",
-                            "profile": {"expires": "2026-01-15"},
-                        }
-                    ]
+                    "px": {
+                        "reading": [
+                            {
+                                "id": 1,
+                                "amount": "10.5",
+                                "day": "2026-01-15",
+                                "profile": {"expires": "2026-01-15"},
+                            }
+                        ]
+                    }
                 }
             },
         },
         source.model,
     )
 
-    with pytest.raises(CaseFailure, match=r"then\.tableState\.reading\[0\]\.amount.*noncanonical"):
+    with pytest.raises(
+        CaseFailure, match=r"then\.tableState\.px\.reading\[0\]\.amount.*noncanonical"
+    ):
         preflight_case_literals(case)
 
 
@@ -184,7 +188,7 @@ def test_preflight_requires_canonical_top_level_statement_binds() -> None:
     case = _case()
     case.then["statements"] = [
         {
-            "sql": {"postgres": "insert into reading (amount) values (?)"},
+            "sql": {"postgres": "insert into px.reading (amount) values (?)"},
             "binds": ["10.5"],
         }
     ]
@@ -204,7 +208,9 @@ def test_preflight_requires_canonical_per_step_statement_binds() -> None:
                     {
                         "statements": [
                             {
-                                "sql": {"postgres": "update reading set amount = ? where id = ?"},
+                                "sql": {
+                                    "postgres": "update px.reading set amount = ? where id = ?"
+                                },
                                 "binds": ["10.5", 1],
                             }
                         ]
@@ -228,7 +234,9 @@ def test_preflight_requires_canonical_document_leaf_statement_binds() -> None:
     case.then["statements"] = [
         {
             "sql": {
-                "postgres": ("select id from reading where jsonb_extract_path_text(profile, ?) = ?")
+                "postgres": (
+                    "select id from px.reading where jsonb_extract_path_text(profile, ?) = ?"
+                )
             },
             "binds": ["expires", "2026-1-15"],
         }
@@ -246,7 +254,7 @@ def _array_statement(sql: str, binds: list[object]) -> Case:
 
 def test_preflight_requires_canonical_elements_of_an_array_bind() -> None:
     case = _array_statement(
-        "select id from reading where amount = any(cast(? as decimal[]))", [["10.50", "10.5"]]
+        "select id from px.reading where amount = any(cast(? as decimal[]))", [["10.50", "10.5"]]
     )
 
     with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[0\]\[1\].*noncanonical"):
@@ -257,41 +265,41 @@ def test_preflight_requires_canonical_elements_of_an_array_bind() -> None:
     ("sql", "binds"),
     [
         pytest.param(
-            "select id from reading where amount = any(cast(? as decimal[]))",
+            "select id from px.reading where amount = any(cast(? as decimal[]))",
             [["10.50"]],
             id="column",
         ),
         pytest.param(
-            "select id from reading where not day = any(cast(? as date[]))",
+            "select id from px.reading where not day = any(cast(? as date[]))",
             [["2026-01-15"]],
             id="negated-column",
         ),
         pytest.param(
-            "select id from reading where jsonb_extract_path_text(profile, ?)"
+            "select id from px.reading where jsonb_extract_path_text(profile, ?)"
             " = any(cast(? as text[]))",
             ["expires", ["2026-01-15"]],
             id="text-extraction",
         ),
         pytest.param(
-            "select id from reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
+            "select id from px.reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
             " = any(cast(? as bigint[]))",
             ["count", [1]],
             id="cast-extraction",
         ),
         pytest.param(
-            "select id from reading t0 where exists (select 1 from sample t1"
+            "select id from px.reading t0 where exists (select 1 from px.sample t1"
             " where t1.reading_id = t0.id and t1.quantity = any(cast(? as int[])))",
             [[3]],
             id="related-column",
         ),
         pytest.param(
-            "select id from reading t0 where (select t1.quantity from sample t1"
+            "select id from px.reading t0 where (select t1.quantity from px.sample t1"
             " where t1.reading_id = t0.id) = any(cast(? as int[]))",
             [[3]],
             id="scalar-subquery",
         ),
         pytest.param(
-            "select id from reading t0 where exists (select 1 from jsonb_array_elements(t0.tags)"
+            "select id from px.reading t0 where exists (select 1 from jsonb_array_elements(t0.tags)"
             " t1 where case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end"
             " = any(cast(? as text[])))",
             ["string", "{}", ["a"]],
@@ -308,28 +316,28 @@ def test_preflight_accepts_an_array_cast_to_the_type_its_operand_compares_in(
 @pytest.mark.parametrize(
     ("sql", "binds", "expected"),
     [
-        pytest.param("select id from reading where id = any(?)", [[1]], "bigint", id="uncast"),
+        pytest.param("select id from px.reading where id = any(?)", [[1]], "bigint", id="uncast"),
         pytest.param(
-            "select id from reading where id = any(cast(? as int[]))",
+            "select id from px.reading where id = any(cast(? as int[]))",
             [[1]],
             "bigint",
             id="narrower-integer",
         ),
         pytest.param(
-            "select id from reading where amount = any(cast(? as decimal(12, 2)[]))",
+            "select id from px.reading where amount = any(cast(? as decimal(12, 2)[]))",
             [["10.50"]],
             "decimal",
             id="modified-decimal",
         ),
         pytest.param(
-            "select id from reading where jsonb_extract_path_text(profile, ?)"
+            "select id from px.reading where jsonb_extract_path_text(profile, ?)"
             " = any(cast(? as date[]))",
             ["expires", ["2026-01-15"]],
             "text",
             id="text-extraction-cast-to-its-declared-type",
         ),
         pytest.param(
-            "select id from reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
+            "select id from px.reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
             " = any(cast(? as int[]))",
             ["count", [1]],
             "bigint",
@@ -345,7 +353,7 @@ def test_preflight_refuses_an_array_not_cast_to_the_type_its_operand_compares_in
 
 
 _READING_COLUMN_ARRAYS = (
-    "insert into reading(id, amount, day, profile, visits) select * from unnest("
+    "insert into px.reading(id, amount, day, profile, visits) select * from unnest("
     "cast(? as bigint[]), cast(? as decimal[]), cast(? as date[]), cast(? as jsonb[]), "
     "cast(? as jsonb[]))"
 )
@@ -468,7 +476,9 @@ def test_preflight_excludes_untyped_statement_control_binds() -> None:
     case.then["statements"] = [
         {
             "sql": {
-                "postgres": ("select id from reading where jsonb_extract_path_text(profile, ?) = ?")
+                "postgres": (
+                    "select id from px.reading where jsonb_extract_path_text(profile, ?) = ?"
+                )
             },
             "binds": [7, "2026-01-15"],
         }
@@ -793,7 +803,7 @@ def _node_path_update(dialect: str, member: str, value: object) -> Case:
         "mariadb": "json_set(payload, ?, json_extract(?, '$'))",
     }[dialect]
     statement = {
-        "sql": {dialect: f"update materialization_node set payload = {mutation} where id = ?"},
+        "sql": {dialect: f"update px.materialization_node set payload = {mutation} where id = ?"},
         "binds": {dialect: [_document_path(dialect, member), value, 1]},
     }
     return Case(
@@ -890,7 +900,7 @@ def _node_extraction_comparison(
     )
     path_binds: list[object] = list(path) if dialect == "postgres" else ["$." + ".".join(path)]
     statement = {
-        "sql": {dialect: f"select t0.id from materialization_node t0 where {extraction} = ?"},
+        "sql": {dialect: f"select t0.id from px.materialization_node t0 where {extraction} = ?"},
         "binds": {dialect: [*path_binds, value]},
     }
     return Case(
@@ -1033,7 +1043,7 @@ def _payment_path_update(dialect: str, kind: str, value: object) -> Case:
     }[dialect]
     return _payment_write(
         dialect,
-        f"update payment_document set payload = {mutation} where id = ? and kind = ?",
+        f"update px.payment_document set payload = {mutation} where id = ? and kind = ?",
         [_document_path(dialect, "detail"), value, 2, kind],
     )
 
@@ -1041,7 +1051,7 @@ def _payment_path_update(dialect: str, kind: str, value: object) -> Case:
 def _payment_document_insert(dialect: str, kind: str, value: object) -> Case:
     return _payment_write(
         dialect,
-        "insert into payment_document (id, kind, payload) values (?, ?, ?)",
+        "insert into px.payment_document (id, kind, payload) values (?, ?, ?)",
         [2, kind, {"detail": value}],
     )
 
@@ -1049,7 +1059,7 @@ def _payment_document_insert(dialect: str, kind: str, value: object) -> Case:
 def _payment_document_update(dialect: str, kind: str, value: object) -> Case:
     return _payment_write(
         dialect,
-        "update payment_document set payload = ? where id = ? and kind = ?",
+        "update px.payment_document set payload = ? where id = ? and kind = ?",
         [{"detail": value}, 2, kind],
     )
 
@@ -1095,13 +1105,13 @@ def _payment_detail_read(dialect: str, where: str, binds: list[object]) -> Case:
     }[dialect]
     path = {"postgres": "detail", "mariadb": "$.detail"}[dialect]
     sql = (
-        "select p.id from payment_document p join payment_document q on q.id = p.id where "
+        "select p.id from px.payment_document p join px.payment_document q on q.id = p.id where "
         + where.format(detail=f"{extraction} = ?")
     )
     return _payment_write(dialect, sql, [path if bind == "<path>" else bind for bind in binds])
 
 
-_NESTED_KIND = "exists (select 1 from payment_document r where r.kind = ?)"
+_NESTED_KIND = "exists (select 1 from px.payment_document r where r.kind = ?)"
 
 
 @pytest.mark.parametrize("dialect", _DIALECTS)
@@ -1134,7 +1144,7 @@ def test_preflight_leaves_a_shared_document_untyped_by_a_tag_that_pins_another_r
 
 
 _PAYMENT_COLUMN_ARRAYS = (
-    "insert into payment_document(id, kind, payload) select * from "
+    "insert into px.payment_document(id, kind, payload) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
 )
 

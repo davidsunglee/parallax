@@ -42,6 +42,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -66,7 +67,7 @@ from tests.unit._transact_support import (
     new_account,
 )
 
-_A = prepare_model(ACCOUNT, edition="a")
+_A = prepare_model(ACCOUNT, edition="a", binding=TEST_BINDING)
 
 
 def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> ScopedDatabase:
@@ -75,7 +76,9 @@ def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> ScopedDatabase:
 
 def _configured_db(port: DatabaseAdapter, options: TxnOptions) -> ScopedDatabase:
     return own_root(
-        Database.connect(port, ACCOUNT, options=options, clock=FixedClock(FIXED))
+        Database.connect(
+            port, ACCOUNT, options=options, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login()
 
 
@@ -94,7 +97,9 @@ class _UnversionedAccount(
     balance: Attr[Decimal] = attr(precision=18, scale=2)
 
 
-_UNVERSIONED = prepare_model(DomainModel(_UnversionedAccount), edition="unversioned")
+_UNVERSIONED = prepare_model(
+    DomainModel(_UnversionedAccount), edition="unversioned", binding=TEST_BINDING
+)
 
 
 def test_each_attempt_settles_write_evidence_under_its_adopted_selection() -> None:
@@ -180,9 +185,9 @@ def test_a_retry_that_reaches_no_timestamp_requiring_work_captures_no_instant() 
     # Transaction-Time boundary.
     clock = ScriptedClock([FIXED])
     port = ScriptedAdapter(Transact(Write(raises=deadlock())), Transact(Write()))
-    own_root(Database.connect(port, ACCOUNT, clock=clock)).using_database_login().transact(
-        lambda tx: tx.insert(new_account())
-    )
+    own_root(
+        Database.connect(port, ACCOUNT, clock=clock, binding=TEST_BINDING)
+    ).using_database_login().transact(lambda tx: tx.insert(new_account()))
     assert port.calls.count(BeginCall()) == 2
     assert clock.now() == FIXED
 

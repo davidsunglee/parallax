@@ -25,14 +25,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: update pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
       binds: [1, badge_seq]
     - sql:
-        postgres: insert into badge(id, holder) values (?, ?)
-        mariadb: insert into badge(id, holder) values (?, ?)
+        postgres: insert into px.badge(id, holder) values (?, ?)
+        mariadb: insert into px.badge(id, holder) values (?, ?)
       binds: [1, Bo]
   tableState:
-    badge:
-      - { id: 1, holder: Bo }
+    px:
+      badge:
+        - { id: 1, holder: Bo }
   databaseCalls: 2

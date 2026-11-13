@@ -45,12 +45,12 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_digest alter column body type text
-          - alter table evolution_digest alter column title type varchar(128)
+          - alter table px.evolution_digest alter column body type text
+          - alter table px.evolution_digest alter column title type varchar(128)
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_digest modify body text not null
-          - alter table evolution_digest modify title varchar(128) not null
+          - alter table px.evolution_digest modify body text not null
+          - alter table px.evolution_digest modify title varchar(128) not null
         createdIndices: []

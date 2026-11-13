@@ -21,7 +21,7 @@ when:
       note: a buffered insert + a buffered update of the SAME new object combine to ONE insert (final balance 99.00)
       statements:
         - sql:
-            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+            postgres: insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [8, Turing, "99.00", 1]
     - objectQuery:
         target: parallax.compatibility.Account
@@ -33,7 +33,7 @@ when:
       note: a dependent find observes the combined insert's final values (read-your-own-writes)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [8]
       expectRows:
         - { id: 8, owner: Turing, balance: "99.00", version: 1 }

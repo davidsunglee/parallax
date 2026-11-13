@@ -31,6 +31,7 @@ from parallax.core.internal.read_delivery._read_plan import (
     ReadPlan,
 )
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._corpus_model_support import model
 from tests.unit._prepared_read_support import result_row
@@ -49,7 +50,7 @@ def _acquisition_plan(meta: Metamodel, name: str, *, complete: bool = False) -> 
     query = resolve_read_query(deserialize({"target": name, "predicate": {"true": {}}}), model=meta)
     return UNCACHED_READ_PLANNER.plan_acquisition(
         edition="test",
-        model=CatalogedModel(meta),
+        model=CatalogedModel(meta, TEST_BINDING),
         dialect=POSTGRES,
         query=read_planning.plan_root(
             query,
@@ -142,7 +143,7 @@ def test_a_level_recording_each_key_once_judges_its_rows_as_it_records_them(
     )
     plan = UNCACHED_READ_PLANNER.plan(
         edition="",
-        model=CatalogedModel(_ENCODED),
+        model=CatalogedModel(_ENCODED, TEST_BINDING),
         dialect=POSTGRES,
         query=query,
         preference=None,

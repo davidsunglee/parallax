@@ -24,7 +24,7 @@ when:
     orderBy: [{ attr: parallax.compatibility.StreamCoordinate.id }]
 then:
   statements:
-    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 order by t0.id asc" }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from px.stream_coordinate t0 order by t0.id asc" }
   graph:
     StreamCoordinate:
       - null

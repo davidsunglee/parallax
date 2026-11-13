@@ -1,0 +1,13 @@
+# Read under the YAML 1.2 core schema, a plain `yes`, `off`, bare date, `1_000`,
+# and sexagesimal-looking text are strings, so each is an identifier as written.
+reader: postgres
+normalized:
+  format_version: 1
+  backend: postgres
+  default: { schema: "yes" }
+  namespaces:
+    audit: { schema: "2024-01-01" }
+  entities:
+    commerce.Customer: { schema: "off", table: "1_000" }
+  sequences:
+    documentNumbers: { sequence: "1:30" }

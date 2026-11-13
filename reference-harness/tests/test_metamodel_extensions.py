@@ -29,6 +29,7 @@ from jsonschema import Draft202012Validator
 
 from reference_harness.case import Model, discover_cases, load_model
 from reference_harness.case_runner import _assert_write_input_columns
+from reference_harness.database_binding import LOCATION_KEYS, resolve_binding
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.inheritance import (
     INHERITANCE_ABSTRACT_NODE_FIXTURE_ROWS,
@@ -41,6 +42,13 @@ from reference_harness.write_plan import tag
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
 
 
 def _entity_columns(model: Model, name: str) -> list[str]:
@@ -340,7 +348,7 @@ def test_multiword_value_object_uses_the_derived_document_column() -> None:
         "mailing_address",
     ]
     assert value_object["column"] in columns
-    (create,) = ddl_for(model, "postgres")
+    (create,) = px_ddl(model, "postgres")
     assert f"{value_object['column']} jsonb" in create
 
 
@@ -414,7 +422,7 @@ def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> N
     for dialect, document_type in {"postgres": "jsonb", "mariadb": "json"}.items():
         # customer.yaml has a VO-bearing sibling `Location` table;
         # this per-table invariant is asserted on the root Customer's CREATE.
-        (create,) = [c for c in ddl_for(model, dialect) if "create table customer (" in c]
+        (create,) = [c for c in px_ddl(model, dialect) if "create table px.customer (" in c]
         emitted = _emitted_columns(create)
         # Exactly the scalar attributes plus the one document column, in order.
         assert emitted == ["id", "name", "address"]
@@ -511,7 +519,7 @@ def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derived_tag()
     columns plus the framework-derived tag column (m-inheritance), even though each
     concrete subtype declares only its own subtype-specific column."""
     model = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
-    statements = ddl_for(model, "postgres")
+    statements = px_ddl(model, "postgres")
     assert len(statements) == 1, "one shared table for the whole family"
     (create,) = statements
     assert "kind varchar" in create  # the framework-derived tag column
@@ -623,7 +631,7 @@ def test_table_per_concrete_subtype_write_has_no_tag() -> None:
     tpcs_insert = cases["m-inheritance-010-tpcs-insert"]
     assert tag(tpcs_insert.model.entity("Invoice")) is None
     (insert,) = tpcs_insert.golden_statements("postgres")
-    assert insert.startswith("insert into invoice(")
+    assert insert.startswith("insert into px.invoice(")
     _assert_write_input_columns(tpcs_insert, "postgres")
 
 
@@ -669,7 +677,7 @@ def _model_with_unique_index() -> Model:
 
 
 def test_non_pk_unique_index_emits_a_named_unique_index() -> None:
-    create, index = ddl_for(_model_with_unique_index(), "postgres")
+    create, index = px_ddl(_model_with_unique_index(), "postgres")
     # The derived primary-key Index becomes `primary key (...)` inline; the
     # authored business-key unique Index becomes its own named statement, so a
     # duplicate reports a name a rollout can correlate rather than an anonymous
@@ -677,13 +685,13 @@ def test_non_pk_unique_index_emits_a_named_unique_index() -> None:
     assert "primary key (id)" in create
     assert "unique" not in create
     assert index.startswith("create unique index pxi_tag_tag_tag_name_uq_unique_")
-    assert index.endswith(" on tag (name)")
+    assert index.endswith(" on px.tag (name)")
 
 
 def test_unique_index_emitted_for_mariadb_too() -> None:
-    _create, index = ddl_for(_model_with_unique_index(), "mariadb")
+    _create, index = px_ddl(_model_with_unique_index(), "mariadb")
     assert index.startswith("create unique index pxi_tag_tag_tag_name_uq_unique_")
-    assert index.endswith(" on tag (name)")
+    assert index.endswith(" on px.tag (name)")
 
 
 @pytest.mark.parametrize(
@@ -715,13 +723,13 @@ def test_authored_indices_on_temporal_tables_end_with_the_axis_ends(
     # Unique and non-unique alike: the authored components, then each axis end in
     # canonical dimension order, under a name hashing those column Attributes.
     model = load_model(COMPATIBILITY_ROOT, "models/temporal-authored-index.yaml")
-    indices = [statement for statement in ddl_for(model, dialect) if " index " in statement]
+    indices = [statement for statement in px_ddl(model, dialect) if " index " in statement]
     handle_code, handle_label, assignment_code, assignment_label = names
     assert indices == [
-        f"create unique index {assignment_code} on assignment (code, thru_z, out_z)",
-        f"create index {assignment_label} on assignment (label, thru_z, out_z)",
-        f"create unique index {handle_code} on handle (code, out_z)",
-        f"create index {handle_label} on handle (label, out_z)",
+        f"create unique index {assignment_code} on px.assignment (code, thru_z, out_z)",
+        f"create index {assignment_label} on px.assignment (label, thru_z, out_z)",
+        f"create unique index {handle_code} on px.handle (code, out_z)",
+        f"create index {handle_label} on px.handle (label, out_z)",
     ]
 
 
@@ -744,6 +752,6 @@ def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
             }
         ),
     )
-    _prerequisite, ddl = ddl_for(model, "postgres")
+    _prerequisite, ddl = px_ddl(model, "postgres")
     assert "primary key (id, out_z)" in ddl
     assert "unique" not in ddl

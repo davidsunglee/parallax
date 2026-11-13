@@ -36,13 +36,13 @@ from parallax.evolution.internal.model_evolution._values import (
     EntityAltered,
     EntityDelta,
     EntityRemoved,
-    EvolutionOperation,
     IndexAdded,
     IndexAltered,
     IndexDelta,
     IndexRemoved,
     InheritanceChanged,
     JoinChanged,
+    LogicalOperation,
     MaximumLengthChanged,
     MultiplicityChanged,
     NullabilityChanged,
@@ -75,7 +75,7 @@ from parallax.evolution.internal.model_evolution._values import (
 __all__ = ["diff"]
 
 
-def diff(matching: Matching) -> tuple[EvolutionOperation, ...]:
+def diff(matching: Matching) -> tuple[LogicalOperation, ...]:
     """Every Evolution Operation the two endpoints differ by."""
     return _ordered(
         [
@@ -122,7 +122,7 @@ def _suppressed_member(matching: Matching, occurrence: ValueObjectIdentity, *, a
     )
 
 
-def _entity_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _entity_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for facts in matching.entities.added.values():
         yield _added(facts.declaration)
     for facts in matching.entities.removed.values():
@@ -133,7 +133,7 @@ def _entity_operations(matching: Matching) -> Iterator[EvolutionOperation]:
             yield EntityAltered(identity, deltas)
 
 
-def _attribute_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _attribute_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for identity in matching.attributes.added:
         if not _entity_covers(matching, identity.entity, added=True):
             yield AttributeAdded(identity)
@@ -146,7 +146,7 @@ def _attribute_operations(matching: Matching) -> Iterator[EvolutionOperation]:
             yield AttributeAltered(identity, deltas)
 
 
-def _value_object_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _value_object_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for identity in matching.value_objects.added:
         if not _suppressed_occurrence(matching, identity, added=True):
             yield ValueObjectOccurrenceAdded(identity)
@@ -159,7 +159,7 @@ def _value_object_operations(matching: Matching) -> Iterator[EvolutionOperation]
             yield ValueObjectOccurrenceAltered(identity, deltas)
 
 
-def _value_object_attribute_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _value_object_attribute_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for identity in matching.value_object_attributes.added:
         if not _suppressed_member(matching, identity.value_object, added=True):
             yield ValueObjectAttributeAdded(identity)
@@ -172,7 +172,7 @@ def _value_object_attribute_operations(matching: Matching) -> Iterator[Evolution
             yield ValueObjectAttributeAltered(identity, deltas)
 
 
-def _relationship_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _relationship_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for identity in matching.relationships.added:
         if not _entity_covers(matching, identity.source_entity, added=True):
             yield RelationshipAdded(identity)
@@ -185,7 +185,7 @@ def _relationship_operations(matching: Matching) -> Iterator[EvolutionOperation]
             yield RelationshipAltered(identity, deltas)
 
 
-def _as_of_axis_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _as_of_axis_operations(matching: Matching) -> Iterator[LogicalOperation]:
     """Arriving and departing axes. A surviving axis never differs: formation
     fixes both endpoints by the axis's Entity and dimension."""
     for entity, dimension in matching.as_of_axes.added:
@@ -196,7 +196,7 @@ def _as_of_axis_operations(matching: Matching) -> Iterator[EvolutionOperation]:
             yield AsOfAxisRemoved(entity, dimension)
 
 
-def _index_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _index_operations(matching: Matching) -> Iterator[LogicalOperation]:
     for identity in matching.indices.added:
         if not _entity_covers(matching, identity.entity, added=True):
             yield IndexAdded(identity)
@@ -209,7 +209,7 @@ def _index_operations(matching: Matching) -> Iterator[EvolutionOperation]:
             yield IndexAltered(identity, deltas)
 
 
-def _declaration_order_operations(matching: Matching) -> Iterator[EvolutionOperation]:
+def _declaration_order_operations(matching: Matching) -> Iterator[LogicalOperation]:
     """One operation per local collection whose surviving declarations moved.
 
     The comparison is over surviving identities alone, so an insertion between
@@ -226,14 +226,14 @@ def _declaration_order_operations(matching: Matching) -> Iterator[EvolutionOpera
             )
 
 
-def _added(entity: CompiledEntity) -> EvolutionOperation:
+def _added(entity: CompiledEntity) -> LogicalOperation:
     """The one entity-level addition for ``entity``'s role in the later endpoint."""
     if isinstance(entity.inheritance, ConcreteSubtype):
         return ConcreteSubtypeAdded(entity.identity)
     return EntityAdded(entity.identity)
 
 
-def _removed(entity: CompiledEntity) -> EvolutionOperation:
+def _removed(entity: CompiledEntity) -> LogicalOperation:
     """The one entity-level removal for ``entity``'s role in the earlier endpoint."""
     if isinstance(entity.inheritance, ConcreteSubtype):
         return ConcreteSubtypeRemoved(entity.identity)
@@ -362,5 +362,5 @@ def _index_deltas(earlier: IndexMetadata, later: IndexMetadata) -> tuple[IndexDe
     return tuple(deltas)
 
 
-def _ordered(operations: Iterable[EvolutionOperation]) -> tuple[EvolutionOperation, ...]:
+def _ordered(operations: Iterable[LogicalOperation]) -> tuple[LogicalOperation, ...]:
     return tuple(sorted(operations, key=canonical_operation_key))

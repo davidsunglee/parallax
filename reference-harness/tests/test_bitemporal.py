@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from reference_harness.case import Case, discover_cases, load_model
+from reference_harness.case import Case, Model, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_write_input_columns,
@@ -27,14 +27,22 @@ from reference_harness.case_runner import (
     _observed_milestone_start,
     _write_column_order,
 )
+from reference_harness.database_binding import LOCATION_KEYS, PhysicalTable, resolve_binding
 from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.object_query_oracle import assert_case_read
-from reference_harness.storage_layout import derived_primary_key_index, observed_table
+from reference_harness.storage_layout import derived_primary_key_index
 from reference_harness.table_state import read_table
 from reference_harness.write_plan import has_temporal_gate, insert_value_rows
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
+
+
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
 
 
 def _case_id(stem: str) -> str:
@@ -70,7 +78,7 @@ def test_position_is_bitemporal_with_both_axes() -> None:
 
 
 def test_bitemporal_ddl_primary_key_spans_both_as_of_to_columns() -> None:
-    _prerequisite, create, _index = ddl_for(_position_model(), "postgres")
+    _prerequisite, create, _index = px_ddl(_position_model(), "postgres")
     # The business key alone (pos_id) is not unique across rectangles; the
     # physical primary key MUST include BOTH axes' end columns (thru_z, out_z) so a
     # valid-time-bounded rectangle and its inactivated original coexist. The ends
@@ -85,7 +93,7 @@ def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None
     # every model primary-key slot, then each temporal dimension's end slot in
     # canonical dimension rank (Valid Time before Transaction Time). Both end
     # slots keep their single Temporal-tier position in the complete sequence.
-    layout = observed_table(_position_model().storage_layout, "position")
+    layout = _position_model().storage_layout.table("parallax.compatibility.Position")
     assert layout is not None
     assert [slot.column for slot in layout.physical_primary_key] == ["pos_id", "thru_z", "out_z"]
     assert [slot.tier.value for slot in layout.physical_primary_key] == [
@@ -94,7 +102,7 @@ def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None
         "temporal",
     ]
     assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 4, 6]
-    _prerequisite, create, _index = ddl_for(_position_model(), "postgres")
+    _prerequisite, create, _index = px_ddl(_position_model(), "postgres")
     assert (
         f"primary key ({', '.join(slot.column for slot in layout.physical_primary_key)})" in create
     )
@@ -198,7 +206,7 @@ def test_setup_insert_independently_establishes_a_temporal_predecessor(
 def test_setup_predecessor_columns_need_not_follow_layout_order(dialect: str) -> None:
     case = _setup_document_case()
     setup = case.apply[0]
-    setup["sql"] = "insert into voyage(payload, out_z, id, in_z) values (?, ?, ?, ?)"
+    setup["sql"] = "insert into px.voyage(payload, out_z, id, in_z) values (?, ?, ?, ?)"
     setup["binds"] = [setup["binds"][index] for index in (3, 2, 0, 1)]
     _assert_write_input_columns(case, dialect)
 
@@ -246,8 +254,8 @@ def test_setup_must_leave_exactly_one_predecessor_of_the_entity(setup_kind: str)
 @pytest.mark.parametrize(
     "sql",
     [
-        "update voyage set in_z = ? where id = ?",
-        "delete from voyage where id = ?",
+        "update px.voyage set in_z = ? where id = ?",
+        "delete from px.voyage where id = ?",
     ],
 )
 def test_later_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> None:
@@ -261,9 +269,9 @@ def test_later_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> N
     "sql",
     [
         "delete from v using voyage as v where v.id = ?",
-        "delete v from voyage as v where v.id = ?",
-        "delete o, v from other_table as o join voyage as v on o.id = v.id where v.id = ?",
-        "update other_table as o join voyage as v on o.id = v.id set v.in_z = ?",
+        "delete v from px.voyage as v where v.id = ?",
+        "delete o, v from other_table as o join px.voyage as v on o.id = v.id where v.id = ?",
+        "update other_table as o join px.voyage as v on o.id = v.id set v.in_z = ?",
     ],
 )
 def test_aliased_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> None:
@@ -297,12 +305,12 @@ def test_unrelated_single_table_setup_preserves_predecessor_evidence(
 @pytest.mark.parametrize(
     ("sql", "binds"),
     [
-        ("insert into voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity"]),
-        ("insert into voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity", "infinity", 4]),
-        ("insert into voyage(id, in_z, out_z) values (?, now(), ?)", [7, "infinity"]),
-        ("insert into voyage(id, id, out_z) values (?, ?, ?)", [7, 7, "infinity"]),
-        ("insert into voyage select * from other_table", []),
-        ("insert into voyage(id, in_z, out_z) values (", []),
+        ("insert into px.voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity"]),
+        ("insert into px.voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity", "infinity", 4]),
+        ("insert into px.voyage(id, in_z, out_z) values (?, now(), ?)", [7, "infinity"]),
+        ("insert into px.voyage(id, id, out_z) values (?, ?, ?)", [7, 7, "infinity"]),
+        ("insert into px.voyage select * from other_table", []),
+        ("insert into px.voyage(id, in_z, out_z) values (", []),
     ],
 )
 def test_setup_predecessor_refuses_unaccounted_insert_values(sql: str, binds: list[Any]) -> None:
@@ -314,7 +322,7 @@ def test_setup_predecessor_refuses_unaccounted_insert_values(sql: str, binds: li
 
 def test_setup_predecessor_refuses_a_second_statement_in_one_entry() -> None:
     case = _setup_document_case()
-    case.apply[0]["sql"] += "; delete from voyage"
+    case.apply[0]["sql"] += "; delete from px.voyage"
     with pytest.raises(CaseFailure, match="setup predecessor"):
         _assert_write_input_columns(case, "postgres")
 
@@ -508,7 +516,7 @@ def test_has_temporal_gate_requires_the_transaction_start_column_itself() -> Non
     # column itself, so neither the address's own `out_z = ?` nor a Valid-Time
     # `from_z = ?` decoy — the coordinate the retired shape gated on — is ever read as
     # the gate, and a longer column is not a substring match.
-    address_only = "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
+    address_only = "update px.position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     gated = f"{address_only} and in_z = ?"
     valid_start_decoy = f"{address_only} and from_z = ?"
     assert has_temporal_gate(gated, "in_z", "postgres")
@@ -524,11 +532,11 @@ def test_has_temporal_gate_reads_the_close_under_each_dialects_own_quoting() -> 
     # the way its dialect must is still read as gated — and a QUOTED name keeps exactly
     # what it spells, so it never answers for a different column.
     postgres = (
-        'update position set "out_z" = ? '
+        'update px.position set "out_z" = ? '
         'where "pos_id" = ? and "thru_z" = ? and "out_z" = ? and "in_z" = ?'
     )
     mariadb = (
-        "update position set `out_z` = ? "
+        "update px.position set `out_z` = ? "
         "where `pos_id` = ? and `thru_z` = ? and `out_z` = ? and `in_z` = ?"
     )
     assert has_temporal_gate(postgres, "in_z", "postgres")
@@ -545,11 +553,13 @@ def test_has_temporal_gate_requires_the_gate_predicate_to_be_TRAILING() -> None:
     # predicate order. Anchoring reports it UNGATED instead, whose four-bind derivation
     # its five placeholders cannot satisfy.
     woven = (
-        "update position set out_z = ? where pos_id = ? and in_z = ? and thru_z = ? and out_z = ?"
+        "update px.position set out_z = ? "
+        "where pos_id = ? and in_z = ? and thru_z = ? and out_z = ?"
     )
     assert not has_temporal_gate(woven, "in_z", "postgres")
     trailing = (
-        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
+        "update px.position set out_z = ? "
+        "where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
     assert has_temporal_gate(trailing, "in_z", "postgres")
 
@@ -659,7 +669,7 @@ def test_a_split_rendering_its_chained_rows_as_separate_inserts_is_refused() -> 
 
 
 _POSITION_COLUMN_ARRAYS = (
-    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
+    "insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
     "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), "
     "cast(? as timestamptz[]))"
@@ -747,7 +757,7 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
         "valid-time",
         "transaction-time",
     }
-    _prerequisite, create = ddl_for(model, "postgres")  # one shared `instrument` table
+    _prerequisite, create = px_ddl(model, "postgres")  # one shared `instrument` table
     assert "primary key (id, thru_z, out_z)" in create
     assert "kind" in create  # the framework-owned tag column, synthesized for the DDL
 
@@ -756,7 +766,7 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
     rate = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
     deposit = rate.entity("DepositRate")
     assert deposit.is_temporal
-    deposit_ddl = next(s for s in ddl_for(rate, "postgres") if "deposit_rate" in s)
+    deposit_ddl = next(s for s in px_ddl(rate, "postgres") if "deposit_rate" in s)
     assert "primary key (id, thru_z, out_z)" in deposit_ddl
     assert "kind" not in deposit_ddl
 
@@ -766,7 +776,7 @@ def test_tph_txtime_terminate_close_is_tag_guarded() -> None:
     # predicates — right after the pk, before the current-row out_z predicate.
     case = _inheritance_case("m-inheritance-090")
     close = case.golden_statements("postgres")[1]
-    assert close == "update reading set out_z = ? where id = ? and kind = ? and out_z = ?"
+    assert close == "update px.reading set out_z = ? where id = ? and kind = ? and out_z = ?"
     assert case.statement_binds(1)[1:3] == [1, "meter"]  # pk then the derived tagValue
     _assert_write_input_columns(case, "postgres")
 
@@ -778,7 +788,7 @@ def test_tph_bitemporal_inactivation_is_tag_guarded() -> None:
     case = _inheritance_case("m-inheritance-094")
     inactivate = case.golden_statements("postgres")[1]
     assert inactivate == (
-        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
+        "update px.instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
     )
     assert case.statement_binds(1)[1:3] == [1, "bond"]
     _assert_write_input_columns(case, "postgres")
@@ -797,10 +807,10 @@ def test_tph_bitemporal_milestones_write_the_layout_slot_sequence() -> None:
     assert order == ("id", "kind", "price", "coupon", "from_z", "thru_z", "in_z", "out_z")
     opening, close, head = case.golden_statements("postgres")
     columns = ", ".join(order)
-    assert opening.startswith(f"insert into instrument({columns}) values")
-    assert head.startswith(f"insert into instrument({columns}) values")
+    assert opening.startswith(f"insert into px.instrument({columns}) values")
+    assert head.startswith(f"insert into px.instrument({columns}) values")
     assert close == (
-        "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
+        "update px.instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?"
     )
     # Every chained INSERT opens at the transaction instant with an open upper bound.
     in_z, out_z = order.index("in_z"), order.index("out_z")
@@ -829,13 +839,18 @@ def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
     # physical primary key selects the two ends from the identity and temporal
     # tiers alike.
     case = _inheritance_case("m-inheritance-094")
-    layout = observed_table(case.model.storage_layout, "instrument")
+    layout = case.model.storage_layout.table("parallax.compatibility.Instrument")
     assert layout is not None
     provider = _RecordingReadProvider()
-    read_table(cast("Any", provider), layout, declared_contributors(case.model))
+    read_table(
+        cast("Any", provider),
+        layout,
+        PhysicalTable(("px",), "instrument"),
+        declared_contributors(case.model),
+    )
     assert provider.queries == [
         "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
-        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"
+        "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from px.instrument t0"
     ]
     assert [slot.column for slot in layout.physical_primary_key] == ["id", "thru_z", "out_z"]
 
@@ -845,11 +860,11 @@ def test_bitemporal_committed_rows_cover_every_shared_table_slot() -> None:
     # sequence, so a Bond row still records the sibling-only `ticker` column as null
     # rather than omitting it.
     case = _inheritance_case("m-inheritance-094")
-    layout = observed_table(case.model.storage_layout, "instrument")
+    layout = case.model.storage_layout.table("parallax.compatibility.Instrument")
     assert layout is not None
     columns = {slot.column for slot in layout.columns}
     assert "ticker" in columns
-    for row in case.expected_table_state["instrument"]:
+    for row in case.expected_table_state[PhysicalTable(("px",), "instrument")]:
         assert set(row) == columns
         assert row["ticker"] is None
 
@@ -862,8 +877,8 @@ def test_tpcs_bitemporal_milestones_write_each_concrete_table_layout() -> None:
     order = _write_column_order(case, case.model.entity("DepositRate"))
     assert order == ("id", "amount", "grade", "from_z", "thru_z", "in_z", "out_z")
     opening = case.golden_statements("postgres")[0]
-    assert opening.startswith(f"insert into deposit_rate({', '.join(order)}) values")
-    for row in case.expected_table_state["deposit_rate"]:
+    assert opening.startswith(f"insert into px.deposit_rate({', '.join(order)}) values")
+    for row in case.expected_table_state[PhysicalTable(("px",), "deposit_rate")]:
         assert set(row) == set(order)
 
 
@@ -873,7 +888,7 @@ def test_tph_temporal_close_missing_tag_guard_is_rejected() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-090"))
     _assert_write_input_columns(case, "postgres")  # sanity: valid as authored
     close = case.then["statements"][1]
-    close["sql"]["postgres"] = "update reading set out_z = ? where id = ? and out_z = ?"
+    close["sql"]["postgres"] = "update px.reading set out_z = ? where id = ? and out_z = ?"
     close["binds"] = ["2024-08-01T00:00:00+00:00", 1, "infinity"]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
@@ -894,7 +909,7 @@ def test_tpcs_temporal_terminate_routes_to_own_table_no_tag() -> None:
     case = _inheritance_case("m-inheritance-095")
     inactivate = case.golden_statements("postgres")[1]
     assert inactivate == (
-        "update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?"
+        "update px.deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?"
     )
     assert "kind" not in inactivate
     _assert_write_input_columns(case, "postgres")

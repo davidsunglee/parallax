@@ -15,7 +15,6 @@ nowhere else.
 
 from __future__ import annotations
 
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
     Attribute,
@@ -31,7 +30,7 @@ from parallax.evolution.internal.model_evolution import (
     EntityAdded,
     EntityAltered,
     UnilateralEvolution,
-    evolve_metamodels,
+    evolve_resolved,
 )
 from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
@@ -41,6 +40,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     RestateColumnDomain,
 )
 from parallax.evolution.internal.schema_delta._plan import plan
+from tests._support.bindings import bound_model
 from tests.unit._corpus_model_support import formed
 
 
@@ -476,9 +476,9 @@ def _parcel(*, origin_nullable: bool) -> AcceptedMetamodel:
 def _operations(
     earlier: AcceptedMetamodel, later: AcceptedMetamodel
 ) -> tuple[PhysicalOperation, ...]:
-    evolution = evolve_metamodels(earlier, later)
+    evolution = evolve_resolved(bound_model(earlier), bound_model(later))
     assert isinstance(evolution, UnilateralEvolution)
-    return plan(evolution, POSTGRES).operations
+    return plan(evolution).operations
 
 
 def _causes(operation: PhysicalOperation) -> list[str]:
@@ -499,7 +499,7 @@ def _added(operations: tuple[PhysicalOperation, ...], table: str) -> AddColumn:
     (added,) = [
         operation
         for operation in operations
-        if isinstance(operation, AddColumn) and operation.table.name == table
+        if isinstance(operation, AddColumn) and operation.table.physical.name == table
     ]
     return added
 
@@ -508,7 +508,7 @@ def _creates(operations: tuple[PhysicalOperation, ...], table: str) -> CreateTab
     (created,) = [
         operation
         for operation in operations
-        if isinstance(operation, CreateTable) and operation.table.name == table
+        if isinstance(operation, CreateTable) and operation.table.physical.name == table
     ]
     return created
 
@@ -517,7 +517,7 @@ def _created(operations: tuple[PhysicalOperation, ...], table: str) -> CreateInd
     (created,) = [
         operation
         for operation in operations
-        if isinstance(operation, CreateIndex) and operation.definition.table.name == table
+        if isinstance(operation, CreateIndex) and operation.definition.table.physical.name == table
     ]
     return created
 

@@ -51,7 +51,6 @@ from decimal import Decimal
 
 from parallax.core import (
     ONE_TO_MANY,
-    POSTGRES,
     Attr,
     DomainModel,
     Entity,
@@ -66,7 +65,7 @@ from parallax.core import (
     rel,
 )
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter, PostgresEndpoint
+from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresEndpoint
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 ```
 <!-- /example -->
@@ -120,12 +119,13 @@ apply them with whatever already runs your migrations:
 
 <!-- example: create-tables-from-the-model -->
 ```python
-def table_statements(model: DomainModel) -> tuple[str, ...]:
-    """The SQL that creates the model's tables in an empty PostgreSQL schema.
+def table_statements(model: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
+    """The SQL that creates the model's tables where ``binding`` places them.
 
-    Parallax never changes a schema itself: run these with your migration tool.
+    Parallax never changes a schema itself, and never creates one: create the
+    binding's schemas and run these with your migration tool.
     """
-    return schema_delta(evolve(ABSENT, model), POSTGRES).statements
+    return schema_delta(evolve(ABSENT, model, later_binding=binding)).statements
 ```
 <!-- /example -->
 
@@ -135,8 +135,9 @@ built from classes. `ABSENT` stands
 for no model at all, as in an empty database, so `evolve(ABSENT, ...)` describes
 creating everything this model needs. That change is always one `schema_delta` accepts,
 and its type says so. `schema_delta` turns the change into PostgreSQL statements. For a
-first try, run them in `psql` or any SQL client connected to an empty database. They
-name no schema, so the tables land in the connection's current schema, usually `public`.
+first try, run them in `psql` or any SQL client connected to an empty database after
+creating the schema the binding names. They name every table schema-qualified, as the
+binding passed to `evolve` places it.
 
 When your model changes later, `evolve` compares the model you deployed before with the
 new one, so keep a copy of each model you deploy. Exporting it as a descriptor with
@@ -155,9 +156,9 @@ def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:
     return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=Password(password)))
 
 
-def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
+def add_and_find_a_customer(adapter: PostgresAdapter, binding: PostgresBinding) -> Customer:
     model = DomainModel(Customer, Order)
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         db.transact(
             lambda tx: tx.insert(Customer(id=1, name="Ada Lovelace", email="ada@example.com"))

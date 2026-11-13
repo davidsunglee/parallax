@@ -102,6 +102,7 @@ from parallax.core.internal.temporal_read import (
     perspective_terms,
     temporal_facet_of,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import (
     compile_nonempty_read as compile_read,
@@ -228,7 +229,7 @@ def _rendered_keys(
 ) -> object:
     """The key-set bind ``step``'s compiled child read carries once ``keys`` are
     rendered into it."""
-    template = compile_template(step.query, model, POSTGRES, result_form="instance")
+    template = compile_template(step.query, bound_model(model), POSTGRES, result_form="instance")
     ((index,),) = (
         group.indices for group in template.compiled.statement.execution_value_positions()
     )
@@ -678,7 +679,7 @@ def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> 
 def _child_sql(
     model: Metamodel, level: read_planning.QueryFetchStep
 ) -> tuple[str, tuple[object, ...]]:
-    template = compile_template(level.query, model, POSTGRES, result_form="instance")
+    template = compile_template(level.query, bound_model(model), POSTGRES, result_form="instance")
     statement = template.compiled.statement
     keys = {
         index
@@ -699,7 +700,7 @@ def test_a_broad_hop_keeps_its_abstract_root_target_over_one_composed_concrete()
     assert level.query.target == EntityIdentity("parallax.compatibility", "Beast")
     assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
-        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from px.beast t0 "
         "where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc",
         ("<keys>",),
     )
@@ -711,7 +712,7 @@ def test_a_singleton_narrow_keeps_its_guard_over_every_composed_concrete() -> No
     assert level.query.target == EntityIdentity("parallax.compatibility", "Wolf")
     assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
-        "select t0.id, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "select t0.id, t0.name, t0.keeper_id, t0.howl from px.beast t0 "
         "where t0.keeper_id = any(cast(? as bigint[])) and t0.kind = ? order by t0.id asc",
         ("<keys>", "wolf"),
     )
@@ -723,7 +724,7 @@ def test_a_broad_hop_keeps_an_abstract_subtype_target_and_its_guard() -> None:
     assert level.query.target == EntityIdentity("parallax.compatibility", "Pet")
     assert _child_sql(model, level) == (
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
-        "from animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?",
+        "from px.animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?",
         ("<keys>", "dog"),
     )
 
@@ -733,7 +734,7 @@ def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> No
     level = _query_step(_plan(model, "Folder", (_path(_seg("Folder.documents")),)))
     assert level.query.target == EntityIdentity("parallax.compatibility", "Document")
     assert _child_sql(model, level) == (
-        "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 "
+        "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from px.invoice t0 "
         "where t0.folder_id = any(cast(? as bigint[]))",
         ("<keys>",),
     )
@@ -1556,7 +1557,7 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
         if isinstance(term, ResolvedComparison) and term.framework
     )
     assert current == framework_comparison(op="eq", member=_rate("txEnd"), value=INFINITY)
-    statement = compile_read(query, RATE, POSTGRES).statement
+    statement = compile_read(query, bound_model(RATE), POSTGRES).statement
     assert statement.binds[-1] is INFINITY
     assert statement.wire_binds()[-1] == "infinity"
     typed = {index for span in statement.typed_bind_spans for index in span.indices()}
@@ -1605,7 +1606,7 @@ def test_a_coverage_read_of_several_windows_selects_rows_overlapping_any_of_them
             ),
         ),
     )
-    statement = compile_read(query, RATE, POSTGRES).statement
+    statement = compile_read(query, bound_model(RATE), POSTGRES).statement
     assert statement.sql.endswith(
         "and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?) "
         "or t0.thru_z > ?) and t0.out_z = ?"
@@ -1625,7 +1626,7 @@ def test_a_coverage_read_of_several_objects_names_each_objects_windows_beside_it
             (2, (TimeInterval(mar, INFINITY),)),
         ),
     )
-    statement = compile_read(query, RATE, POSTGRES).statement
+    statement = compile_read(query, bound_model(RATE), POSTGRES).statement
     assert statement.sql.endswith(
         "((t0.id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? "
         "and t0.from_z < ?))) or (t0.id = ? and t0.thru_z > ?)) and t0.out_z = ?"
@@ -1783,14 +1784,14 @@ def test_a_narrowed_read_resolves_its_effective_position_once(
     pair = (_identity(strategy, "Left"), _identity(strategy, "Right"))
 
     query = read_planning.plan_root(narrowed, _MATRIX, projection=_ALL)
-    compiled = compile_read(query, _MATRIX, POSTGRES, result_form="instance")
+    compiled = compile_read(query, bound_model(_MATRIX), POSTGRES, result_form="instance")
     assert requests == [pair]
     assert tuple(query.position.concrete_subtypes) == pair == compiled.resolved_position
     assert _selected(query) == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
 
     requests.clear()
     child = _query_step(read_planning.plan(included, _MATRIX, projection=_ALL)).query
-    compile_template(child, _MATRIX, POSTGRES, result_form="instance")
+    compile_template(child, bound_model(_MATRIX), POSTGRES, result_form="instance")
     assert requests == [pair]
     assert tuple(child.position.concrete_subtypes) == pair
 

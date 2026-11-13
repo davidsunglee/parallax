@@ -29,12 +29,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)
+        postgres: insert into px.spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, "50.00", ACME, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: update spot_quote set out_z = ? where id = ? and out_z = ?
+        postgres: update px.spot_quote set out_z = ? where id = ? and out_z = ?
       binds: ["2024-08-01T00:00:00.000000Z", 1, infinity]
   tableState:
-    spot_quote:
-      - { id: 1, price: "50.00", symbol: ACME, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+    px:
+      spot_quote:
+        - { id: 1, price: "50.00", symbol: ACME, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
   databaseCalls: 3

@@ -47,7 +47,7 @@ TARGET: Final = EntityIdentity("parallax.compatibility", "Account")
 """A namespaced Entity whose canonical spelling has to be BUILT, which is what
 makes a seam that spells its target measure as an allocation."""
 
-STATEMENT: Final = LoweredStatement("select id from account where id = $1", (7,))
+STATEMENT: Final = LoweredStatement("select id from px.account where id = $1", (7,))
 
 AFFECTED: Final = 5_000
 """A driver's affected-row count, past the interpreter's small-integer cache."""

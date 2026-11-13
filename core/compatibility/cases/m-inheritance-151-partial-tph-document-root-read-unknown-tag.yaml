@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 order by t0.id asc
-        mariadb: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 order by t0.id asc
+        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from px.beast_document t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from px.beast_document t0 order by t0.id asc
   graph:
     Beast:
       - { id: 1, name: Akela, leaderId: null, howl: aroo, _type: parallax.compatibility.Wolf }

@@ -17,10 +17,18 @@ from reference_harness import errors
 from reference_harness.case import Case, Model, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import _assert_schema
+from reference_harness.database_binding import LOCATION_KEYS, resolve_binding
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.providers.mariadb import MariaDbProvider
 from reference_harness.providers.postgres import PostgresProvider
 from reference_harness.schemas import build_registry, load_schemas
+
+
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
 
 
 def test_predicates_partition_by_category() -> None:
@@ -120,17 +128,17 @@ def _error_case(raw: dict) -> Case:
 _SHARE_LOCK_READ = {
     "postgres": (
         "select t0.id, t0.owner, t0.balance, t0.version "
-        "from account t0 where t0.id = ? for share of t0"
+        "from px.account t0 where t0.id = ? for share of t0"
     ),
     "mariadb": (
         "select t0.id, t0.owner, t0.balance, t0.version "
-        "from account t0 where t0.id = ? lock in share mode"
+        "from px.account t0 where t0.id = ? lock in share mode"
     ),
 }
 
 _ACCOUNT_UPDATE = {
-    "postgres": "update account set balance = ? where id = ?",
-    "mariadb": "update account set balance = ? where id = ?",
+    "postgres": "update px.account set balance = ? where id = ?",
+    "mariadb": "update px.account set balance = ? where id = ?",
 }
 
 
@@ -200,11 +208,11 @@ def test_schema_accepts_single_connection_error_case() -> None:
             "nativeCode": {"postgres": "23505", "mariadb": 1062},
             "statements": [
                 {
-                    "sql": {"postgres": "insert into widget (id, label) values (?, ?)"},
+                    "sql": {"postgres": "insert into px.widget (id, label) values (?, ?)"},
                     "binds": [1, "a"],
                 },
                 {
-                    "sql": {"postgres": "insert into widget (id, label) values (?, ?)"},
+                    "sql": {"postgres": "insert into px.widget (id, label) values (?, ?)"},
                     "binds": [1, "b"],
                 },
             ],
@@ -217,7 +225,7 @@ def test_schema_accepts_two_connection_error_case() -> None:
     def _gauge(binds: list) -> dict:
         return {
             "statements": [
-                {"sql": {"postgres": "update gauge set v = ? where id = ?"}, "binds": binds}
+                {"sql": {"postgres": "update px.gauge set v = ? where id = ?"}, "binds": binds}
             ]
         }
 
@@ -272,7 +280,7 @@ def test_case_recognizes_read_lock_concurrency_error_shape() -> None:
     rounds = case.concurrency["rounds"]
     # Round 1 is a locking read on A; round 2 is a write on B.
     assert "for share of t0" in rounds[0]["A"]["statements"][0]["sql"]["postgres"]
-    assert rounds[1]["B"]["statements"][0]["sql"]["postgres"].startswith("update account")
+    assert rounds[1]["B"]["statements"][0]["sql"]["postgres"].startswith("update px.account")
 
 
 def test_schema_accepts_read_lock_concurrency_error_case() -> None:
@@ -313,7 +321,9 @@ def test_schema_rejects_error_case_without_native_code() -> None:
         "tags": ["m-db-error", "uniqueViolation"],
         "then": {
             "errorClass": "uniqueViolation",
-            "statements": [{"sql": {"postgres": "insert into tag(id) values (?)"}, "binds": [1]}],
+            "statements": [
+                {"sql": {"postgres": "insert into px.tag(id) values (?)"}, "binds": [1]}
+            ],
         },
     }
     assert list(_case_validator().iter_errors(case)) != []
@@ -328,11 +338,11 @@ def test_error_model_builds_ddl_on_both_dialects() -> None:
     names = {e.name for e in model.entities}
     assert {"Widget", "Tag", "Gauge"} <= names
     for dialect in ("postgres", "mariadb"):
-        ddl = "\n".join(ddl_for(model, dialect))
-        assert "create table widget" in ddl
-        assert "create table tag" in ddl
+        ddl = "\n".join(px_ddl(model, dialect))
+        assert "create table px.widget" in ddl
+        assert "create table px.tag" in ddl
         # Tag.name's authored unique Index, as its own named statement.
-        assert " on tag (name)" in ddl
+        assert " on px.tag (name)" in ddl
 
 
 def test_gauge_seeded_with_two_lockable_rows() -> None:

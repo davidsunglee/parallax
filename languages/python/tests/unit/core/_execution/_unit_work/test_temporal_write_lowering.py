@@ -77,6 +77,7 @@ from parallax.core.internal.write_plan.steps import (
     WriteRow,
 )
 from parallax.descriptor._records import Metamodel
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
@@ -315,7 +316,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     step, close = _lower_steps(
         update, BALANCE, "2024-09-01T00:00:00+00:00", observation=observation, concurrency="locking"
     )[0]
-    assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert close.sql == "update px.balance set out_z = ? where bal_id = ? and out_z = ?"
     assert isinstance(step, PlannedClose)
     # ungated: a shortfall is the non-retriable stale write
     assert step.affected_rows == ExactCount(1, STALE_WRITE)
@@ -367,7 +368,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         concurrency=concurrency,
     )
     assert close == (
-        f"update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?{gate_sql}",
+        f"update px.position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?{gate_sql}",
         (
             _instant("2024-02-15T00:00:00+00:00"),
             1,
@@ -403,8 +404,8 @@ def test_temporal_close_requires_an_effective_table() -> None:
     ):
         lowered(
             close,
-            LayoutPayloadPreparer(formed(Metamodel(entities=(balance,)))),
-            formed(Metamodel(entities=(balance,))),
+            LayoutPayloadPreparer(bound_model(formed(Metamodel(entities=(balance,))))),
+            bound_model(formed(Metamodel(entities=(balance,)))),
             POSTGRES,
         )
 
@@ -432,7 +433,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     )
     assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
         (
-            "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
+            "insert into px.spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
             (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), OPEN_BOUND),
         )
     ]
@@ -464,11 +465,13 @@ def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_s
     )
     step = PlannedInsert(entity=entity.identity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
 
-    statement = lowered(step, LayoutPayloadPreparer(model), model, POSTGRES)
+    statement = lowered(
+        step, LayoutPayloadPreparer(bound_model(model)), bound_model(model), POSTGRES
+    )
 
     assert statement.sql == (
-        "insert into ledger(id, amount, in_z, out_z) "
-        "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from ledger t0 returning id"
+        "insert into px.ledger(id, amount, in_z, out_z) "
+        "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from px.ledger t0 returning id"
     )
     assert statement.binds == (0, 1, 100, opened, OPEN_BOUND)
     assert statement.binds[-1] is OPEN_BOUND
@@ -543,7 +546,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
             execute_write_steps=_no_flush,
             execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=NO_ROW_READS,
-            planner=build_write_planner(model),
+            planner=build_write_planner(bound_model(model)),
             actor_identity=TEST_ACTOR_IDENTITY,
         )
     )
@@ -559,7 +562,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     update = KeyedWriteInstruction("amend", "SpotQuote", ({"id": 1, "price": Decimal("60.00")},))
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert chain == (
-        "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
+        "insert into px.spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
         (1, 60.00, "ACME", _instant("2024-06-01T00:00:00+00:00"), OPEN_BOUND),
     )
 
@@ -586,7 +589,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
             execute_write_steps=_no_flush,
             execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=NO_ROW_READS,
-            planner=build_write_planner(model),
+            planner=build_write_planner(bound_model(model)),
             actor_identity=TEST_ACTOR_IDENTITY,
         )
     )
@@ -626,7 +629,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
         concurrency="optimistic",
     )[0]
     assert close == (
-        "update instrument set out_z = ? "
+        "update px.instrument set out_z = ? "
         "where id = ? and kind = ? and thru_z = ? and out_z = ? and in_z = ?",
         (
             _instant("2024-07-01T00:00:00+00:00"),
@@ -668,7 +671,7 @@ def test_a_bitemporal_guard_addresses_its_rectangle_by_both_ends() -> None:
     )
     assert lowered == [
         (
-            "update position set in_z = in_z where pos_id = ? and thru_z = ? and out_z = ? "
+            "update px.position set in_z = in_z where pos_id = ? and thru_z = ? and out_z = ? "
             "and in_z = ?",
             (1, _instant("2024-06-01T00:00:00+00:00"), "infinity", _instant(_GUARDED_AT)),
         )
@@ -688,7 +691,8 @@ def test_a_table_per_hierarchy_guard_carries_the_tag_guard_after_the_key() -> No
     )
     assert lowered == [
         (
-            "update reading set in_z = in_z where id = ? and kind = ? and out_z = ? and in_z = ?",
+            "update px.reading set in_z = in_z where id = ? and kind = ? and out_z = ? and in_z "
+            "= ?",
             (1, "meter", "infinity", _instant(_GUARDED_AT)),
         )
     ]
@@ -868,7 +872,7 @@ def test_an_owned_revision_gates_on_its_observed_start_under_optimistic() -> Non
     assert isinstance(step, PlannedTemporalRevision)
     assert step.affected_rows == ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT)
     assert statement == (
-        "update balance set val = ? where bal_id = ? and out_z = ? and in_z = ?",
+        "update px.balance set val = ? where bal_id = ? and out_z = ? and in_z = ?",
         (175.00, 1, "infinity", _instant(_T)),
     )
 
@@ -907,7 +911,7 @@ def _position_row(value: float, start: str, end: str | None) -> tuple[object, ..
 
 
 _POSITION_INSERT = (
-    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
+    "insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
     "values (?, ?, ?, ?, ?, ?, ?)"
 )
 _JAN = "2024-01-01T00:00:00+00:00"
@@ -924,7 +928,8 @@ def test_an_owned_suffix_update_revises_the_retained_end_and_inserts_the_head() 
     assert [type(step) for step, _ in lowered] == [PlannedTemporalRevision, PlannedInsert]
     assert [statement for _, statement in lowered] == [
         (
-            "update position set val = ?, from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            "update px.position set val = ?, from_z = ? where pos_id = ? and thru_z = ? and "
+            "out_z = ?",
             (200.00, _instant(_MAR), 1, "infinity", "infinity"),
         ),
         (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
@@ -949,7 +954,7 @@ def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_
     ]
     assert [statement for _, statement in lowered] == [
         (
-            "update position set from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            "update px.position set from_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
             (_instant(_JUN), 1, _instant(_DEC), "infinity"),
         ),
         (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
@@ -967,7 +972,7 @@ def test_an_owned_unbounded_termination_removes_the_row_and_inserts_its_head() -
     assert [type(step) for step, _ in lowered] == [PlannedTemporalRemoval, PlannedInsert]
     assert [statement for _, statement in lowered] == [
         (
-            "delete from position where pos_id = ? and thru_z = ? and out_z = ?",
+            "delete from px.position where pos_id = ? and thru_z = ? and out_z = ?",
             (1, "infinity", "infinity"),
         ),
         (_POSITION_INSERT, _position_row(100.00, _JAN, _MAR)),
@@ -997,7 +1002,7 @@ def test_a_pre_attempt_rectangle_is_closed_and_opens_only_nonempty_successors() 
     statements = _lower(update, POSITION, _T, observation=observation)
     assert statements == [
         (
-            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
+            "update px.position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
             (_instant(_T), 1, "infinity", "infinity"),
         ),
         (_POSITION_INSERT, _position_row(200.00, _JAN, None)),

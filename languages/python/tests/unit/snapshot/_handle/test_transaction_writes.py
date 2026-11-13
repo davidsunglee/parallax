@@ -48,6 +48,7 @@ from parallax.core.internal.unit_work import (
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -119,7 +120,7 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
     assert port.calls == [
         BeginCall(),
         WriteCall(
-            "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)",
+            "insert into px.payment(id, kind, amount, card_network) values (?, ?, ?, ?)",
             (10, "card", Decimal("200.00"), "Visa"),
         ),
         CommitCall(),
@@ -152,7 +153,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
         BeginCall(),
         ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
         WriteCall(
-            "update account set balance = ?, version = ? where id = ? and version = ?",
+            "update px.account set balance = ?, version = ? where id = ? and version = ?",
             (175.00, 2, 1, 1),
         ),
         CommitCall(),
@@ -217,7 +218,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     assert port.calls == [
         BeginCall(),
         ReadCall(FIND_SQL_LOCKED, (3,), read_only=True),
-        WriteCall("delete from account where id = ?", (3,)),
+        WriteCall("delete from px.account where id = ?", (3,)),
         CommitCall(),
     ]
 
@@ -315,22 +316,22 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
     assert port.calls == [
         BeginCall(),
         ReadCall(
-            "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?",
+            "select t0.id, t0.total, t0.version from px.consignment t0 where t0.id = ?",
             (1,),
             read_only=True,
         ),
         ReadCall(
-            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "select t0.id, t0.consignment_id, t0.carrier from px.consignment_leg t0 "
             "where t0.consignment_id = any(cast(? as bigint[])) for share of t0",
             (ArrayBind(INT64, [1]),),
             read_only=True,
         ),
         WriteCall(
-            "update consignment set total = ?, version = ? where id = ? and version = ?",
+            "update px.consignment set total = ?, version = ? where id = ? and version = ?",
             (20.00, 2, 1, 1),
         ),
         WriteCall(
-            "update consignment_leg set carrier = ? where id = ?",
+            "update px.consignment_leg set carrier = ? where id = ?",
             ("Baltic", 5),
         ),
         CommitCall(),
@@ -346,20 +347,20 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
     assert [(type(op), op.sql) for op in port.calls if isinstance(op, (ReadCall, WriteCall))] == [
         (
             ReadCall,
-            "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?",
+            "select t0.id, t0.total, t0.version from px.consignment t0 where t0.id = ?",
         ),
         (
             ReadCall,
-            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "select t0.id, t0.consignment_id, t0.carrier from px.consignment_leg t0 "
             "where t0.consignment_id = any(cast(? as bigint[])) for share of t0",
         ),
         (
             WriteCall,
-            "update consignment set total = ?, version = ? where id = ? and version = ?",
+            "update px.consignment set total = ?, version = ? where id = ? and version = ?",
         ),
         (
             WriteCall,
-            "update consignment_leg set carrier = ? where id = ?",
+            "update px.consignment_leg set carrier = ? where id = ?",
         ),
     ]
 
@@ -379,7 +380,7 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
     sql = write_ops[0].sql
     binds = write_ops[0].binds
     assert sql == (
-        "insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) "
+        "insert into px.branch(br_id, name, from_z, thru_z, in_z, out_z, address) "
         "values (?, ?, ?, ?, ?, ?, ?)"
     )
     assert binds[2:6] == (
@@ -503,7 +504,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
 
     account_db(port).transact(fn, concurrency="locking")
     expected = WriteCall(
-        "update account set balance = ?, version = ? where id = ?",
+        "update px.account set balance = ?, version = ? where id = ?",
         (175.00, 2, 1),
     )
     assert expected in port.calls
@@ -547,7 +548,7 @@ def test_a_bounded_keyed_update_expressing_no_member_issues_no_dml() -> None:
         tx.amend(fetched.edit(), until=until)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -569,7 +570,9 @@ def test_a_bounded_keyed_update_expressing_no_member_still_rejects_equal_bounds(
 
     with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # never reached the no-op check
 
@@ -595,7 +598,9 @@ def test_a_bounded_keyed_update_with_a_naive_until_raises_the_instant_refusal() 
     # silently satisfy this block.
     with raises_code(UsageError, "instant-invalid", match="naive datetime"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
@@ -619,7 +624,7 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
             )
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -653,7 +658,9 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
 
     account_db(account).transact(non_temporal)
     own_root(
-        Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(
+            position, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login().transact(absent_until, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in account.calls)
     assert not any(isinstance(op, WriteCall) for op in position.calls)
@@ -714,14 +721,14 @@ def test_an_update_beyond_its_observed_rectangle_reads_the_coverage_it_reaches(
         tx.amend(source.edit(value=Decimal("150.00")))
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency=cast("Any", concurrency))
 
     reads = [call for call in port.calls if isinstance(call, ReadCall)]
     coverage = reads[1]
     lock = " for share of t0" if concurrency == "locking" else ""
     assert coverage.sql.endswith(
-        "from where_position t0 where t0.id = ? and t0.thru_z > ? and t0.out_z = ?" + lock
+        "from px.where_position t0 where t0.id = ? and t0.thru_z > ? and t0.out_z = ?" + lock
     )
     assert coverage.binds == (1, jun, INFINITY_INSTANT)
     writes = [call for call in port.calls if isinstance(call, WriteCall)]
@@ -744,7 +751,7 @@ def test_a_bounded_update_reads_coverage_only_up_to_its_bound() -> None:
         tx.amend(source.edit(value=Decimal("150.00")), until=sep)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
 
     coverage = [call for call in port.calls if isinstance(call, ReadCall)][1]
@@ -778,7 +785,7 @@ def test_a_source_keeps_its_pin_through_projection_and_streaming(delivery: str) 
                 tx.amend(source.edit(value=Decimal("150.00")))
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
     _close, opened = [call for call in port.calls if isinstance(call, WriteCall)]
     head, tail = inserted_rows(opened)
@@ -810,7 +817,7 @@ def test_a_source_with_no_pin_and_no_standing_insertion_names_no_start() -> None
             tx.wire.terminate(opened)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     assert not any(isinstance(call, WriteCall) for call in port.calls)
 
@@ -828,7 +835,9 @@ def test_a_keyed_update_of_a_source_read_at_valid_time_latest_is_refused() -> No
 
     with raises_code(UsageError, "write-instruction-invalid", match="read at Valid-Time LATEST"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
@@ -865,7 +874,9 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
     # subtype's refusal reads exactly as its root's would without either
     # Entity's declarations being asked for their As-Of Axes.
     database = own_root(
-        Database.connect(ScriptedAdapter(Transact()), RATE, clock=FixedClock(FIXED))
+        Database.connect(
+            ScriptedAdapter(Transact()), RATE, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     )
 
     def undeclared(*_args: object) -> object:
@@ -906,7 +917,9 @@ def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
 
     with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
@@ -923,7 +936,9 @@ def test_a_bounded_keyed_terminate_rejects_a_reversed_window_bound() -> None:
 
     with pytest.raises(UsageError, match="requires valid_from < until"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
 
 
@@ -1004,7 +1019,9 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
 
     with raises_code(UsageError, "write-value-not-stored"):
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
 
 
@@ -1094,7 +1111,7 @@ def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
         tx.terminate(node)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2  # close + head
 
@@ -1109,7 +1126,7 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
         tx.terminate(node)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn, concurrency="optimistic")
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2  # close + head
 
@@ -1129,7 +1146,9 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
 
     with pytest.raises(UsageError, match="transaction-time-pin-read-only"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any buffering
 
@@ -1151,7 +1170,9 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
 
     with pytest.raises(TypeError, match="_Elsewhere is not an Entity Class of this model"):
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
 
 
@@ -1261,7 +1282,9 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
 
     with raises_code(UsageError, "write-value-not-stored") as refusal:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert refusal.value.args[1].startswith(f"{mm.Account.identity.canonical}: ")
     assert "tx.insert(...)" in refusal.value.args[1]
@@ -1366,7 +1389,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
     ]
 
 
@@ -1382,7 +1405,7 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
     ]
 
 
@@ -1401,7 +1424,7 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() ->
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton"))
     ]
 
 
@@ -1443,9 +1466,9 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_executes_after_that_delete
 
     db_for(PERSON, port).transact(fn)
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton")),
-        WriteCall("delete from person where id = ?", (9,)),
-        WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace")),
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton")),
+        WriteCall("delete from px.person where id = ?", (9,)),
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace")),
     ]
 
 
@@ -1465,7 +1488,7 @@ def test_a_bounded_terminate_of_a_pending_insert_leaves_its_tail_and_refuses_a_r
             tx.insert(fresh, valid_from=opened_from)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
@@ -1492,7 +1515,9 @@ def test_an_insert_after_a_bounded_terminate_of_a_flushed_insert_is_still_refuse
 
     with raises_code(UsageError, "write-value-already-stored"):
         own_root(
-            Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+            Database.connect(
+                port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
@@ -1533,7 +1558,9 @@ def test_a_value_carrying_foreign_lifecycle_sources_state_is_refused_by_both_fam
 
     with raises_code(UsageError, "write-value-foreign-lifecycle"):
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
 
 
@@ -1575,7 +1602,9 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
 
     with raises_code(UsageError, "write-value-not-stored"):
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
 
 
@@ -1641,7 +1670,7 @@ def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key()
 
     db_for(PERSON, port).transact(fn)
     assert port.calls[-2:] == [
-        WriteCall("update person set name = ? where id = ?", ("Grace", 1)),
+        WriteCall("update px.person set name = ? where id = ?", ("Grace", 1)),
         CommitCall(),
     ]
 

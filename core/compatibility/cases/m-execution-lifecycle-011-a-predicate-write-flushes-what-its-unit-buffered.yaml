@@ -22,8 +22,8 @@ when:
       note: buffer an insert; nothing reads it back, so nothing flushes yet
       statements:
         - sql:
-            postgres: insert into wallet(id, owner, balance) values (?, ?, ?)
-            mariadb: insert into wallet(id, owner, balance) values (?, ?, ?)
+            postgres: insert into px.wallet(id, owner, balance) values (?, ?, ?)
+            mariadb: insert into px.wallet(id, owner, balance) values (?, ?, ?)
           binds: [4, Turing, "50.00"]
     - uow: counted
       write:
@@ -41,8 +41,8 @@ when:
       note: its Flush delivers the buffered insert first, so the update matches wallets 1, 3, and 4; wallet 1 already belongs to Ada and still counts
       statements:
         - sql:
-            postgres: update wallet set owner = ? where balance < ?
-            mariadb: update wallet set owner = ? where balance < ?
+            postgres: update px.wallet set owner = ? where balance < ?
+            mariadb: update px.wallet set owner = ? where balance < ?
           binds: [Ada, "200.00"]
     - uow: counted
       write:
@@ -58,8 +58,8 @@ when:
       note: a Flush of its own holding only its statement, which matches nothing
       statements:
         - sql:
-            postgres: delete from wallet where balance < ?
-            mariadb: delete from wallet where balance < ?
+            postgres: delete from px.wallet where balance < ?
+            mariadb: delete from px.wallet where balance < ?
           binds: ["-1.00"]
     - uow: counted
       write:
@@ -77,11 +77,12 @@ when:
 then:
   databaseCalls: 3
   tableState:
-    wallet:
-      - { id: 1, owner: Ada, balance: "100.00" }
-      - { id: 2, owner: Linus, balance: "250.00" }
-      - { id: 3, owner: Ada, balance: "10.00" }
-      - { id: 4, owner: Ada, balance: "50.00" }
+    px:
+      wallet:
+        - { id: 1, owner: Ada, balance: "100.00" }
+        - { id: 2, owner: Linus, balance: "250.00" }
+        - { id: 3, owner: Ada, balance: "10.00" }
+        - { id: 4, owner: Ada, balance: "50.00" }
   executionLifecycle:
     roots:
       - execution: 1

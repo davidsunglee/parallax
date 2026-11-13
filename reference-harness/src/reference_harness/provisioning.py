@@ -24,8 +24,9 @@ __all__ = ["apply_given", "provision", "provision_empty"]
 def provision(case: Case, db: DatabaseProvider) -> None:
     """Put *db* into *case*'s declared starting state, discarding whatever it held.
 
-    Destructive and complete: the database is reset, the setup model's derived DDL
-    is applied to the empty schema, its fixtures are loaded, and the case's own
+    Destructive and complete: every location the case binding places the setup
+    model in is reset, the setup model's derived DDL is applied to them, its
+    fixtures are loaded, and the case's own
     ``given.corrupt`` entries are written over them. The setup model is the case's
     ``given.provisioningModel`` where it names one and its read model otherwise
     (:attr:`~reference_harness.case.Case.setup_model`). A lane whose case builds
@@ -37,9 +38,10 @@ def provision(case: Case, db: DatabaseProvider) -> None:
     the fixtures land reaches it on every provider without a dialect-specific
     document update (`m-case-format` *Corrupting stored state*).
     """
-    db.reset()
-    db.apply_ddl(ddl_for(case.setup_model, db.dialect))
-    load_model(case.setup_model, db, case.corrupt)
+    placement = case.setup_placement(db.dialect)
+    db.reset(placement.qualifiers)
+    db.apply_ddl(ddl_for(case.setup_model, placement))
+    load_model(case.setup_model, db, placement, case.corrupt)
 
 
 def provision_empty(case: Case, db: DatabaseProvider) -> None:
@@ -51,10 +53,11 @@ def provision_empty(case: Case, db: DatabaseProvider) -> None:
     in which case the model's fixtures are loaded first so the sequence can mutate
     a pre-existing persisted row.
     """
-    db.reset()
-    db.apply_ddl(ddl_for(case.setup_model, db.dialect))
+    placement = case.setup_placement(db.dialect)
+    db.reset(placement.qualifiers)
+    db.apply_ddl(ddl_for(case.setup_model, placement))
     if case.load_fixtures:
-        load_model(case.setup_model, db)
+        load_model(case.setup_model, db, placement)
 
 
 def apply_given(case: Case, db: DatabaseProvider) -> None:

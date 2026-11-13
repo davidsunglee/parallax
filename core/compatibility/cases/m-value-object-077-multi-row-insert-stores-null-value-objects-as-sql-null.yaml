@@ -19,8 +19,8 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: insert into customer(id, name, address) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))
-            mariadb: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+            postgres: insert into px.customer(id, name, address) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))
+            mariadb: insert into px.customer(id, name, address) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
           binds:
             postgres:
               - [301, 302, 303]
@@ -45,16 +45,16 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[]))
-            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?, ?, ?)
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where t0.id = any(cast(? as bigint[]))
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where t0.id in (?, ?, ?)
           binds: { postgres: [[301, 302, 303]], mariadb: [301, 302, 303] }
       referenceSql:
         postgres: >-
-          select id, name, address from customer
+          select id, name, address from px.customer
           where (id in (301, 303) and address is null)
           or (id = 302 and jsonb_typeof(address -> 'city') = 'null' and jsonb_typeof(address -> 'geo') = 'null')
         mariadb: >-
-          select id, name, address from customer
+          select id, name, address from px.customer
           where (id in (301, 303) and address is null)
           or (id = 302 and json_type(json_extract(address, '$.city')) = 'NULL' and json_type(json_extract(address, '$.geo')) = 'NULL')
       expectRows:

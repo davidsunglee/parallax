@@ -46,6 +46,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.core.internal.write_plan import ObjectKey
 from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
+from tests._support.bindings import bound_model
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -131,7 +132,11 @@ class _Production:
 
     def __init__(self, meta: Metamodel) -> None:
         self.meta = meta
-        simulated = SimulatedWriteSteps(build_write_planner(meta).payloads, meta, POSTGRES)
+        simulated = SimulatedWriteSteps(
+            build_write_planner(bound_model(meta)).payloads,
+            bound_model(meta),
+            POSTGRES,
+        )
         self.uow = UnitOfWork(
             settings=TransactionSettings(),
             lifetime=TxnAttemptLifetime(),
@@ -140,7 +145,7 @@ class _Production:
             execute_write_steps=simulated,
             execute_counted_step=simulated.counted,
             acquire_rows=HeldRows(meta),
-            planner=build_write_planner(meta),
+            planner=build_write_planner(bound_model(meta)),
             actor_identity=TEST_ACTOR_IDENTITY,
         )
         self.captured: dict[str, ReadEvidenceByFetchedRow] = {}

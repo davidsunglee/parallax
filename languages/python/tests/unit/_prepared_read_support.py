@@ -19,6 +19,7 @@ from dataclasses import replace
 from typing import Literal
 
 from parallax.core.internal import predicate as oa
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from parallax.core.internal.db_port import Row
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
@@ -34,6 +35,7 @@ from parallax.core.internal.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.document_reads import fold_mapping_rows, folded_names
 from tests._support.sql import compile_projected_read, compile_read
 
@@ -63,10 +65,12 @@ def _latest(
 _COMPILED: dict[tuple[int, str | EntityIdentity], tuple[Metamodel, CompiledRead]] = {}
 
 
-def compiled_read(model: Metamodel, entity: str | EntityIdentity) -> CompiledRead:
+def compiled_read(
+    model: Metamodel, entity: str | EntityIdentity, binding: DatabaseBinding = TEST_BINDING
+) -> CompiledRead:
     """The instance-form read of every ``entity`` row as of latest, compiled once
-    per model and Entity as a find compiles it. ``entity`` is a bare declared name
-    or an exact identity."""
+    per model and Entity as a find compiles it, under ``binding``. ``entity`` is
+    a bare declared name or an exact identity."""
     address = (id(model), entity)
     held = _COMPILED.get(address)
     if held is None or held[0] is not model:
@@ -78,7 +82,7 @@ def compiled_read(model: Metamodel, entity: str | EntityIdentity) -> CompiledRea
             model,
             compile_read(
                 oa.TrueNode(),
-                model,
+                ResolvedBinding(model, binding),
                 POSTGRES,
                 metadata,
                 temporal=_latest(model, metadata.identity) or None,
@@ -99,6 +103,7 @@ def bound_read(
     entity: str | EntityIdentity,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
+    binding: DatabaseBinding = TEST_BINDING,
 ) -> ReadRowConverter:
     """:func:`compiled_read` bound against ``model`` routing by
     ``correlation_members``, once per model, Entity, and selection, as a read
@@ -106,11 +111,11 @@ def bound_read(
     address = (id(model), entity, correlation_members)
     held = _BOUND.get(address)
     if held is None or held[0] is not model:
-        compiled = compiled_read(model, entity)
+        compiled = compiled_read(model, entity, binding)
         held = _BOUND[address] = (
             model,
             bind(
-                CatalogedModel(model),
+                CatalogedModel(model, binding),
                 compiled.result_contract,
                 compiled.projection,
                 correlation_members=correlation_members,

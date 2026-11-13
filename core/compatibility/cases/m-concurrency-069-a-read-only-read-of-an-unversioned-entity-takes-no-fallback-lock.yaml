@@ -18,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ?
+        postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.id = ?
       binds: [1]
-  referenceSql: select id, owner, balance from wallet where id = 1
+  referenceSql: select id, owner, balance from px.wallet where id = 1
   rows:
     - { id: 1, owner: Ada, balance: "100.00" }
   databaseCalls: 1

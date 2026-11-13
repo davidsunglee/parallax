@@ -15,14 +15,14 @@ when:
       - A:
           statements:
             - sql:
-                postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? for share of t0
-                mariadb: select t0.id, t0.owner, t0.balance from wallet t0 where t0.id = ? lock in share mode
+                postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.id = ? lock in share mode
               binds: [1]
       - B:
           statements:
             - sql:
-                postgres: update wallet set balance = ? where id = ?
-                mariadb: update wallet set balance = ? where id = ?
+                postgres: update px.wallet set balance = ? where id = ?
+                mariadb: update px.wallet set balance = ? where id = ?
               binds: ["999.00", 1]
 then:
   errorClass: lockWaitTimeout

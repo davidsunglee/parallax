@@ -27,6 +27,7 @@ from parallax.conformance._mechanism.envelope import (
 from parallax.conformance._mechanism.flat_rows import flat_rows
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import (
+    case_binding,
     case_entity,
     case_serving_model,
     family_declarer,
@@ -69,7 +70,7 @@ from parallax.core.execution_lifecycle import (
     FlushFinished,
     TransactionAttemptStarted,
 )
-from parallax.core.internal import inheritance, storage_layout, temporal_read
+from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import (
     ConflictError,
     InternalError,
@@ -82,6 +83,7 @@ from parallax.core.internal.concurrency import (
     ConcurrencyPreference,
     concurrency_facet_of,
 )
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from parallax.core.internal.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
@@ -587,7 +589,7 @@ def _unlicensed(instruction: PreparedKeyedInstruction, model: AcceptedMetamodel)
 @contextlib.contextmanager
 def _simulated_unit(
     model: AcceptedMetamodel,
-    dialect: Dialect,
+    binding: DatabaseBinding,
     concurrency: ConcurrencyPreference,
     tx_instant: str,
     *,
@@ -605,8 +607,10 @@ def _simulated_unit(
     lifetime closes however the transaction ends, and a failure or ``rollback``
     discards what the unit of work holds.
     """
-    planner = build_write_planner(model)
-    steps = SimulatedWriteSteps(planner.payloads, model, dialect)
+    resolved = ResolvedBinding(model, binding)
+    dialect = resolved.dialect
+    planner = build_write_planner(resolved)
+    steps = SimulatedWriteSteps(planner.payloads, resolved, dialect)
     lifetime = TxnAttemptLifetime()
     uow = UnitOfWork(
         settings=TransactionSettings(
@@ -644,12 +648,12 @@ def _lower_marker_unit(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     prepare: WirePreparer,
-    dialect: Dialect,
+    binding: DatabaseBinding,
     concurrency: ConcurrencyPreference,
     tx_instant: str,
 ) -> tuple[LoweredStatement, ...]:
     prepared = prepare(instruction)
-    with _simulated_unit(model, dialect, concurrency, tx_instant, rollback=False) as unit:
+    with _simulated_unit(model, binding, concurrency, tx_instant, rollback=False) as unit:
         unit.buffer(_ResolvedWrite(prepared, None))
     return unit.statements
 
@@ -658,7 +662,7 @@ def lower_writes(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
     prepare: WirePreparer,
-    dialect: Dialect,
+    binding: DatabaseBinding,
     concurrency: ConcurrencyPreference,
     tx_instant: str,
     *,
@@ -672,12 +676,12 @@ def lower_writes(
     translated = read_submissions(model, entries)
     if _framework_unit(translated):
         statements = _lower_marker_unit(
-            translated[0].instruction, model, prepare, dialect, concurrency, tx_instant
+            translated[0].instruction, model, prepare, binding, concurrency, tx_instant
         )
         _check_statement_count_consistency(entries, len(statements))
         return statements
     resolved = _resolve_entries(entries, model, prepare, translated)
-    with _simulated_unit(model, dialect, concurrency, tx_instant, rollback=rollback) as unit:
+    with _simulated_unit(model, binding, concurrency, tx_instant, rollback=rollback) as unit:
         for write in resolved:
             unit.buffer(write)
     statements = unit.statements
@@ -698,7 +702,7 @@ def _prepared_case_predicate_write(
 def _lower_predicate_write_step(
     prepared: PreparedPredicateInstruction,
     model: AcceptedMetamodel,
-    dialect: Dialect,
+    binding: DatabaseBinding,
     concurrency: ConcurrencyPreference,
     *,
     rollback: bool,
@@ -718,7 +722,7 @@ def _lower_predicate_write_step(
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     with _simulated_unit(
-        model, dialect, concurrency, INERT_CLOCK_INSTANT, rollback=rollback
+        model, binding, concurrency, INERT_CLOCK_INSTANT, rollback=rollback
     ) as unit:
         unit.execute_predicate(prepared)
     statements = tuple(unit.statements)
@@ -811,7 +815,7 @@ def _lower_scenario_step(
                 cast("Mapping[str, object]", raw_write), context.model, context.prepare
             ),
             context.model,
-            dialect,
+            context.binding,
             context.concurrency,
             rollback=rollback,
         )
@@ -821,7 +825,7 @@ def _lower_scenario_step(
         entries,
         context.model,
         context.prepare,
-        dialect,
+        context.binding,
         context.concurrency,
         entry_instant(entries[0]),
         rollback=rollback,
@@ -855,7 +859,7 @@ def _lower_group(
     lowered: list[LoweredStep] = []
     with _simulated_unit(
         model,
-        dialect,
+        context.binding,
         context.concurrency,
         group_tx_instant(steps, range(start, end + 1)),
         rollback=doomed,
@@ -938,6 +942,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         concurrency,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -970,7 +975,8 @@ def _write_sequence_lowered(
     ``observedVersion`` control key."""
     model = load_case_metamodel(case)
     prepare = case_wire_preparer(model)
-    dialect = dialect_for(dialect_name)
+    del dialect_name  # the case's PostgreSQL binding names the one dialect this lane lowers for
+    binding = case_binding(case)
     concurrency = case_document.concurrency(case)
     try:
         return [
@@ -980,7 +986,7 @@ def _write_sequence_lowered(
                     [entry],
                     model,
                     prepare,
-                    dialect,
+                    binding,
                     concurrency,
                     entry_instant(entry),
                     rollback=False,
@@ -1184,7 +1190,7 @@ def execute_keyed_unit(
             translated[0].instruction,
             context.model,
             context.prepare,
-            port.dialect,
+            context.binding,
             context.concurrency,
             tx_instant,
         )
@@ -1323,20 +1329,25 @@ def _group_is_doomed(case: case_format.Case, label: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class CaseContext:
-    """Fixed case model, planning preference, root options, and authored transaction keywords.
+    """Fixed case model and binding, planning preference, root options, and
+    authored transaction keywords.
 
     The dialect comes from each executing connection, which may differ across
     interleaved groups."""
 
     serving: ServingModel
     model: AcceptedMetamodel
+    binding: DatabaseBinding
     concurrency: ConcurrencyPreference
     requests: case_format.TransactionKeywords
     options: TxnOptions
     prepare: WirePreparer = field(init=False, repr=False, compare=False)
+    resolved: ResolvedBinding = field(init=False, repr=False, compare=False)
+    """The case model under the binding its serving model was prepared under."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "prepare", case_wire_preparer(self.model))
+        object.__setattr__(self, "resolved", ResolvedBinding(self.model, self.binding))
 
 
 def _empty_buffered() -> list[tuple[int, int]]:
@@ -1710,6 +1721,7 @@ def _run_state_graded_case(
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         case_document.concurrency(case),
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -1746,7 +1758,13 @@ def _run_state_graded_case(
     except LOWERING_ERRORS as exc:
         raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     return ScenarioRun(
-        [], database_calls, refusals, rows_observed, [], units, read_table_state(port, model)
+        [],
+        database_calls,
+        refusals,
+        rows_observed,
+        [],
+        units,
+        read_table_state(port, context.resolved),
     )
 
 
@@ -1796,6 +1814,7 @@ def run_scenario_case(
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         concurrency,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -1863,7 +1882,7 @@ def run_scenario_case(
     emissions = envelope.emissions([(step.pointer, step.statements) for step in lowered])
     then = case.document.get("then")
     table_state = (
-        read_table_state(port, model)
+        read_table_state(port, context.resolved)
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
@@ -1893,7 +1912,7 @@ def run_write_sequence_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], dict[str, list[MappingRow]], int]:
+) -> tuple[list[Emission], dict[str, dict[str, list[MappingRow]]], int]:
     """Run a writeSequence: each entry executes as its OWN unit of work through
     ``db.transact`` (one transaction per entry, never the whole sequence in
     one), then report the ordered per-entry
@@ -1916,6 +1935,7 @@ def run_write_sequence_case(
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         case_document.concurrency(case),
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -1933,31 +1953,34 @@ def run_write_sequence_case(
     except LOWERING_ERRORS as exc:
         raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
     emissions = envelope.emissions(lowered)
-    table_state = read_table_state(port, model)
+    table_state = read_table_state(port, context.resolved)
     return emissions, table_state, database_calls
 
 
 def read_table_state(
-    port: DatabaseConnection, model: AcceptedMetamodel
-) -> dict[str, list[MappingRow]]:
-    """The committed contents of every model table, in canonical wire form.
+    port: DatabaseConnection, resolved: ResolvedBinding
+) -> dict[str, dict[str, list[MappingRow]]]:
+    """The committed contents of every model table, in canonical wire form, keyed
+    by the qualifier, then the physical name ``resolved`` places it under.
 
-    Every compiled Table Layout is read back exactly once, projecting its
-    complete slot sequence in canonical order, so the observation reports the
-    whole physical row ``then.tableState`` asserts — including a slot that only
-    a sibling table-per-hierarchy variant fills (e.g. `m-inheritance-007`'s
-    inserted `CardPayment` row still reports the cash-only `tendered` column as
-    `null`).
+    Every compiled Table Layout is read back exactly once, from the physical
+    table its mapping owner resolves to, projecting its complete slot sequence
+    in canonical order, so the observation reports the whole physical row
+    ``then.tableState`` asserts — including a slot that only a sibling
+    table-per-hierarchy variant fills (e.g. `m-inheritance-007`'s inserted
+    `CardPayment` row still reports the cash-only `tendered` column as `null`).
     """
     dialect = port.dialect
-    state: dict[str, list[MappingRow]] = {}
-    for layout in storage_layout.storage_layout_facet_of(model).tables:
+    model = resolved.meta
+    state: dict[str, dict[str, list[MappingRow]]] = {}
+    projection = ActualWireProjection(model)
+    for table in resolved.tables:
+        layout = table.layout
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
-        sql = f"select {columns} from {dialect.quote(layout.table.name)}"
-        rows = port.execute(sql, [])
-        projection = ActualWireProjection(model)
+        rows = port.execute(f"select {columns} from {table.sql}", [])
         keys = tuple(slot.column.name for slot in layout.columns)
-        state[layout.table.name] = [
+        (qualifier,) = table.physical.qualifier
+        state.setdefault(qualifier, {})[table.physical.name] = [
             projection.table_row(layout, dict(zip(keys, row, strict=True))) for row in rows
         ]
     return state
@@ -2253,7 +2276,7 @@ def run_conflict_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], int, dict[str, list[MappingRow]] | None, int]:
+) -> tuple[list[Emission], int, dict[str, dict[str, list[MappingRow]]] | None, int]:
     """Run a `conflict` case (`m-case-format`): the single-attempt form
     (`when.write`), or the `when.attempts` sequence production's own bounded
     retry loop replays — every attempt one physical attempt of ONE
@@ -2334,7 +2357,7 @@ def run_conflict_case(
     ]
     then = case.document.get("then")
     table_state = (
-        read_table_state(port, model)
+        read_table_state(port, ResolvedBinding(model, case_binding(case)))
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )

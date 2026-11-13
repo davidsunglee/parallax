@@ -1390,7 +1390,7 @@ def test_the_span_port_answers_each_read_with_the_milestones_it_names_once() -> 
         ],
     )
     coverage = (
-        "select t0.id, t0.from_z from t t0 where ((t0.id = ? and ((t0.thru_z > ? and "
+        "select t0.id, t0.from_z from px.t t0 where ((t0.id = ? and ((t0.thru_z > ? and "
         "t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?))) or (t0.id = ? and "
         "t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ?"
     )
@@ -1399,7 +1399,7 @@ def test_the_span_port_answers_each_read_with_the_milestones_it_names_once() -> 
     answered = port.execute(coverage, [*windows, 2, _START, _START + _DAY, INFINITY])
     assert answered == [(1, _START + _DAY), (1, _START + _DAY * 2), (2, _START)]
     as_of = (
-        "select t0.id, t0.from_z from t t0 where t0.id between ? and ? and "
+        "select t0.id, t0.from_z from px.t t0 where t0.id between ? and ? and "
         "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     )
     middle = _START + _DAY / 2
@@ -1430,18 +1430,18 @@ def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_const
     assert transport is not None
     assert port.work() == lowering_support.FlushWork(0, 0, 0, 0, 0)
     assert port.execute_write(
-        "insert into t(a, b) select * from unnest(cast(? as bigint[]), cast(? as bigint[]))",
+        "insert into px.t(a, b) select * from unnest(cast(? as bigint[]), cast(? as bigint[]))",
         [ArrayBind(INT64, [1, 1, 1]), ArrayBind(INT64, [2, 2, 2])],
     )
-    assert port.execute_write("update t set a = ? where b = ?", [1, 2])
+    assert port.execute_write("update px.t set a = ? where b = ?", [1, 2])
     assert port.execute(
-        "update t t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
+        "update px.t t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
         "with ordinality v(c1, c2, ord) where t.b = v.c1 returning v.ord",
         [ArrayBind(INT64, [7, 8]), ArrayBind(INT64, [1, 2])],
     ) == [(1,), (2,)]
     result = transport(
-        [_Statement("update t set a = ? where b = ?", (1, 2)) for _ in range(3)]
-        + [_Statement("delete from t where b = ?", (StructuredDocument({"b": 1}),))]
+        [_Statement("update px.t set a = ? where b = ?", (1, 2)) for _ in range(3)]
+        + [_Statement("delete from px.t where b = ?", (StructuredDocument({"b": 1}),))]
     )
     assert result == OrderedWriteResultComplete((1, 1, 1, 1))
     assert serialized == [2, 2, 2, 2, 2, 2, 1]
@@ -1846,7 +1846,7 @@ def test_a_batch_insert_flushes_every_row_as_one_collapsed_column_array_insert(
     assert case.work == port.work()
     (statement,) = port.executed
     matched = re.fullmatch(
-        r"insert into (\w+)\(([\w, ]+)\) select \* from unnest\((.+)\)", statement.sql
+        r"insert into px\.(\w+)\(([\w, ]+)\) select \* from unnest\((.+)\)", statement.sql
     )
     assert matched is not None, statement.sql
     table, columns = matched.group(1), matched.group(2).split(", ")

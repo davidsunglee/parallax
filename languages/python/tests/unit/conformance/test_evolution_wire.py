@@ -117,11 +117,12 @@ from parallax.evolution.internal.model_evolution import (
 )
 from parallax.evolution.internal.schema_delta import (
     CreatedIndex,
-    PhysicalLocation,
     SchemaDelta,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
+from tests._support.bindings import physical_table
 from tests.unit._metamodel_support import identity
 
 _ORDER = identity("Order")
@@ -684,11 +685,11 @@ def test_a_delta_cell_carries_the_statements_and_the_created_index_provenance() 
     name = PhysicalIndexName("pxi_widget_label_0")
     cell = schema_cell(
         SchemaDelta(
-            statements=("create table widget (id bigint not null)",),
+            statements=("create table px.widget (id bigint not null)",),
             created_indices=(
                 CreatedIndex(
                     physical_index_name=name,
-                    physical_table=Table(name="widget"),
+                    physical_table=physical_table("widget"),
                     logical_index_identity=IndexIdentity(_ORDER, "widget_label"),
                     unique=True,
                 ),
@@ -697,11 +698,11 @@ def test_a_delta_cell_carries_the_statements_and_the_created_index_provenance() 
     )
     assert cell == {
         "delta": {
-            "statements": ["create table widget (id bigint not null)"],
+            "statements": ["create table px.widget (id bigint not null)"],
             "createdIndices": [
                 {
                     "physicalIndexName": name.value,
-                    "physicalTable": "widget",
+                    "physicalTable": {"qualifier": ["px"], "name": "widget"},
                     "logicalIndexIdentity": f"{_ORDER_SPELLING}.widget_label",
                     "unique": True,
                 }
@@ -716,7 +717,7 @@ def test_an_unsupported_prerequisite_is_placed_by_its_extension_alone() -> None:
         (
             UnsupportedSchemaOperation(
                 kind="CreateExtension",
-                location=PhysicalLocation(extension="btree_gist"),
+                location=SchemaTarget(extension="btree_gist"),
                 reason="ignored by the corpus",
                 caused_by=(EntityAdded(entity=_ORDER),),
             ),
@@ -743,14 +744,14 @@ def test_an_unsupported_cell_names_each_operation_its_place_and_its_causes() -> 
         (
             UnsupportedSchemaOperation(
                 kind="CreateTable",
-                location=PhysicalLocation(table=Table(name="widget")),
+                location=SchemaTarget(table=physical_table("widget")),
                 reason="ignored by the corpus",
                 caused_by=(EntityAdded(entity=_ORDER),),
             ),
             UnsupportedSchemaOperation(
                 kind="CreateIndex",
-                location=PhysicalLocation(
-                    table=Table(name="widget"),
+                location=SchemaTarget(
+                    table=physical_table("widget"),
                     column=Column(name="label"),
                     index=PhysicalIndexName("pxi_widget_label_0"),
                 ),
@@ -764,13 +765,13 @@ def test_an_unsupported_cell_names_each_operation_its_place_and_its_causes() -> 
             "operations": [
                 {
                     "kind": "CreateTable",
-                    "physicalLocation": {"table": "widget"},
+                    "physicalLocation": {"table": {"qualifier": ["px"], "name": "widget"}},
                     "causedBy": [{"kind": "EntityAdded", "entity": _ORDER_SPELLING}],
                 },
                 {
                     "kind": "CreateIndex",
                     "physicalLocation": {
-                        "table": "widget",
+                        "table": {"qualifier": ["px"], "name": "widget"},
                         "column": "label",
                         "index": "pxi_widget_label_0",
                     },

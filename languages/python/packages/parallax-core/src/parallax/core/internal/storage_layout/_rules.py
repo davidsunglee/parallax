@@ -24,7 +24,6 @@ from parallax.core.internal.metamodel import (
     MetamodelIssue,
     ModelLocation,
     Multiplicity,
-    Table,
 )
 from parallax.core.internal.model_formation import ModuleIdentity
 from parallax.core.internal.relationship import project_join_endpoints
@@ -38,9 +37,6 @@ __all__ = [
 
 STORAGE_LAYOUT_MODULE: Final[ModuleIdentity] = "m-storage-layout"
 """The module identity owning physical Table composition and collisions."""
-
-TABLE_MAPPING_COLLISION: Final[IssueCode] = "storage-layout-table-mapping-collision"
-"""A later independent mapping owner names an already-owned structural Table."""
 
 COLUMN_COLLISION: Final[IssueCode] = "storage-layout-column-collision"
 """Two distinct contributors in one uniquely owned Table claim one Column."""
@@ -56,7 +52,6 @@ contract adds no document-path, expression, or provider-native index form."""
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
-        TABLE_MAPPING_COLLISION,
         COLUMN_COLLISION,
         DOCUMENT_MEMBER_COLUMN_OVERRIDE,
         INDEX_OVER_DOCUMENT_MEMBER,
@@ -256,41 +251,17 @@ def _index_issues(
 
 
 def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
-    """Report independent-owner, physical-Column, and layout defects.
+    """Report physical-Column and layout defects, mapping owner by mapping owner.
 
-    Mapping owners are visited in canonical Entity Identity order. Every later
-    owner of one Table relates to the first owner, and a multiply owned Table is
-    excluded from Column validation so no secondary diagnostic obscures its
-    invalid physical boundary. The complete mapping pass finishes before any
-    uniquely owned Table enters Column validation.
-
+    Owners are visited in canonical Entity Identity order. Equal declared table
+    names of independent owners are no defect here: whether two owners share a
+    physical table is decided when a Database Binding resolves the model.
     """
     groups = project_table_groups(candidate)
     document_groups = _document_groups(candidate, groups, project_join_endpoints(candidate))
     documents_by_owner = {document.group.mapping_owner: document for document in document_groups}
-    first_owners: dict[Table, InheritanceTableGroup] = {}
-    multiply_owned: set[Table] = set()
     issues: list[MetamodelIssue] = []
     for group in groups:
-        first = first_owners.get(group.table)
-        if first is None:
-            first_owners[group.table] = group
-            continue
-        multiply_owned.add(group.table)
-        issues.append(
-            MetamodelIssue(
-                TABLE_MAPPING_COLLISION,
-                group.mapping_provenance,
-                (first.mapping_provenance,),
-                message=(
-                    f"Table {group.table.name!r} is already mapped by independent owner "
-                    f"{first.mapping_owner.canonical!r}"
-                ),
-            )
-        )
-    for group in groups:
-        if group.table in multiply_owned:
-            continue
         column_issues = _column_issues(group, documents_by_owner.get(group.mapping_owner))
         issues.extend(column_issues)
     issues.extend(_override_issues(document_groups))

@@ -27,14 +27,16 @@ KIND_RANK: Final[Mapping[type, int]] = {
 }
 
 
-def order_key(operation: TableOperation) -> tuple[str, int, str]:
-    """The physical Table, then the operation kind, then the member addressed.
+def order_key(operation: TableOperation) -> tuple[str, tuple[str, ...], int, str]:
+    """The physical Table — its local name, then its qualifier — then the
+    operation kind, then the member addressed.
 
     Leading with the Table rather than with the kind keeps one Table's statements
     together and keeps the whole output stable under an edit to an unrelated
-    Table.
+    Table; the qualifier tells equal local names in different locations apart.
     """
-    return (table_of(operation).name, KIND_RANK[type(operation)], member_key(operation))
+    physical = table_of(operation).physical
+    return (physical.name, physical.qualifier, KIND_RANK[type(operation)], member_key(operation))
 
 
 def order(plan: Sequence[PhysicalOperation]) -> tuple[PhysicalOperation, ...]:

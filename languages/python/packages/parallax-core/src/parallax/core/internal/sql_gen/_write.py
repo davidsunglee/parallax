@@ -14,6 +14,7 @@ from parallax.core.internal.base import (
     NeutralType,
     StructuredDocument,
 )
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import (
     JSON_NULL,
     ArrayBind,
@@ -104,9 +105,10 @@ class _DocumentAssignments:
 type _Cell = tuple[str, object, NeutralType | None]
 
 
-def _ctx(meta: Metamodel, dialect: Dialect) -> StatementBuilder:
+def _ctx(resolved: ResolvedBinding, dialect: Dialect) -> StatementBuilder:
+    meta = resolved.meta
     return StatementBuilder(
-        meta,
+        resolved,
         inheritance.inheritance_facet_of(meta),
         storage_layout.storage_layout_facet_of(meta),
         dialect,
@@ -141,7 +143,7 @@ def entity_layout(meta: Metamodel, entity: CompiledEntity) -> EntityLayoutView |
 
 
 def compile_write_step(
-    step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
+    step: PlannedStep, payload: StepPayload, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """Lower one finalized step to its single DML statement, storing exactly the
     values ``payload`` prepared for it.
@@ -152,20 +154,22 @@ def compile_write_step(
     """
     match step:
         case PlannedInsert():
-            return _lower_insert(step, _insert_payload(step, payload), meta, dialect)
+            return _lower_insert(step, _insert_payload(step, payload), resolved, dialect)
         case PlannedUpdate():
-            return _lower_update(step, _assignment_payload(step, payload), meta, dialect)
+            return _lower_update(step, _assignment_payload(step, payload), resolved, dialect)
         case PlannedClose() | PlannedTemporalRevision():
-            return _lower_milestone_update(step, _assignment_payload(step, payload), meta, dialect)
+            return _lower_milestone_update(
+                step, _assignment_payload(step, payload), resolved, dialect
+            )
         case PlannedDelete():
             _require_no_payload(step, payload)
-            return _lower_delete(step, meta, dialect)
+            return _lower_delete(step, resolved, dialect)
         case PlannedTemporalRemoval():
             _require_no_payload(step, payload)
-            return _lower_milestone_removal(step, meta, dialect)
+            return _lower_milestone_removal(step, resolved, dialect)
         case PlannedTemporalGuard():
             _require_no_payload(step, payload)
-            return _lower_milestone_guard(step, meta, dialect)
+            return _lower_milestone_guard(step, resolved, dialect)
 
 
 def non_insert_parameter_ceiling(
@@ -274,17 +278,17 @@ class InsertStatementBuilder:
     groups into one physical statement.
     """
 
-    __slots__ = ("_dialect", "_meta", "_rows", "_slots")
+    __slots__ = ("_dialect", "_resolved", "_rows", "_slots")
 
     def __init__(
         self,
         slots: RowSlots,
         cells: tuple[object, ...],
-        meta: Metamodel,
+        resolved: ResolvedBinding,
         dialect: Dialect,
     ) -> None:
         self._slots = slots
-        self._meta = meta
+        self._resolved = resolved
         self._dialect = dialect
         self._rows = [_placed(slots, cells)]
 
@@ -295,7 +299,7 @@ class InsertStatementBuilder:
         slots = self._slots
         dialect = self._dialect
         rows = self._rows
-        statement = _ctx(self._meta, dialect)
+        statement = _ctx(self._resolved, dialect)
         column_sql = ", ".join([dialect.quote(column) for column in slots.columns])
         if len(rows) == 1:
             statement.bind_managed_row(
@@ -336,7 +340,7 @@ def _placed(slots: RowSlots, cells: tuple[object, ...]) -> tuple[object, ...]:
 
 
 def _lower_insert(
-    step: PlannedInsert, payload: InsertPayload, meta: Metamodel, dialect: Dialect
+    step: PlannedInsert, payload: InsertPayload, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """One logical insert's statement: every entry through one
     :class:`InsertStatementBuilder`, or the pk-gen `max` INSERT…SELECT form when
@@ -346,7 +350,7 @@ def _lower_insert(
     slots = payload.slots
     first, *rest = payload.rows
     if not any(isinstance(value, MaxPlusOne) for value in first):
-        builder = InsertStatementBuilder(slots, first, meta, dialect)
+        builder = InsertStatementBuilder(slots, first, resolved, dialect)
         for cells in rest:
             builder.append(cells)
         return builder.finish()
@@ -358,7 +362,7 @@ def _lower_insert(
         )
     column_sql = ", ".join(dialect.quote(column) for column in slots.columns)
     table = slots.table
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     select_parts: list[str] = []
     returned: list[str] = []
     for column, value, neutral_type in zip(
@@ -423,9 +427,9 @@ class GroupedEffectBuilder:
     effect.
     """
 
-    __slots__ = ("_columns", "_dialect", "_first", "_meta", "_slots")
+    __slots__ = ("_columns", "_dialect", "_first", "_resolved", "_slots")
 
-    def __init__(self, slots: EffectSlots, meta: Metamodel, dialect: Dialect) -> None:
+    def __init__(self, slots: EffectSlots, resolved: ResolvedBinding, dialect: Dialect) -> None:
         if not dialect.binds_arrays:
             raise InternalError(
                 SQL_GENERATION_FAILED,
@@ -433,7 +437,7 @@ class GroupedEffectBuilder:
                 "a grouped effect has no other form",
             )
         self._slots = slots
-        self._meta = meta
+        self._resolved = resolved
         self._dialect = dialect
         self._columns: tuple[list[object], ...] = tuple([[] for _ in slots.element_types])
         self._first: tuple[_Effect, AssignmentPayload | None] | None = None
@@ -485,7 +489,8 @@ class GroupedEffectBuilder:
             self._first = (step, assigned)
 
     def finish(self) -> LoweredStatement:
-        slots, meta, dialect = self._slots, self._meta, self._dialect
+        slots, resolved, dialect = self._slots, self._resolved, self._dialect
+        meta = resolved.meta
         if self._first is None:
             raise InternalError(
                 SQL_GENERATION_FAILED, f"{slots.entity.canonical}: a grouped effect holds an effect"
@@ -493,7 +498,7 @@ class GroupedEffectBuilder:
         first, payload = self._first
         entity = _entity(meta, first.entity)
         view = _layout(meta, entity)
-        ctx = _ctx(meta, dialect)
+        ctx = _ctx(resolved, dialect)
         terms = _sourced_terms(first, payload, slots, view, entity, dialect)
         for _, binds in terms:
             ctx.bind_structural_all(binds)
@@ -511,7 +516,7 @@ class GroupedEffectBuilder:
         names = ", ".join([f"c{index + 1}" for index in range(len(element_types))])
         source = f"unnest({arrays}) with ordinality {_SOURCE}({names}, ord)"
         where = " and ".join(_sourced_address(ctx, first, slots, view, entity, dialect))
-        table = view.layout.table.name
+        table = ctx.table_sql(view.layout)
         if isinstance(first, PlannedDelete | PlannedTemporalRemoval):
             return ctx.finish(
                 f"delete from {table} t using {source} where {where} returning {_SOURCE}.ord"
@@ -632,7 +637,7 @@ def _sourced_address(
 
 
 def _lower_update(
-    step: PlannedUpdate, payload: AssignmentPayload, meta: Metamodel, dialect: Dialect
+    step: PlannedUpdate, payload: AssignmentPayload, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """`update <table> set <assigned columns> = ?, …[ where <target>[ and <gate>]]`.
 
@@ -644,22 +649,23 @@ def _lower_update(
     it before the document. That position is a rendering fact, not a layout one,
     mirroring the version gate's own "binds last" rule one clause family over.
     """
+    meta = resolved.meta
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     version = step.concurrency.attribute if isinstance(step.concurrency, Versioned) else None
     assignment_sql = _assignment_clause(ctx, view, meta, payload, version, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {assignment_sql}{_where(where_sql, gate_sql)}"
+        f"update {ctx.table_sql(view.layout)} set {assignment_sql}{_where(where_sql, gate_sql)}"
     )
 
 
 def _lower_milestone_update(
     step: PlannedClose | PlannedTemporalRevision,
     payload: AssignmentPayload,
-    meta: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
 ) -> LoweredStatement:
     """`update <table> set <assignments> where <milestone target>[ and <gate>]`.
@@ -672,56 +678,62 @@ def _lower_milestone_update(
     Transaction-Time end alone; a revision assigns payload and, where it moves,
     the Valid-Time start.
     """
+    meta = resolved.meta
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     assignment_sql = _assignment_clause(ctx, view, meta, payload, None, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {assignment_sql}{_where(where_sql, gate_sql)}"
+        f"update {ctx.table_sql(view.layout)} set {assignment_sql}{_where(where_sql, gate_sql)}"
     )
 
 
 def _lower_milestone_removal(
-    step: PlannedTemporalRemoval, meta: Metamodel, dialect: Dialect
+    step: PlannedTemporalRemoval, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """`delete from <table> where <milestone target>[ and <gate>]`."""
+    meta = resolved.meta
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
-    return ctx.finish(f"delete from {view.layout.table.name}{_where(where_sql, gate_sql)}")
+    return ctx.finish(f"delete from {ctx.table_sql(view.layout)}{_where(where_sql, gate_sql)}")
 
 
 def _lower_milestone_guard(
-    step: PlannedTemporalGuard, meta: Metamodel, dialect: Dialect
+    step: PlannedTemporalGuard, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """`update <table> set <axis start> = <axis start> where <milestone target> and <gate>`.
 
     The gated Transaction-Time start is assigned to itself, so the statement
     matches and locks exactly the row a close would and changes no value of it.
     """
+    meta = resolved.meta
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     column = dialect.quote(_column(view, step.concurrency.start_attribute, entity))
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {column} = {column}{_where(where_sql, gate_sql)}"
+        f"update {ctx.table_sql(view.layout)} set {column} = {column}{_where(where_sql, gate_sql)}"
     )
 
 
-def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+def _lower_delete(
+    step: PlannedDelete, resolved: ResolvedBinding, dialect: Dialect
+) -> LoweredStatement:
     """`delete from <table>[ where <target>[ and <gate>]]`."""
+    meta = resolved.meta
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    ctx = _ctx(meta, dialect)
+    ctx = _ctx(resolved, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
-    return ctx.finish(f"delete from {view.layout.table.name}{_where(where_sql, gate_sql)}")
+    return ctx.finish(f"delete from {ctx.table_sql(view.layout)}{_where(where_sql, gate_sql)}")
 
 
 def _where(*conditions: str) -> str:
@@ -840,7 +852,7 @@ def _target_predicate(
             temporal = resolve_temporal_visibility(
                 predicate, target=entity, model=meta, resolution=NoRootSelections()
             )
-            compiled = compile_write_predicate(temporal, meta, dialect, entity)
+            compiled = compile_write_predicate(temporal, ctx.resolved, dialect, entity)
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
                 raise InternalError(
                     SQL_GENERATION_FAILED, "compiled predicate carries no lowered statement"

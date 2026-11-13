@@ -370,7 +370,7 @@ def _group_realization(cell: Cell, objects: int, *, ordered: bool) -> Realizatio
 
 def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
     """What ``cell``'s one transaction presents to a connection acquired from
-    a server that does, or does not, offer ``ordered`` write transport.
+    px.a server that does, or does not, offer ``ordered`` write transport.
 
     Each Write Group closes every seeded milestone its objects' windows reach,
     in one grouped effect or one contiguous run, and then opens every object's

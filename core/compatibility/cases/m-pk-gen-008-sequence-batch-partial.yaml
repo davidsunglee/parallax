@@ -26,19 +26,20 @@ when:
 then:
   statements:
     - sql:
-        postgres: update pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
       binds: [3, pass_seq]
     - sql:
-        postgres: insert into pass(id, zone) select * from unnest(cast(? as bigint[]), cast(? as text[]))
-        mariadb: insert into pass(id, zone) values (?, ?), (?, ?)
+        postgres: insert into px.pass(id, zone) select * from unnest(cast(? as bigint[]), cast(? as text[]))
+        mariadb: insert into px.pass(id, zone) values (?, ?), (?, ?)
       binds:
         postgres:
           - [1, 2]
           - [north, south]
         mariadb: [1, north, 2, south]
   tableState:
-    pass:
-      - { id: 1, zone: north }
-      - { id: 2, zone: south }
+    px:
+      pass:
+        - { id: 1, zone: north }
+        - { id: 2, zone: south }
   databaseCalls: 2

@@ -26,7 +26,7 @@ when:
       note: observe balance 1's current milestone (150.00, known from 2024-06-01) — the ONE state both buffered writes settle against
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [1, infinity]
       expectRows:
         - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
@@ -48,7 +48,7 @@ when:
       note: the terminate supersedes the buffered update, so the close is emitted alone and no successor milestone is chained
       statements:
         - sql:
-            postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+            postgres: update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, infinity, "2024-06-01T00:00:00.000000Z"]
     - uow: superseded-chain
       objectQuery:
@@ -64,14 +64,15 @@ when:
       note: the dependent find MUST observe no current milestone; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?
           binds: [1, infinity]
       expectRows: []
 then:
   databaseCalls: 3
   tableState:
-    balance:
-      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
-      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
-      - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+    px:
+      balance:
+        - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+        - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+        - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }

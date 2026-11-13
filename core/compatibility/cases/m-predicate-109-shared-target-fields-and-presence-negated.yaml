@@ -16,7 +16,7 @@ when:
               - notEq: {path: parallax.compatibility.Basket.owner.name, value: Cy}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)'}
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from px.basket t0 left join px.basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)', mariadb: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from px.basket t0 left join px.basket_owner t1 on t1.id = t0.owner_id where not (not t1.id is null and t1.active = ? and t1.name <> ?)'}
     binds: [true, Cy]
   graph:
     Basket:

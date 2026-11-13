@@ -15,12 +15,15 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.snapshot import Database, ScopedDatabase
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ScriptedAdapter
 from tests.unit._transact_support import ACCOUNT, FIXED
 
 
 def test_root_and_scope_expose_disjoint_ownership_and_execution_surfaces() -> None:
-    root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    root = Database.connect(
+        ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+    )
     scoped = root.using_database_login()
 
     assert not hasattr(root, "find")
@@ -39,7 +42,9 @@ def test_root_and_scope_expose_disjoint_ownership_and_execution_surfaces() -> No
 
 
 def test_scopes_are_immutable_and_only_roots_can_construct_them() -> None:
-    root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    root = Database.connect(
+        ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+    )
     scoped = root.using_database_login()
 
     with pytest.raises(TypeError, match="authority selection"):
@@ -55,7 +60,9 @@ class _Principal:
 
 
 def test_required_scope_arguments_are_positional_only() -> None:
-    root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    root = Database.connect(
+        ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+    )
     principal = _Principal("alice", "role-a")
     scoped = root.using_database_login()
 
@@ -75,14 +82,16 @@ def test_a_misspelled_read_policy_is_refused_before_the_adapter_opens() -> None:
             raise AssertionError("a misspelled policy must be refused before opening")
 
     with pytest.raises(ValueError, match="read_policy must be one of"):
-        Database.connect(_Unopenable(), ACCOUNT, read_policy=cast("Any", "reader"))
+        Database.connect(
+            _Unopenable(), ACCOUNT, read_policy=cast("Any", "reader"), binding=TEST_BINDING
+        )
 
 
 def test_a_reader_policy_over_a_writer_only_runtime_closes_what_connect_opened() -> None:
     adapter = ScriptedAdapter()
 
     with pytest.raises(ValueError, match="needs a reader route"):
-        Database.connect(adapter, ACCOUNT, read_policy="reader_only")
+        Database.connect(adapter, ACCOUNT, read_policy="reader_only", binding=TEST_BINDING)
 
     assert adapter.closes == 1
     assert adapter.acquisitions == 0

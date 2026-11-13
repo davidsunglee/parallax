@@ -36,6 +36,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.root_ownership import own_root
 
 
@@ -52,9 +53,9 @@ _WIDE: Final = 70_001
 
 
 def _seeded(profile_run: Any) -> None:
-    profile_run.reset(_META, {})
+    profile_run.reset(_META, {}, TEST_BINDING)
     profile_run.port.execute_write(
-        "insert into ckt_purse(id, owner, balance) "
+        "insert into px.ckt_purse(id, owner, balance) "
         "select key, 'o' || key, 1.00 from generate_series(1, ?) key",
         [_WIDE],
     )
@@ -62,7 +63,7 @@ def _seeded(profile_run: Any) -> None:
 
 def _database(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=provider)
+        connect(profile_run.port, _MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -95,10 +96,10 @@ def test_a_collapsed_update_and_delete_wider_than_the_parameter_limit_each_run_o
     db.transact(amend)
     (update,) = _writes(provider)
     assert update.statement.sql == (
-        "update ckt_purse set balance = ? where id = any(cast(? as bigint[]))"
+        "update px.ckt_purse set balance = ? where id = any(cast(? as bigint[]))"
     )
     assert update.statement.binds == (Decimal("9.50"), ArrayBind(INT64, keys))
-    assert _scalar(profile_run, "select count(*) from ckt_purse where balance = 9.50") == _WIDE
+    assert _scalar(profile_run, "select count(*) from px.ckt_purse where balance = 9.50") == _WIDE
 
     def delete(tx: TxnContext) -> None:
         for purse in tx.find(Purse.where(Purse.id >= 1)).results():
@@ -106,9 +107,9 @@ def test_a_collapsed_update_and_delete_wider_than_the_parameter_limit_each_run_o
 
     db.transact(delete)
     _update, removal = _writes(provider)
-    assert removal.statement.sql == "delete from ckt_purse where id = any(cast(? as bigint[]))"
+    assert removal.statement.sql == "delete from px.ckt_purse where id = any(cast(? as bigint[]))"
     assert removal.statement.binds == (ArrayBind(INT64, keys),)
-    assert _scalar(profile_run, "select count(*) from ckt_purse") == 0
+    assert _scalar(profile_run, "select count(*) from px.ckt_purse") == 0
 
 
 _ID: Final = AttributeIdentity(Purse.identity, "id")
@@ -122,7 +123,9 @@ def _composite(*keys: tuple[int, str]) -> KeyTarget:
 def _execute(profile_run: Any, step: PlannedStep) -> int:
     port = profile_run.port
     dialect = port.dialect
-    statement = lowered(step, LayoutPayloadPreparer(_META), _META, dialect)
+    statement = lowered(
+        step, LayoutPayloadPreparer(bound_model(_META)), bound_model(_META), dialect
+    )
     assert len(statement.binds) == (3 if isinstance(step, PlannedUpdate) else 2)
     return port.execute_write(statement.sql, list(statement.binds))
 
@@ -146,9 +149,14 @@ def test_a_several_column_key_membership_selects_only_rows_whose_whole_key_it_li
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(width, MISSING_TARGET),
     )
-    statement = lowered(update, LayoutPayloadPreparer(_META), _META, profile_run.port.dialect)
+    statement = lowered(
+        update,
+        LayoutPayloadPreparer(bound_model(_META)),
+        bound_model(_META),
+        profile_run.port.dialect,
+    )
     assert statement.sql == (
-        "update ckt_purse set balance = ? where (id, owner) in "
+        "update px.ckt_purse set balance = ? where (id, owner) in "
         "(select * from unnest(cast(? as bigint[]), cast(? as text[])))"
     )
     assert statement.binds[1:] == (
@@ -157,10 +165,14 @@ def test_a_several_column_key_membership_selects_only_rows_whose_whole_key_it_li
     )
 
     assert _execute(profile_run, update) == matching
-    assert _scalar(profile_run, "select count(*) from ckt_purse where balance = 7.25") == matching
+    assert (
+        _scalar(profile_run, "select count(*) from px.ckt_purse where balance = 7.25") == matching
+    )
     unlisted = f"(mod(id, 2) = 0 or id > {width})"
     assert (
-        _scalar(profile_run, f"select count(*) from ckt_purse where balance = 7.25 and {unlisted}")
+        _scalar(
+            profile_run, f"select count(*) from px.ckt_purse where balance = 7.25 and {unlisted}"
+        )
         == 0
     )
 
@@ -171,5 +183,5 @@ def test_a_several_column_key_membership_selects_only_rows_whose_whole_key_it_li
         affected_rows=ExactCount(width, MISSING_TARGET),
     )
     assert _execute(profile_run, delete) == matching
-    assert _scalar(profile_run, "select count(*) from ckt_purse") == _WIDE - matching
-    assert _scalar(profile_run, "select count(*) from ckt_purse where balance = 7.25") == 0
+    assert _scalar(profile_run, "select count(*) from px.ckt_purse") == _WIDE - matching
+    assert _scalar(profile_run, "select count(*) from px.ckt_purse where balance = 7.25") == 0

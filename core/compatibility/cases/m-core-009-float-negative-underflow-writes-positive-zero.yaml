@@ -14,20 +14,21 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into writable_scalars(id, f32, f64) values (?, ?, ?)
-        mariadb: insert into writable_scalars(id, f32, f64) values (?, ?, ?)
+        postgres: insert into px.writable_scalars(id, f32, f64) values (?, ?, ?)
+        mariadb: insert into px.writable_scalars(id, f32, f64) values (?, ?, ?)
       binds:
         - 1
         - 0.0
         - 0.0
   tableState:
-    writable_scalars:
-      - id: 1
-        f32: 0.0
-        f64: 0.0
-        payload: null
-        local_time: null
-        external_id: null
-        amount: null
-        label: null
+    px:
+      writable_scalars:
+        - id: 1
+          f32: 0.0
+          f64: 0.0
+          payload: null
+          local_time: null
+          external_id: null
+          amount: null
+          label: null
   databaseCalls: 1

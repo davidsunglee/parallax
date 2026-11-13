@@ -20,13 +20,13 @@ from parallax.core.internal.base import (
     UsageError,
     detach_json_container,
 )
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import JSON_NULL, ArrayBind, Dialect
 from parallax.core.internal.inheritance import InheritanceFacet
 from parallax.core.internal.metamodel import (
     AttributeMetadata,
     CompiledEntity,
     EntityIdentity,
-    Metamodel,
     TablePerHierarchy,
 )
 from parallax.core.internal.predicate import StringOp
@@ -497,6 +497,8 @@ class CandidateRenderScope(ColumnScope, Protocol):
 
     def next_alias(self) -> str: ...
 
+    def table_sql(self, layout: TableLayout) -> str: ...
+
     def child(self, entity: CompiledEntity, alias: str) -> CandidateRenderScope: ...
 
 
@@ -571,17 +573,19 @@ class StatementBuilder[RowScope = object]:
         "dialect",
         "facet",
         "meta",
+        "resolved",
         "storage",
     )
 
     def __init__(
         self,
-        meta: Metamodel,
+        resolved: ResolvedBinding,
         facet: InheritanceFacet,
         storage: StorageLayoutFacet,
         dialect: Dialect,
     ) -> None:
-        self.meta = meta
+        self.resolved = resolved
+        self.meta = resolved.meta
         self.facet = facet
         self.storage = storage
         self.dialect = dialect
@@ -785,6 +789,10 @@ class StatementBuilder[RowScope = object]:
             self._append_typed_span(span.shifted(offset))
         for override in statement.wire_bind_overrides:
             self._wire_overrides[offset + override.index] = override.value
+
+    def table_sql(self, layout: TableLayout) -> str:
+        """The resolved SQL reference to ``layout``'s physical table."""
+        return self.resolved.table(layout.mapping_owner).sql
 
     def finish(self, sql: str) -> LoweredStatement:
         """Seal the statement with its bind metadata."""

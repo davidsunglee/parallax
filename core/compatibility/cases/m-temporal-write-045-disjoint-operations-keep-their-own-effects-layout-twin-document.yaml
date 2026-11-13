@@ -114,136 +114,137 @@ then:
     adjacent: { outcome: committed }
     distinct: { outcome: committed }
   tableState:
-    sequence_span:
-      - id: 1
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2024-11-01T00:00:00.000000Z"
-        payload: { amount: 100, label: a, memo: { note: n1 } }
-      - id: 1
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-02-01T00:00:00.000000Z"
-        in_z: "2024-11-01T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: a, memo: { note: n1 } }
-      - id: 1
-        from_z: "2024-02-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-01T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 150, label: a, memo: { note: n1 } }
-      - id: 1
-        from_z: "2024-04-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2024-11-01T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: a, memo: { note: n1 } }
-      - id: 1
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: "2024-08-01T00:00:00.000000Z"
-        in_z: "2024-11-01T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 300, label: r, memo: { note: rr } }
-      - id: 1
-        from_z: "2024-08-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2024-11-01T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: a, memo: { note: n1 } }
-      - id: 2
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2024-11-02T00:00:00.000000Z"
-        payload: { amount: 100, label: b, memo: { note: n2 } }
-      - id: 2
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-02-01T00:00:00.000000Z"
-        in_z: "2024-11-02T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: b, memo: { note: n2 } }
-      - id: 2
-        from_z: "2024-02-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-02T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 250, label: q, memo: { note: q } }
-      - id: 2
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2024-11-02T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: b, memo: { note: n2 } }
-      - id: 3
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2024-11-03T00:00:00.000000Z"
-        payload: { amount: 100, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: "2024-02-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-02-01T00:00:00.000000Z"
-        thru_z: "2024-03-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 110, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-03-01T00:00:00.000000Z"
-        thru_z: "2024-04-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-04-01T00:00:00.000000Z"
-        thru_z: "2024-05-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 120, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-05-01T00:00:00.000000Z"
-        thru_z: "2024-06-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-15T00:00:00.000000Z"
-        out_z: "2024-11-03T00:00:00.000000Z"
-        payload: { amount: 200, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-06-01T00:00:00.000000Z"
-        thru_z: "2024-07-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 200, label: c, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-07-01T00:00:00.000000Z"
-        thru_z: "2024-08-01T00:00:00.000000Z"
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 200, label: w, memo: { note: n3 } }
-      - id: 3
-        from_z: "2024-08-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2024-11-03T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 200, label: c, memo: { note: n3 } }
-      - id: 4
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-01T00:00:00.000000Z"
-        out_z: "2023-12-15T00:00:00.000000Z"
-        payload: { amount: 90, label: d, memo: { note: n4 } }
-      - id: 4
-        from_z: "2024-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2023-12-15T00:00:00.000000Z"
-        out_z: infinity
-        payload: { amount: 100, label: d, memo: { note: n4 } }
+    px:
+      sequence_span:
+        - id: 1
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2024-11-01T00:00:00.000000Z"
+          payload: { amount: 100, label: a, memo: { note: n1 } }
+        - id: 1
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-02-01T00:00:00.000000Z"
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: a, memo: { note: n1 } }
+        - id: 1
+          from_z: "2024-02-01T00:00:00.000000Z"
+          thru_z: "2024-04-01T00:00:00.000000Z"
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 150, label: a, memo: { note: n1 } }
+        - id: 1
+          from_z: "2024-04-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: a, memo: { note: n1 } }
+        - id: 1
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: "2024-08-01T00:00:00.000000Z"
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 300, label: r, memo: { note: rr } }
+        - id: 1
+          from_z: "2024-08-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: a, memo: { note: n1 } }
+        - id: 2
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2024-11-02T00:00:00.000000Z"
+          payload: { amount: 100, label: b, memo: { note: n2 } }
+        - id: 2
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-02-01T00:00:00.000000Z"
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: b, memo: { note: n2 } }
+        - id: 2
+          from_z: "2024-02-01T00:00:00.000000Z"
+          thru_z: "2024-04-01T00:00:00.000000Z"
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 250, label: q, memo: { note: q } }
+        - id: 2
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: b, memo: { note: n2 } }
+        - id: 3
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2024-11-03T00:00:00.000000Z"
+          payload: { amount: 100, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-02-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-02-01T00:00:00.000000Z"
+          thru_z: "2024-03-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 110, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-03-01T00:00:00.000000Z"
+          thru_z: "2024-04-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-04-01T00:00:00.000000Z"
+          thru_z: "2024-05-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 120, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-05-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: "2024-11-03T00:00:00.000000Z"
+          payload: { amount: 200, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: "2024-07-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 200, label: c, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-07-01T00:00:00.000000Z"
+          thru_z: "2024-08-01T00:00:00.000000Z"
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 200, label: w, memo: { note: n3 } }
+        - id: 3
+          from_z: "2024-08-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-03T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 200, label: c, memo: { note: n3 } }
+        - id: 4
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2023-12-15T00:00:00.000000Z"
+          payload: { amount: 90, label: d, memo: { note: n4 } }
+        - id: 4
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: infinity
+          payload: { amount: 100, label: d, memo: { note: n4 } }

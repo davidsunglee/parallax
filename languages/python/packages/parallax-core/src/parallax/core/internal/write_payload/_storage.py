@@ -14,6 +14,7 @@ from parallax.core.internal.base import (
     ManagedValue,
     NeutralType,
 )
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.document_codec import (
     NULL,
     DocumentPatch,
@@ -35,7 +36,6 @@ from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     MemberIdentity,
-    Metamodel,
     Multiplicity,
 )
 from parallax.core.internal.storage_layout import (
@@ -99,17 +99,18 @@ _DIRECT, _COLLECTION, _OCCURRENCE, _SHARED, _CONSTANT = range(5)
 
 
 class StorageCatalog:
-    """Where one accepted model stores each member of every Entity owning rows.
+    """Where one resolved model stores each member of every Entity owning rows.
 
     Each Entity's storage is compiled the first time a write of it asks and
     kept for the catalog's lifetime, so a catalog costs nothing per Entity the
     model declares but never writes.
     """
 
-    __slots__ = ("_entities", "_layouts")
+    __slots__ = ("_entities", "_layouts", "_resolved")
 
-    def __init__(self, model: Metamodel) -> None:
-        self._layouts = storage_layout.storage_layout_facet_of(model)
+    def __init__(self, resolved: ResolvedBinding) -> None:
+        self._resolved = resolved
+        self._layouts = storage_layout.storage_layout_facet_of(resolved.meta)
         self._entities: dict[EntityIdentity, EntityStorage] = {}
 
     def entity(self, identity: EntityIdentity) -> EntityStorage:
@@ -120,7 +121,8 @@ class StorageCatalog:
                 raise InternalError(
                     WRITE_PLANNING_FAILED, f"{identity.name!r}: write target has no effective table"
                 )
-            storage = self._entities[identity] = EntityStorage(view)
+            table = self._resolved.table(view.layout.mapping_owner).sql
+            storage = self._entities[identity] = EntityStorage(view, table)
         return storage
 
 
@@ -168,9 +170,9 @@ class EffectShape:
 
 
 class EntityStorage:
-    """One Entity's Table Layout, compiled for writing: each slot in Table
-    Layout order, the document-resident members of its shared Structured
-    Column, the Row Slots of each presence first seen, at most
+    """One Entity's Table Layout, compiled for writing: its resolved table's SQL
+    reference, each slot in Table Layout order, the document-resident members of
+    its shared Structured Column, the Row Slots of each presence first seen, at most
     :data:`ROW_SLOTS_PER_ENTITY` of them, and likewise the Effect Slots of each
     effect shape first seen."""
 
@@ -189,10 +191,10 @@ class EntityStorage:
         "view",
     )
 
-    def __init__(self, view: EntityLayoutView) -> None:
+    def __init__(self, view: EntityLayoutView, table: str) -> None:
         self.view = view
         self.entity = view.entity
-        self.table = view.layout.table.name
+        self.table = table
         selection = view.member_selection
         bindings = selection.bindings
         members = selection.shape.members

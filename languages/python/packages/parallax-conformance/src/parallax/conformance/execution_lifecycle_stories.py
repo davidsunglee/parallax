@@ -18,6 +18,7 @@ from parallax.core.execution_lifecycle import (
     TransactionInvocationStarted,
 )
 from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -84,7 +85,7 @@ class JoinedShape:
 
 
 def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> JoinedShape:
     """A joined call is an activity under the OUTER attempt and runs no attempt
     of its own — observed through an installed Provider, while the work runs.
@@ -98,7 +99,7 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
     while the boundary ran is the whole account of it.
     """
     provider = JoinedShapeProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as database:
+    with connect(adapter, model, binding=binding, lifecycle_provider=provider) as database:
         db = database.using_database_login()
 
         def outer(tx: TxnContext) -> Account:

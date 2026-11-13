@@ -14,14 +14,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
-        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where json_value(t0.profile, ?) = ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where json_value(t0.profile, ?) = ?
       binds:
         postgres: [token, '123e4567-e89b-12d3-a456-426614174000']
         mariadb: ['$.token', '123e4567-e89b-12d3-a456-426614174000']
   referenceSql:
-    postgres: select id, label from sample where profile ->> 'token' = '123e4567-e89b-12d3-a456-426614174000'
-    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.token')), 'null') = '123e4567-e89b-12d3-a456-426614174000'
+    postgres: select id, label from px.sample where profile ->> 'token' = '123e4567-e89b-12d3-a456-426614174000'
+    mariadb: select id, label from px.sample where nullif(json_unquote(json_extract(profile, '$.token')), 'null') = '123e4567-e89b-12d3-a456-426614174000'
   rows:
     - { id: 1, label: Ada }
   databaseCalls: 1

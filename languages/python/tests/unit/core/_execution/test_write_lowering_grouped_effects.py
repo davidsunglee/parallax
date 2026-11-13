@@ -54,6 +54,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     SelfIncrement,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._grouped_effect_support import (
@@ -91,12 +92,18 @@ def grouped(
 ) -> tuple[WriteGroup, list[LoweredStatement]]:
     """``steps``, one per settled write, laid out as one Write Group by the
     model's own shapes, and the statements a dry traversal of it lowers to."""
-    preparer = LayoutPayloadPreparer(meta) if payloads is None else payloads
+    preparer = LayoutPayloadPreparer(bound_model(meta)) if payloads is None else payloads
     group = WriteGroup.from_members(
         ((SettledWrite(), (step,)) for step in steps), effect_shape=preparer.effect_shape
     )
     statements = list(
-        stream_physical(group.steps, preparer, meta, dialect, effect_spans=group.effect_spans)
+        stream_physical(
+            group.steps,
+            preparer,
+            bound_model(meta),
+            dialect,
+            effect_spans=group.effect_spans,
+        )
     )
     return group, statements
 
@@ -117,7 +124,7 @@ def test_distinct_values_of_unversioned_updates_bind_one_array_per_source_column
     group, (statement,) = grouped(WALLET, steps)
     assert group.effect_spans == (EffectSpan(0, 3, group.effect_spans[0].shape),)
     assert statement.sql == (
-        "update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), "
+        "update px.wallet t set balance = v.c2 from unnest(cast(? as bigint[]), "
         "cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
         "returning v.ord"
     )
@@ -134,7 +141,7 @@ def test_versioned_updates_bind_each_gate_and_planned_advance_per_row() -> None:
     ]
     _, (statement,) = grouped(ACCOUNT, steps)
     assert statement.sql == (
-        "update account t set balance = v.c3, version = v.c4 from unnest("
+        "update px.account t set balance = v.c3, version = v.c4 from unnest("
         "cast(? as bigint[]), cast(? as int[]), cast(? as decimal[]), cast(? as int[])) "
         "with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 "
         "returning v.ord"
@@ -154,7 +161,7 @@ def test_a_table_per_hierarchy_tag_guard_binds_once_after_the_arrays() -> None:
     ]
     _, (statement,) = grouped(PAYMENT, steps)
     assert statement.sql == (
-        "update payment t set amount = v.c2 from unnest(cast(? as bigint[]), "
+        "update px.payment t set amount = v.c2 from unnest(cast(? as bigint[]), "
         "cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
         "and t.kind = ? returning v.ord"
     )
@@ -172,7 +179,7 @@ def test_a_composite_key_binds_one_array_per_key_column() -> None:
     ]
     _, (statement,) = grouped(WALLET, steps)
     assert statement.sql == (
-        "update wallet t set balance = v.c3 from unnest(cast(? as bigint[]), "
+        "update px.wallet t set balance = v.c3 from unnest(cast(? as bigint[]), "
         "cast(? as text[]), cast(? as decimal[])) with ordinality v(c1, c2, c3, ord) "
         "where t.id = v.c1 and t.owner = v.c2 returning v.ord"
     )
@@ -200,7 +207,7 @@ def test_document_paths_bind_once_and_their_values_one_jsonb_array_each() -> Non
     ]
     _, (statement,) = grouped(LEDGER_DOCUMENT, steps)
     assert statement.sql == (
-        "update tag_ledger t set payload = jsonb_set(jsonb_set(jsonb_set(t.payload, ?, v.c4), "
+        "update px.tag_ledger t set payload = jsonb_set(jsonb_set(jsonb_set(t.payload, ?, v.c4), "
         "?, v.c5), ?, v.c6), version = v.c3 from unnest(cast(? as bigint[]), "
         "cast(? as int[]), cast(? as int[]), cast(? as jsonb[]), cast(? as jsonb[]), "
         "cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, c5, c6, ord) "
@@ -243,7 +250,7 @@ def test_a_value_object_column_and_a_collection_column_bind_whole_documents() ->
     ]
     _, (statement,) = grouped(LEDGER_COLUMNS, steps)
     assert statement.sql == (
-        "update tag_ledger t set tags = v.c4, route = v.c5, version = v.c3 from unnest("
+        "update px.tag_ledger t set tags = v.c4, route = v.c5, version = v.c3 from unnest("
         "cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[]), "
         "cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, c5, ord) "
         "where t.id = v.c1 and t.version = v.c2 returning v.ord"
@@ -263,8 +270,8 @@ def test_differing_member_sets_form_one_grouped_effect_each_in_first_appearance_
     group, statements = grouped(WALLET, steps)
     assert group.steps == tuple(steps[i] for i in (0, 2, 1, 3))
     assert [statement.sql.split(" from ")[0] for statement in statements] == [
-        "update wallet t set balance = v.c2",
-        "update wallet t set owner = v.c2",
+        "update px.wallet t set balance = v.c2",
+        "update px.wallet t set owner = v.c2",
     ]
 
 
@@ -276,11 +283,11 @@ def test_a_lone_effect_of_its_shape_lowers_as_it_would_alone() -> None:
     ]
     group, statements = grouped(WALLET, steps)
     assert len(group.effect_spans) == 1
-    assert statements[1].sql == "update wallet set owner = ? where id = ?"
+    assert statements[1].sql == "update px.wallet set owner = ? where id = ?"
 
 
 def test_a_registry_advance_runs_alone_beside_grouped_updates() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     advance = dataclasses.replace(
         update(WALLET, "Wallet", 2, {"balance": Decimal("2.00")}),
         assignments=PlannedAssignments(
@@ -295,17 +302,17 @@ def test_a_registry_advance_runs_alone_beside_grouped_updates() -> None:
         update(WALLET, "Wallet", 4, {"balance": Decimal("4.00")}),
     ]
     group, statements = grouped(WALLET, steps, payloads=preparer)
-    assert [statement.sql.startswith("update wallet t") for statement in statements] == [
+    assert [statement.sql.startswith("update px.wallet t") for statement in statements] == [
         False,
         False,
         True,
     ]
-    assert statements[1].sql == "update wallet set balance = balance + ? where id = ?"
+    assert statements[1].sql == "update px.wallet set balance = balance + ? where id = ?"
     assert group.effect_spans == (EffectSpan(2, 4, group.effect_spans[0].shape),)
 
 
 def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
-    preparer = LayoutPayloadPreparer(PERSON)
+    preparer = LayoutPayloadPreparer(bound_model(PERSON))
     handoff = [
         update(PERSON, "Passport", 1, {"number": "A"}),
         update(PERSON, "Passport", 2, {"personId": 7}),
@@ -316,9 +323,9 @@ def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
     assert group.steps == tuple(handoff)
     assert group.effect_spans == ()
     assert [statement.sql for statement in statements] == [
-        "update passport set number = ? where id = ?",
-        "update passport set person_id = ? where id = ?",
-        "update passport set number = ? where id = ?",
+        "update px.passport set number = ? where id = ?",
+        "update px.passport set person_id = ? where id = ?",
+        "update px.passport set number = ? where id = ?",
     ]
 
 
@@ -350,11 +357,11 @@ def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
     ids=["multi-key-delete", "multi-key-update"],
 )
 def test_effects_outside_the_grouped_kinds_have_no_shape(step: PlannedStep) -> None:
-    assert LayoutPayloadPreparer(WALLET).effect_shape(step) is None
+    assert LayoutPayloadPreparer(bound_model(WALLET)).effect_shape(step) is None
 
 
 def test_shapes_compare_by_value_past_the_retained_slots() -> None:
-    preparer = LayoutPayloadPreparer(PAYMENT)
+    preparer = LayoutPayloadPreparer(bound_model(PAYMENT))
     entity = entity_identity(PAYMENT, "CardPayment")
     for presence in range(ROW_SLOTS_PER_ENTITY + 2):
         preparer.effect_slots(entity, EffectShape(PlannedUpdate, entity, (), presence + 64, None))
@@ -377,7 +384,7 @@ def test_an_array_less_dialect_lowers_every_effect_alone() -> None:
     group, statements = grouped(WALLET, steps, dialect=arrayless)
     assert len(group.effect_spans) == 1
     assert [statement.sql for statement in statements] == [
-        "update wallet set balance = ? where id = ?"
+        "update px.wallet set balance = ? where id = ?"
     ] * 2
 
 
@@ -389,7 +396,7 @@ def test_a_shape_wider_than_the_bind_limit_lowers_every_effect_alone() -> None:
     narrow = dataclasses.replace(POSTGRES, max_bind_parameters=2)
     _, statements = grouped(PAYMENT, steps, dialect=narrow)
     assert [statement.sql for statement in statements] == [
-        "update payment set amount = ? where id = ? and kind = ?"
+        "update px.payment set amount = ? where id = ? and kind = ?"
     ] * 2
 
 
@@ -403,7 +410,7 @@ class _FailingPreparer(LayoutPayloadPreparer):
     __slots__ = ("failing", "failure", "prepared")
 
     def __init__(self, meta: Metamodel, failing: PlannedUpdate, failure: BaseException) -> None:
-        super().__init__(meta)
+        super().__init__(bound_model(meta))
         self.failing = failing
         self.failure = failure
         self.prepared: list[object] = []
@@ -427,7 +434,9 @@ def _span_cursor(
     shape = preparer.effect_shape(steps[0])
     assert shape is not None
     span = EffectSpan(0, len(steps), shape)
-    cursor = LoweringCursor(tuple(steps), preparer, WALLET, POSTGRES, effect_spans=(span,))
+    cursor = LoweringCursor(
+        tuple(steps), preparer, bound_model(WALLET), POSTGRES, effect_spans=(span,)
+    )
     first = cursor.take()
     assert first is not None and cursor.grouped_effect_start(first) is span
     return cursor, span
@@ -462,7 +471,11 @@ def test_the_dry_traversal_answers_the_prefix_then_raises_the_held_failure() -> 
     shape = preparer.effect_shape(steps[0])
     assert shape is not None
     traversal = stream_physical(
-        tuple(steps), preparer, WALLET, POSTGRES, effect_spans=(EffectSpan(0, 3, shape),)
+        tuple(steps),
+        preparer,
+        bound_model(WALLET),
+        POSTGRES,
+        effect_spans=(EffectSpan(0, 3, shape),),
     )
     assert arrays(next(traversal))[0] == (INT64, [1, 2])
     with pytest.raises(_Refused):
@@ -470,23 +483,25 @@ def test_the_dry_traversal_answers_the_prefix_then_raises_the_held_failure() -> 
 
 
 def test_a_grouped_effect_refuses_a_dialect_binding_no_arrays() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     step = update(WALLET, "Wallet", 1, {"balance": Decimal(1)})
     shape = preparer.effect_shape(step)
     assert shape is not None
     slots = preparer.effect_slots(step.entity, shape)
     arrayless = dataclasses.replace(POSTGRES, binds_arrays=False)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="binds no arrays"):
-        GroupedEffectBuilder(slots, WALLET, arrayless)
+        GroupedEffectBuilder(slots, bound_model(WALLET), arrayless)
 
 
 def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     balance = update(WALLET, "Wallet", 1, {"balance": Decimal(1)})
     owner = update(WALLET, "Wallet", 2, {"owner": "Bo", "balance": Decimal(2)})
     shape = preparer.effect_shape(balance)
     assert shape is not None
-    builder = GroupedEffectBuilder(preparer.effect_slots(balance.entity, shape), WALLET, POSTGRES)
+    builder = GroupedEffectBuilder(
+        preparer.effect_slots(balance.entity, shape), bound_model(WALLET), POSTGRES
+    )
     builder.append(balance, preparer.assignments(balance.entity, balance.assignments))
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="does not place"):
         builder.append(owner, preparer.assignments(owner.entity, owner.assignments))
@@ -504,11 +519,13 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
 
 
 def test_a_grouped_effect_refuses_an_effect_gated_otherwise_than_its_shape() -> None:
-    preparer = LayoutPayloadPreparer(ACCOUNT)
+    preparer = LayoutPayloadPreparer(bound_model(ACCOUNT))
     ungated = delete(ACCOUNT, "Account", 1, versioned=True)
     shape = preparer.effect_shape(ungated)
     assert shape is not None
-    builder = GroupedEffectBuilder(preparer.effect_slots(ungated.entity, shape), ACCOUNT, POSTGRES)
+    builder = GroupedEffectBuilder(
+        preparer.effect_slots(ungated.entity, shape), bound_model(ACCOUNT), POSTGRES
+    )
     builder.append(ungated, None)
     with raises_code(
         InternalError,
@@ -520,11 +537,13 @@ def test_a_grouped_effect_refuses_an_effect_gated_otherwise_than_its_shape() -> 
 
 
 def test_a_grouped_effect_keeps_no_payload_but_its_first_past_its_append() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     steps = _three()
     shape = preparer.effect_shape(steps[0])
     assert shape is not None
-    builder = GroupedEffectBuilder(preparer.effect_slots(steps[0].entity, shape), WALLET, POSTGRES)
+    builder = GroupedEffectBuilder(
+        preparer.effect_slots(steps[0].entity, shape), bound_model(WALLET), POSTGRES
+    )
     payloads = [preparer.assignments(step.entity, step.assignments) for step in steps]
     unheld = [sys.getrefcount(payload) for payload in payloads]
     for index, step in enumerate(steps):
@@ -538,7 +557,7 @@ def test_a_grouped_effect_keeps_no_payload_but_its_first_past_its_append() -> No
 
 
 def test_effect_slots_gather_a_whole_row_or_nothing() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     step = _three()[0]
     shape = preparer.effect_shape(step)
     assert shape is not None
@@ -554,27 +573,29 @@ def test_effect_slots_gather_a_whole_row_or_nothing() -> None:
 
 
 def test_a_grouped_effect_holding_no_effect_has_no_statement() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     step = _three()[0]
     shape = preparer.effect_shape(step)
     assert shape is not None
-    builder = GroupedEffectBuilder(preparer.effect_slots(step.entity, shape), WALLET, POSTGRES)
+    builder = GroupedEffectBuilder(
+        preparer.effect_slots(step.entity, shape), bound_model(WALLET), POSTGRES
+    )
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="holds an effect"):
         builder.finish()
 
 
 def test_effect_slots_answer_only_a_shape_of_their_own_entity() -> None:
-    preparer = LayoutPayloadPreparer(PAYMENT)
+    preparer = LayoutPayloadPreparer(bound_model(PAYMENT))
     with raises_code(InternalError, WRITE_PLANNING_FAILED, match="Effect Slots of its own Entity"):
         preparer.effect_slots(entity_identity(PAYMENT, "CardPayment"), "not a shape")
 
 
 def test_a_grouped_effect_opens_only_at_its_own_span() -> None:
-    preparer = LayoutPayloadPreparer(WALLET)
+    preparer = LayoutPayloadPreparer(bound_model(WALLET))
     steps = _three()
     shape = preparer.effect_shape(steps[0])
     assert shape is not None
-    cursor = LoweringCursor(tuple(steps), preparer, WALLET, POSTGRES)
+    cursor = LoweringCursor(tuple(steps), preparer, bound_model(WALLET), POSTGRES)
     first = cursor.take()
     assert first is not None
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="opens at its own span"):
@@ -587,7 +608,7 @@ def test_a_grouped_effect_opens_only_at_its_own_span() -> None:
 def test_unversioned_deletes_bind_one_key_array_and_return_each_removed_ordinal() -> None:
     _, (statement,) = grouped(WALLET, [delete(WALLET, "Wallet", key) for key in (1, 2, 3)])
     assert statement.sql == (
-        "delete from wallet t using unnest(cast(? as bigint[])) with ordinality "
+        "delete from px.wallet t using unnest(cast(? as bigint[])) with ordinality "
         "v(c1, ord) where t.id = v.c1 returning v.ord"
     )
     assert arrays(statement) == [(INT64, [1, 2, 3])]
@@ -597,7 +618,7 @@ def test_gated_deletes_bind_each_rows_observed_version() -> None:
     steps = [delete(ACCOUNT, "Account", 1, observed=3), delete(ACCOUNT, "Account", 2, observed=7)]
     _, (statement,) = grouped(ACCOUNT, steps)
     assert statement.sql == (
-        "delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
+        "delete from px.account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
         "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
     )
     assert arrays(statement) == [(INT64, [1, 2]), (INT32, [3, 7])]
@@ -612,16 +633,16 @@ def test_gated_and_ungated_deletes_of_one_entity_are_distinct_shapes() -> None:
     group, statements = grouped(ACCOUNT, steps)
     assert group.steps == (steps[0], steps[2], steps[1])
     assert [statement.sql for statement in statements] == [
-        "delete from account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
+        "delete from px.account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
         "where t.id = v.c1 returning v.ord",
-        "delete from account where id = ? and version = ?",
+        "delete from px.account where id = ? and version = ?",
     ]
 
 
 def test_table_per_hierarchy_and_composite_key_deletes_keep_the_lone_address() -> None:
     _, (tagged,) = grouped(PAYMENT, [delete(PAYMENT, "CardPayment", key) for key in (1, 2)])
     assert tagged.sql == (
-        "delete from payment t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
+        "delete from px.payment t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
         "where t.id = v.c1 and t.kind = ? returning v.ord"
     )
     assert arrays(tagged)[-1] == ("scalar", ["card"])
@@ -631,7 +652,7 @@ def test_table_per_hierarchy_and_composite_key_deletes_keep_the_lone_address() -
     ]
     _, (statement,) = grouped(WALLET, composite)
     assert statement.sql == (
-        "delete from wallet t using unnest(cast(? as bigint[]), cast(? as text[])) with "
+        "delete from px.wallet t using unnest(cast(? as bigint[]), cast(? as text[])) with "
         "ordinality v(c1, c2, ord) where t.id = v.c1 and t.owner = v.c2 returning v.ord"
     )
 
@@ -643,7 +664,7 @@ def test_transaction_time_closes_bind_their_gate_and_instant_and_share_the_open_
     ]
     _, (statement,) = grouped(BALANCE, steps)
     assert statement.sql == (
-        "update balance t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+        "update px.balance t set out_z = v.c3 from unnest(cast(? as bigint[]), "
         "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality "
         "v(c1, c2, c3, ord) where t.bal_id = v.c1 and t.out_z = ? and t.in_z = v.c2 "
         "returning v.ord"
@@ -663,7 +684,7 @@ def test_bitemporal_closes_bind_each_finite_or_open_valid_end_per_row() -> None:
     ]
     _, (statement,) = grouped(POSITION, steps)
     assert statement.sql == (
-        "update position t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+        "update px.position t set out_z = v.c3 from unnest(cast(? as bigint[]), "
         "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality "
         "v(c1, c2, c3, ord) where t.pos_id = v.c1 and t.thru_z = v.c2 and t.out_z = ? "
         "returning v.ord"
@@ -708,7 +729,7 @@ def test_guards_assign_their_start_to_itself_and_gate_each_rows_observed_start()
     ]
     _, (statement,) = grouped(BALANCE, steps)
     assert statement.sql == (
-        "update balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
+        "update px.balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
         "cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.bal_id = v.c1 "
         "and t.out_z = ? and t.in_z = v.c2 returning v.ord"
     )
@@ -725,7 +746,7 @@ def test_removals_delete_each_addressed_milestone(observed: dt.datetime | None) 
     sources = ", cast(? as timestamptz[])" if observed is not None else ""
     names = "c1, c2, c3" if observed is not None else "c1, c2"
     assert statement.sql == (
-        "delete from position t using unnest(cast(? as bigint[]), cast(? as timestamptz[])"
+        "delete from px.position t using unnest(cast(? as bigint[]), cast(? as timestamptz[])"
         f"{sources}) with ordinality v({names}, ord) where t.pos_id = v.c1 and "
         f"t.thru_z = v.c2 and t.out_z = ?{gate} returning v.ord"
     )
@@ -743,7 +764,7 @@ def test_revisions_assign_payload_and_valid_start_per_row() -> None:
     ]
     _, (statement,) = grouped(POSITION, steps)
     assert statement.sql == (
-        "update position t set val = v.c3, from_z = v.c4 from unnest(cast(? as bigint[]), "
+        "update px.position t set val = v.c3, from_z = v.c4 from unnest(cast(? as bigint[]), "
         "cast(? as timestamptz[]), cast(? as decimal[]), cast(? as timestamptz[])) with "
         "ordinality v(c1, c2, c3, c4, ord) where t.pos_id = v.c1 and t.thru_z = v.c2 and "
         "t.out_z = ? returning v.ord"
@@ -766,7 +787,7 @@ def test_document_revisions_patch_each_path_from_the_source() -> None:
     ]
     _, (statement,) = grouped(COVERAGE_DOCUMENT, steps)
     assert statement.sql == (
-        "update coverage_span t set payload = jsonb_set(t.payload, ?, v.c3) from unnest("
+        "update px.coverage_span t set payload = jsonb_set(t.payload, ?, v.c3) from unnest("
         "cast(? as bigint[]), cast(? as timestamptz[]), cast(? as jsonb[])) with ordinality "
         "v(c1, c2, c3, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? "
         "returning v.ord"
@@ -776,7 +797,7 @@ def test_document_revisions_patch_each_path_from_the_source() -> None:
 
 
 def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefix() -> None:
-    preparer = LayoutPayloadPreparer(COVERAGE_DOCUMENT)
+    preparer = LayoutPayloadPreparer(bound_model(COVERAGE_DOCUMENT))
     steps = [
         revision(
             COVERAGE_DOCUMENT,
@@ -791,7 +812,11 @@ def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefi
     assert shape is not None and preparer.effect_shape(steps[2]) == shape
     span = EffectSpan(0, 3, shape)
     cursor = LoweringCursor(
-        tuple(steps), preparer, COVERAGE_DOCUMENT, POSTGRES, effect_spans=(span,)
+        tuple(steps),
+        preparer,
+        bound_model(COVERAGE_DOCUMENT),
+        POSTGRES,
+        effect_spans=(span,),
     )
     first = cursor.take()
     assert first is not None and cursor.grouped_effect_start(first) is span
@@ -803,7 +828,7 @@ def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefi
 
 
 def test_each_milestone_kind_and_gate_is_its_own_shape() -> None:
-    preparer = LayoutPayloadPreparer(POSITION)
+    preparer = LayoutPayloadPreparer(bound_model(POSITION))
     target = milestone(POSITION, "Position", 1)
     shapes = [
         preparer.effect_shape(step)
@@ -822,7 +847,7 @@ def test_each_milestone_kind_and_gate_is_its_own_shape() -> None:
 
 
 def test_one_writes_closes_of_distinct_milestones_share_its_shapes_statement() -> None:
-    preparer = LayoutPayloadPreparer(POSITION)
+    preparer = LayoutPayloadPreparer(bound_model(POSITION))
     first = [
         close(POSITION, "Position", milestone(POSITION, "Position", 1, valid_end=instant(6))),
         close(POSITION, "Position", milestone(POSITION, "Position", 1)),
@@ -833,7 +858,11 @@ def test_one_writes_closes_of_distinct_milestones_share_its_shapes_statement() -
         effect_shape=preparer.effect_shape,
     )
     (statement,) = stream_physical(
-        group.steps, preparer, POSITION, POSTGRES, effect_spans=group.effect_spans
+        group.steps,
+        preparer,
+        bound_model(POSITION),
+        POSTGRES,
+        effect_spans=group.effect_spans,
     )
     assert group.steps == (*first, *second)
     assert arrays(statement)[0] == (INT64, [1, 1, 2])
@@ -841,7 +870,7 @@ def test_one_writes_closes_of_distinct_milestones_share_its_shapes_statement() -
 
 
 def test_a_writes_later_close_waits_behind_its_own_revision() -> None:
-    preparer = LayoutPayloadPreparer(POSITION)
+    preparer = LayoutPayloadPreparer(bound_model(POSITION))
     own = [
         close(POSITION, "Position", milestone(POSITION, "Position", 1, valid_end=instant(6))),
         revision(POSITION, "Position", milestone(POSITION, "Position", 1), {"value": Decimal(1)}),

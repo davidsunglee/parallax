@@ -1,0 +1,7 @@
+# Under the YAML 1.2 core schema `0o17` and `0x1F` are integers and `.inf` a
+# float, never names; a binding spells such a name quoted.
+reader: postgres
+issues:
+  - { code: binding-value-invalid, path: [default, schema] }
+  - { code: binding-value-invalid, path: [entities, commerce.Customer, table] }
+  - { code: binding-value-invalid, path: [sequences, documentNumbers, sequence] }

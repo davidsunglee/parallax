@@ -17,6 +17,7 @@ import pytest
 from reference_harness._case_execution import CaseExecution
 from reference_harness.case import Case, Model, load_model
 from reference_harness.case_assertions import rows_equal
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.provisioning import provision_empty
 from reference_harness.table_state import read_tables
 
@@ -62,7 +63,7 @@ _WIDE = Model(
 )
 
 _WIDE_INSERT = (
-    "insert into wide(id, flag, small, big, ratio, measure, amount, label, payload, day, "
+    "insert into px.wide(id, flag, small, big, ratio, measure, amount, label, payload, day, "
     "clock, stamp, ref, tags, address) select * from unnest(cast(? as bigint[]), "
     "cast(? as boolean[]), cast(? as int[]), cast(? as bigint[]), cast(? as real[]), "
     "cast(? as double precision[]), cast(? as decimal[]), cast(? as text[]), "
@@ -151,7 +152,9 @@ def test_every_scalar_document_and_null_element_is_stored_in_its_row(provider) -
 
     assert _insert(provider, case, _WIDE_INSERT, _column_arrays(columns, _WIDE_ROWS)) == 3
 
-    stored = read_tables(case, provider, ("wide",))["wide"]
+    stored = read_tables(case, provider, (PhysicalTable(("px",), "wide"),))[
+        PhysicalTable(("px",), "wide")
+    ]
     assert rows_equal(stored, _WIDE_ROWS), stored
 
 
@@ -166,7 +169,7 @@ def test_a_document_element_keeps_json_null_apart_from_sql_null(provider) -> Non
     observed = provider.query(
         "select id, address is null as sql_null, jsonb_typeof(address -> 'city') as city, "
         "jsonb_typeof(tags) as tags, jsonb_array_length(tags) as tag_count "
-        "from wide order by id"
+        "from px.wide order by id"
     )
     assert observed == [
         {"id": 1, "sql_null": False, "city": "null", "tags": "array", "tag_count": 2},
@@ -186,13 +189,15 @@ def test_each_shared_document_is_stored_beside_its_own_rows_tag(provider) -> Non
         {"id": 4, "kind": "cash", "payload": {"detail": "0.00"}},
     ]
     statement = (
-        "insert into payment_document(id, kind, payload) select * from "
+        "insert into px.payment_document(id, kind, payload) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
 
     assert _insert(provider, case, statement, _column_arrays(["id", "kind", "payload"], rows)) == 3
 
-    stored = read_tables(case, provider, ("payment_document",))["payment_document"]
+    stored = read_tables(case, provider, (PhysicalTable(("px",), "payment_document"),))[
+        PhysicalTable(("px",), "payment_document")
+    ]
     assert rows_equal(stored, rows), stored
 
 
@@ -221,7 +226,7 @@ def test_temporal_successors_store_finite_bounds_beside_the_open_bound(provider)
     ]
     columns = list(rows[0])
     statement = (
-        f"insert into position({', '.join(columns)}) select * from unnest("
+        f"insert into px.position({', '.join(columns)}) select * from unnest("
         "cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
         "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), "
         "cast(? as timestamptz[]))"
@@ -229,8 +234,10 @@ def test_temporal_successors_store_finite_bounds_beside_the_open_bound(provider)
 
     assert _insert(provider, case, statement, _column_arrays(columns, rows)) == 2
 
-    stored = read_tables(case, provider, ("position",))["position"]
+    stored = read_tables(case, provider, (PhysicalTable(("px",), "position"),))[
+        PhysicalTable(("px",), "position")
+    ]
     assert rows_equal(stored, rows), stored
-    assert provider.query("select count(*) as open from position where out_z = 'infinity'") == [
+    assert provider.query("select count(*) as open from px.position where out_z = 'infinity'") == [
         {"open": 2}
     ]

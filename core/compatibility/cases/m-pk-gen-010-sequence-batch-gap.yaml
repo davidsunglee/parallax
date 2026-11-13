@@ -25,14 +25,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: update pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update pk_sequence set next_val = next_val + ? where name = ?
+        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
+        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
       binds: [3, pass_seq]
     - sql:
-        postgres: insert into pass(id, zone) values (?, ?)
-        mariadb: insert into pass(id, zone) values (?, ?)
+        postgres: insert into px.pass(id, zone) values (?, ?)
+        mariadb: insert into px.pass(id, zone) values (?, ?)
       binds: [1, north]
   tableState:
-    pass:
-      - { id: 1, zone: north }
+    px:
+      pass:
+        - { id: 1, zone: north }
   databaseCalls: 2

@@ -85,15 +85,15 @@ def test_the_tally_counts_each_call_and_the_rows_each_insert_carried() -> None:
     connection = _counting(inner, tally)
     connection.execute("select 1", [])
     connection.execute(
-        "update t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
+        "update px.t set a = v.c2 from unnest(cast(? as bigint[]), cast(? as bigint[])) "
         "with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord",
         [ArrayBind(INT64, [1, 2]), ArrayBind(INT64, [3, 4])],
     )
     connection.execute_pipeline(cast("Any", ("a", "b")))
-    connection.execute_write("update t set a = ?", [1])
-    connection.execute_write("insert into t(a) values (?)", [1])
+    connection.execute_write("update px.t set a = ?", [1])
+    connection.execute_write("insert into px.t(a) values (?)", [1])
     connection.execute_write(
-        "insert into t(a) select * from unnest(cast(? as bigint[]))",
+        "insert into px.t(a) select * from unnest(cast(? as bigint[]))",
         [ArrayBind(INT64, [1, 2, 3])],
     )
     transport_call = cast(
@@ -154,7 +154,7 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
 
     def body(handed: Any) -> int:
         assert isinstance(handed, CountingConnection)
-        handed.execute_write("update t set a = 1", [])
+        handed.execute_write("update px.t set a = 1", [])
         forwarded = handed.ordered_write_transport
         assert forwarded is not None
         forwarded(("x",))

@@ -26,6 +26,7 @@ from tests._support.aws_run import (
     RunIdentity,
     interrupted_on_termination,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.routed_reads import SEEDED_MODEL, seeded_fixtures
 
 _WRITER = "parallax-ci.cluster-abc.us-east-2.rds.amazonaws.com"
@@ -476,7 +477,7 @@ def test_resetting_waits_for_recreated_tables_and_grants_on_every_instance() -> 
     run, _ = _started(cluster, clock)
     cluster.log.clear()
 
-    run.reset(SEEDED_MODEL, seeded_fixtures())
+    run.reset(SEEDED_MODEL, seeded_fixtures(), TEST_BINDING)
 
     administration = [entry for entry in cluster.log if entry.startswith(_ADMIN)]
     assert administration[0] == f"{_ADMIN}: drop schema if exists public cascade"
@@ -500,13 +501,13 @@ def test_resetting_gives_up_when_an_instance_never_catches_up() -> None:
     run, _ = _started(cluster)
 
     with pytest.raises(TimeoutError, match="parallax-ci-writer to see the reset schema and grants"):
-        run.reset(SEEDED_MODEL, seeded_fixtures())
+        run.reset(SEEDED_MODEL, seeded_fixtures(), TEST_BINDING)
 
 
 def test_resetting_before_the_run_started_is_refused() -> None:
     run = AwsRun(_ENVIRONMENT, _IDENTITY, _Ports(_Cluster()), _pacing(_Clock()))
     with pytest.raises(CloudRunError, match="not started"):
-        run.reset(SEEDED_MODEL, seeded_fixtures())
+        run.reset(SEEDED_MODEL, seeded_fixtures(), TEST_BINDING)
 
 
 def test_case_runtimes_are_released_through_the_runs_ledger() -> None:

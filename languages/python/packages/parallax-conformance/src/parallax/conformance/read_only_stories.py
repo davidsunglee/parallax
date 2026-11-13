@@ -7,6 +7,7 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel, ReadOnlyTxnOptions, UsageError
 from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import ReadOnlyTxnContext, connect
 
 __all__ = [
@@ -30,7 +31,7 @@ class ReadOnlyReport:
 
 
 def reads_run_in_one_read_only_transaction_at_a_chosen_isolation(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> ReadOnlyReport:
     """Two reads of one account inside one read-only transaction at Repeatable
     Read, so both observe the transaction's one snapshot.
@@ -43,7 +44,7 @@ def reads_run_in_one_read_only_transaction_at_a_chosen_isolation(
     call is refused before its callback runs and, once caught, leaves the
     read-only transaction usable.
     """
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
 
         def report(rtx: ReadOnlyTxnContext) -> ReadOnlyReport:

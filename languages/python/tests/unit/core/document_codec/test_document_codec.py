@@ -885,7 +885,11 @@ def test_patch_preserves_every_key_it_is_not_told_to_change() -> None:
         "entries": [{"kind": "home"}],
         "day": "2026-01-15",
     }
-    assert stored == {"flag": True, "unknown": "from a newer writer", "entries": [{"kind": "home"}]}
+    assert stored == {
+        "flag": True,
+        "unknown": "from a newer writer",
+        "entries": [{"kind": "home"}],
+    }
 
 
 def test_a_leaf_patch_spells_its_value_through_the_encoding_table() -> None:

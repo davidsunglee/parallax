@@ -256,13 +256,13 @@ def test_run_scenario_case_runs_a_grouped_predicate_write_after_what_its_group_b
     # What is reported is what the port executed, in the order it executed it.
     assert [e.sql for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
     assert [sql.split("(")[0] for sql, _ in port.writes] == [
-        "delete from order_item where id = ?",
-        "update order_item set sku = ? where quantity < ?",
-        "insert into orders",
-        "insert into order_item",
+        "delete from px.order_item where id = ?",
+        "update px.order_item set sku = ? where quantity < ?",
+        "insert into px.orders",
+        "insert into px.order_item",
     ]
     # One participating read, then the case's own tables read back once it ran.
-    assert len(port.reads) == 1 + len(run.table_state or {})
+    assert len(port.reads) == 1 + len((run.table_state or {}).get("px", {}))
     assert port.commits == 1 and port.rollbacks == 0
 
 
@@ -397,7 +397,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
             "databaseCalls": 1,
             "statements": [
                 {
-                    "sql": {"postgres": "update account set balance = ? where id = ?"},
+                    "sql": {"postgres": "update px.account set balance = ? where id = ?"},
                     "binds": [1.0, 1],
                 }
             ],
@@ -712,7 +712,9 @@ def _ledger_unit(port: FakeWritePort) -> tuple[tuple[object, ...], int]:
     case = _synthetic_ledger_scenario([])
     serving = model_facts.case_serving_model(case)
     meta = models.accepted_model_of(serving.current().model)
-    context = scenario.CaseContext(serving, meta, "optimistic", {}, TxnOptions())
+    context = scenario.CaseContext(
+        serving, meta, model_facts.case_binding(case), "optimistic", {}, TxnOptions()
+    )
     entries = cast(
         "list[dict[str, object]]", _ledger_update("300.00", "2024-05-01T00:00:00+00:00")["write"]
     )
@@ -755,7 +757,8 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
     # The committed table state is read back for every model table (the
     # m-conformance-adapter write-sequence observation); the read-back is an
     # observation, so it never counts toward the case's Database Calls.
-    assert set(table_state) == {
+    assert set(table_state) == {"px"}
+    assert set(table_state["px"]) == {
         "orders",
         "order_item",
         "order_status",
@@ -810,7 +813,7 @@ def test_a_units_resolving_read_names_no_statement_in_the_lifecycle_observation(
     """The one call inside a write unit that the emissions do not hold.
 
     m-temporal-write-002 costs four Database Calls for three golden statements: the
-    update entry reads the milestone it closes before writing it. A case counts
+    update px.entry reads the milestone it closes before writing it. A case counts
     that read and authors no golden for it, so the delivered stream carries a
     Database Call the emission order has no entry for — and the remaining calls
     still name that order in full, which is what makes the omission readable as
@@ -993,7 +996,7 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     assert len(port.writes) == 1
     sql, binds = port.writes[0]
     assert sql == (
-        "insert into wallet(id, owner, balance) select * from "
+        "insert into px.wallet(id, owner, balance) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     )
     columns = [cast("ArrayBind", bind).values for bind in binds]
@@ -1037,8 +1040,8 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 2
     assert [e.sql for e in emissions] == [
-        "update wallet set balance = ? where id = any(cast(? as bigint[]))",
-        "update wallet set owner = ? where id = any(cast(? as bigint[]))",
+        "update px.wallet set balance = ? where id = any(cast(? as bigint[]))",
+        "update px.wallet set owner = ? where id = any(cast(? as bigint[]))",
     ]
     assert [e.binds for e in emissions] == [
         (500.00, ArrayBind(INT64, [1, 2])),
@@ -1106,10 +1109,10 @@ def test_non_uniform_multi_row_update_applies_one_grouped_effect_per_member_set(
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 2
     assert [e.sql for e in emissions] == [
-        "update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), "
+        "update px.wallet t set balance = v.c2 from unnest(cast(? as bigint[]), "
         "cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
         "returning v.ord",
-        "update wallet t set owner = v.c2 from unnest(cast(? as bigint[]), "
+        "update px.wallet t set owner = v.c2 from unnest(cast(? as bigint[]), "
         "cast(? as text[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
         "returning v.ord",
     ]
@@ -1147,7 +1150,7 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 1
     assert [e.sql for e in emissions] == [
-        "update account set balance = ?, version = ? where id = ? and version = ?"
+        "update px.account set balance = ?, version = ? where id = ? and version = ?"
     ]
     assert emissions[0].binds == (decimal.Decimal("5.00"), 2, 2, 1)
 
@@ -1268,7 +1271,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
     port = FakeWritePort()
     run = scenario.run_scenario_case(case, port)
     assert run.database_calls == 1
-    assert run.emissions[0].sql == "delete from wallet where balance < ?"
+    assert run.emissions[0].sql == "delete from px.wallet where balance < ?"
     assert len(port.writes) == 1
     assert port.commits == 0 and port.rollbacks == 1
 
@@ -1320,7 +1323,7 @@ def test_run_conflict_case_single_attempt() -> None:
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert affected == 1
     assert len(port.writes) == 1
-    assert table_state is not None and "account" in table_state
+    assert table_state is not None and "account" in table_state["px"]
 
 
 @pytest.mark.parametrize(
@@ -1379,7 +1382,7 @@ def test_conflict_submissions_never_prepare_or_simulate_a_peer_write(
     assert affected == 1 and database_calls == 2
     assert len(port.reads) == 2 and len(port.writes) == 1
     assert emissions[0].sql == (
-        "update account set balance = ?, version = ? where id = ? and version = ?"
+        "update px.account set balance = ?, version = ? where id = ? and version = ?"
     )
 
 
@@ -1406,8 +1409,8 @@ def test_a_conflict_attempt_counts_duplicate_addressed_keys_once() -> None:
 # The canonical spellings of the golden writes a fake port reports a zero-row
 # shortfall for: a concurrent writer already moved or removed the row.
 _ACCOUNT_WRITE_SHORTFALL: Final[tuple[str, ...]] = (
-    "update account set balance = ?",
-    "delete from account",
+    "update px.account set balance = ?",
+    "delete from px.account",
 )
 
 
@@ -1438,7 +1441,7 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     emissions, affected, _table_state, _database_calls = scenario.run_conflict_case(case, port)
-    assert [e.sql for e in emissions] == ["delete from account where id = ? and version = ?"]
+    assert [e.sql for e in emissions] == ["delete from px.account where id = ? and version = ?"]
     assert affected == 1
 
 
@@ -2057,7 +2060,7 @@ def test_a_held_uow_group_opens_at_the_roots_level_and_plans_under_the_roots_pre
     run = scenario.run_scenario_case(_rooted(_case("m-unit-work-005")), port)
     assert port.levels == ["serializable"]
     assert run.emissions[0].sql.endswith("for share of t0")
-    assert run.emissions[1].sql == "update account set balance = ?, version = ? where id = ?"
+    assert run.emissions[1].sql == "update px.account set balance = ?, version = ? where id = ?"
 
 
 def test_an_authored_request_overrides_the_root_for_the_group_it_names() -> None:
@@ -2132,6 +2135,7 @@ def test_the_case_context_carries_the_root_record_beside_the_sparse_request() ->
     context = scenario.CaseContext(
         serving,
         models.accepted_model_of(serving.current().model),
+        model_facts.case_binding(case),
         case_document.concurrency(case),
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -2306,14 +2310,14 @@ def test_each_write_of_a_compiled_group_is_admitted_on_its_own_evidence() -> Non
     )
     compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     assert [(emission.case_pointer, emission.sql, emission.binds) for emission in compiled] == [
-        ("/scenario/0/write", "update order_item set quantity = ? where id = ?", (9, 21)),
+        ("/scenario/0/write", "update px.order_item set quantity = ? where id = ?", (9, 21)),
         (
             "/scenario/1/objectQuery",
-            "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 "
+            "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 "
             "where t0.id = ? for share of t0",
             (21,),
         ),
-        ("/scenario/2/write", "delete from order_item where id = ?", (21,)),
+        ("/scenario/2/write", "delete from px.order_item where id = ?", (21,)),
     ]
 
 

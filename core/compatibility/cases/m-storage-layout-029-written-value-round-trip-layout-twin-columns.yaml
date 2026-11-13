@@ -27,8 +27,8 @@ when:
       note: write every member of every shape — the nested `one`, the nested `many`, and the top-level `many`
       statements:
         - sql:
-            postgres: insert into write_twin(id, label, spec, marks) values (?, ?, ?, ?)
-            mariadb: insert into write_twin(id, label, spec, marks) values (?, ?, ?, ?)
+            postgres: insert into px.write_twin(id, label, spec, marks) values (?, ?, ?, ?)
+            mariadb: insert into px.write_twin(id, label, spec, marks) values (?, ?, ?, ?)
           binds:
             - 10
             - north
@@ -51,8 +51,8 @@ when:
       note: omit `note` and every occurrence-valued member — the omitted `many` members still store the empty array
       statements:
         - sql:
-            postgres: insert into write_twin(id, spec, marks) values (?, ?, ?)
-            mariadb: insert into write_twin(id, spec, marks) values (?, ?, ?)
+            postgres: insert into px.write_twin(id, spec, marks) values (?, ?, ?)
+            mariadb: insert into px.write_twin(id, spec, marks) values (?, ?, ?)
           binds:
             - 11
             - title: Beta
@@ -70,8 +70,8 @@ when:
       note: spell `note` as an explicit null — the same member, the other presence state
       statements:
         - sql:
-            postgres: insert into write_twin(id, spec, marks) values (?, ?, ?)
-            mariadb: insert into write_twin(id, spec, marks) values (?, ?, ?)
+            postgres: insert into px.write_twin(id, spec, marks) values (?, ?, ?)
+            mariadb: insert into px.write_twin(id, spec, marks) values (?, ?, ?)
           binds:
             - 12
             - title: Gamma
@@ -88,8 +88,8 @@ when:
       note: name no occurrence at all — `spec` is absent while `marks` still stores the empty array
       statements:
         - sql:
-            postgres: insert into write_twin(id, label, marks) values (?, ?, ?)
-            mariadb: insert into write_twin(id, label, marks) values (?, ?, ?)
+            postgres: insert into px.write_twin(id, label, marks) values (?, ?, ?)
+            mariadb: insert into px.write_twin(id, label, marks) values (?, ?, ?)
           binds:
             - 13
             - delta
@@ -107,8 +107,8 @@ when:
       note: read the four written rows back — each one publishes exactly the value its own write composed
       statements:
         - sql:
-            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id > ? order by t0.id asc
-            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id > ? order by t0.id asc
+            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from px.write_twin t0 where t0.id > ? order by t0.id asc
+            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from px.write_twin t0 where t0.id > ? order by t0.id asc
           binds: [9]
       expectRows:
         - id: 10
@@ -143,54 +143,55 @@ when:
 then:
   databaseCalls: 5
   tableState:
-    write_twin:
-      - id: 1
-        label: north
-        spec:
-          title: Atlas
-          note: first
-          origin: { country: "NO" }
-          stops:
-            - { port: Oslo }
-        marks:
-          - { code: A }
-          - { code: B }
-      - id: 2
-        label: south
-        spec:
-          title: Meridian
-          note: second
-          origin: { country: SE }
-          stops:
-            - { port: Bergen }
-        marks:
-          - { code: C }
-      - id: 10
-        label: north
-        spec:
-          title: Atlas
-          note: first
-          origin: { country: "NO" }
-          stops:
-            - { port: Oslo }
-            - { port: Bergen }
-        marks:
-          - { code: A }
-          - { code: B }
-      - id: 11
-        label: null
-        spec:
-          title: Beta
-          stops: []
-        marks: []
-      - id: 12
-        label: null
-        spec:
-          title: Gamma
-          note: null
-          stops: []
-        marks: []
-      - id: 13
-        label: delta
-        spec: null
-        marks: []
+    px:
+      write_twin:
+        - id: 1
+          label: north
+          spec:
+            title: Atlas
+            note: first
+            origin: { country: "NO" }
+            stops:
+              - { port: Oslo }
+          marks:
+            - { code: A }
+            - { code: B }
+        - id: 2
+          label: south
+          spec:
+            title: Meridian
+            note: second
+            origin: { country: SE }
+            stops:
+              - { port: Bergen }
+          marks:
+            - { code: C }
+        - id: 10
+          label: north
+          spec:
+            title: Atlas
+            note: first
+            origin: { country: "NO" }
+            stops:
+              - { port: Oslo }
+              - { port: Bergen }
+          marks:
+            - { code: A }
+            - { code: B }
+        - id: 11
+          label: null
+          spec:
+            title: Beta
+            stops: []
+          marks: []
+        - id: 12
+          label: null
+          spec:
+            title: Gamma
+            note: null
+            stops: []
+          marks: []
+        - id: 13
+          label: delta
+          spec: null
+          marks: []

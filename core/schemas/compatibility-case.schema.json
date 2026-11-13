@@ -199,13 +199,13 @@
       }
     },
     {
-      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED or TARGET instruction a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All four `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
+      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED or TARGET instruction a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`/`binding`. A `binding` is a dialect-keyed Database Binding the validator reads and resolves against the case's top-level `model`, refused by one binding definition or resolution rule; an inline `model` is resolved under the corpus default binding once formation accepts it. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All four `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "rejected" },
         "when": {
-          "propertyNames": { "enum": ["objectQuery", "write", "model"] },
-          "properties": { "write": { "type": "object" } }
+          "propertyNames": { "enum": ["objectQuery", "write", "model", "binding"] },
+          "properties": { "write": { "type": "object" }, "binding": { "$ref": "#/$defs/caseBinding" } }
         },
         "then": {
           "required": ["rejectedRule"],
@@ -218,7 +218,8 @@
       "oneOf": [
         { "properties": { "when": { "required": ["objectQuery"] } } },
         { "properties": { "when": { "required": ["write"] } } },
-        { "properties": { "when": { "required": ["model"] } } }
+        { "properties": { "when": { "required": ["model"] } } },
+        { "properties": { "when": { "required": ["binding"] } } }
       ]
     },
     {
@@ -648,6 +649,10 @@
     }
   ],
   "properties": {
+    "binding": {
+      "description": "The Database Binding every database-backed observation of this case resolves its model under (m-database-binding), keyed by Dialect Identity; each value is one binding document (`database-binding.schema.json`) for that dialect's backend. A dialect it does not name, and every case without one, runs under that dialect's corpus default binding (`core/compatibility/bindings/default.yaml`).",
+      "$ref": "#/$defs/caseBinding"
+    },
     "model": {
       "description": "Path to the model descriptor, relative to core/compatibility/.",
       "type": "string",
@@ -846,6 +851,10 @@
         "model": {
           "description": "rejected cases only (accepted-model formation, including m-inheritance / m-storage-layout / m-relationship). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an accepted-model formation defect a model-aware semantic validator MUST reject before any SQL. This includes cross-entity inheritance-family invariants, a second independent owner of one structural Table, physical-column collisions within a uniquely owned Table, rendered-key collisions, and unequal declared defining-join endpoint types that per-entity schema validation cannot express. Kept inline (never in the shared `models/` registry) so an invalid model cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
           "type": "object"
+        },
+        "binding": {
+          "description": "rejected cases only (m-database-binding). A dialect-keyed Database Binding under test, one binding document per dialect that reads it, refused by exactly one binding definition or resolution rule when read and resolved against the case's top-level `model`.",
+          "$ref": "#/$defs/caseBinding"
         },
         "evolve": {
           "description": "evolution cases only (m-model-evolution). The two accepted models the case evolves between, replacing the top-level `model`: the later endpoint is the model every per-case check reads.",
@@ -1571,12 +1580,16 @@
           }
         },
         "tableState": {
-          "description": "The resulting table state a writeSequence, conflict, scenario, error, or concurrencySuccess case asserts once its writes have run — after a writeSequence's ordered DML golden SQL, a conflict case's write, a scenario's last step, or a `when.concurrency` choreography whose held sessions have both ended. A state-graded scenario states every row, current and history, of every table a submission writes. Keyed by table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with the open-bound `infinity` as the literal string `infinity`.",
+          "description": "The resulting table state a writeSequence, conflict, scenario, error, or concurrencySuccess case asserts once its writes have run — after a writeSequence's ordered DML golden SQL, a conflict case's write, a scenario's last step, or a `when.concurrency` choreography whose held sessions have both ended. A state-graded scenario states every row, current and history, of every table a submission writes. Keyed first by the table's resolved location qualifier (the case binding's schema or database name, `px` under the corpus default binding), then by its resolved physical table name; each value is the full set of rows that table must contain (order-insensitive). Row values speak DB column names; timestamp columns are authored as ISO-8601 UTC strings at core microsecond precision, with the open-bound `infinity` as the literal string `infinity`.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
-            "type": "array",
-            "items": { "type": "object" }
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
           }
         },
         "units": {
@@ -1722,10 +1735,28 @@
             "inheritance-persistence-not-root-owned",
             "inheritance-layout-not-root-owned",
             "inheritance-member-shadowing",
-            "storage-layout-table-mapping-collision",
             "storage-layout-column-collision",
             "storage-layout-document-member-column-override",
             "storage-layout-index-over-document-member",
+            "binding-syntax-invalid",
+            "binding-value-invalid",
+            "binding-field-unknown",
+            "binding-field-missing",
+            "binding-version-unsupported",
+            "binding-backend-mismatch",
+            "binding-namespace-key-invalid",
+            "binding-entity-key-invalid",
+            "binding-sequence-key-invalid",
+            "binding-identifier-invalid",
+            "binding-entity-unknown",
+            "binding-entity-owns-no-table",
+            "binding-namespace-unknown",
+            "binding-sequence-unknown",
+            "binding-table-unresolved",
+            "binding-sequence-unresolved",
+            "binding-table-collision",
+            "binding-sequence-collision",
+            "binding-sequence-table-collision",
             "relationship-join-source-invalid",
             "relationship-join-type-mismatch",
             "relationship-cardinality-join-mismatch",
@@ -1774,6 +1805,26 @@
     }
   },
   "$defs": {
+    "caseBinding": {
+      "description": "Binding documents keyed by Dialect Identity. Each document is validated against `database-binding.schema.json` for its own backend; a rejected case's `when.binding` may carry a definition-invalid one on purpose.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "postgres": {"type": "object"},
+        "mariadb": {"type": "object"}
+      }
+    },
+    "physicalTable": {
+      "description": "One physical table as structured components: its location's qualifier components, then its local name. Each component is raw and is compared exactly; a dot inside one is never qualification.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qualifier", "name"],
+      "properties": {
+        "qualifier": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "name": {"type": "string", "minLength": 1}
+      }
+    },
     "transactionOptions": {
       "description": "The transaction options, defined once and shared by the three placements that spell them: the Database Root's configured defaults (`given.databaseOptions`), an outer invocation's explicit request (`when.uow`), and a joining call's explicit request (a `when.boundary` `join` step). Each placement gives a field its own meaning; the value vocabulary, type, and bound are the same in all three, and null is a value none of them admits. The third option, `retry`, is `$defs/retryPolicy`, which the outer lifecycle observation reports as well.",
       "concurrency": {
@@ -1828,6 +1879,14 @@
           "description": "The later accepted model descriptor, relative to core/compatibility/.",
           "type": "string",
           "pattern": "^models/.+\\.ya?ml$"
+        },
+        "earlierBinding": {
+          "description": "The binding the earlier endpoint resolves under, keyed by Dialect Identity. Absent, the earlier endpoint inherits the case `binding`, else the corpus default binding, independently of the later endpoint. An absent (`null`) earlier model has no earlier endpoint to bind.",
+          "$ref": "#/$defs/caseBinding"
+        },
+        "laterBinding": {
+          "description": "The binding the later endpoint resolves under, keyed by Dialect Identity, inheriting like `earlierBinding`.",
+          "$ref": "#/$defs/caseBinding"
         }
       }
     },
@@ -1856,7 +1915,9 @@
         "IndexAdded",
         "IndexRemoved",
         "IndexAltered",
-        "DeclarationOrderChanged"
+        "DeclarationOrderChanged",
+        "TableRelocated",
+        "SequenceRelocated"
       ]
     },
     "evolutionFieldDeltaKind": {
@@ -1980,17 +2041,24 @@
             }
           ]
         },
+        "sequence": {
+          "description": "A logical allocator key, exactly as the model declares it.",
+          "type": "string",
+          "minLength": 1
+        },
         "earlier": {
-          "description": "The surviving declaration identities in the earlier endpoint's order.",
-          "type": "array",
-          "minItems": 2,
-          "items": {"type": "string", "minLength": 1}
+          "description": "For a declaration-order change, the surviving declaration identities in the earlier endpoint's order; for a relocation, the physical object the earlier binding resolved.",
+          "anyOf": [
+            {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+            {"$ref": "#/$defs/physicalTable"}
+          ]
         },
         "later": {
-          "description": "The same identities in the later endpoint's order, which differs.",
-          "type": "array",
-          "minItems": 2,
-          "items": {"type": "string", "minLength": 1}
+          "description": "For a declaration-order change, the same identities in the later endpoint's order, which differs; for a relocation, the physical object the later binding resolves.",
+          "anyOf": [
+            {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+            {"$ref": "#/$defs/physicalTable"}
+          ]
         }
       },
       "oneOf": [
@@ -2007,6 +2075,26 @@
           "properties": {"kind": {"enum": ["EntityAltered"]}},
           "required": ["kind", "entity", "deltas"],
           "propertyNames": {"enum": ["kind", "entity", "deltas"]}
+        },
+        {
+          "description": "A surviving mapping owner whose physical table the two bindings resolve differently.",
+          "properties": {
+            "kind": {"enum": ["TableRelocated"]},
+            "earlier": {"$ref": "#/$defs/physicalTable"},
+            "later": {"$ref": "#/$defs/physicalTable"}
+          },
+          "required": ["kind", "entity", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "entity", "earlier", "later"]}
+        },
+        {
+          "description": "A surviving logical allocator whose physical sequence the two bindings resolve differently.",
+          "properties": {
+            "kind": {"enum": ["SequenceRelocated"]},
+            "earlier": {"$ref": "#/$defs/physicalTable"},
+            "later": {"$ref": "#/$defs/physicalTable"}
+          },
+          "required": ["kind", "sequence", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "sequence", "earlier", "later"]}
         },
         {
           "properties": {"kind": {"enum": ["AttributeAdded", "AttributeRemoved"]}},
@@ -2064,7 +2152,11 @@
           "propertyNames": {"enum": ["kind", "index", "deltas"]}
         },
         {
-          "properties": {"kind": {"enum": ["DeclarationOrderChanged"]}},
+          "properties": {
+            "kind": {"enum": ["DeclarationOrderChanged"]},
+            "earlier": {"type": "array"},
+            "later": {"type": "array"}
+          },
           "required": ["kind", "collection", "owner", "earlier", "later"],
           "propertyNames": {"enum": ["kind", "collection", "owner", "earlier", "later"]}
         }
@@ -2187,7 +2279,7 @@
       "required": ["physicalIndexName", "physicalTable", "logicalIndexIdentity", "unique"],
       "properties": {
         "physicalIndexName": {"type": "string", "minLength": 1},
-        "physicalTable": {"type": "string", "minLength": 1},
+        "physicalTable": {"$ref": "#/$defs/physicalTable"},
         "logicalIndexIdentity": {
           "description": "An authored Index Identity, in the `indexRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
           "type": "string",
@@ -2212,7 +2304,7 @@
             {"required": ["extension"], "maxProperties": 1}
           ],
           "properties": {
-            "table": {"type": "string", "minLength": 1},
+            "table": {"$ref": "#/$defs/physicalTable"},
             "column": {"type": "string", "minLength": 1},
             "index": {"type": "string", "minLength": 1},
             "extension": {"type": "string", "minLength": 1}

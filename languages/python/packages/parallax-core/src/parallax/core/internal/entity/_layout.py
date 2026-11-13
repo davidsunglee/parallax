@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from parallax.core.internal.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
@@ -235,17 +236,24 @@ class CatalogedModel:
     runtime that must share one model's layouts holds one record rather than
     forming a second beside it.
 
-    ``layouts`` stays out of comparison: it is a function of ``meta``, so it
-    distinguishes no two records that ``meta`` does not, while comparing it
-    would compare a catalog by identity — which nothing may do — and so make
-    two records over one model unequal for having each derived an
-    interchangeable catalog. A record is therefore the model it carries.
+    ``binding`` places the model physically, and ``resolved`` is the model
+    under that binding, derived the same way: constructing the record resolves
+    every table and sequence or raises the binding's refusal.
+
+    ``layouts`` and ``resolved`` stay out of comparison: each is a function of
+    ``meta`` and ``binding``, so it distinguishes no two records that those do
+    not, while comparing a derived catalog would compare it by identity —
+    which nothing may do. A record is therefore the model and binding it
+    carries: equal models under different bindings are different records.
     """
 
     meta: Metamodel
+    binding: DatabaseBinding
     layouts: LayoutCatalog = field(init=False, compare=False)
+    resolved: ResolvedBinding = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "resolved", ResolvedBinding(self.meta, self.binding))
         object.__setattr__(self, "layouts", LayoutCatalog(self.meta))
 
 

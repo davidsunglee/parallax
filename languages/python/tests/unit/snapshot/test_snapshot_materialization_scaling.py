@@ -78,6 +78,7 @@ from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotNodeState,
 )
+from tests._support.bindings import TEST_BINDING
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (
@@ -130,7 +131,7 @@ def _prepared(layout: Layout) -> ModelSelection:
     preparation change could grow per row or per execution, and only what a
     reading can reach can be graded.
     """
-    return prepare_model(workload(layout), edition=_EDITION)
+    return prepare_model(workload(layout), edition=_EDITION, binding=TEST_BINDING)
 
 
 def _catalog(selection: ModelSelection) -> CatalogedModel:
@@ -363,7 +364,7 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
 @in_a_child_interpreter
 def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execution() -> None:
     port = control_support.GuardedPort(control_support.GUARDED_ROOTS[0])
-    root = Database(port.open(), control_support.GUARDED_MODEL)
+    root = Database(port.open(), control_support.GUARDED_MODEL, binding=TEST_BINDING)
     scope = root.using_database_login()
     result = scope.find(control_support.guarded_query(control_support.GUARD_WIDTHS[-1]))
     held = cast("Any", result)

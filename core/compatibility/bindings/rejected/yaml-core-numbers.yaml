@@ -1,0 +1,7 @@
+format_version: 1
+backend: postgres
+default: { schema: 0o17 }
+entities:
+  commerce.Customer: { table: 0x1F }
+sequences:
+  documentNumbers: { sequence: .inf }

@@ -44,7 +44,7 @@ be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening eithe
 of its windows, :func:`retained` and :func:`retained_increment` warm both their
 seam and their sampler inside their own call, and :func:`high_water` warms its
 span the same way. :func:`survivors`
-opens its window before the first run, so a seam that fills a memo on first reach
+opens its window before the first run, so a seam that fills a memo on px.first reach
 is handed to it through :func:`warmed`, which puts those memos in the baseline
 the sample is compared against rather than in the sample. The one that must not
 be warmed is :func:`first_run`, whose subject is the first run a process makes:

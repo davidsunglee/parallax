@@ -26,7 +26,7 @@ when:
       note: pin id 1 at the finite Transaction-Time instant 2024-02-01 with Valid-Time Latest — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
       statements:
         - sql:
-            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from px.position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
           binds: [1, infinity, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
       expectRows:
         - { pos_id: 1, acct_num: A, val: "90.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }

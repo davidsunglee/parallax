@@ -28,6 +28,7 @@ from parallax.core.internal.db_port import IsolationLevel
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -61,7 +62,7 @@ def _seeded(profile_run: Any, *, fragmented: bool = False) -> None:
     ∞)`` at 200, object 3 as one rectangle, and with ``fragmented`` object 4 as
     ``frag(4, 64)``: 128 rectangles ``[d_i, d_{i+1})`` at amount ``i``, the last
     one open; every row known from T0."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     rows: list[tuple[int, int, str, dt.datetime, object]] = [
         (1, 100, "k1", _JAN, _JUN),
         (1, 200, "k1", _JUN, INFINITY),
@@ -78,7 +79,7 @@ def _seeded(profile_run: Any, *, fragmented: bool = False) -> None:
     try:
         for key, amount, label, start, end in rows:
             control.execute_write(
-                "insert into share_span(id, amount, label, from_z, thru_z, in_z, out_z) "
+                "insert into px.share_span(id, amount, label, from_z, thru_z, in_z, out_z) "
                 "values (?, ?, ?, ?, ?, ?, ?)",
                 [key, amount, label, start, end, _T0, INFINITY],
             )
@@ -88,7 +89,13 @@ def _seeded(profile_run: Any, *, fragmented: bool = False) -> None:
 
 def _db(profile_run: Any, instant: dt.datetime, provider: Any = None) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=FixedClock(instant), lifecycle_provider=provider)
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=FixedClock(instant),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -96,7 +103,7 @@ def _rows(profile_run: Any, key: int) -> list[_Row]:
     rows = profile_run.port.execute(
         "select id, in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, amount "
-        "from share_span where id = ? order by in_z, out_z, from_z",
+        "from px.share_span where id = ? order by in_z, out_z, from_z",
         [key],
     )
     return [tuple(row) for row in rows]
@@ -280,9 +287,9 @@ def test_a_locking_shared_read_holds_the_lock_on_the_rows_it_selected_and_no_oth
 
     def peer() -> None:
         for statement in (
-            "update share_span set label = label "
+            "update px.share_span set label = label "
             "where id = 2 and from_z = '2024-06-01' and out_z = 'infinity'",
-            "update share_span set label = label "
+            "update px.share_span set label = label "
             "where id = 3 and from_z = '2024-01-01' and out_z = 'infinity'",
         ):
             control = profile_run.control()

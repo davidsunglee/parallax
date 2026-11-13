@@ -45,6 +45,7 @@ from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnConte
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -71,7 +72,7 @@ from tests.unit._transact_support import (
 )
 from tests.unit.snapshot._handle import _mixed_strategy_model as mx
 
-_UPDATE_SQL = "update account set balance = ?, version = ? where id = ? and version = ?"
+_UPDATE_SQL = "update px.account set balance = ?, version = ? where id = ? and version = ?"
 
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
@@ -392,7 +393,7 @@ def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> N
     assert isinstance(page_two, ReadCall)
     assert page_two.sql.count("for share") == 1
     assert (
-        ")) u join account t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
+        ")) u join px.account t0 on u.id = t0.id order by t0.id asc limit ? for share of t0"
     ) in page_two.sql
     assert page_two.binds == (1, 1, 1, 2, 1, 2, 2)
 
@@ -417,7 +418,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
 
 type _Representation = Literal["typed", "wire"]
 _REPRESENTATIONS: tuple[_Representation, ...] = ("typed", "wire")
-_LOCKING_UPDATE_SQL = "update account set balance = ?, version = ? where id = ?"
+_LOCKING_UPDATE_SQL = "update px.account set balance = ?, version = ? where id = ?"
 
 
 def _first_root(scope: TxnContext | ScopedDatabase, representation: _Representation) -> Any:
@@ -666,8 +667,8 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_notes_no_failu
     # neither. A page failure propagates BARE inside the callback — the
     # transaction's own reads are bracketed by nothing — and the invocation
     # notes the attempt's edition once on the way out.
-    a = prepare_model(ACCOUNT, edition="ledger-a")
-    b = prepare_model(ACCOUNT, edition="ledger-b")
+    a = prepare_model(ACCOUNT, edition="ledger-a", binding=TEST_BINDING)
+    b = prepare_model(ACCOUNT, edition="ledger-b", binding=TEST_BINDING)
     serving = ServingModel(a)
     failure = DatabaseError(
         category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"

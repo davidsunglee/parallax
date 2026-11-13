@@ -20,12 +20,13 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
-            mariadb: update lease_note set note_text = ? where not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
+            postgres: update px.lease_note set note_text = ? where not exists (select 1 from px.lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
+            mariadb: update px.lease_note set note_text = ? where not exists (select 1 from px.lease t1 where t1.id = lease_id and t1.term = ? and t1.out_z = ?)
           binds: [lapsed, 12mo, infinity]
 then:
   databaseCalls: 1
   tableState:
-    lease_note:
-      - { id: 100, lease_id: 10, note_text: lapsed }
-      - { id: 101, lease_id: 10, note_text: lapsed }
+    px:
+      lease_note:
+        - { id: 100, lease_id: 10, note_text: lapsed }
+        - { id: 101, lease_id: 10, note_text: lapsed }

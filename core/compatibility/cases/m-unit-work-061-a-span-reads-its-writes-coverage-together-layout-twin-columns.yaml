@@ -23,7 +23,7 @@ when:
       note: observe both spans' heads at March under the shared lock
       statements:
         - sql:
-            postgres: select t0.id, t0.amount, t0.label, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage_span t0 where t0.id < ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc for share of t0
+            postgres: select t0.id, t0.amount, t0.label, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from px.coverage_span t0 where t0.id < ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc for share of t0
           binds: [3, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
       expectRows:
         - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
@@ -36,14 +36,14 @@ when:
       note: one shared coverage read names both spans' uncovered June onward and share-locks both tails, after which both spans are ready and execute as one Write Group; each tail already holds 150 and is kept, so each span closes only its head, and both heads' closes, one grouped effect, precede one insert opening each span's head and amended middle
       statements:
         - sql:
-            postgres: update coverage_span t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? returning v.ord
+            postgres: update px.coverage_span t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? returning v.ord
           binds:
             - [1, 2]
             - ["2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
             - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
             - infinity
         - sql:
-            postgres: insert into coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+            postgres: insert into px.coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
           binds:
             - [1, 1, 2, 2]
             - [100, 150, 100, 150]
@@ -55,13 +55,14 @@ when:
 then:
   databaseCalls: 4
   tableState:
-    coverage_span:
-      - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { id: 1, amount: 150, label: a, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, amount: 150, label: a, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, amount: 100, label: b, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { id: 2, amount: 150, label: b, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, amount: 100, label: b, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, amount: 150, label: b, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 3, amount: 100, label: c, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+    px:
+      coverage_span:
+        - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { id: 1, amount: 150, label: a, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, amount: 150, label: a, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, amount: 100, label: b, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { id: 2, amount: 150, label: b, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, amount: 100, label: b, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, amount: 150, label: b, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 3, amount: 100, label: c, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }

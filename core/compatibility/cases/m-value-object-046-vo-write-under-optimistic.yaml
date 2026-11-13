@@ -22,8 +22,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: update subscriber set address = ?, version = ? where id = ? and version = ?
-        mariadb: update subscriber set address = ?, version = ? where id = ? and version = ?
+        postgres: update px.subscriber set address = ?, version = ? where id = ? and version = ?
+        mariadb: update px.subscriber set address = ?, version = ? where id = ? and version = ?
       binds:
         - street: 9 Fjord Way
           city: Oslo
@@ -34,12 +34,13 @@ then:
         - 1
   affectedRows: 1
   tableState:
-    subscriber:
-      - id: 1
-        version: 2
-        address:
-          street: 9 Fjord Way
-          city: Oslo
-          geo:
-            country: "NO"
+    px:
+      subscriber:
+        - id: 1
+          version: 2
+          address:
+            street: 9 Fjord Way
+            city: Oslo
+            geo:
+              country: "NO"
   databaseCalls: 2

@@ -40,6 +40,7 @@ from parallax.core.internal.metamodel import EntityIdentity, TablePerConcreteSub
 from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.storage_layout._facet import _StorageLayoutFacet
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "position.reuse"
@@ -176,9 +177,9 @@ def _served(profile_run: Any, spies: _Spies) -> _Served:
     model = DomainModel(*_CLASSES)
     assert set(spies.family) == _ROOTS
     spies.clear()
-    prepared = prepare_model(model, edition="position-reuse")
+    prepared = prepare_model(model, edition="position-reuse", binding=TEST_BINDING)
     assert spies.counts() == _Counts(0, 0, 0)
-    profile_run.reset(model_of(model), {})
+    profile_run.reset(model_of(model), {}, TEST_BINDING)
     serving = ServingModel(prepared)
     own_root(connect(profile_run.port, serving)).using_database_login().transact(_seed)
     root = own_root(connect(profile_run.port, serving))

@@ -26,7 +26,7 @@ from parallax.core import (
     UsageError,
     WritePreconditionError,
 )
-from parallax.postgres import PostgresAdapter, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -499,12 +499,13 @@ preference and Read Committed. Each option comes from the first of these that se
 <!-- example: set-transaction-defaults -->
 ```python
 def connect_with_transaction_defaults(
-    adapter: PostgresAdapter, model: DomainModel
+    adapter: PostgresAdapter, model: DomainModel, binding: PostgresBinding
 ) -> Database[PostgresRole]:
     """Every transaction of this root makes at most four attempts and prefers locking."""
     return connect(
         adapter,
         model,
+        binding=binding,
         options=TxnOptions(retry=RetryPolicy(max_retries=3), concurrency="locking"),
     )
 

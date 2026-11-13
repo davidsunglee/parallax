@@ -9,11 +9,14 @@ semantics its owner's suite already grades.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, assert_type
 
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import model_of
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import (
@@ -26,8 +29,9 @@ from parallax.evolution import (
 from parallax.evolution.internal.model_evolution import (
     EntityAdded,
     EntityRemoved,
-    evolve_metamodels,
+    evolve_resolved,
 )
+from tests._support.bindings import TEST_BINDING, binding_for, bound_model
 
 
 class Widget(Entity, table="widget", namespace="shop"):
@@ -43,36 +47,51 @@ _BOTH = DomainModel(Widget, Gadget)
 
 
 def test_provisioning_narrows_to_a_unilateral_evolution_of_the_accepted_model() -> None:
-    evolution = evolve(ABSENT, _BOTH)
+    evolution = evolve(ABSENT, _BOTH, later_binding=TEST_BINDING)
     assert_type(evolution, UnilateralEvolution)
-    assert evolution == evolve_metamodels(ABSENT, model_of(_BOTH))
+    assert evolution == evolve_resolved(ABSENT, bound_model(model_of(_BOTH)))
     assert evolution.earlier is None
-    assert evolution.later is model_of(_BOTH)
+    assert evolution.later.meta is model_of(_BOTH)
 
 
 def test_identical_endpoints_evolve_to_an_empty_unilateral_evolution() -> None:
-    evolution = evolve(_WIDGETS, _WIDGETS)
+    evolution = evolve(_WIDGETS, _WIDGETS, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING)
     assert_type(evolution, Evolution)
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.operations == ()
-    assert evolution.earlier is evolution.later is model_of(_WIDGETS)
+    assert evolution.earlier is not None
+    assert evolution.earlier.meta is evolution.later.meta is model_of(_WIDGETS)
 
 
 def test_a_coordinated_change_keeps_both_exact_accepted_endpoints() -> None:
-    evolution = evolve(_BOTH, _WIDGETS)
+    evolution = evolve(_BOTH, _WIDGETS, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING)
     assert isinstance(evolution, CoordinatedEvolution)
     assert [type(operation) for operation in evolution.operations] == [EntityRemoved]
-    assert evolution.earlier is model_of(_BOTH)
-    assert evolution.later is model_of(_WIDGETS)
+    assert evolution.earlier.meta is model_of(_BOTH)
+    assert evolution.later.meta is model_of(_WIDGETS)
 
 
 def test_class_and_descriptor_backed_models_evolve_alike() -> None:
     deployed = domain_model_from_yaml(export_yaml(_WIDGETS))
-    assert evolve(deployed, _WIDGETS).operations == ()
-    assert evolve(_WIDGETS, domain_model_from_yaml(export_yaml(_WIDGETS))).operations == ()
-    mixed = evolve(deployed, _BOTH)
+    assert (
+        evolve(
+            deployed, _WIDGETS, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING
+        ).operations
+        == ()
+    )
+    assert (
+        evolve(
+            _WIDGETS,
+            domain_model_from_yaml(export_yaml(_WIDGETS)),
+            earlier_binding=TEST_BINDING,
+            later_binding=TEST_BINDING,
+        ).operations
+        == ()
+    )
+    mixed = evolve(deployed, _BOTH, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING)
     assert [type(operation) for operation in mixed.operations] == [EntityAdded]
-    assert mixed.earlier is model_of(deployed)
+    assert mixed.earlier is not None
+    assert mixed.earlier.meta is model_of(deployed)
 
 
 @pytest.mark.parametrize(
@@ -85,4 +104,11 @@ def test_class_and_descriptor_backed_models_evolve_alike() -> None:
 )
 def test_an_argument_that_is_no_domain_model_is_refused(earlier: Any, later: Any) -> None:
     with pytest.raises(TypeError, match="takes a Domain Model"):
-        evolve(earlier, later)
+        evolve(earlier, later, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING)
+
+
+def test_endpoints_bound_for_different_backends_are_refused_before_comparison() -> None:
+    other_backend = binding_for(dataclasses.replace(POSTGRES, name="mariadb"))
+    with pytest.raises(UsageError) as refused:
+        evolve(_WIDGETS, _WIDGETS, earlier_binding=TEST_BINDING, later_binding=other_backend)
+    assert refused.value.code == "evolution-backend-mismatch"

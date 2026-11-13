@@ -45,6 +45,7 @@ from parallax.core.internal.unit_work import (
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
@@ -127,7 +128,13 @@ _SEED: _State = (100, "a", _S1, _M)
 
 def _db(profile_run: Any, *instants: dt.datetime, **options: Any) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), **options)
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock(list(instants)),
+            **options,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -144,7 +151,7 @@ def _rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {members} "
-        f"from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [
         tuple(int(cell) if isinstance(cell, float) else cell for cell in row)
@@ -159,13 +166,13 @@ def _start(row: _Row) -> dt.datetime:
 
 
 def _tag_label(profile_run: Any) -> object:
-    ((label,),) = profile_run.port.execute("select label from dtw_tag where id = 1", [])
+    ((label,),) = profile_run.port.execute("select label from px.dtw_tag where id = 1", [])
     return label
 
 
 def _seeded(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
     """Span 1 as one rectangle [January, infinity) opened at T0, and tag 1."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, *instants)
 
     def seed(tx: TxnContext) -> None:
@@ -181,7 +188,7 @@ def _seeded(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> Scop
 
 def _two_rectangles(profile_run: Any, entity: type[Any], *instants: dt.datetime) -> ScopedDatabase:
     """Span 1 as [January, June) opened at T0 and [June, infinity) at T1."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _T1, *instants)
     db.transact(
         lambda tx: tx.insert(
@@ -409,16 +416,16 @@ def _install(profile_run: Any, entity: type[Any], body: str) -> None:
     control = profile_run.control()
     try:
         control.execute_write(
-            "create table dtw_audit (seen int not null, current_rows int not null)", []
+            "create table px.dtw_audit (seen int not null, current_rows int not null)", []
         )
-        control.execute_write("grant select on dtw_audit to public", [])
+        control.execute_write("grant select on px.dtw_audit to public", [])
         control.execute_write(
             "create function dtw_on_tag() returns trigger language plpgsql security definer "
             f"as $body$ begin {body} return new; end $body$",
             [],
         )
         control.execute_write(
-            "create trigger dtw_tag_updated after update on dtw_tag "
+            "create trigger dtw_tag_updated after update on px.dtw_tag "
             "for each row execute function dtw_on_tag()",
             [],
         )
@@ -428,13 +435,13 @@ def _install(profile_run: Any, entity: type[Any], body: str) -> None:
 
 def _audit_current_rows(entity: type[Any]) -> str:
     return (
-        "insert into dtw_audit (seen, current_rows) select 1, count(*) "
-        f"from {_TABLES[entity]} where id = 1 and out_z = 'infinity';"
+        "insert into px.dtw_audit (seen, current_rows) select 1, count(*) "
+        f"from px.{_TABLES[entity]} where id = 1 and out_z = 'infinity';"
     )
 
 
 def _audited(profile_run: Any) -> list[tuple[object, ...]]:
-    return list(profile_run.port.execute("select seen, current_rows from dtw_audit", []))
+    return list(profile_run.port.execute("select seen, current_rows from px.dtw_audit", []))
 
 
 _ACROSS = {
@@ -556,9 +563,9 @@ def test_overlapping_observed_writes_on_either_side_of_a_predicate_write_apply_i
 
 
 _BREAKS = {
-    "restamped": "update {table} set in_z = in_z + interval '1 second' "
+    "restamped": "update px.{table} set in_z = in_z + interval '1 second' "
     "where id = 1 and out_z = 'infinity' and from_z = timestamptz '2024-04-01 00:00:00+00';",
-    "removed": "delete from {table} where id = 1 and out_z = 'infinity' "
+    "removed": "delete from px.{table} where id = 1 and out_z = 'infinity' "
     "and from_z = timestamptz '2024-04-01 00:00:00+00';",
 }
 
@@ -808,7 +815,7 @@ def test_a_disjoint_observed_original_lost_without_retries_rolls_every_effect_ba
 def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_ones_start_fails(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _TA)
 
     def seed(tx: TxnContext) -> None:
@@ -829,7 +836,7 @@ def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_on
     members = ", ".join(_member(entity, name) for name in ("label", "spec"))
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{members} from {_TABLES[entity]} order by in_z",
+        f"{members} from px.{_TABLES[entity]} order by in_z",
         [],
     )
     assert [tuple(row) for row in rows] == [(_T0, None, "seed", _S1)]
@@ -840,7 +847,7 @@ def test_a_transaction_time_write_after_a_predicate_write_restating_the_first_on
 def test_an_insertion_sources_edits_on_both_sides_of_a_predicate_write_keep_one_instant(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     # Inserting a Non-Temporal tag captures no Transaction Instant.
     db = _db(profile_run, _TA)
     db.transact(lambda tx: tx.insert(Tag(id=1, label="t")))

@@ -24,14 +24,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from person t0
+        postgres: select t0.id, t0.name from px.person t0
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor from animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor from px.animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?
       binds: [[10, 11, 12], cat]
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from px.animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?
       binds: [[10, 11, 12], dog]
-  referenceSql: select id, name from person
+  referenceSql: select id, name from px.person
   graph:
     Person:
       - id: 10

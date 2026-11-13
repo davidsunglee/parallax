@@ -29,6 +29,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, 
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import (
@@ -191,7 +192,7 @@ def _stored_rows(profile_run: Any, cell: Cell, entity: type[Any]) -> list[Histor
     return [
         HistoryRow(*cast("tuple[Any, ...]", row))
         for row in profile_run.port.execute(
-            f"select id, from_z, thru_z, in_z, out_z, {values} from {table} "
+            f"select id, from_z, thru_z, in_z, out_z, {values} from px.{table} "
             "where id between ? and ?",
             [keys[0], keys[-1]],
         )
@@ -219,7 +220,7 @@ def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]
         return rows, None
     document = _document_column(profile_run, _TABLES[CollectionSpan])
     ((differing,),) = profile_run.port.execute(
-        f"select count(*) from {_TABLES[CollectionSpan]} where id between ? and ? "
+        f"select count(*) from px.{_TABLES[CollectionSpan]} where id between ? and ? "
         f"and (({document}->'tags') is distinct from ?::jsonb "
         f"or ({document}->'legs') is distinct from ?::jsonb)",
         [object_key(0), object_key(cell.objects - 1), json.dumps(_TAGS), json.dumps(_LEGS)],
@@ -241,7 +242,13 @@ def _database(profile_run: Any, tally: PortTally, cell: Cell, calls: FlushCalls)
         lambda connection: cast("Any", CountingConnection(connection, tally, cell.connection)),
     )
     return own_root(
-        connect(decorated, _MODEL, clock=FixedClock(AMENDED_AT), lifecycle_provider=calls)
+        connect(
+            decorated,
+            _MODEL,
+            clock=FixedClock(AMENDED_AT),
+            lifecycle_provider=calls,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -253,7 +260,7 @@ def _flush_runs(calls: FlushCalls) -> Sequence[tuple[str, list[tuple[str, int | 
 def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
     profile_run: Any, cell: Cell
 ) -> None:
-    profile_run.reset(model_of(_MODEL), _fixtures(cell))
+    profile_run.reset(model_of(_MODEL), _fixtures(cell), TEST_BINDING)
     tally = PortTally()
     calls = FlushCalls()
     _database(profile_run, tally, cell, calls).transact(

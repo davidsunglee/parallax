@@ -7,10 +7,10 @@ shape: error
 then:
   statements:
     - sql:
-        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        postgres: insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [3, C, "50.00", "2024-03-01T00:00:00.000000Z", "2024-08-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        postgres: insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [3, C, "75.00", "2024-05-01T00:00:00.000000Z", infinity]
   errorClass: constraintViolation
   nativeCode:

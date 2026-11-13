@@ -27,9 +27,9 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.balance < ?
           binds: ["200.00"]
-      referenceSql: select id, owner, balance from wallet where balance < 200.00
+      referenceSql: select id, owner, balance from px.wallet where balance < 200.00
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00" }
         - { id: 3, owner: Grace, balance: "10.00" }

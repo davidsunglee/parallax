@@ -27,6 +27,7 @@ from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.case_document import RunOnly, eligibility
 from parallax.conformance._mechanism.envelope import Emission, ScenarioRun, UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import (
+    case_binding,
     case_edition,
     case_serving_model,
     case_setup_model_ref,
@@ -40,6 +41,7 @@ __all__ = [
     "RunOnly",
     "ScenarioRun",
     "UnclassifiedEngineError",
+    "case_binding",
     "case_database",
     "case_edition",
     "case_serving_model",

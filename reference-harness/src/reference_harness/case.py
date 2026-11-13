@@ -24,13 +24,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, NoReturn, cast
 
 from .corpus_yaml import read_corpus_yaml
+from .database_binding import PhysicalTable, Placement, normalize_binding, resolve_binding
 from .naming import default_column_name
+from .paths import find_core_root
 from .references import entity_identity as _entity_identity
 from .references import resolve_definition as _resolve_definition
 from .temporality import derive_temporal_structure, temporal_axes
 
 if TYPE_CHECKING:
     from .storage_layout import StorageLayout
+
+_DEFAULT_BINDINGS: Final = Path("bindings") / "default.yaml"
+_STATE_DIALECTS: Final = ("postgres", "mariadb")
 
 
 def _compile_attribute(attribute: dict[str, Any]) -> dict[str, Any]:
@@ -726,6 +731,75 @@ class Case:
     model: Model
     earlier_model: Model | None = None
     provisioning_model: Model | None = None
+    default_bindings: Mapping[str, Any] = field(default_factory=lambda: _corpus_default_bindings())
+    _placements: dict[tuple[int, str, str], tuple[Model, Placement]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
+    def binding_document(self, dialect: str, endpoint: str | None = None) -> Mapping[str, Any]:
+        """The binding document *dialect* resolves this case under.
+
+        *endpoint* names an evolution endpoint (``earlierBinding`` or
+        ``laterBinding``), which inherits the case ``binding``, which inherits
+        the corpus default — each per dialect independently.
+        """
+        evolve = self.when.get("evolve", {}) if endpoint is not None else {}
+        for candidate in (evolve.get(endpoint), self.raw.get("binding"), self.default_bindings):
+            if isinstance(candidate, Mapping) and dialect in candidate:
+                return candidate[dialect]
+        raise KeyError(f"{self.path.name}: no {dialect} binding and no corpus default")
+
+    def placement(
+        self, dialect: str, model: Model | None = None, endpoint: str | None = None
+    ) -> Placement:
+        """*model* (else :attr:`model`) resolved under :meth:`binding_document`.
+
+        Every accepted case resolves; a binding refusal here is a corpus defect.
+        """
+        placed = self.model if model is None else model
+        key = (id(placed), dialect, endpoint or "")
+        cached = self._placements.get(key)
+        if cached is None or cached[0] is not placed:
+            document = normalize_binding(self.binding_document(dialect, endpoint), dialect)
+            cached = (placed, resolve_binding(placed, document, dialect))
+            self._placements[key] = cached
+        return cached[1]
+
+    def setup_placement(self, dialect: str) -> Placement:
+        """:attr:`setup_model` resolved under the case binding."""
+        return self.placement(dialect, self.setup_model)
+
+    def entity_table(self, entity: str, dialect: str | None = None) -> PhysicalTable:
+        """The physical table the case binding places *entity*'s rows in.
+
+        Read through *dialect*'s placement, else :attr:`state_placement`.
+        """
+        view = self.model.storage_layout.entity(entity)
+        if view is None:
+            raise KeyError(f"{self.path.name}: {entity} stores no rows")
+        placement = self.state_placement if dialect is None else self.placement(dialect)
+        return placement.table(view.layout.mapping_owner)
+
+    @property
+    def state_placement(self) -> Placement:
+        """The one placement :attr:`model`'s dialect-neutral observations name.
+
+        ``then.tableState`` and the other physical observations no dialect key
+        selects name tables one way for every dialect, so the case binding must
+        place every table identically under each; a binding that does not is a
+        corpus defect.
+        """
+        placements = [self.placement(dialect) for dialect in _STATE_DIALECTS]
+        first = placements[0]
+        if any(
+            placed.tables != first.tables or placed.sequences != first.sequences
+            for placed in placements[1:]
+        ):
+            raise ValueError(
+                f"{self.path.name}: the case binding places tables differently per dialect, "
+                "which a dialect-neutral observation cannot name"
+            )
+        return first
 
     @property
     def setup_model(self) -> Model:
@@ -962,8 +1036,14 @@ class Case:
         return keyed
 
     @property
-    def expected_table_state(self) -> dict[str, list[dict[str, Any]]]:
-        return self.then.get("tableState", {})
+    def expected_table_state(self) -> dict[PhysicalTable, list[dict[str, Any]]]:
+        """``then.tableState``'s rows by the physical table each nested
+        ``qualifier -> name`` key names."""
+        return {
+            PhysicalTable((qualifier,), name): rows
+            for qualifier, tables in self.then.get("tableState", {}).items()
+            for name, rows in tables.items()
+        }
 
     @property
     def state_graded(self) -> bool:
@@ -1421,6 +1501,20 @@ _CASE_CACHE: dict[tuple[Path, Path], Case] = {}
 _TEMPLATE_CACHE: dict[Path, tuple[Case, ...]] = {}
 
 
+_BINDINGS_CACHE: dict[Path, Mapping[str, Any]] = {}
+
+
+def _default_bindings(path: Path) -> Mapping[str, Any]:
+    if path not in _BINDINGS_CACHE:
+        _BINDINGS_CACHE[path] = frozen_view(_load_yaml(path))
+    return _BINDINGS_CACHE[path]
+
+
+def _corpus_default_bindings() -> Mapping[str, Any]:
+    """The corpus default binding of the repository's own compatibility root."""
+    return _default_bindings(find_core_root(Path(__file__)) / "compatibility" / _DEFAULT_BINDINGS)
+
+
 def load_model_metadata(compatibility_root: Path, model_rel: str) -> Model:
     """Load canonical model metadata without reading fixture rows, cached by path."""
     model_path = (compatibility_root / model_rel).resolve()
@@ -1478,10 +1572,16 @@ def load_case(compatibility_root: Path, case_path: Path) -> Case:
     model = load_model(root, evolve.get("later") or raw["model"])
     earlier = evolve.get("earlier")
     provisioning = raw.get("given", {}).get("provisioningModel")
+    defaults_path = root / _DEFAULT_BINDINGS
     case = Case(
         path=resolved_case_path,
         raw=raw,
         model=model,
+        default_bindings=(
+            _default_bindings(defaults_path)
+            if defaults_path.is_file()
+            else _corpus_default_bindings()
+        ),
         earlier_model=load_model(root, earlier) if isinstance(earlier, str) else None,
         provisioning_model=(
             load_model(root, provisioning) if isinstance(provisioning, str) else None

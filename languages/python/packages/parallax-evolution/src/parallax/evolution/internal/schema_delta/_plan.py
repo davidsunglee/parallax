@@ -6,6 +6,7 @@ from typing import Final
 
 from parallax.core.internal import storage_layout
 from parallax.core.internal.base import JSON, STRING, NeutralType
+from parallax.core.internal.database_binding import ResolvedBinding, ResolvedTemporalConstraints
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.inheritance import (
     InheritanceEntityView,
@@ -27,7 +28,6 @@ from parallax.core.internal.storage_layout import (
     InheritanceDiscriminator,
     StorageLayoutFacet,
     TableLayout,
-    TemporalHistoryConstraints,
 )
 from parallax.evolution.internal.model_evolution import (
     AttributeAdded,
@@ -99,13 +99,13 @@ class Plan:
     collisions: tuple[CollisionGroup, ...]
 
 
-def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
+def plan(evolution: UnilateralEvolution) -> Plan:
     """Every physical operation ``evolution`` asks the database to perform.
 
-    ``dialect`` is needed here because a physical index operation is not
-    well-formed without its name, and a name is only derivable against the
-    identifier limit the Dialect fixes.
+    The later binding's dialect fixes the identifier limit every physical index
+    name is derived against and the scope index names are unique within.
     """
+    dialect = evolution.later.dialect
     later = _Endpoint.of(evolution.later)
     earlier = None if evolution.earlier is None else _Endpoint.of(evolution.earlier)
     causes = _Causes.over(evolution.operations, later, earlier)
@@ -121,8 +121,10 @@ def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
                 _authored_indices(earlier),
                 _authored_indices(later),
                 dialect,
-                earlier_temporal=() if earlier is None else temporal_backing_indices(earlier.facet),
-                later_temporal=temporal_backing_indices(later.facet),
+                earlier_temporal=(
+                    () if earlier is None else temporal_backing_indices(earlier.resolved)
+                ),
+                later_temporal=temporal_backing_indices(later.resolved),
             ),
             surviving=frozenset(layout.mapping_owner for layout in later.facet.tables),
         ),
@@ -151,27 +153,25 @@ def _prerequisites(
     return (CreateExtension(name=_EXCLUSION_PREREQUISITE, caused_by=caused_by),)
 
 
-def temporal_backing_indices(facet: StorageLayoutFacet) -> tuple[TemporalBackingIndex, ...]:
+def temporal_backing_indices(resolved: ResolvedBinding) -> tuple[TemporalBackingIndex, ...]:
     """The Index behind each temporal primary key and exclusion one endpoint holds."""
     held: list[TemporalBackingIndex] = []
-    for layout in facet.tables:
-        constraints = layout.temporal_constraints
+    for table in resolved.tables:
+        constraints = table.temporal_constraints
         if constraints is None:
             continue
         exclusion = _exclusion(constraints)
         held.append(
             TemporalBackingIndex(
-                mapping_owner=layout.mapping_owner,
-                table=layout.table,
+                table=table,
                 kind="primaryKey",
-                columns=tuple(slot.column for slot in constraints.primary_key.columns),
+                columns=tuple(slot.column for slot in constraints.definition.primary_key.columns),
                 name=PhysicalIndexName(constraints.primary_key_name),
             )
         )
         held.append(
             TemporalBackingIndex(
-                mapping_owner=layout.mapping_owner,
-                table=layout.table,
+                table=table,
                 kind="exclusion",
                 columns=(
                     *exclusion.equal,
@@ -190,7 +190,7 @@ def _authored_indices(endpoint: _Endpoint | None) -> tuple[IndexDefinition, ...]
     return tuple(
         definition
         for layout in endpoint.facet.tables
-        for definition in _index_definitions(endpoint.model, layout)
+        for definition in _index_definitions(endpoint, layout)
     )
 
 
@@ -208,26 +208,29 @@ def _lower(
     is ever taken away: nothing that destroys a stored shape is unilateral, so
     the algebra has no case for it.
     """
-    defined = tuple(_index_definitions(later.model, layout))
+    defined = tuple(_index_definitions(later, layout))
     before = None if earlier is None else earlier.facet.table(layout.mapping_owner)
     if before is None or earlier is None:
         yield from _create(layout, later, defined, causes.table(layout.mapping_owner), dialect)
         return
     yield from _columns(layout, before, later, earlier, causes)
-    yield from _indices(tuple(_index_definitions(earlier.model, before)), defined, causes, dialect)
+    yield from _indices(tuple(_index_definitions(earlier, before)), defined, causes, dialect)
 
 
 @dataclass(frozen=True, slots=True)
 class _Endpoint:
-    """One accepted Metamodel beside the compiled facets the lowering reads."""
+    """One model under its binding, beside the compiled facets the lowering reads."""
 
+    resolved: ResolvedBinding
     model: Metamodel
     facet: StorageLayoutFacet
     family: InheritanceFacet
 
     @staticmethod
-    def of(model: Metamodel) -> _Endpoint:
+    def of(resolved: ResolvedBinding) -> _Endpoint:
+        model = resolved.meta
         return _Endpoint(
+            resolved=resolved,
             model=model,
             facet=storage_layout.storage_layout_facet_of(model),
             family=inheritance_facet_of(model),
@@ -333,12 +336,13 @@ def _create(
     it arrives because the declarations the Table materializes arrived, and no
     Index operation of its own describes it.
     """
-    constraints = layout.temporal_constraints
+    table = later.resolved.table(layout.mapping_owner)
+    constraints = table.temporal_constraints
     yield CreateTable(
-        table=layout.table,
+        table=table,
         columns=tuple(_physical_column(later.model, slot) for slot in layout.columns),
         primary_key=tuple(slot.column for slot in layout.physical_primary_key),
-        interval_checks=_interval_checks(layout),
+        interval_checks=_interval_checks(constraints),
         caused_by=causes,
         primary_key_name=None if constraints is None else constraints.primary_key_name,
         exclusion=None if constraints is None else _exclusion(constraints),
@@ -351,28 +355,32 @@ def _create(
         )
 
 
-def _exclusion(constraints: TemporalHistoryConstraints) -> Exclusion:
+def _exclusion(constraints: ResolvedTemporalConstraints) -> Exclusion:
     """The Table's non-overlap constraint, its intervals in canonical axis order."""
-    axes = (constraints.valid_axis, constraints.transaction_axis)
+    definition = constraints.definition
+    axes = (definition.valid_axis, definition.transaction_axis)
     return Exclusion(
         name=constraints.exclusion_name,
-        equal=tuple(slot.column for slot in constraints.logical_key),
+        equal=tuple(slot.column for slot in definition.logical_key),
         overlapping=tuple(
             (axis.start.column, axis.end.column) for axis in axes if axis is not None
         ),
     )
 
 
-def _interval_checks(layout: TableLayout) -> tuple[IntervalCheck, ...]:
+def _interval_checks(constraints: ResolvedTemporalConstraints | None) -> tuple[IntervalCheck, ...]:
     """Each temporal axis's interval check, in canonical axis order."""
-    constraints = layout.temporal_constraints
     if constraints is None:
         return ()
-    axes = (constraints.valid_axis, constraints.transaction_axis)
+    definition = constraints.definition
+    checks = (
+        (definition.valid_axis, constraints.valid_check_name),
+        (definition.transaction_axis, constraints.transaction_check_name),
+    )
     return tuple(
-        IntervalCheck(name=axis.interval_check_name, start=axis.start.column, end=axis.end.column)
-        for axis in axes
-        if axis is not None
+        IntervalCheck(name=name, start=axis.start.column, end=axis.end.column)
+        for axis, name in checks
+        if axis is not None and name is not None
     )
 
 
@@ -392,12 +400,13 @@ def _columns(
     and so holds no value at all. Narrowing a domain rows are stored against is
     not unilateral, so no accepted input reaches this Column any other way.
     """
+    table = later.resolved.table(layout.mapping_owner)
     for slot in layout.columns:
         held = before.column(slot.column)
         target = _physical_column(later.model, slot)
         if held is None:
             yield AddColumn(
-                table=layout.table,
+                table=table,
                 column=target,
                 caused_by=causes.column(layout.mapping_owner, slot),
             )
@@ -410,7 +419,7 @@ def _columns(
                 f"{layout.table.name}.{slot.column.name}: a stored domain narrowed"
             )
         yield RestateColumnDomain(
-            table=layout.table,
+            table=table,
             earlier=source,
             later=target,
             caused_by=causes.domain(
@@ -767,19 +776,21 @@ def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> Att
     return attribute
 
 
-def _index_definitions(model: Metamodel, layout: TableLayout) -> Iterator[IndexDefinition]:
-    """Every authored Index this Table holds, in the layout's canonical order.
+def _index_definitions(endpoint: _Endpoint, layout: TableLayout) -> Iterator[IndexDefinition]:
+    """Every authored Index this Table holds, in the layout's canonical order,
+    on the table ``endpoint``'s binding resolves.
 
     The derived primary-key Index is emitted inline by ``create table`` as the
     key itself, so a separate statement for it would be a second object over the
     same columns.
     """
+    table = endpoint.resolved.table(layout.mapping_owner)
+    model = endpoint.model
     for physical in layout.indices:
         if physical == layout.primary_key_index:
             continue
         yield IndexDefinition(
-            mapping_owner=layout.mapping_owner,
-            table=layout.table,
+            table=table,
             index=physical.declaration.identity,
             components=physical.declaration.attributes,
             column_attributes=physical.column_attributes,

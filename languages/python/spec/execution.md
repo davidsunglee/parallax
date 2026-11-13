@@ -16,18 +16,29 @@ Supporting a new PostgreSQL major requires a separate compatibility decision.
 
 ## Models, roots, and scopes
 
-`prepare_model(model, edition=...)` returns a complete immutable `ModelSelection`
-or raises without exposing a partial selection. Its `model` is the original
-Domain Model. Its edition is a nonempty opaque string compared only for equality;
+`prepare_model(model, binding=..., edition=...)` returns a complete immutable
+`ModelSelection` or raises without exposing a partial selection. `binding` is a
+required `DatabaseBinding` such as `parallax.postgres.PostgresBinding`; omitting
+it raises `UsageError` code `binding-required`, and an invalid or unplaceable
+binding raises `BindingError`. Its `model` is the original Domain Model. Its edition is a nonempty opaque string compared only for equality;
 applications must not reuse a token for a changed model within one publication
 history. A `ServingModel` holds one selection. `publish(candidate, expected=...)`
 atomically compares the held selection by identity and either replaces it or
 raises `PublicationConflictError` with the exact `expected` and `held` values.
+Before that, against `expected`, a candidate for another backend raises
+`UsageError` code `publication-backend-mismatch`, and one that relocates a
+surviving table or sequence raises `UsageError` code
+`PUBLICATION_RELOCATION_REFUSED`.
 There is no automatic publication retry, edition ordering, or implicit DDL.
 The application prepares, makes the physical schema ready, and publishes.
 
-`connect(adapter, model, ...)` accepts a Domain Model or Serving Model and owns
-one opened runtime. The Domain Model shorthand uses a static Serving Model.
+`connect(adapter, model, ...)` accepts a Domain Model with a required
+`binding=` or a Serving Model with none, and owns one opened runtime. The Domain
+Model shorthand uses a static Serving Model. Before the runtime opens, a missing
+binding raises `binding-required`, a binding beside a Serving Model raises
+`connect-binding-unexpected`, and a backend other than the adapter's dialect
+raises `connect-backend-mismatch`. `evolve` takes `later_binding=` and, for a
+present earlier model, `earlier_binding=`.
 `Database` is the resource root: close it explicitly or use its context manager;
 closing is idempotent and invalidates derived scopes. The root exposes authority
 selection and option and routing derivation, not modeled execution verbs.

@@ -14,16 +14,17 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into writable_scalars(id, label) values (?, ?)
+        postgres: insert into px.writable_scalars(id, label) values (?, ?)
       binds: [4, abcdefgh]
   tableState:
-    writable_scalars:
-      - id: 4
-        f32: null
-        f64: null
-        payload: null
-        local_time: null
-        external_id: null
-        amount: null
-        label: abcdefgh
+    px:
+      writable_scalars:
+        - id: 4
+          f32: null
+          f64: null
+          payload: null
+          local_time: null
+          external_id: null
+          amount: null
+          label: abcdefgh
   databaseCalls: 1

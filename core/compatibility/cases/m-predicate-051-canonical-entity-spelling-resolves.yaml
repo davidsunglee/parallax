@@ -14,10 +14,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.archive_label from archive_shared t0 where t0.archive_label = ?
-        mariadb: select t0.id, t0.archive_label from archive_shared t0 where t0.archive_label = ?
+        postgres: select t0.id, t0.archive_label from px.archive_shared t0 where t0.archive_label = ?
+        mariadb: select t0.id, t0.archive_label from px.archive_shared t0 where t0.archive_label = ?
       binds: [A-1]
-  referenceSql: select id, archive_label from archive_shared where archive_label = 'A-1'
+  referenceSql: select id, archive_label from px.archive_shared where archive_label = 'A-1'
   rows:
     - { id: 10, archive_label: A-1 }
   databaseCalls: 1

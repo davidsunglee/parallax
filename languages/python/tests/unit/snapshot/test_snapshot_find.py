@@ -126,6 +126,7 @@ from parallax.snapshot._handle import _read
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from parallax.snapshot._publication._graph_view import GraphView
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
@@ -259,7 +260,7 @@ def _refs(value: object) -> tuple[int, ...]:
 def _cataloged(model: Metamodel) -> CatalogedModel:
     """``model`` paired with its member layouts, as a connected ``Database``
     resolves the pair once and hands the executor for every read it serves."""
-    return CatalogedModel(model)
+    return CatalogedModel(model, TEST_BINDING)
 
 
 def _find(
@@ -733,7 +734,9 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
     # the child level keeps Beast as its target, so it reads the shared table
     # unguarded and Bagheera's bear reaches classification rather than vanishing.
     port = _partially_composed_keepers()
-    db = own_root(Database.connect(port, COMPOSED_BEAST_READER)).using_database_login()
+    db = own_root(
+        Database.connect(port, COMPOSED_BEAST_READER, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         BeastKeeper.where(BeastKeeper.all)
         .order_by(BeastKeeper.id.asc())
@@ -744,7 +747,7 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
 
     child_sql, child_binds = port.executed[1]
     assert child_sql == (
-        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
+        "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from px.beast t0 "
         "where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc"
     )
     assert child_binds == [ArrayBind(INT64, [10, 11])]
@@ -768,7 +771,11 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
     projected = snapshot.wire().checked().results()
     assert projected[1] == bagheera
     direct = (
-        own_root(Database.connect(_partially_composed_keepers(), COMPOSED_BEAST_READER))
+        own_root(
+            Database.connect(
+                _partially_composed_keepers(), COMPOSED_BEAST_READER, binding=TEST_BINDING
+            )
+        )
         .using_database_login()
         .wire.find(query)
     )
@@ -986,7 +993,7 @@ def test_a_milestone_root_with_an_undecoded_start_publishes_at_the_whole_empty_p
     # One undecoded start empties the root's whole milestone pin, never leaving
     # the axis that did decode behind as a partial one.
     port = ScriptedAdapter(Read(rows=[row]), Read(rows=[row]), Read(rows=[row]))
-    db = own_root(Database.connect(port, model)).using_database_login()
+    db = own_root(Database.connect(port, model, binding=TEST_BINDING)).using_database_login()
 
     snapshot = db.find(query)
     direct = db.wire.find(query).result()
@@ -1170,7 +1177,9 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     # RuntimeError and why it names neither the query nor the model. Read-query
     # resolution resolves the target before anything else, so the port is never
     # touched: a refusing port raises on any read or write.
-    db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
+    db = own_root(
+        Database.connect(RefusingAdapter(), ACCOUNT, binding=TEST_BINDING)
+    ).using_database_login()
     with raises_code(UsageError, "query-target-not-in-model") as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
@@ -1181,7 +1190,9 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     # not built yet, so the refusal names the Feature rather than calling the
     # query wrong. A refusing port raises on any read or write: classification runs
     # before SQL generation, connection acquisition, and adapter access alike.
-    db = own_root(Database.connect(RefusingAdapter(), POLICY_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(RefusingAdapter(), POLICY_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -1197,7 +1208,7 @@ def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
     # deep-fetch executor has always served. The root level comes back empty, so
     # the child level short-circuits and one statement is the whole execution.
     port = QueuePort([[]])
-    db = own_root(Database.connect(port, POLICY_MODEL)).using_database_login()
+    db = own_root(Database.connect(port, POLICY_MODEL, binding=TEST_BINDING)).using_database_login()
     query = (
         Policy.where(Policy.all).as_of(valid_time=LATEST, tx_time=LATEST).include(Policy.coverages)
     )
@@ -1209,7 +1220,9 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
     # Ordering and a cap are siblings of the two clauses the deferral is read
     # off, so neither can stand between them: a deferral is a property of the
     # read, never of how its rows are shaped afterwards.
-    db = own_root(Database.connect(RefusingAdapter(), POLICY_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(RefusingAdapter(), POLICY_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         Policy.where(Policy.all)
         .history(TX_TIME)
@@ -1228,7 +1241,9 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     # step 3, so the connected model's inability to answer at all is what
     # surfaces — a deferral result is never exposed for a query the model does
     # not even declare a target for.
-    db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
+    db = own_root(
+        Database.connect(RefusingAdapter(), ACCOUNT, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -1257,7 +1272,7 @@ def test_a_native_columns_leaf_is_preserved_without_host_reclassification() -> N
     # the cell. The fake can bypass that boundary, but materialization does not
     # reinterpret the value as fresh Wire or Pydantic input.
     port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
-    db = own_root(Database.connect(port, ACCOUNT)).using_database_login()
+    db = own_root(Database.connect(port, ACCOUNT, binding=TEST_BINDING)).using_database_login()
     root = db.find(mm.Account.where(mm.Account.id == 1)).checked().result()
     assert isinstance(root, mm.Account)
     assert root.balance == "not-a-decimal"
@@ -1269,7 +1284,9 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     # classification answers it in band. A default accessor still refuses — with
     # the invalid-data report, never with a materialization failure.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])
-    db = own_root(Database.connect(port, vo.CUSTOMER_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     with pytest.raises(InvalidDataError) as refusal:
         snapshot.result()
@@ -1313,7 +1330,9 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
             ]
         ]
     )
-    db = own_root(Database.connect(port, read_models.BALANCE_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(port, read_models.BALANCE_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     with raises_code(InternalError, "snapshot-materialization-failed") as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
     assert isinstance(refusal.value.__cause__, ValueError)
@@ -1681,7 +1700,7 @@ def test_a_dormant_root_publishes_no_roots_and_issues_no_statement(
     model: DomainModel, query: ObjectQuery[Any, Any]
 ) -> None:
     port = ScriptedAdapter()
-    db = own_root(Database.connect(port, model)).using_database_login()
+    db = own_root(Database.connect(port, model, binding=TEST_BINDING)).using_database_login()
 
     snapshot = db.find(query)
     direct = db.wire.find(query)
@@ -1736,7 +1755,9 @@ _WORKBENCH_ROWS: Final[list[MappingRow]] = [
 
 def test_an_include_of_a_dormant_target_loads_empty_and_null_without_a_child_statement() -> None:
     port = ScriptedAdapter(Read(rows=list(_WORKBENCH_ROWS)), Read(rows=[_COG]))
-    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    db = own_root(
+        Database.connect(port, dormant.DORMANT_POSITION_COLUMNS, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         dormant.Workbench.where(dormant.Workbench.all)
         .order_by(dormant.Workbench.id.asc())
@@ -1750,7 +1771,7 @@ def test_an_include_of_a_dormant_target_loads_empty_and_null_without_a_child_sta
 
     (_root_read, gadgets) = _reads(port)
     assert gadgets.sql == (
-        "select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 "
+        "select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from px.dormant_gadget t0 "
         "where t0.workbench_id = any(cast(? as bigint[])) order by t0.id asc"
     )
     assert gadgets.binds == (ArrayBind(INT64, [1, 2]),)
@@ -1770,7 +1791,9 @@ def test_an_include_of_a_dormant_tpcs_target_loads_empty_and_null_without_a_chil
     None
 ):
     port = ScriptedAdapter(Read(rows=list(_WORKBENCH_ROWS)), Read(rows=[_COG]))
-    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    db = own_root(
+        Database.connect(port, dormant.DORMANT_POSITION_COLUMNS, binding=TEST_BINDING)
+    ).using_database_login()
     query = (
         dormant.Workbench.where(dormant.Workbench.all)
         .order_by(dormant.Workbench.id.asc())
@@ -1900,7 +1923,9 @@ def test_a_dormant_milestone_set_keeps_its_family_temporal_shape_without_a_state
 
 def test_a_dormant_wire_read_publishes_no_roots_without_a_statement() -> None:
     port = ScriptedAdapter()
-    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    db = own_root(
+        Database.connect(port, dormant.DORMANT_POSITION_COLUMNS, binding=TEST_BINDING)
+    ).using_database_login()
 
     result = db.wire.find(
         object_query_node(
@@ -1940,7 +1965,9 @@ def test_an_invalid_query_over_a_dormant_position_is_still_refused(
 
 def test_an_executable_read_matching_no_rows_still_issues_its_statement() -> None:
     port = ScriptedAdapter(Read(rows=[]))
-    db = own_root(Database.connect(port, dormant.DORMANT_POSITION_COLUMNS)).using_database_login()
+    db = own_root(
+        Database.connect(port, dormant.DORMANT_POSITION_COLUMNS, binding=TEST_BINDING)
+    ).using_database_login()
 
     with port:
         assert db.find(dormant.Widget.where(dormant.Widget.label == "none")).results() == []
@@ -2081,8 +2108,8 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
     # Both shapes adopt from the same Serving Model, so between publications
     # they report one edition; a publication between them changes only what
     # is adopted afterwards, and a result already published keeps its stamp.
-    a = prepare_model(ACCOUNT, edition="ledger-a")
-    b = prepare_model(ACCOUNT, edition="ledger-b")
+    a = prepare_model(ACCOUNT, edition="ledger-a", binding=TEST_BINDING)
+    b = prepare_model(ACCOUNT, edition="ledger-b", binding=TEST_BINDING)
     serving = ServingModel(a)
     port = ScriptedAdapter(
         Read(rows=[NEW_ROW]),
@@ -2114,8 +2141,8 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     # failure escaping that transaction is noted with B — and it is still the
     # refusal the result under A settled, with A's edition on it. Access itself
     # starts no execution and adopts nothing.
-    a = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-a")
-    b = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-b")
+    a = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-a", binding=TEST_BINDING)
+    b = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-b", binding=TEST_BINDING)
     serving = ServingModel(a)
     port = ScriptedAdapter(
         Read(rows=[{"id": 1, "name": "Ada", "address": {"city": 7}}]), Transact()
@@ -2184,7 +2211,7 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
     port = ScriptedAdapter(
         *eager_read, *eager_read, *first_page, *last_page, *first_page, *last_page
     )
-    root = own_root(Database.connect(port, ORDERS_MODEL))
+    root = own_root(Database.connect(port, ORDERS_MODEL, binding=TEST_BINDING))
     db = root.using_database_login()
     query = StoryOrder.where(StoryOrder.active == True).include(StoryOrder.items)  # noqa: E712
 
@@ -2252,7 +2279,7 @@ def test_temporal_reads_reuse_one_preparation_and_render_their_own_coordinates(
     earlier = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     later = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     port = ScriptedAdapter(*_POLICY_PAGE * 3)
-    root = own_root(Database.connect(port, POLICY_MODEL))
+    root = own_root(Database.connect(port, POLICY_MODEL, binding=TEST_BINDING))
     db = root.using_database_login()
 
     def read(surface: Any, at: dt.datetime) -> list[Any]:
@@ -2306,7 +2333,7 @@ def test_a_document_layout_temporal_read_renders_its_own_operand_and_coordinates
     later = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     stored = Read(rows=[_milestoned({"id": 1, "payload": StructuredDocument({"route": "North"})})])
     port = ScriptedAdapter(stored, stored, stored)
-    root = own_root(Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL))
+    root = own_root(Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, binding=TEST_BINDING))
     db = root.using_database_login()
 
     def read(surface: Any, route: str, at: dt.datetime) -> list[Any]:

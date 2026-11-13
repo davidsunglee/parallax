@@ -7,6 +7,7 @@ from parallax.core.internal.base import StructuredDocument
 from parallax.core.internal.entity import DomainModel, Entity
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 
 from .db_port import Read, ScriptedAdapter
 
@@ -32,6 +33,7 @@ def invalid_customer_root(model: DomainModel) -> Entity:
             )
         ),
         model,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         invalid = db.find(Customer.where(Customer.id == 6)).checked().result()

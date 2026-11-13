@@ -18,10 +18,10 @@ from parallax.core.internal.metamodel import (
     Column,
     EntityIdentity,
     IndexIdentity,
-    Table,
 )
 from parallax.evolution.internal.schema_delta._naming import physical_index_name, readable_prefix
 from parallax.evolution.internal.schema_delta._physical import IndexDefinition, PhysicalColumn
+from tests._support.bindings import resolved_table
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
 
@@ -37,8 +37,7 @@ def _definition(
     unique: bool = False,
 ) -> IndexDefinition:
     return IndexDefinition(
-        mapping_owner=_ENTITY,
-        table=Table(name=table),
+        table=resolved_table(_ENTITY, table),
         index=IndexIdentity(_ENTITY, index),
         components=tuple(AttributeIdentity(_ENTITY, name) for name in components),
         column_attributes=tuple(

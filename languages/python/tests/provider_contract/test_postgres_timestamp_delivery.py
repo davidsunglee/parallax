@@ -20,6 +20,7 @@ from parallax.core.internal.base import INFINITY, TemporalBound
 from parallax.core.internal.entity._model import model_of
 from parallax.postgres import PoolOptions
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "timestamp.delivery"
@@ -112,12 +113,17 @@ _SPAN_READS: dict[tuple[_Pin, _Pin], _Milestone] = {
 
 
 def _served(profile_run: Any, zone: str) -> tuple[ScopedDatabase, Any]:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     runtime = profile_run.configured(
         pool=PoolOptions(min_size=1, max_size=1), settings={"timezone": zone}
     ).open()
     try:
-        root = Database(runtime, _MODEL, clock=ScriptedClock([_INSERTED.typed, _UPDATED.typed]))
+        root = Database(
+            runtime,
+            _MODEL,
+            clock=ScriptedClock([_INSERTED.typed, _UPDATED.typed]),
+            binding=TEST_BINDING,
+        )
     except BaseException:
         runtime.close()
         raise

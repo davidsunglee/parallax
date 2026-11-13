@@ -4,7 +4,7 @@ Mirrors the drift-canary pattern in ``test_dag_sync.py``: the tool is imported a
 a library (``pythonpath = ["tools"]``), the clean tree must pass, and a
 deliberately planted untracked file must block. The canary proves the guard
 actually closes the vacuous-diff-cover hole it exists for — a guard that only
-ever returns 0 is indistinguishable from no guard. Every plant goes into a
+ever returns 0 is indistinguishable from no guard. Every plant goes into px.a
 scratch checkout the guard is pointed at, never into the real tree: another
 test auditing the real tree at the same moment would otherwise find it.
 """

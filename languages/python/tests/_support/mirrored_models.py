@@ -720,6 +720,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "table-per-concrete-subtype shape plus the root-owned optimistic-lock version "
             "`account` already proves"
         ),
+        "binding-ledgers": (
+            "no mirror authored; its two independent ledgers declaring one table name are a "
+            "placement fixture only a case binding can place, which the binding cases read "
+            "and write directly"
+        ),
         "buffered-sequence-layout-twin-columns": _BUFFERED_SEQUENCE_TWIN,
         "bytes-cell": (
             "no mirror authored; its one `bytes` Attribute is the mapping the mirrored "
@@ -853,6 +858,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-temporal-v2": _EVOLUTION_ENDPOINT,
         "evolution-temporality-index-v1": _EVOLUTION_ENDPOINT,
         "evolution-temporality-index-v2": _EVOLUTION_ENDPOINT,
+        "evolution-temporal-container-v1": _EVOLUTION_ENDPOINT,
+        "evolution-temporal-container-v2": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v1": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v2": _EVOLUTION_ENDPOINT,
         "evolution-unbounded-index-v1": _EVOLUTION_ENDPOINT,

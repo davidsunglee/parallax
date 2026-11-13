@@ -1,0 +1,23 @@
+# Two standalone Entities declare the same table name. Model formation accepts
+# them: a declared name is only the default physical name a binding may keep or
+# override. The corpus default binding places both owners in one schema under
+# that name, so resolution refuses the later canonical owner before anything is
+# served.
+model: models/member-column-defaults.yaml
+tags: [m-database-binding, m-storage-layout, m-model-formation, rejected, negative, table-mapping, standalone, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: FirstRecord
+        table: shared_record
+        attributes:
+          - { name: firstId, type: int64, column: first_id, primaryKey: true }
+          - { name: firstValue, type: string, column: first_value }
+      - name: SecondRecord
+        table: shared_record
+        attributes:
+          - { name: secondId, type: int64, column: second_id, primaryKey: true }
+          - { name: secondValue, type: string, column: second_value }
+then:
+  rejectedRule: binding-table-collision

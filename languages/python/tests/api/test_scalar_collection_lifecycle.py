@@ -28,6 +28,7 @@ from parallax.core import (
 )
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection.lifecycle"
@@ -138,11 +139,13 @@ _STRATEGIES = pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
     clock = ScriptedClock(list(instants)) if instants else FixedClock(_AT)
-    return own_root(connect(profile_run.port, _MODEL, clock=clock)).using_database_login()
+    return own_root(
+        connect(profile_run.port, _MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _reset(profile_run: Any) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
 
 
 def _name(entity: type[Any]) -> str:
@@ -158,7 +161,7 @@ def _stored(profile_run: Any, entity: type[Any], *members: str) -> list[tuple[ob
     return [
         tuple(row)
         for row in profile_run.port.execute(
-            f"select {cells} from {_TABLES[entity]} order by id", []
+            f"select {cells} from px.{_TABLES[entity]} order by id", []
         )
     ]
 
@@ -356,7 +359,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, "
         f"{_member(entity, 'amount')}, {_member(entity, 'tags')} "
-        f"from {_TABLES[entity]} order by from_z, in_z"
+        f"from px.{_TABLES[entity]} order by from_z, in_z"
     )
     return [
         tuple(int(cell) if isinstance(cell, float) else cell for cell in row)
@@ -486,7 +489,7 @@ def test_a_transaction_time_owner_chains_a_changed_collection_and_keeps_an_equal
     _db(profile_run, _TA).transact(changed)
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(entity, 'tags')} from {_TABLES[entity]} order by in_z"
+        f"{_member(entity, 'tags')} from px.{_TABLES[entity]} order by in_z"
     )
     assert [tuple(row) for row in profile_run.port.execute(sql, [])] == [
         (_S1, _TA, ["a", "b"]),

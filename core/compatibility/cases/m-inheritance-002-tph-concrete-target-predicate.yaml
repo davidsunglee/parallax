@@ -12,9 +12,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.amount, t0.card_network from payment t0 where t0.amount > ? and t0.kind = ?
+        postgres: select t0.id, t0.amount, t0.card_network from px.payment t0 where t0.amount > ? and t0.kind = ?
       binds: ["60.00", card]
-  referenceSql: select id, amount, card_network from payment where amount > 60.00 and kind = 'card'
+  referenceSql: select id, amount, card_network from px.payment where amount > 60.00 and kind = 'card'
   rows:
     - { id: 1, amount: "100.00", card_network: Visa, _type: parallax.compatibility.CardPayment }
   databaseCalls: 1

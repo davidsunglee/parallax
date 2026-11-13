@@ -50,6 +50,7 @@ then:
         shortfall: failedPrecondition
     control: { outcome: committed }
   tableState:
-    account:
-      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
-      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }

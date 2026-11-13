@@ -49,6 +49,7 @@ from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
 from parallax.core.internal.sql_gen._compile import CompiledTemplate
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend, named_backend
 from tests._support.query_probes import canonical_document
 from tests._support.retry import fast_retry
@@ -61,6 +62,7 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
@@ -85,7 +87,7 @@ def _accounts(db: Any) -> list[Any]:
 )
 def test_every_supported_configuration_connects_and_serves(profile_run: Any, pool: Any) -> None:
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=pool), _ACCOUNT) as _root_db:
+    with connect(profile_run.configured(pool=pool), _ACCOUNT, binding=TEST_BINDING) as _root_db:
         db = _root_db.using_database_login()
         assert _accounts(db)
 
@@ -95,8 +97,8 @@ def test_a_handle_serves_after_a_close_of_another_over_the_same_configuration(
 ) -> None:
     _seeded(profile_run)
     configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
-    first_root = connect(configured, _ACCOUNT)
-    second_root = connect(configured, _ACCOUNT)
+    first_root = connect(configured, _ACCOUNT, binding=TEST_BINDING)
+    second_root = connect(configured, _ACCOUNT, binding=TEST_BINDING)
     second = second_root.using_database_login()
     try:
         first_root.close()
@@ -108,7 +110,11 @@ def test_a_handle_serves_after_a_close_of_another_over_the_same_configuration(
 
 def test_a_closed_handle_refuses_the_next_operation(profile_run: Any) -> None:
     _seeded(profile_run)
-    root = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
+    root = connect(
+        profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
+    )
     db = root.using_database_login()
     root.close()
 
@@ -122,7 +128,11 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
     # A retry needs a connection of its own, so a handle closed underneath a
     # retry loop stops it rather than letting it run again.
     _seeded(profile_run)
-    root = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
+    root = connect(
+        profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
+    )
     db = root.using_database_login()
     attempts: list[int] = []
 
@@ -155,7 +165,7 @@ def test_a_startup_that_cannot_reach_a_server_publishes_no_handle(profile_run: A
     )
 
     with pytest.raises(DatabaseStartupError) as failed:
-        connect(unreachable, _ACCOUNT)
+        connect(unreachable, _ACCOUNT, binding=TEST_BINDING)
 
     assert failed.value.phase in {"acquire", "open"}
 
@@ -170,7 +180,9 @@ def test_a_whole_eager_read_and_each_delivery_page_need_one_slot(profile_run: An
     # inside its acquisition, and each delivery page returns its lease in turn.
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         assert _accounts(db)
@@ -189,6 +201,7 @@ def test_an_exhausted_delivery_gives_its_slot_back_before_its_scope_ends(
     with connect(
         profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=2.0),
         _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         with db.stream(Account.where(Account.all), batch_size=1) as roots:
@@ -203,6 +216,7 @@ def test_an_independent_read_uses_the_only_slot_between_delivery_pages(profile_r
     with connect(
         profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=1.0),
         _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         with db.stream(Account.where(Account.all), batch_size=1) as roots:
@@ -213,7 +227,9 @@ def test_an_independent_read_uses_the_only_slot_between_delivery_pages(profile_r
 def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: Any) -> None:
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
 
@@ -229,7 +245,9 @@ def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: An
 def test_an_independent_transaction_needs_a_slot_of_its_own(profile_run: Any) -> None:
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=0, max_size=2)), _ACCOUNT
+        profile_run.configured(pool=PoolOptions(min_size=0, max_size=2)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         started = threading.Event()
@@ -259,6 +277,7 @@ def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> 
     with connect(
         profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=2.0),
         _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         node: dict[str, object] = {"target": "Account", "predicate": {"true": {}}}
@@ -273,7 +292,9 @@ def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> 
 def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run: Any) -> None:
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=2)), _ACCOUNT
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=2)),
+        _ACCOUNT,
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         existing = _accounts(db)
@@ -431,7 +452,7 @@ def _end_the_session(profile_run: Any, application_name: str) -> None:
 
 
 def _first_use_database(profile_run: Any, provider: _Heard) -> tuple[Any, Any, str]:
-    profile_run.reset(model_of(_FIRST_USE_MODEL), {})
+    profile_run.reset(model_of(_FIRST_USE_MODEL), {}, TEST_BINDING)
     application_name = f"parallax_first_use_{uuid.uuid4().hex[:12]}"
     root = connect(
         profile_run.configured(
@@ -440,6 +461,7 @@ def _first_use_database(profile_run: Any, provider: _Heard) -> tuple[Any, Any, s
         ),
         _FIRST_USE_MODEL,
         lifecycle_provider=provider,
+        binding=TEST_BINDING,
     )
     db = root.using_database_login()
     db.transact(
@@ -554,7 +576,7 @@ def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
 
     reading = (
         database_pooling_stories.the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
-            configured, _ACCOUNT
+            configured, _ACCOUNT, TEST_BINDING
         )
     )
 
@@ -574,7 +596,9 @@ def test_a_watch_reads_nothing_once_its_handle_has_closed(profile_run: Any) -> N
     # should publish.
     _seeded(profile_run)
     provider = database_pooling_stories.PoolWatchingProvider()
-    with connect(profile_run.configured(), _ACCOUNT, lifecycle_provider=provider):
+    with connect(
+        profile_run.configured(), _ACCOUNT, lifecycle_provider=provider, binding=TEST_BINDING
+    ):
         pass
 
     assert provider.watch is not None
@@ -593,7 +617,7 @@ def test_every_documented_retention_form_opens_against_a_real_server(profile_run
     )
 
     for adapter in (forms.default, forms.tuned, forms.zero_minimum, forms.on_demand):
-        with connect(adapter, _ACCOUNT) as _root_db:
+        with connect(adapter, _ACCOUNT, binding=TEST_BINDING) as _root_db:
             db = _root_db.using_database_login()
             assert _accounts(db)
 
@@ -605,7 +629,10 @@ def test_both_model_forms_connect_and_both_closes_give_the_runtime_back(
     configured = profile_run.configured(pool=PoolOptions(min_size=0, max_size=2))
 
     shape = database_pooling_stories.a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
-        configured, _ACCOUNT, ServingModel(prepare_model(_ACCOUNT, edition="published"))
+        configured,
+        _ACCOUNT,
+        TEST_BINDING,
+        ServingModel(prepare_model(_ACCOUNT, edition="published", binding=TEST_BINDING)),
     )
 
     assert shape.scoped_rows > 0
@@ -617,7 +644,7 @@ def test_one_configuration_serves_two_independent_handles(profile_run: Any) -> N
     configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
 
     shape = database_pooling_stories.one_configuration_opens_independent_runtimes(
-        configured, _ACCOUNT
+        configured, _ACCOUNT, TEST_BINDING
     )
 
     assert shape.first_rows > 0
@@ -636,7 +663,9 @@ def test_the_routed_configuration_reads_from_each_route_it_names(profile_run: An
         configured.writer.credentials,
     )
 
-    balances = database_pooling_stories.each_scope_reads_where_its_policy_says(adapter, _ACCOUNT)
+    balances = database_pooling_stories.each_scope_reads_where_its_policy_says(
+        adapter, _ACCOUNT, TEST_BINDING
+    )
 
     assert balances.from_reader
     assert balances.from_writer == balances.from_reader == balances.reader_or_writer
@@ -677,7 +706,9 @@ def test_the_lifespan_pattern_opens_one_handle_and_closes_it_at_shutdown(
     escaped: list[Any] = []
 
     async def scenario() -> list[Decimal]:
-        async with database_pooling_stories.pooled_database(configured, _ACCOUNT) as db:
+        async with database_pooling_stories.pooled_database(
+            configured, _ACCOUNT, TEST_BINDING
+        ) as db:
             escaped.append(db)
             return await database_pooling_stories.serve_account_balances(db)
 
@@ -704,7 +735,7 @@ def test_a_complete_operation_offloaded_from_an_async_endpoint_never_touches_the
 
     async def scenario() -> tuple[int, list[Decimal]]:
         async with database_pooling_stories.pooled_database(
-            configured, _ACCOUNT, lifecycle_provider=witness
+            configured, _ACCOUNT, TEST_BINDING, lifecycle_provider=witness
         ) as db:
             balances = await database_pooling_stories.serve_account_balances(db)
             return threading.get_ident(), balances

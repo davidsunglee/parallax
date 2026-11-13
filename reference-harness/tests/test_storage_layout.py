@@ -24,12 +24,18 @@ import reference_harness.unit_work_scenario as unit_work_scenario
 import reference_harness.write_plan as write_plan
 from reference_harness.case import Model, load_model
 from reference_harness.data_loader import load_model as load_fixture_rows
+from reference_harness.database_binding import (
+    LOCATION_KEYS,
+    BindingIssue,
+    BindingRejection,
+    PhysicalTable,
+    resolve_binding,
+)
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
     STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
-    STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
     AttributeContributor,
     ColumnTier,
     DirectColumn,
@@ -45,7 +51,6 @@ from reference_harness.storage_layout import (
     _interned,
     _interned_ordinal_selection,
     compile_storage_layout,
-    observed_table,
     validate_storage_layout,
 )
 from reference_harness.temporality import derive_temporal_structure
@@ -56,6 +61,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
+
+
 class _RecordingProvider:
     """A no-database provider recording the fixture-load calls it receives."""
 
@@ -64,13 +76,16 @@ class _RecordingProvider:
     def __init__(self) -> None:
         self.loads: list[tuple[str, list[str], list[list[Any]]]] = []
 
-    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
-        self.loads.append((table, list(columns), [list(row) for row in rows]))
+    def load(
+        self, table: PhysicalTable, columns: Sequence[str], rows: Sequence[Sequence[Any]]
+    ) -> None:
+        spelled = ".".join((*table.qualifier, table.name))
+        self.loads.append((spelled, list(columns), [list(row) for row in rows]))
 
 
 def _table(layout: StorageLayout, table: str) -> TableLayout | None:
     """The layout declaring ``table``, which its mapping owner also reaches."""
-    found = observed_table(layout, table)
+    found = next((candidate for candidate in layout.tables if candidate.table == table), None)
     assert found is None or layout.table(found.mapping_owner) is found
     return found
 
@@ -79,9 +94,14 @@ def _storage_layout_model() -> Model:
     return load_model(_COMPATIBILITY_ROOT, "models/storage-layout.yaml")
 
 
+def _load_fixtures(model: Model, provider: Any, corruptions: Sequence[Any] = ()) -> None:
+    placement = resolve_binding(model, {"default": {"schema": "px"}}, "postgres")
+    load_fixture_rows(model, provider, placement, corruptions)
+
+
 def _create_table_ddl(model: Model, table: str, dialect: str = "postgres") -> str:
-    prefix = f"create table {table} ("
-    (statement,) = [ddl for ddl in ddl_for(model, dialect) if ddl.startswith(prefix)]
+    prefix = f"create table px.{table} ("
+    (statement,) = [ddl for ddl in px_ddl(model, dialect) if ddl.startswith(prefix)]
     return statement
 
 
@@ -892,7 +912,16 @@ def test_tpcs_layouts_and_position_preserve_branch_slot_absence() -> None:
     ]
 
 
-def test_mapping_owner_collision_uses_canonical_first_owner_before_columns() -> None:
+def _placement_refusal(definitions: list[dict[str, Any]]) -> BindingRejection:
+    """Formation accepts *definitions*; the corpus default binding refuses them."""
+    validate_storage_layout(definitions)
+    model = Model(path=Path("inline.yaml"), descriptor={"entities": definitions})
+    with pytest.raises(BindingRejection) as caught:
+        resolve_binding(model, {"default": {"schema": "px"}}, "postgres")
+    return caught.value
+
+
+def test_equal_declared_tables_collide_at_the_later_canonical_owner_in_one_location() -> None:
     definitions = [
         {
             "name": "Third",
@@ -904,7 +933,7 @@ def test_mapping_owner_collision_uses_canonical_first_owner_before_columns() -> 
             "table": "shared",
             "attributes": [
                 _attribute("secondId", primary_key=True),
-                _attribute("duplicate", column="second_id"),
+                _attribute("duplicate", column="second_id_copy"),
             ],
         },
         {
@@ -913,67 +942,27 @@ def test_mapping_owner_collision_uses_canonical_first_owner_before_columns() -> 
             "attributes": [_attribute("firstId", primary_key=True)],
         },
     ]
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
-    assert caught.value.rule == STORAGE_LAYOUT_TABLE_MAPPING_COLLISION
-    assert "'First' and 'Second'" in caught.value.detail
+    refusal = _placement_refusal(definitions)
+    assert refusal.issues == (
+        BindingIssue(("entities", "Second"), "binding-table-collision"),
+        BindingIssue(("entities", "Third"), "binding-table-collision"),
+    )
 
 
-def test_mapping_collision_rejects_before_an_earlier_unique_table_column_collision() -> None:
+def test_equal_declared_tables_in_two_locations_resolve_apart() -> None:
     definitions = [
-        {
-            "name": "AColumnOwner",
-            "table": "column_collision",
-            "attributes": [
-                _attribute("id", primary_key=True),
-                _attribute("value"),
-            ],
-            "valueObjects": [{"name": "payload", "column": "value"}],
-        },
-        {
-            "name": "BFirstTableOwner",
-            "table": "mapping_collision",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
-        {
-            "name": "CSecondTableOwner",
-            "table": "mapping_collision",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
+        {"name": "Ledger", "table": "account", "attributes": [_attribute("id", primary_key=True)]},
+        {"name": "Member", "table": "account", "attributes": [_attribute("id", primary_key=True)]},
     ]
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
-    assert caught.value.rule == STORAGE_LAYOUT_TABLE_MAPPING_COLLISION
-    assert "'BFirstTableOwner' and 'CSecondTableOwner'" in caught.value.detail
-
-
-def test_interleaved_two_table_collisions_reject_the_first_later_owner_in_canonical_order() -> None:
-    definitions = [
-        {
-            "name": "DLaterA",
-            "table": "table_a",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
-        {
-            "name": "BFirst",
-            "table": "table_b",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
-        {
-            "name": "CLaterB",
-            "table": "table_b",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
-        {
-            "name": "AFirst",
-            "table": "table_a",
-            "attributes": [_attribute("id", primary_key=True)],
-        },
-    ]
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
-    assert caught.value.rule == STORAGE_LAYOUT_TABLE_MAPPING_COLLISION
-    assert "'BFirst' and 'CLaterB'" in caught.value.detail
+    validate_storage_layout(definitions)
+    model = Model(path=Path("inline.yaml"), descriptor={"entities": definitions})
+    placement = resolve_binding(
+        model,
+        {"default": {"schema": "px"}, "entities": {"Member": {"schema": "px_crm"}}},
+        "postgres",
+    )
+    assert placement.table("Ledger") == PhysicalTable(("px",), "account")
+    assert placement.table("Member") == PhysicalTable(("px_crm",), "account")
 
 
 @pytest.mark.parametrize(
@@ -984,15 +973,13 @@ def test_interleaved_two_table_collisions_reject_the_first_later_owner_in_canoni
         ("tpcs", "standalone"),
     ],
 )
-def test_cross_category_mapping_owners_share_one_table_claim_stream(
+def test_cross_category_mapping_owners_share_one_physical_table_claim_stream(
     first_category: str, later_category: str
 ) -> None:
-    first, first_owner = _mapping_owner(first_category, "A", "shared")
+    first, _first_owner = _mapping_owner(first_category, "A", "shared")
     later, later_owner = _mapping_owner(later_category, "B", "shared")
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout([*later, *first])
-    assert caught.value.rule == STORAGE_LAYOUT_TABLE_MAPPING_COLLISION
-    assert f"'{first_owner}' and '{later_owner}'" in caught.value.detail
+    refusal = _placement_refusal([*later, *first])
+    assert refusal.issues == (BindingIssue(("entities", later_owner), "binding-table-collision"),)
 
 
 def test_column_collision_uses_category_order_and_distinct_provenance() -> None:
@@ -1425,24 +1412,27 @@ def test_ddl_document_slot_follows_every_scalar_tier() -> None:
 def test_fixture_load_binds_absent_cells_as_none_in_entity_layout_order() -> None:
     model = _storage_layout_model()
     provider = _RecordingProvider()
-    load_fixture_rows(model, cast("Any", provider))
+    _load_fixtures(model, cast("Any", provider))
     loads = {
         table: (columns, rows)
         for table, columns, rows in provider.loads
-        if table != "layout_payment"
+        if table != "px.layout_payment"
     }
 
-    profile_columns, profile_rows = loads["layout_profile"]
+    profile_columns, profile_rows = loads["px.layout_profile"]
     assert profile_columns == ["id", "label", "note", "contact"]
     # The harness binds every layout column, so an omitted optional cell is an
     # explicit None rather than a skipped column.
     assert profile_rows[1] == [2, "Secondary", None, {"email": "kari@example.test"}]
-    assert loads["layout_audit"] == (["id", "title", "detail"], [[1, "Quarterly audit", "Ingrid"]])
-    assert loads["layout_survey"] == (["id", "title", "detail"], [[1, "Annual survey", "Bjorn"]])
+    assert loads["px.layout_audit"] == (
+        ["id", "title", "detail"],
+        [[1, "Quarterly audit", "Ingrid"]],
+    )
+    assert loads["px.layout_survey"] == (["id", "title", "detail"], [[1, "Annual survey", "Bjorn"]])
 
     # Each shared-table variant loads only the slots applicable to itself, so the
     # sibling's required column is absent from its own column list entirely.
-    shared = [entry for entry in provider.loads if entry[0] == "layout_payment"]
+    shared = [entry for entry in provider.loads if entry[0] == "px.layout_payment"]
     assert [(columns, rows) for _table, columns, rows in shared] == [
         (
             ["id", "kind", "amount", "card_network"],
@@ -1458,11 +1448,11 @@ def test_fixture_load_binds_absent_cells_as_none_in_entity_layout_order() -> Non
 def test_fixture_load_derives_each_variant_discriminator_through_its_view() -> None:
     model = _storage_layout_model()
     provider = _RecordingProvider()
-    load_fixture_rows(model, cast("Any", provider))
+    _load_fixtures(model, cast("Any", provider))
     variants = [
         (columns[columns.index("kind")], row[columns.index("kind")])
         for table, columns, rows in provider.loads
-        if table == "layout_payment"
+        if table == "px.layout_payment"
         for row in rows
     ]
     assert variants == [("kind", "card"), ("kind", "cash")]
@@ -1472,10 +1462,10 @@ def _corrupted_cells(model_rel: str, table: str, *corruptions: Any) -> dict[str,
     """The first row *table* loads with, by column, after *corruptions* are written
     into it."""
     provider = _RecordingProvider()
-    load_fixture_rows(
+    _load_fixtures(
         load_model(_COMPATIBILITY_ROOT, model_rel), cast("Any", provider), list(corruptions)
     )
-    ((_table, columns, rows),) = [entry for entry in provider.loads if entry[0] == table]
+    ((_table, columns, rows),) = [entry for entry in provider.loads if entry[0] == f"px.{table}"]
     return dict(zip(columns, rows[0], strict=True))
 
 
@@ -1554,7 +1544,7 @@ def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() ->
     }
     corrupted = Model(model.path, model.descriptor, fixtures=cast("Any", rows))
     with pytest.raises(ValueError, match="unknown member"):
-        load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))
+        _load_fixtures(corrupted, cast("Any", _RecordingProvider()))
 
 
 def _document_note_model(rows: list[dict[str, Any]]) -> Model:
@@ -1604,9 +1594,9 @@ def test_fixture_load_composes_one_document_from_a_rows_own_members() -> None:
         ]
     )
     provider = _RecordingProvider()
-    load_fixture_rows(model, cast("Any", provider))
+    _load_fixtures(model, cast("Any", provider))
     ((table, columns, rows),) = provider.loads
-    assert (table, columns) == ("note", ["id", "payload"])
+    assert (table, columns) == ("px.note", ["id", "payload"])
     # Each leaf is authored as the ordinary neutral wire value a direct Column
     # would take and the codec spells it, so one fixture file describes one
     # logical row under either layout.
@@ -1626,7 +1616,7 @@ def test_fixture_load_composes_one_document_from_a_rows_own_members() -> None:
 def test_fixture_load_keeps_the_document_presence_states_apart() -> None:
     model = _document_note_model([{"id": 2, "displayName": None}])
     provider = _RecordingProvider()
-    load_fixture_rows(model, cast("Any", provider))
+    _load_fixtures(model, cast("Any", provider))
     ((_table, _columns, rows),) = provider.loads
     # An omitted member contributes no key, an authored null contributes JSON
     # null, and a `many` occurrence always contributes its array.
@@ -1636,7 +1626,7 @@ def test_fixture_load_keeps_the_document_presence_states_apart() -> None:
 def test_a_fixture_row_naming_no_document_member_is_still_refused() -> None:
     model = _document_note_model([{"id": 3, "mystery": 1}])
     with pytest.raises(ValueError, match="unknown member"):
-        load_fixture_rows(model, cast("Any", _RecordingProvider()))
+        _load_fixtures(model, cast("Any", _RecordingProvider()))
 
 
 def _storage_layout_importers() -> list[Path]:

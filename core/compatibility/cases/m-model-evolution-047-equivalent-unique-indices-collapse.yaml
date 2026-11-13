@@ -32,28 +32,28 @@ then:
     postgres:
       delta:
         statements:
-          - create unique index pxi_evolution_tote_parallax_co_99750a164f63cf5873a7f3016eeefd95 on evolution_tote (label, region)
-          - create unique index pxi_evolution_tote_parallax_co_c868b1fdc826986b8f1ef7d32d8df8fa on evolution_tote (region, label)
+          - create unique index pxi_evolution_tote_parallax_co_99750a164f63cf5873a7f3016eeefd95 on px.evolution_tote (label, region)
+          - create unique index pxi_evolution_tote_parallax_co_c868b1fdc826986b8f1ef7d32d8df8fa on px.evolution_tote (region, label)
         createdIndices:
           - physicalIndexName: pxi_evolution_tote_parallax_co_99750a164f63cf5873a7f3016eeefd95
-            physicalTable: evolution_tote
+            physicalTable: { qualifier: [px], name: evolution_tote }
             logicalIndexIdentity: parallax.compatibility.Tote.tote_by_label
             unique: true
           - physicalIndexName: pxi_evolution_tote_parallax_co_c868b1fdc826986b8f1ef7d32d8df8fa
-            physicalTable: evolution_tote
+            physicalTable: { qualifier: [px], name: evolution_tote }
             logicalIndexIdentity: parallax.compatibility.Tote.tote_by_region
             unique: true
     mariadb:
       delta:
         statements:
-          - create unique index pxi_evolution_tote_parallax_com_99750a164f63cf5873a7f3016eeefd95 on evolution_tote (label, region)
-          - create unique index pxi_evolution_tote_parallax_com_c868b1fdc826986b8f1ef7d32d8df8fa on evolution_tote (region, label)
+          - create unique index pxi_evolution_tote_parallax_com_99750a164f63cf5873a7f3016eeefd95 on px.evolution_tote (label, region)
+          - create unique index pxi_evolution_tote_parallax_com_c868b1fdc826986b8f1ef7d32d8df8fa on px.evolution_tote (region, label)
         createdIndices:
           - physicalIndexName: pxi_evolution_tote_parallax_com_99750a164f63cf5873a7f3016eeefd95
-            physicalTable: evolution_tote
+            physicalTable: { qualifier: [px], name: evolution_tote }
             logicalIndexIdentity: parallax.compatibility.Tote.tote_by_label
             unique: true
           - physicalIndexName: pxi_evolution_tote_parallax_com_c868b1fdc826986b8f1ef7d32d8df8fa
-            physicalTable: evolution_tote
+            physicalTable: { qualifier: [px], name: evolution_tote }
             logicalIndexIdentity: parallax.compatibility.Tote.tote_by_region
             unique: true

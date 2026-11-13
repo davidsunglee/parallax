@@ -20,6 +20,7 @@ from parallax.conformance.provision import (
 )
 from parallax.core.internal.metamodel import Metamodel
 from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint
+from tests._support.bindings import bound_model
 
 
 class WheelDatabase:
@@ -65,7 +66,7 @@ class WheelDatabase:
         )
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        reset_database(self._session, model, fixtures)
+        reset_database(self._session, bound_model(model), fixtures)
 
     def release_case_runtimes(self) -> int:
         return self._ledger.release()

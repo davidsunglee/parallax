@@ -67,6 +67,7 @@ from parallax.core.internal.sql_gen._planning import (
 from parallax.core.internal.sql_gen._predicate import EntityRowScope, render_shared_sources
 from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.core.internal.wire import loads
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.sql import compile_nonempty_read as compile_read
@@ -78,7 +79,7 @@ WALLET = corpus_model("wallet")
 
 def _builder() -> StatementBuilder:
     return StatementBuilder(
-        WALLET,
+        bound_model(WALLET),
         inheritance.inheritance_facet_of(WALLET),
         storage_layout.storage_layout_facet_of(WALLET),
         POSTGRES,
@@ -95,7 +96,7 @@ def _template(statement: LoweredStatement) -> CompiledTemplate:
             predicate=resolved_as_stated(ResolvedConstant(True), WALLET, entity),
             projection=read_planning.ResolvedReadProjection((), False),
         ),
-        WALLET,
+        bound_model(WALLET),
         POSTGRES,
     )
     return sql_compile._template(  # pyright: ignore[reportPrivateUsage]
@@ -119,7 +120,7 @@ def _planned_read(family: Metamodel, entity: CompiledEntity) -> PlannedEntityQue
 
 def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
     return StatementBuilder(
-        family,
+        bound_model(family),
         inheritance.inheritance_facet_of(family),
         storage_layout.storage_layout_facet_of(family),
         POSTGRES,
@@ -172,7 +173,7 @@ def test_rendered_sources_retain_their_actual_target_and_origin_rows() -> None:
     binding = builder.source_binding(SharedSourceRef(root, 0))
     assert binding.origin is row
     assert binding.target.alias == "t1"
-    assert f"left join basket_owner {binding.target.alias} " in joins
+    assert f"left join px.basket_owner {binding.target.alias} " in joins
     results = builder.owner_results_binding(OwnerResultsRef(root, 0))
     assert (results.alias, results.columns) == ("r0", ("q0",))
     builder.finish(joins)

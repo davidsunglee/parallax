@@ -352,7 +352,7 @@ def test_a_narrowed_target_decides_each_candidate_branch() -> None:
     placement = _root(plan).placements[()]
     assert isinstance(placement, UnsharedEvaluation)
     (hop,) = placement.continuation.hops
-    assert [branch.table for branch in hop.candidates.branches] == [
+    assert [branch.table.table.name for branch in hop.candidates.branches] == [
         "traversal_bike",
         "traversal_car",
     ]

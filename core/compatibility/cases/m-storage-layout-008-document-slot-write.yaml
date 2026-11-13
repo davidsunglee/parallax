@@ -28,7 +28,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into layout_profile(id, label, note, contact) values (?, ?, ?, ?)
+        postgres: insert into px.layout_profile(id, label, note, contact) values (?, ?, ?, ?)
       binds:
         - 1
         - Primary
@@ -36,22 +36,23 @@ then:
         - email: solveig@example.test
           phone: '555-0100'
     - sql:
-        postgres: insert into layout_profile(id, label, contact) values (?, ?, ?)
+        postgres: insert into px.layout_profile(id, label, contact) values (?, ?, ?)
       binds:
         - 2
         - Secondary
         - email: kari@example.test
   tableState:
-    layout_profile:
-      - id: 1
-        label: Primary
-        note: preferred contact
-        contact:
-          email: solveig@example.test
-          phone: '555-0100'
-      - id: 2
-        label: Secondary
-        note: null
-        contact:
-          email: kari@example.test
+    px:
+      layout_profile:
+        - id: 1
+          label: Primary
+          note: preferred contact
+          contact:
+            email: solveig@example.test
+            phone: '555-0100'
+        - id: 2
+          label: Secondary
+          note: null
+          contact:
+            email: kari@example.test
   databaseCalls: 2

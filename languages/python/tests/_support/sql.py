@@ -7,6 +7,7 @@ from typing import Literal
 
 from parallax.core.internal import concurrency, inheritance, read_planning
 from parallax.core.internal.concurrency import ConcurrencyPreference
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.inheritance import InheritancePositionView
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
@@ -35,18 +36,24 @@ from parallax.core.internal.sql_gen._compile import compile_template as compile_
 from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
+from tests._support.bindings import bound_model
+
+
+def as_resolved(model: Metamodel | ResolvedBinding) -> ResolvedBinding:
+    """``model`` itself if already resolved, else resolved under the test binding."""
+    return model if isinstance(model, ResolvedBinding) else bound_model(model)
 
 
 def compile_nonempty_read(
     query: read_planning.PlannedEntityQuery,
-    model: Metamodel,
+    model: Metamodel | ResolvedBinding,
     dialect: Dialect,
     *,
     result_form: Literal["row", "instance"] = "row",
     shared_lock: bool = False,
 ) -> CompiledRead:
     compiled = compile_entity_query(
-        query, model, dialect, result_form=result_form, shared_lock=shared_lock
+        query, as_resolved(model), dialect, result_form=result_form, shared_lock=shared_lock
     )
     assert isinstance(compiled, CompiledRead)
     return compiled
@@ -54,14 +61,14 @@ def compile_nonempty_read(
 
 def compile_nonempty_template(
     query: read_planning.PlannedEntityQuery,
-    model: Metamodel,
+    model: Metamodel | ResolvedBinding,
     dialect: Dialect,
     *,
     result_form: Literal["row", "instance"] = "row",
     shared_lock: bool = False,
 ) -> CompiledTemplate:
     compiled = compile_entity_template(
-        query, model, dialect, result_form=result_form, shared_lock=shared_lock
+        query, as_resolved(model), dialect, result_form=result_form, shared_lock=shared_lock
     )
     assert isinstance(compiled, CompiledTemplate)
     return compiled
@@ -69,7 +76,7 @@ def compile_nonempty_template(
 
 def compile_read(
     predicate: PredicateNode,
-    model: Metamodel,
+    bound: Metamodel | ResolvedBinding,
     dialect: Dialect,
     target: CompiledEntity,
     *,
@@ -81,6 +88,8 @@ def compile_read(
     preference: ConcurrencyPreference | None = None,
 ) -> CompiledRead:
     """Compile one root statement without applying delivery orchestration."""
+    resolved = as_resolved(bound)
+    model = resolved.meta
     query = _validated(
         predicate,
         model,
@@ -98,7 +107,7 @@ def compile_read(
             if result_form == "instance"
             else read_planning.ReadProjectionRequest("none", False),
         ),
-        model,
+        resolved,
         dialect,
         result_form=result_form,
         shared_lock=preference is not None
@@ -109,7 +118,7 @@ def compile_read(
 
 def compile_projected_read(
     predicate: PredicateNode,
-    model: Metamodel,
+    bound: Metamodel | ResolvedBinding,
     dialect: Dialect,
     target: CompiledEntity,
     *,
@@ -124,13 +133,15 @@ def compile_projected_read(
     neither of which widens the other: every declared member, as a predecessor
     read takes it, a named subset, or none."""
     projection = read_planning.ReadProjectionRequest(value_objects, observe_structured_document)
+    resolved = as_resolved(bound)
+    model = resolved.meta
     return compile_nonempty_read(
         read_planning.plan_root(
             _validated(predicate, model, target, narrow_to=narrow_to, temporal=temporal),
             model,
             projection=projection,
         ),
-        model,
+        resolved,
         dialect,
         result_form=result_form,
     )
@@ -174,15 +185,17 @@ def read_position(
 
 def compile_write_predicate(
     predicate: PredicateNode,
-    model: Metamodel,
+    bound: Metamodel | ResolvedBinding,
     dialect: Dialect,
     target: CompiledEntity,
 ) -> CompiledPredicate:
     """Elaborate an authored test predicate and resolve its temporal visibility
     as readless write lowering does before compiling it."""
+    resolved = as_resolved(bound)
+    model = resolved.meta
     return compile_validated_write_predicate(
         resolved_as_stated(validate_predicate(target, predicate, model), model, target),
-        model,
+        resolved,
         dialect,
         target,
     )

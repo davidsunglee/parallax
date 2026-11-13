@@ -16,10 +16,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
-        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from px.branch t0 where t0.thru_z = ? and t0.out_z = ?
+        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from px.branch t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
-  referenceSql: select br_id, name, from_z, thru_z, in_z, out_z from branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
+  referenceSql: select br_id, name, from_z, thru_z, in_z, out_z from px.branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
   graph:
     Branch:
       - id: 1

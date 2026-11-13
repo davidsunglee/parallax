@@ -31,6 +31,7 @@ from parallax.core.internal.read_delivery._page import (
 from parallax.core.internal.read_delivery._row_converter import bind
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING
 from tests._support.document_reads import fold_mapping_rows
 from tests.unit.snapshot._snapshot_page_support import rendered_members
 
@@ -63,7 +64,9 @@ def deliver(
     for row in rows:
         unknown = [key for key in row if re.search(rf"\b{re.escape(key)}\b", sql) is None]
         assert not unknown, f"{unknown} are not spelled by {sql!r}"
-    converter = bind(CatalogedModel(model), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(model, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
     builder = PageBuilder(ViewSchema.of())
     converted = [
         converter.record_row(row, builder, source=ROOT_LEVEL)

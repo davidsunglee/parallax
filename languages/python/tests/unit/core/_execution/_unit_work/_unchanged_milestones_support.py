@@ -34,6 +34,7 @@ from parallax.core.internal.write_plan.plan import (
 from parallax.core.internal.write_plan.steps import (
     PlannedStep,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of
@@ -117,7 +118,7 @@ def planned(
     counts_unchanged_rows: bool = True,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return build_write_planner(meta).finalize(
+    return build_write_planner(bound_model(meta)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(NOW.isoformat()),

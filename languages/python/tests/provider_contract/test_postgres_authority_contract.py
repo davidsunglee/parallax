@@ -10,6 +10,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
 from parallax.postgres import PoolOptions, PostgresRole
 from tests._support.aws_run import AS_LOGIN
+from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend
 
 
@@ -42,19 +43,19 @@ def test_a_cloud_run_acts_as_its_login_rather_than_the_login_s_default_role(
 def test_reused_session_contains_roles_and_restores_the_configured_default(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(*_grade_model())
+    profile_run.reset(*_grade_model(), TEST_BINDING)
     role_a = profile_run.authorization("role-a")
     role_b = profile_run.authorization("role-b")
     dialect = profile_run.port.dialect
     control = profile_run.control()
     try:
-        control.execute_write("create table authority_a (value integer not null)", [])
-        control.execute_write("create table authority_b (value integer not null)", [])
+        control.execute_write("create table px.authority_a (value integer not null)", [])
+        control.execute_write("create table px.authority_b (value integer not null)", [])
         control.execute_write(
-            f"grant select, insert on authority_a to {dialect.quote(role_a.name)}", []
+            f"grant select, insert on px.authority_a to {dialect.quote(role_a.name)}", []
         )
         control.execute_write(
-            f"grant select, insert on authority_b to {dialect.quote(role_b.name)}", []
+            f"grant select, insert on px.authority_b to {dialect.quote(role_b.name)}", []
         )
     finally:
         control.close()
@@ -69,9 +70,9 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
             login_pid, session_user, current_user = _identity(login)
             assert session_user == profile_run.login_identity == runtime.login_identity
             assert current_user == profile_run.default_role.name
-            assert login.execute("select count(*) from grade", []) == [(3,)]
+            assert login.execute("select count(*) from px.grade", []) == [(3,)]
             with pytest.raises(DatabaseError):
-                login.execute("select value from authority_a", [])
+                login.execute("select value from px.authority_a", [])
 
         with role_a_source.new_context("writer_only") as authorized_a:
             pid_a, session_user_a, current_user_a = _identity(authorized_a)
@@ -80,10 +81,10 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
                 profile_run.login_identity,
                 role_a.name,
             )
-            authorized_a.execute_write("insert into authority_a (value) values (?)", [1])
-            assert authorized_a.execute("select value from authority_a", []) == [(1,)]
+            authorized_a.execute_write("insert into px.authority_a (value) values (?)", [1])
+            assert authorized_a.execute("select value from px.authority_a", []) == [(1,)]
             with pytest.raises(DatabaseError):
-                authorized_a.execute("select value from authority_b", [])
+                authorized_a.execute("select value from px.authority_b", [])
 
         with role_b_source.new_context("writer_only") as authorized_b:
             pid_b, session_user_b, current_user_b = _identity(authorized_b)
@@ -92,10 +93,10 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
                 profile_run.login_identity,
                 role_b.name,
             )
-            authorized_b.execute_write("insert into authority_b (value) values (?)", [2])
-            assert authorized_b.execute("select value from authority_b", []) == [(2,)]
+            authorized_b.execute_write("insert into px.authority_b (value) values (?)", [2])
+            assert authorized_b.execute("select value from px.authority_b", []) == [(2,)]
             with pytest.raises(DatabaseError):
-                authorized_b.execute("select value from authority_a", [])
+                authorized_b.execute("select value from px.authority_a", [])
 
         with login_source.new_context("writer_only") as restored_login:
             restored_pid, restored_session, restored_current = _identity(restored_login)
@@ -105,9 +106,9 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
                 profile_run.default_role.name,
             )
             with pytest.raises(DatabaseError):
-                restored_login.execute("select value from authority_a", [])
+                restored_login.execute("select value from px.authority_a", [])
             with pytest.raises(DatabaseError):
-                restored_login.execute("select value from authority_b", [])
+                restored_login.execute("select value from px.authority_b", [])
     finally:
         runtime.close()
 

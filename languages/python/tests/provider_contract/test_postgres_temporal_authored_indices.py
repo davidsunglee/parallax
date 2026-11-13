@@ -21,11 +21,11 @@ import pytest
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import Attr, Bitemporal, DomainModel, TxTemporal, attr, index
 from parallax.core.internal.db_error import DatabaseError
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.evolution import SchemaDelta, schema_delta
-from parallax.evolution.internal.model_evolution import ABSENT, evolve_metamodels
+from parallax.evolution.internal.model_evolution import ABSENT, evolve_resolved
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.root_ownership import own_root
 
 _NAMESPACE: Final = "temporal.authored.index"
@@ -70,13 +70,13 @@ _INDEX_COLUMNS: Final = (
 def _provision(profile_run: Any) -> SchemaDelta:
     """Provision through the shipped Schema Delta and answer that rollout."""
     model = model_of(_MODEL)
-    profile_run.reset(model, {})
-    return schema_delta(evolve_metamodels(ABSENT, model), POSTGRES)
+    profile_run.reset(model, {}, TEST_BINDING)
+    return schema_delta(evolve_resolved(ABSENT, bound_model(model)))
 
 
 def _db(profile_run: Any, instants: Sequence[dt.datetime]) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -123,7 +123,7 @@ def test_a_transaction_time_amend_keeping_its_unique_value_chains_its_successor(
     db.transact(lambda tx: tx.amend(tx.find(Ledger.where(Ledger.id == 1)).result().edit(label="b")))
     assert _rows(
         profile_run,
-        "select id, code, label, in_z, out_z = 'infinity' from tai_ledger order by in_z",
+        "select id, code, label, in_z, out_z = 'infinity' from px.tai_ledger order by in_z",
     ) == [(1, "X", "a", _JAN, False), (1, "X", "b", _JUN, True)]
 
 
@@ -141,7 +141,7 @@ def test_a_bitemporal_split_keeping_its_unique_value_chains_both_successors(
     assert _rows(
         profile_run,
         "select code, rent, from_z, thru_z = 'infinity', in_z, out_z = 'infinity' "
-        "from tai_tenancy order by in_z, from_z",
+        "from px.tai_tenancy order by in_z, from_z",
     ) == [
         ("Y", 100, _JAN, True, _JAN, False),
         ("Y", 100, _JAN, False, _JUL, True),
@@ -209,7 +209,8 @@ a release hashing only the authored components gave it."""
 
 _HELD_INDICES: Final = (
     "select indexname, indexdef from pg_indexes "
-    "where tablename = ? and left(indexname, 4) = 'pxi_' order by indexname"
+    "where schemaname = 'px' and tablename = ? and left(indexname, 4) = 'pxi_' "
+    "order by indexname"
 )
 
 
@@ -225,10 +226,10 @@ class _Adoption:
 
     def create(self) -> str:
         kind = "unique index" if self.unique else "index"
-        return f"create {kind} {self.target} on {self.table} ({self.authored}, {self.ends})"
+        return f"create {kind} {self.target} on px.{self.table} ({self.authored}, {self.ends})"
 
     def drop(self) -> str:
-        return f"drop index {self.legacy}"
+        return f"drop index px.{self.legacy}"
 
 
 def _legacy(profile_run: Any, name: str) -> _Adoption:
@@ -239,8 +240,8 @@ def _legacy(profile_run: Any, name: str) -> _Adoption:
     table, target = _created(_provision(profile_run), name)
     (provisioned,) = _rows(profile_run, _INDEX_COLUMNS, [table, target])
     kind = "unique index" if unique else "index"
-    profile_run.port.execute_write(f"drop index {target}", [])
-    profile_run.port.execute_write(f"create {kind} {legacy} on {table} ({authored})", [])
+    profile_run.port.execute_write(f"drop index px.{target}", [])
+    profile_run.port.execute_write(f"create {kind} {legacy} on px.{table} ({authored})", [])
     return _Adoption(table, target, legacy, unique, authored, ends, provisioned)
 
 

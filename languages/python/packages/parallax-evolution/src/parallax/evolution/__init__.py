@@ -14,8 +14,8 @@ from parallax.evolution.internal.model_evolution import (
 )
 from parallax.evolution.internal.schema_delta import (
     CreatedIndex,
-    PhysicalLocation,
     SchemaDelta,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
     schema_delta,
@@ -29,8 +29,8 @@ __all__ = [
     "CoordinationRequirement",
     "CreatedIndex",
     "Evolution",
-    "PhysicalLocation",
     "SchemaDelta",
+    "SchemaTarget",
     "UnilateralEvolution",
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",

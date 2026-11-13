@@ -67,6 +67,7 @@ from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Pin
 from parallax.core.internal.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication, wire_publication
+from tests._support.bindings import TEST_BINDING
 from tests._support.model_capabilities import (
     graph_construction_for,
     prepared_view_keys_for,
@@ -327,7 +328,7 @@ class PageFixture:
         self._domain = domain
         self._proved = proved
         self._model = model if model is not None else model_of(domain)
-        self._cataloged = CatalogedModel(self._model)
+        self._cataloged = CatalogedModel(self._model, TEST_BINDING)
         self._builder = PageBuilder(
             ViewSchema(
                 (

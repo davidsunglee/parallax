@@ -14,9 +14,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from animal t0 where t0.kind in (?, ?)
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from px.animal t0 where t0.kind in (?, ?)
       binds: [cat, dog]
-  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume from animal where kind in ('cat', 'dog')
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume from px.animal where kind in ('cat', 'dog')
   graph:
     Animal:
       - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, _type: parallax.compatibility.Dog }

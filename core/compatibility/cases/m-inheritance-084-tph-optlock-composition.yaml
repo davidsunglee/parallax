@@ -18,9 +18,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+        postgres: update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
       binds: [Coupe, 6, 1, car, 5]
   tableState:
-    vehicle:
-      - { id: 1, kind: car, name: Coupe, version: 6, doors: 4, axles: null }
+    px:
+      vehicle:
+        - { id: 1, kind: car, name: Coupe, version: 6, doors: 4, axles: null }
   databaseCalls: 2

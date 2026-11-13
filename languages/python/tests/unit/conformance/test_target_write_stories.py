@@ -18,6 +18,7 @@ from parallax.conformance.target_write_stories import (
     reviewed_accounts_are_deleted_under_the_versions_their_review_saw,
 )
 from parallax.core.internal.db_error import DatabaseError
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -37,5 +38,7 @@ def test_a_deletion_failing_for_any_other_reason_is_never_counted_as_refused() -
         Transact(Write(raises=lock_wait)),
     )
     with pytest.raises(DatabaseError) as failed:
-        reviewed_accounts_are_deleted_under_the_versions_their_review_saw(port, MODELS["account"])
+        reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
+            port, MODELS["account"], TEST_BINDING
+        )
     assert failed.value is lock_wait

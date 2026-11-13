@@ -13,14 +13,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) < ?
-        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where cast(json_value(t0.address, ?) as double) < ?
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) < ?
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where cast(json_value(t0.address, ?) as double) < ?
       binds:
         postgres: [geo, elevation, 8]
         mariadb: ['$.geo.elevation', 8]
   referenceSql:
-    postgres: select id, name from customer where (address -> 'geo' ->> 'elevation')::double precision < 8
-    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 < 8
+    postgres: select id, name from px.customer where (address -> 'geo' ->> 'elevation')::double precision < 8
+    mariadb: select id, name from px.customer where nullif(json_unquote(json_extract(address, '$.geo.elevation')), 'null') + 0 < 8
   rows:
     - { id: 3, name: Grace }
   databaseCalls: 1

@@ -26,10 +26,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_deal add column expiry timestamptz
+          - alter table px.evolution_deal add column expiry timestamptz
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_deal add column expiry datetime(6)
+          - alter table px.evolution_deal add column expiry datetime(6)
         createdIndices: []

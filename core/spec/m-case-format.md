@@ -414,7 +414,9 @@ in decimal space under any authored `tolerance`.
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
 | `then.graphs` | `then` | read | an ORDERED array of per-milestone graphs a `history` / `asOfRange` snapshot read materializes (see *Milestone-set graphs*, below) — each entry `{pin, graph}`; coexists with `then.graph` exactly as `then.rows` does |
 | `then.storedDataIssues` | `then` | read | the stored-data diagnoses a graph-form read publishes for the result positions whose stored state contradicted the declared model — one `{ordinal, hydrated, issues}` entry per invalid position, in result order (see *Classified stored data*, below) |
-| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, scenario, or `when.concurrency` case asserts once its writes have run, keyed by table name (REQUIRED for a writeSequence case and a state-graded scenario) |
+| `then.tableState` | `then` | writeSequence | the resulting table state a writeSequence, conflict, scenario, or `when.concurrency` case asserts once its writes have run, keyed by each table's resolved location qualifier and then its resolved physical name — `px` under the corpus default binding (REQUIRED for a writeSequence case and a state-graded scenario) |
+| `binding` | top level | no | the Database Binding every database-backed observation resolves the case's model under, keyed by Dialect Identity, each value a binding document (`m-database-binding`); a dialect it does not name, and every case without one, uses that dialect's corpus default binding (`bindings/default.yaml`, placing everything in `px`). Golden SQL, naive SQL, and `then.tableState` name every table exactly as the binding places it |
+| `when.evolve.earlierBinding` / `laterBinding` | `when.evolve` | no | evolution cases only: the dialect-keyed binding each endpoint resolves under, each independently inheriting the case `binding`, else the corpus default; an absent (`null`) earlier model has no earlier endpoint to bind |
 | `then.units` | `then` | state-graded scenario | each `uow` group's fate, keyed by its label: `outcome` `committed` or `rolledBack`, and for a group a flush failure ended, its `flushFailure` (see *Unit fates*, below); a golden-graded group stating none commits |
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall of a gated conflict, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `constraintViolation` / `deadlock` / `lockWaitTimeout`) |
@@ -2375,11 +2377,12 @@ A **rejected** case proves a **negative**: that a model-aware validator refuses 
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
 invalid input under `when` — **exactly one** of an `objectQuery` (a schema-valid
 `m-object-query` document, its predicate included), a `write` (a neutral write
-row, ①), **or** a `model` (an inline invalid model descriptor, below) — and a
+row, ①), a `model` (an inline invalid model descriptor, below), **or** a
+`binding` (a dialect-keyed Database Binding, below) — and a
 `then.rejectedRule` naming the violated normative rule. A rejected read names its
 own queried position inside that document, so no lane falls back to a default
 root. A rejected case pins a **single** invalid input: carrying **more than one**
-of `objectQuery` / `write` / `model`, or **none**, is
+of `objectQuery` / `write` / `model` / `binding`, or **none**, is
 invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
 that forbids other keys) and mirrored by a harness guard, so the "exactly one
 invalid input" rule holds even for a caller that reaches the runner without schema
@@ -2669,8 +2672,6 @@ but disagree on its settings or key type (see `m-pk-gen`),
 `inheritance-persistence-not-root-owned`,
 `inheritance-layout-not-root-owned`, `inheritance-member-shadowing`,
 `inheritance-materialization-key-collision` (see `m-inheritance`),
-`storage-layout-table-mapping-collision`: a later independent mapping owner
-claims a structural Table already claimed by the first canonical owner,
 `storage-layout-column-collision`: within one uniquely owned Table, distinct
 Attributes, top-level Value Objects, a TPH discriminator, or a shared Structured
 Column claim one physical Column,
@@ -2680,6 +2681,32 @@ Document Layout contradicts,
 `storage-layout-index-over-document-member`: an Index component names a
 document-resident Attribute, which has no Column to index (see
 `m-storage-layout` for each invariant).
+
+**Binding** rules (a Database Binding refused when it is read or resolved
+against a model; `m-database-binding` defines each issue code — a `when.binding`
+case reaches either phase, and a `when.model` case reaches resolution under the
+case binding):
+
+- `binding-syntax-invalid`
+- `binding-value-invalid`
+- `binding-field-unknown`
+- `binding-field-missing`
+- `binding-version-unsupported`
+- `binding-backend-mismatch`
+- `binding-namespace-key-invalid`
+- `binding-entity-key-invalid`
+- `binding-sequence-key-invalid`
+- `binding-identifier-invalid`
+- `binding-entity-unknown`
+- `binding-entity-owns-no-table`
+- `binding-namespace-unknown`
+- `binding-sequence-unknown`
+- `binding-table-unresolved`
+- `binding-sequence-unresolved`
+- `binding-table-collision`
+- `binding-sequence-collision`
+- `binding-sequence-table-collision`
+
 A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` with an accepted-model formation defect — kept inside the
 case rather than in the shared `models/` registry, so an invalid model cannot
@@ -2690,14 +2717,18 @@ names a real, loadable descriptor (its identity/registry role is unchanged). A
 model-aware validator (and every language implementation) MUST reject the inline
 model pre-SQL with **exactly** the named rule.
 
-Storage Layout validation is keyed by structural Table identity. A standalone
-Entity is one mapping owner, a whole TPH family represented by its root is one
-owner, and each TPCS concrete mapping is one owner; TPH participants do not
-compete with their family. Owners are encountered in canonical Entity Identity
-order. The first owner claims the Table, and every later independent owner is
-rejected as `storage-layout-table-mapping-collision` at its Entity mapping
-location with the first owner related. The same-Table witness uses non-overlapping
-Columns so this ownership issue cannot be mistaken for a physical Column claim.
+Storage Layout validation is keyed by mapping owner. A standalone Entity is one
+mapping owner, a whole TPH family represented by its root is one owner, and each
+TPCS concrete mapping is one owner; TPH participants do not compete with their
+family. Equal declared table names are no formation defect. An inline model
+formation accepts is then resolved under the corpus default binding, so two
+owners declaring one name are refused there as `binding-table-collision` at the
+later owner's entry, the earlier owner related.
+
+A `when.binding` case carries a dialect-keyed binding — one binding document per
+dialect it is read by — which the validator reads for its backend and resolves
+against the case's top-level `model`, asserting exactly the one named binding
+rule, from either the definition or the resolution phase.
 
 Within every uniquely owned Table, `storage-layout-column-collision` applies to
 a standalone Entity's local contributors, one table-per-concrete-subtype

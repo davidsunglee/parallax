@@ -18,11 +18,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name from crew t0
+        postgres: select t0.id, t0.kind, t0.name from px.crew t0
     - sql:
-        postgres: select t0.id, t0.crew_id, t0.label from crew_task t0 where t0.crew_id = any(cast(? as bigint[])) order by t0.id asc
+        postgres: select t0.id, t0.crew_id, t0.label from px.crew_task t0 where t0.crew_id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[1, 2, 3]]
-  referenceSql: select id, kind, name from crew
+  referenceSql: select id, kind, name from px.crew
   graph:
     Crew:
       - id: 1

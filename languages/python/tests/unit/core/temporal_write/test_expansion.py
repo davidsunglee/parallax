@@ -71,6 +71,7 @@ from parallax.core.internal.write_plan.steps import (
     WriteRow,
 )
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.errors import raises_code
 from tests._support.managed_rows import row_selection_of
@@ -118,7 +119,10 @@ def _named(members: Mapping[str, object]) -> ManagedRow:
     raise AssertionError(f"no fixture Entity declares every member of {members!r}")
 
 
-_PAYLOADS = {_SPAN: LayoutPayloadPreparer(_SPANS), _BALANCE: LayoutPayloadPreparer(_BALANCES)}
+_PAYLOADS = {
+    _SPAN: LayoutPayloadPreparer(bound_model(_SPANS)),
+    _BALANCE: LayoutPayloadPreparer(bound_model(_BALANCES)),
+}
 
 
 def _span(
@@ -653,7 +657,7 @@ def test_a_rectangle_part_of_which_is_destroyed_is_changed_whatever_else_holds()
 _TAG_SPANS = model("scalar-collection-lifecycle-layout-twin-columns")
 _TAG_SPAN = EntityIdentity("parallax.compatibility", "TagSpan")
 _TAG_SPAN_FACTS = _facts(_TAG_SPANS, _TAG_SPAN)
-_PAYLOADS[_TAG_SPAN] = LayoutPayloadPreparer(_TAG_SPANS)
+_PAYLOADS[_TAG_SPAN] = LayoutPayloadPreparer(bound_model(_TAG_SPANS))
 _STORED_MARKS = PredecessorRow(
     members={
         "id": 1,

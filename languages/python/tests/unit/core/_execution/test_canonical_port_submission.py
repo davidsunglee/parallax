@@ -17,6 +17,7 @@ from parallax.core.internal.read_delivery._page_reader import (
     _pipelined_rows,  # pyright: ignore[reportPrivateUsage] - the pipeline submission under test
 )
 from parallax.core.internal.sql_gen._context import LoweredStatement
+from tests._support.bindings import bound_model
 from tests._support.db_port import (
     Ordered,
     OrderedCall,
@@ -55,7 +56,7 @@ def test_core_submits_canonical_sql_through_all_four_paths(monkeypatch: pytest.M
     orders = model("orders")
     compiled = compile_read(
         Comparison(op="eq", subject=FieldSubject("Order.id"), value=7),
-        orders,
+        bound_model(orders),
         POSTGRES,
         target(orders, "Order"),
     )

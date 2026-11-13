@@ -7,6 +7,7 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel, RetryPolicy, TxnOptions
 from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -40,6 +41,7 @@ class ScopedAuthorityShape:
 def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
     adapter: DatabaseAdapter[Authorization],
     model: DomainModel,
+    binding: PostgresBinding,
     authorization: Authorization,
 ) -> ScopedAuthorityShape:
     """Select both authority modes from one explicitly owned Database Root.
@@ -52,7 +54,7 @@ def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
     because execution authority compares by value within the same root.
     """
     defaults = TxnOptions(retry=RetryPolicy(max_retries=1))
-    with connect(adapter, model, options=defaults) as root:
+    with connect(adapter, model, binding=binding, options=defaults) as root:
         login = root.using_database_login()
         principal_value = AuthorityPrincipal("authority-guide", authorization)
         principal = root.using_principal(principal_value).with_options(isolation="serializable")

@@ -152,6 +152,7 @@ from parallax.core.internal.write_plan.plan import EffectSpan, WriteGroup, Write
 from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 from parallax.postgres._connection import adapt_binds, initialize_connection, to_driver_sql
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _structural_geometry_support as geometry_support
@@ -362,7 +363,7 @@ geometry families, so one model-preparation checkpoint prices the whole
 structural workload."""
 
 MODEL: Final = DomainModel(*ENTITY_CLASSES)
-CATALOG: Final = CatalogedModel(model_of(MODEL))
+CATALOG: Final = CatalogedModel(model_of(MODEL), TEST_BINDING)
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 INGRESSES: Final[tuple[Ingress, ...]] = ("typed", "wire")
 ANCESTOR_KEY: Final = 1
@@ -887,7 +888,7 @@ class AcceptingPort(ConnectsAsItself):
 def response_database(case: ResponseCase) -> Generator[ScopedDatabase]:
     """A login-scoped handle over the family model ``case`` opens a row of,
     composed outside every window and closed after the last one."""
-    root = Database.connect(AcceptingPort(), FAMILY_MODEL)
+    root = Database.connect(AcceptingPort(), FAMILY_MODEL, binding=TEST_BINDING)
     try:
         yield root.using_database_login()
     finally:
@@ -925,6 +926,7 @@ def database(case: Case, port: AcceptingPort | None = None) -> Generator[ScopedD
         (AcceptingPort(stored) if port is None else port).open(),
         case.model,
         clock=FixedClock(INSTANT),
+        binding=TEST_BINDING,
     ) as root:
         yield root.using_database_login()
 
@@ -1544,6 +1546,7 @@ def flush_database(
         (flush_port(case) if port is None else port).open(),
         MODEL,
         clock=FixedClock(INSTANT),
+        binding=TEST_BINDING,
     ) as root:
         yield root.using_database_login()
 
@@ -1695,7 +1698,9 @@ def batch_case_named(name: str) -> BatchCase:
 def batch_database(port: OrderedAcceptingPort) -> Generator[ScopedDatabase]:
     """A login-scoped handle over the batch model writing through ``port``,
     composed outside every window, flushing at :data:`INSTANT`."""
-    with Database(port.open(), BATCH_MODEL, clock=FixedClock(INSTANT)) as root:
+    with Database(
+        port.open(), BATCH_MODEL, clock=FixedClock(INSTANT), binding=TEST_BINDING
+    ) as root:
         yield root.using_database_login()
 
 

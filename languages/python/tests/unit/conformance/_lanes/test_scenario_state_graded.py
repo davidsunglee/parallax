@@ -94,7 +94,7 @@ def _update(row: dict[str, Any], **entry: Any) -> dict[str, Any]:
 )
 def test_a_flush_failure_is_reported_where_the_flush_ran(steps: list[Any], at: object) -> None:
     case = _state_graded(steps, {"g": {"outcome": "rolledBack"}})
-    port = FakeWritePort(find_rows=[_ACCOUNT_ROW], zero_affected_for=("update account",))
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW], zero_affected_for=("update px.account",))
 
     run = scenario.run_scenario_case(case, port)
 

@@ -19,20 +19,20 @@ then:
     postgres:
       delta:
         statements:
-          - create table evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
-          - create index pxi_evolution_widget_parallax_7753774cf2b102e91958001d642905d7 on evolution_widget (label)
+          - create table px.evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_widget_parallax_7753774cf2b102e91958001d642905d7 on px.evolution_widget (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_widget_parallax_7753774cf2b102e91958001d642905d7
-            physicalTable: evolution_widget
+            physicalTable: { qualifier: [px], name: evolution_widget }
             logicalIndexIdentity: parallax.compatibility.Widget.evolution_widget_label
             unique: false
     mariadb:
       delta:
         statements:
-          - create table evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
-          - create index pxi_evolution_widget_parallax_c_7753774cf2b102e91958001d642905d7 on evolution_widget (label)
+          - create table px.evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_widget_parallax_c_7753774cf2b102e91958001d642905d7 on px.evolution_widget (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_widget_parallax_c_7753774cf2b102e91958001d642905d7
-            physicalTable: evolution_widget
+            physicalTable: { qualifier: [px], name: evolution_widget }
             logicalIndexIdentity: parallax.compatibility.Widget.evolution_widget_label
             unique: false

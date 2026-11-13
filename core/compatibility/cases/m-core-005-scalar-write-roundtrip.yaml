@@ -20,8 +20,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.writable_scalars(id, f32, f64, payload, local_time, external_id) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - 1.5
@@ -30,13 +30,14 @@ then:
         - "12:34:56"
         - "123e4567-e89b-12d3-a456-426614174000"
   tableState:
-    writable_scalars:
-      - id: 1
-        f32: 1.5
-        f64: 2.25
-        payload: "01020304"
-        local_time: "12:34:56"
-        external_id: "123e4567-e89b-12d3-a456-426614174000"
-        amount: null
-        label: null
+    px:
+      writable_scalars:
+        - id: 1
+          f32: 1.5
+          f64: 2.25
+          payload: "01020304"
+          local_time: "12:34:56"
+          external_id: "123e4567-e89b-12d3-a456-426614174000"
+          amount: null
+          label: null
   databaseCalls: 1

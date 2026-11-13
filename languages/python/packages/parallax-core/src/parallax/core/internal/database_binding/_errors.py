@@ -2,17 +2,23 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 from parallax.core.internal.base import UsageError
 
+if TYPE_CHECKING:
+    from parallax.core.internal.database_binding._authored import DatabaseBinding
+
 __all__ = [
     "BINDING_DEFINITION_REJECTED",
+    "BINDING_REQUIRED",
     "BINDING_RESOLUTION_REJECTED",
+    "REQUIRED",
     "BindingError",
     "BindingErrorCode",
     "BindingIssue",
     "BindingPath",
+    "require_binding",
 ]
 
 type BindingErrorCode = Literal["binding-definition-rejected", "binding-resolution-rejected"]
@@ -65,3 +71,35 @@ class BindingError(UsageError):
             for issue in reported
         )
         super().__init__(code, f"{len(reported)} issue(s){lines}")
+
+
+BINDING_REQUIRED: Final = "binding-required"
+"""A model was prepared, connected, or evolved without the binding that places it."""
+
+_BINDING_GUIDE: Final = "docs/guide/02-modeling.md#database-bindings"
+
+
+class _Required:
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<binding required>"
+
+
+REQUIRED: Final = _Required()
+"""The default a binding parameter carries only to name its omission in a refusal."""
+
+
+def require_binding(binding: object, verb: str) -> DatabaseBinding:
+    """``binding`` itself, refusing an omitted one with migration guidance.
+
+    No connection default, ``search_path``, or current database places a
+    model, so omitting the binding is refused rather than defaulted.
+    """
+    if isinstance(binding, _Required):
+        raise UsageError(
+            BINDING_REQUIRED,
+            f"{verb} requires binding=, the Database Binding that places the model's tables "
+            f"and sequences, such as parallax.postgres.PostgresBinding; see {_BINDING_GUIDE}",
+        )
+    return cast("DatabaseBinding", binding)

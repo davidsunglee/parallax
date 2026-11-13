@@ -22,6 +22,7 @@ from pymysql.constants import FIELD_TYPE
 from reference_harness._case_execution import CaseExecution
 from reference_harness._declared_contributor import TEMPORAL_INFINITY
 from reference_harness.case import Case, Model, load_model
+from reference_harness.database_binding import LOCATION_KEYS, resolve_binding
 from reference_harness.ddl_builder import (
     _RESERVED_WORDS,
     _column_type,
@@ -42,13 +43,19 @@ from reference_harness.providers.mariadb import (
 from reference_harness.providers.postgres import _load_authored_json
 from reference_harness.sql_canonical import sqlglot_dialect
 from reference_harness.sql_normalize import is_canonical, normalize
-from reference_harness.storage_layout import observed_table
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 
 # --- the normalizer knows the mariadb dialect --------------------------------
+
+
+def px_ddl(model: Model, dialect: str) -> list[str]:
+    """*model*'s DDL under the corpus default binding, every table in ``px``."""
+    return ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS[dialect]: "px"}}, dialect)
+    )
 
 
 def test_mariadb_maps_to_mysql_engine() -> None:
@@ -58,7 +65,7 @@ def test_mariadb_maps_to_mysql_engine() -> None:
 
 
 def test_plain_read_is_identical_canonical_form_on_both_dialects() -> None:
-    sql = "select t0.id, t0.name from orders t0 where t0.id = ?"
+    sql = "select t0.id, t0.name from px.orders t0 where t0.id = ?"
     assert is_canonical(sql, "postgres")
     assert is_canonical(sql, "mariadb")
 
@@ -66,8 +73,8 @@ def test_plain_read_is_identical_canonical_form_on_both_dialects() -> None:
 def test_temporal_read_and_insert_are_canonical_on_mariadb() -> None:
     for sql in (
         "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z "
-        "from balance t0 where t0.out_z = ?",
-        "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
+        "from px.balance t0 where t0.out_z = ?",
+        "insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ):
         assert is_canonical(sql, "mariadb"), sql
 
@@ -78,14 +85,14 @@ def test_temporal_read_and_insert_are_canonical_on_mariadb() -> None:
 def test_read_lock_diverges_per_dialect() -> None:
     """Postgres `for share of t0` and MariaDB `lock in share mode` are EACH the
     canonical fixed point for their own dialect."""
-    pg = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? for share of t0"
-    md = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode"
+    pg = "select t0.id, t0.owner, t0.balance from px.account t0 where t0.id = ? for share of t0"
+    md = "select t0.id, t0.owner, t0.balance from px.account t0 where t0.id = ? lock in share mode"
     assert is_canonical(pg, "postgres")
     assert is_canonical(md, "mariadb")
 
 
 def test_mariadb_lock_normalizes_idempotently() -> None:
-    md = "select t0.id from account t0 where t0.id = ? lock in share mode"
+    md = "select t0.id from px.account t0 where t0.id = ? lock in share mode"
     once = normalize(md, "mariadb")
     assert once.endswith("lock in share mode")
     assert normalize(once, "mariadb") == once
@@ -94,7 +101,7 @@ def test_mariadb_lock_normalizes_idempotently() -> None:
 def test_sqlglot_for_share_is_rewritten_to_mariadb_lock() -> None:
     """sqlglot would render the shared lock as `for share`; the seam rewrites it
     to MariaDB's `lock in share mode` so the golden SQL is MariaDB-idiomatic."""
-    md = "select t0.id from account t0 where t0.id = ? lock in share mode"
+    md = "select t0.id from px.account t0 where t0.id = ? lock in share mode"
     assert "for share" not in normalize(md, "mariadb")
 
 
@@ -143,11 +150,11 @@ def test_a_placeholder_cast_unions_with_its_declared_column(
     dialect = provider.dialect
     column_type = _column_type(neutral_type, max_length, dialect)
     cast_type = placeholder_cast_type(neutral_type, max_length, dialect)
-    provider.reset()
-    provider.apply_ddl([f"create table placeholder_probe (probed {column_type})"])
+    provider.reset([("px",)])
+    provider.apply_ddl([f"create table px.placeholder_probe (probed {column_type})"])
 
     rows = provider.query(
-        f"select probed from placeholder_probe union all select cast(null as {cast_type}) probed"
+        f"select probed from px.placeholder_probe union all select cast(null as {cast_type}) probed"
     )
 
     assert rows == [{"probed": None}]
@@ -155,7 +162,7 @@ def test_a_placeholder_cast_unions_with_its_declared_column(
 
 def test_mariadb_ddl_derives_from_descriptor() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
-    create, _index = ddl_for(model, "mariadb")
+    create, _index = px_ddl(model, "mariadb")
     # The temporal interval columns use DATETIME(6) (no native infinity); the
     # money column uses DECIMAL — both behind the seam, derived from the model.
     assert "in_z datetime(6)" in create
@@ -165,8 +172,8 @@ def test_mariadb_ddl_derives_from_descriptor() -> None:
 
 def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
-    _prerequisite, postgres, *_indices = ddl_for(model, "postgres")
-    mariadb, *_indices = ddl_for(model, "mariadb")
+    _prerequisite, postgres, *_indices = px_ddl(model, "postgres")
+    mariadb, *_indices = px_ddl(model, "mariadb")
     assert (
         "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z)"
         in postgres
@@ -179,21 +186,22 @@ def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> 
 
 def test_every_table_a_temporal_family_maps_carries_the_roots_checks() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
-    created = {ddl.split()[2]: ddl for ddl in ddl_for(model, "postgres") if "create table" in ddl}
+    created = {ddl.split()[2]: ddl for ddl in px_ddl(model, "postgres") if "create table" in ddl}
     assert (
         "constraint pxc_tx_deposit_rate_414fd0086fa88b25167aa860be1092ee"
-        in (created["deposit_rate"])
+        in (created["px.deposit_rate"])
     )
     assert (
-        "constraint pxc_valid_loan_rate_e484575d67cc8dc583c0e35f7e6bc9a2" in (created["loan_rate"])
+        "constraint pxc_valid_loan_rate_e484575d67cc8dc583c0e35f7e6bc9a2"
+        in (created["px.loan_rate"])
     )
     payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
-    assert all("check" not in ddl for ddl in ddl_for(payment, "postgres"))
+    assert all("check" not in ddl for ddl in px_ddl(payment, "postgres"))
 
 
 def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_neither() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
-    prerequisite, postgres, *_indices = ddl_for(model, "postgres")
+    prerequisite, postgres, *_indices = px_ddl(model, "postgres")
     assert prerequisite == "create extension if not exists btree_gist"
     assert (
         "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
@@ -204,26 +212,28 @@ def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_n
         "(pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&)"
         in postgres
     )
-    mariadb, *_indices = ddl_for(model, "mariadb")
+    mariadb, *_indices = px_ddl(model, "mariadb")
     assert "exclude" not in mariadb and "constraint" not in mariadb
-    assert not any("extension" in ddl for ddl in ddl_for(model, "mariadb"))
+    assert not any("extension" in ddl for ddl in px_ddl(model, "mariadb"))
 
 
 def test_a_shared_table_excludes_by_the_root_key_and_each_concrete_table_by_its_own() -> None:
     instrument = load_model(COMPATIBILITY_ROOT, "models/instrument.yaml")
-    (shared,) = [ddl for ddl in ddl_for(instrument, "postgres") if "create table" in ddl]
+    (shared,) = [ddl for ddl in px_ddl(instrument, "postgres") if "create table" in ddl]
     assert "exclude using gist (id with =, tstzrange(from_z, thru_z)" in shared
     assert "kind with =" not in shared
     rate = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
-    created = {ddl.split()[2]: ddl for ddl in ddl_for(rate, "postgres") if "create table" in ddl}
+    created = {ddl.split()[2]: ddl for ddl in px_ddl(rate, "postgres") if "create table" in ddl}
     assert (
         "constraint pxc_excl_deposit_rate_ea12fdba9b842cd0660b9f10d5593728"
-        in (created["deposit_rate"])
+        in (created["px.deposit_rate"])
     )
-    assert "constraint pxc_excl_loan_rate_4eee23731629fb6ebaa7cc5fc179b5eb" in created["loan_rate"]
+    assert (
+        "constraint pxc_excl_loan_rate_4eee23731629fb6ebaa7cc5fc179b5eb" in created["px.loan_rate"]
+    )
     payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     assert all(
-        "exclude" not in ddl and "extension" not in ddl for ddl in ddl_for(payment, "postgres")
+        "exclude" not in ddl and "extension" not in ddl for ddl in px_ddl(payment, "postgres")
     )
 
 
@@ -276,10 +286,10 @@ def test_quote_identifier_quotes_non_simple_names() -> None:
 
 def test_reserved_word_column_ddl_is_quoted() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/grade.yaml")
-    assert '"order" integer not null' in ddl_for(model, "postgres")[0]
-    assert "`order` int not null" in ddl_for(model, "mariadb")[0]
+    assert '"order" integer not null' in px_ddl(model, "postgres")[0]
+    assert "`order` int not null" in px_ddl(model, "mariadb")[0]
     # the simple columns stay unquoted
-    assert "id bigint not null" in ddl_for(model, "postgres")[0]
+    assert "id bigint not null" in px_ddl(model, "postgres")[0]
 
 
 # --- the layout answer is shared; only type and quoting diverge --------------
@@ -302,12 +312,12 @@ def test_both_dialects_render_the_same_selected_slots_and_nullability() -> None:
     # nullability, and physical key; only the column type spelling and the
     # identifier quote character are its own decisions.
     model = load_model(COMPATIBILITY_ROOT, "models/storage-layout.yaml")
-    layout = observed_table(model.storage_layout, "layout_payment")
+    layout = next(t for t in model.storage_layout.tables if t.table == "layout_payment")
     assert layout is not None
     expected = [(slot.column, not slot.effective_nullable) for slot in layout.columns]
     rendered = {
         dialect: next(
-            ddl for ddl in ddl_for(model, dialect) if "create table layout_payment " in ddl
+            ddl for ddl in px_ddl(model, dialect) if "create table px.layout_payment " in ddl
         )
         for dialect in ("postgres", "mariadb")
     }
@@ -407,7 +417,7 @@ def test_case_execution_adapts_only_the_declared_timestamp_column() -> None:
     offset_text = "2024-06-01T00:00:00+02:00"
     provider = MariaRecorder()
     CaseExecution(case, provider).execute(
-        "insert into event(id, label, occurred_at) values (?, ?, ?)",
+        "insert into px.event(id, label, occurred_at) values (?, ?, ?)",
         [1, offset_text, offset_text],
     )
 

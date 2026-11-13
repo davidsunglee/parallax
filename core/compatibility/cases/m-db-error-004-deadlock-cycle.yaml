@@ -18,26 +18,26 @@ when:
       - A:
           statements:
             - sql:
-                postgres: "update gauge set v = ? where id = ?"
-                mariadb: "update gauge set v = ? where id = ?"
+                postgres: "update px.gauge set v = ? where id = ?"
+                mariadb: "update px.gauge set v = ? where id = ?"
               binds: [10, 1]
         B:
           statements:
             - sql:
-                postgres: "update gauge set v = ? where id = ?"
-                mariadb: "update gauge set v = ? where id = ?"
+                postgres: "update px.gauge set v = ? where id = ?"
+                mariadb: "update px.gauge set v = ? where id = ?"
               binds: [20, 2]
       - A:
           statements:
             - sql:
-                postgres: "update gauge set v = ? where id = ?"
-                mariadb: "update gauge set v = ? where id = ?"
+                postgres: "update px.gauge set v = ? where id = ?"
+                mariadb: "update px.gauge set v = ? where id = ?"
               binds: [11, 2]
         B:
           statements:
             - sql:
-                postgres: "update gauge set v = ? where id = ?"
-                mariadb: "update gauge set v = ? where id = ?"
+                postgres: "update px.gauge set v = ? where id = ?"
+                mariadb: "update px.gauge set v = ? where id = ?"
               binds: [21, 1]
 then:
   errorClass: deadlock

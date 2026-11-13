@@ -19,10 +19,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_consignment add column origin_doc jsonb
+          - alter table px.evolution_consignment add column origin_doc jsonb
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_consignment add column origin_doc json
+          - alter table px.evolution_consignment add column origin_doc json
         createdIndices: []

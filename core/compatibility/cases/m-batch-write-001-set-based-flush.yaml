@@ -22,17 +22,18 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
+        postgres: insert into px.wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
       binds:
         - [10, 11, 12]
         - [Mira, Omar, Nell]
         - ["100.00", "20.00", "30.00"]
     - sql:
-        postgres: update wallet set balance = ? where id = any(cast(? as bigint[]))
+        postgres: update px.wallet set balance = ? where id = any(cast(? as bigint[]))
       binds: ["500.00", [10, 11]]
   tableState:
-    wallet:
-      - { id: 10, owner: Mira, balance: "500.00" }
-      - { id: 11, owner: Omar, balance: "500.00" }
-      - { id: 12, owner: Nell, balance: "30.00" }
+    px:
+      wallet:
+        - { id: 10, owner: Mira, balance: "500.00" }
+        - { id: 11, owner: Omar, balance: "500.00" }
+        - { id: 12, owner: Nell, balance: "30.00" }
   databaseCalls: 3

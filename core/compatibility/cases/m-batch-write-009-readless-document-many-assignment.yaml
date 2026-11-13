@@ -24,43 +24,44 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id < ?
-            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id < ?
+            postgres: update px.traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id < ?
+            mariadb: update px.traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id < ?
           binds:
             postgres: ['{tags}', [{ label: founder }], 3]
             mariadb: ['$.tags', [{ label: founder }], 3]
 then:
   databaseCalls: 1
   tableState:
-    traveler:
-      - id: 1
-        payload:
-          displayName: Ada
-          score: 7
-          joinedOn: "2026-01-15"
-          note: north wing
-          address:
-            city: Oslo
-            geo:
-              country: "NO"
-          tags:
-            - { label: founder }
-      - id: 2
-        payload:
-          displayName: Bo
-          score: 30
-          joinedOn: "2025-12-31"
-          address:
-            city: Bergen
-            geo:
-              country: "NO"
-          tags:
-            - { label: founder }
-      - id: 3
-        payload:
-          displayName: Cyd
-          score: null
-          joinedOn: null
-          note: null
-          address: null
-          tags: []
+    px:
+      traveler:
+        - id: 1
+          payload:
+            displayName: Ada
+            score: 7
+            joinedOn: "2026-01-15"
+            note: north wing
+            address:
+              city: Oslo
+              geo:
+                country: "NO"
+            tags:
+              - { label: founder }
+        - id: 2
+          payload:
+            displayName: Bo
+            score: 30
+            joinedOn: "2025-12-31"
+            address:
+              city: Bergen
+              geo:
+                country: "NO"
+            tags:
+              - { label: founder }
+        - id: 3
+          payload:
+            displayName: Cyd
+            score: null
+            joinedOn: null
+            note: null
+            address: null
+            tags: []

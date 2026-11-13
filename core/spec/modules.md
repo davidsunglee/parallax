@@ -106,7 +106,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-storage-layout` | Canonical physical Table composition and column layout | active | cases |
-| `m-database-binding` | Deployment placement of tables and logical allocators: binding documents and their normalization | deferred | cases |
+| `m-database-binding` | Deployment placement of tables and logical allocators: binding documents, their resolution against a model, and relocation between resolved bindings | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
@@ -195,13 +195,16 @@ m-sql --> m-document-codec
 m-sql --> m-wire
 m-sql --> m-write-plan
 m-sql --> m-read-planning
+m-sql --> m-database-binding
 m-dialect --> m-core
 m-database-binding --> m-metamodel
 m-database-binding --> m-dialect
+m-database-binding --> m-storage-layout
 m-db-port --> m-core
 m-db-port --> m-dialect
 m-db-error --> m-db-port
 m-db-error --> m-dialect
+m-db-error --> m-database-binding
 m-unit-work --> m-predicate
 m-unit-work --> m-wire
 m-unit-work --> m-db-port
@@ -229,6 +232,7 @@ m-write-payload --> m-metamodel
 m-write-payload --> m-storage-layout
 m-write-payload --> m-document-codec
 m-write-payload --> m-write-plan
+m-write-payload --> m-database-binding
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
 m-auto-retry --> m-unit-work
@@ -281,6 +285,7 @@ m-execution --> m-execution-authority
 m-execution --> m-auto-retry
 m-execution --> m-execution-lifecycle
 m-execution --> m-db-port
+m-execution --> m-database-binding
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
@@ -295,11 +300,13 @@ m-model-evolution --> m-inheritance
 m-model-evolution --> m-relationship
 m-model-evolution --> m-temporal-read
 m-model-evolution --> m-concurrency
+m-model-evolution --> m-database-binding
 m-schema-delta --> m-model-evolution
 m-schema-delta --> m-metamodel
 m-schema-delta --> m-inheritance
 m-schema-delta --> m-storage-layout
 m-schema-delta --> m-dialect
+m-schema-delta --> m-database-binding
 m-case-format --> m-core
 m-conformance-adapter --> m-case-format
 m-api-conformance --> m-case-format

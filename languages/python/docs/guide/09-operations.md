@@ -16,6 +16,7 @@ from parallax.postgres import (
     OnDemandOptions,
     PoolOptions,
     PostgresAdapter,
+    PostgresBinding,
     PostgresEndpoint,
     PostgresRole,
 )
@@ -41,7 +42,7 @@ it on shutdown. This function opens the shop's root:
 <!-- example: open-one-root-per-process -->
 ```python
 def open_the_shop_database(
-    conninfo: str, credentials: CredentialSource, model: DomainModel
+    conninfo: str, credentials: CredentialSource, model: DomainModel, binding: PostgresBinding
 ) -> Database[PostgresRole]:
     """The process's one root: a bounded pool, room for more read plans, and logging."""
     adapter = PostgresAdapter(
@@ -50,6 +51,7 @@ def open_the_shop_database(
     return connect(
         adapter,
         model,
+        binding=binding,
         read_plan_cache_capacity=512,
         lifecycle_provider=LoggingLifecycleProvider(logging.getLogger("shop.database")),
     )

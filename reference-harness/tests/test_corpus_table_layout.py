@@ -55,7 +55,8 @@ def _corpus_projection(model_paths: list[Path]) -> CorpusProjection:
             assert len(column_contributors) == len(set(column_contributors))
             assert len(primary_key_ordinals) == len(set(primary_key_ordinals))
             assert all(0 <= ordinal < len(layout.columns) for ordinal in primary_key_ordinals)
-            tables[layout.table] = {
+            tables[layout.mapping_owner] = {
+                "table": layout.table,
                 "columns": [
                     {
                         "column": slot.column,
@@ -90,5 +91,10 @@ def test_every_row_owning_corpus_entity_reaches_exactly_one_baseline_table() -> 
     baseline: CorpusProjection = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
     for relative_path, tables in baseline.items():
         model = load_model(_COMPATIBILITY_ROOT, relative_path)
-        row_owning_tables = {entity.table for entity in model.entities if not entity.is_abstract}
+        row_owning_tables = {
+            view.layout.mapping_owner
+            for entity in model.entities
+            if not entity.is_abstract
+            and (view := model.storage_layout.entity(entity.canonical_name)) is not None
+        }
         assert set(tables) == row_owning_tables, relative_path

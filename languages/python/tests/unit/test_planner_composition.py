@@ -16,6 +16,7 @@ import pytest
 from parallax.conformance import models
 from parallax.core._execution._planning import build_write_planner
 from parallax.core.internal.unit_work import NO_AUDIT, SubjectActor, WritePlanner
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 
 if TYPE_CHECKING:
@@ -34,7 +35,7 @@ def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy() -> 
     # wiring half: every planner holds the neutral strategy, so no step reaching
     # audit meets one that could decorate. The other half, that the neutral
     # strategy hands back what it was given, lives in `test_strategy.py`.
-    decoration = build_write_planner(_ACCOUNT).audit_decoration(
+    decoration = build_write_planner(bound_model(_ACCOUNT)).audit_decoration(
         actor_identity=SubjectActor("alice"), transaction_instant=inert_instant()
     )
 

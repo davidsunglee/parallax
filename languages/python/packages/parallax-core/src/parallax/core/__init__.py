@@ -5,6 +5,7 @@ from __future__ import annotations
 from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import (
+    PUBLICATION_RELOCATION_REFUSED,
     ModelSelection,
     PublicationConflictError,
     ServingModel,
@@ -129,6 +130,7 @@ __all__ = [
     "ONE_TO_ONE",
     "POSTGRES",
     "PRINCIPAL_INVALID",
+    "PUBLICATION_RELOCATION_REFUSED",
     "QUERY_TARGET_NOT_IN_MODEL",
     "READ_ONLY",
     "READ_WRITE",

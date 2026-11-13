@@ -35,6 +35,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy, TxnOptions
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 
 _ACCOUNT = MODELS["account"]
 _root_options_story = (
@@ -48,11 +49,12 @@ _retry_policy_story = (
 # --------------------------------------------------------------------------- #
 # The public shape, pinned directly: the export snapshot records names alone.  #
 # --------------------------------------------------------------------------- #
-def test_connect_takes_options_as_its_first_keyword_in_the_documented_order() -> None:
+def test_connect_takes_the_binding_then_options_as_keywords_in_the_documented_order() -> None:
     parameters = list(inspect.signature(connect).parameters)
     assert parameters == [
         "adapter",
         "model",
+        "binding",
         "options",
         "read_policy",
         "read_plan_cache_capacity",
@@ -69,6 +71,7 @@ def test_the_direct_constructor_takes_the_same_keywords_over_an_open_runtime() -
     assert parameters == [
         "runtime",
         "model",
+        "binding",
         "options",
         "read_policy",
         "read_plan_cache_capacity",
@@ -180,6 +183,7 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
@@ -203,7 +207,7 @@ def test_an_unconfigured_root_runs_at_read_committed_over_a_stronger_session_def
     # port consults, so the transaction requested its level and got it.
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
-    with connect(_probed(profile_run, seen), _ACCOUNT) as _root_db:
+    with connect(_probed(profile_run, seen), _ACCOUNT, binding=TEST_BINDING) as _root_db:
         db = _root_db.using_database_login()
         options = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
     assert options == TxnOptions()
@@ -222,7 +226,9 @@ def test_a_root_default_and_an_explicit_override_each_reach_the_transaction(
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
     root = TxnOptions(isolation="serializable")
-    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:
+    with connect(
+        _probed(profile_run, seen), _ACCOUNT, options=root, binding=TEST_BINDING
+    ) as _root_db:
         db = _root_db.using_database_login()
         inherited = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
         overridden = db.transact(
@@ -244,7 +250,10 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
     with connect(
-        _probed(profile_run, seen), _ACCOUNT, options=TxnOptions(isolation=level)
+        _probed(profile_run, seen),
+        _ACCOUNT,
+        options=TxnOptions(isolation=level),
+        binding=TEST_BINDING,
     ) as _root_db:
         db = _root_db.using_database_login()
         db.transact(_read_one)
@@ -254,7 +263,7 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
 
 def test_the_retry_policy_story_runs_against_a_real_database(profile_run: Any) -> None:
     _seeded(profile_run)
-    shape = _retry_policy_story(profile_run.port, _ACCOUNT)
+    shape = _retry_policy_story(profile_run.port, _ACCOUNT, TEST_BINDING)
     assert shape.inherited == RetryPolicy(
         max_retries=3, backoff=AdaptiveBackoff(base_delay=0.002, max_delay=0.05)
     )
@@ -269,7 +278,7 @@ def test_a_retired_bound_keyword_is_an_unknown_keyword_on_every_public_surface(
 ) -> None:
     _seeded(profile_run)
     keywords: dict[str, Any] = {retired: 1}
-    with connect(profile_run.port, _ACCOUNT) as database:
+    with connect(profile_run.port, _ACCOUNT, binding=TEST_BINDING) as database:
         db = database.using_database_login()
         with pytest.raises(TypeError, match=retired):
             db.transact(_read_one, **keywords)
@@ -285,7 +294,7 @@ def test_the_root_options_usage_guide_story_runs_against_a_real_database(
     profile_run: Any,
 ) -> None:
     _seeded(profile_run)
-    shape = _root_options_story(profile_run.port, _ACCOUNT)
+    shape = _root_options_story(profile_run.port, _ACCOUNT, TEST_BINDING)
     root = TxnOptions(isolation="repeatable_read", retry=RetryPolicy(max_retries=2))
     assert shape.inherited == root
     assert shape.overridden == TxnOptions(
@@ -311,7 +320,9 @@ def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transactio
         concurrency="locking",
         isolation="serializable",
     )
-    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:
+    with connect(
+        _probed(profile_run, seen), _ACCOUNT, options=root, binding=TEST_BINDING
+    ) as _root_db:
         db = _root_db.using_database_login()
         found = db.find(Account.where(Account.id == 1)).result()
         with db.stream(Account.where(Account.id == 1), batch_size=1) as delivery:

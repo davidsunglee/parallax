@@ -21,6 +21,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.internal.db_port import Route, RouteCapabilities, RoutePolicy, RouteSelection
 from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
@@ -53,7 +54,13 @@ def _query() -> Any:
 
 def _scope(adapter: ScriptedAdapter, read_policy: RoutePolicy | None = None) -> ScopedDatabase:
     database: Database[Any] = own_root(
-        connect(adapter, ORDERS_MODEL, clock=FixedClock(FIXED), read_policy=read_policy)
+        connect(
+            adapter,
+            ORDERS_MODEL,
+            clock=FixedClock(FIXED),
+            read_policy=read_policy,
+            binding=TEST_BINDING,
+        )
     )
     return database.using_database_login()
 

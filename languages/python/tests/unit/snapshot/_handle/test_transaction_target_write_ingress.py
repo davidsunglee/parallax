@@ -58,8 +58,10 @@ from tests.unit._transact_support import (
 )
 from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry, Tug, Vessel
 
-_GATED_BALANCE = "update account set balance = ?, version = ? where id = ? and version = ?"
-_GATED_FULL = "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+_GATED_BALANCE = "update px.account set balance = ?, version = ? where id = ? and version = ?"
+_GATED_FULL = (
+    "update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+)
 
 
 def _calls(port: ScriptedAdapter) -> list[PortCall]:
@@ -309,7 +311,7 @@ def test_a_target_deletion_of_a_concrete_target_is_guarded_by_its_tag() -> None:
     db_for(VESSEL, port).transact(lambda tx: tx.delete_if(Ferry, key=4, version=3))
     assert _calls(port) == [
         WriteCall(
-            "delete from vessel where id = ? and kind = ? and version = ?",
+            "delete from px.vessel where id = ? and kind = ? and version = ?",
             (4, "ferry", 3),
         )
     ]
@@ -351,10 +353,10 @@ def test_a_target_key_addresses_the_key_attribute_whatever_its_name() -> None:
     db_for(DomainModel(Locker), port).transact(fn)
     assert _calls(port) == [
         WriteCall(
-            "update locker set holder = ?, version = ? where code = ? and version = ?",
+            "update px.locker set holder = ?, version = ? where code = ? and version = ?",
             ("Bo", 3, "A1", 2),
         ),
-        WriteCall("delete from locker where code = ? and version = ?", ("B2", 5)),
+        WriteCall("delete from px.locker where code = ? and version = ?", ("B2", 5)),
     ]
 
 

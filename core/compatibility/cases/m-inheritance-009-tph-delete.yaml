@@ -16,10 +16,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: delete from payment where id = ? and kind = ?
+        postgres: delete from px.payment where id = ? and kind = ?
       binds: [2, card]
   tableState:
-    payment:
-      - { id: 1, kind: card, amount: "100.00", card_network: Visa, tendered: null }
-      - { id: 3, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
+    px:
+      payment:
+        - { id: 1, kind: card, amount: "100.00", card_network: Visa, tendered: null }
+        - { id: 3, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
   databaseCalls: 2

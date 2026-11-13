@@ -13,6 +13,7 @@ from parallax.core import Attr, Document, DomainModel, TemporalBound, TxTemporal
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import TxnContext, connect, edge_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "locking.stream.temporal"
@@ -43,9 +44,9 @@ _TABLES = {
 def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
     profile_run: Any, entity: type[Any], wire: bool
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock([_JAN, _MAR]))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock([_JAN, _MAR]), binding=TEST_BINDING)
     ).using_database_login()
     db.transact(lambda tx: [tx.insert(entity(id=key, seats=4)) for key in range(1, 6)])
     first_page = threading.Event()
@@ -108,7 +109,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
         # The first page also locks its lookahead row, id 3.
         assert (
             peer.execute_write(
-                f"update {table} set out_z = ? where id = 4 and out_z = 'infinity'", [_FEB]
+                f"update px.{table} set out_z = ? where id = 4 and out_z = 'infinity'", [_FEB]
             )
             == 1
         )
@@ -116,7 +117,7 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
         value = "'{\"seats\": 8}'" if entity is DocumentMilestone else "8"
         assert (
             peer.execute_write(
-                f"insert into {table} (id, {payload}, in_z, out_z) "
+                f"insert into px.{table} (id, {payload}, in_z, out_z) "
                 f"values (4, {value}, ?, 'infinity')",
                 [_FEB],
             )
@@ -139,12 +140,12 @@ def test_a_locking_continuation_never_publishes_a_closed_current_milestone(
     current = [
         tuple(row)
         for row in profile_run.port.execute(
-            f"select id, {member} from {table} where out_z = 'infinity' order by id", []
+            f"select id, {member} from px.{table} where out_z = 'infinity' order by id", []
         )
     ]
     assert current == [(1, 4), (2, 4), (3, 5), (4, 9 if 4 in observed else 8), (5, 5)]
     history = profile_run.port.execute(
-        f"select in_z, out_z, {member} from {table} where id = 4 and in_z = ?", [_JAN]
+        f"select in_z, out_z, {member} from px.{table} where id = 4 and in_z = ?", [_JAN]
     )
     assert [tuple(row) for row in history] == [(_JAN, _FEB, 4)]
 

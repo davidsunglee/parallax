@@ -8,6 +8,7 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -30,7 +31,7 @@ def test_equal_key_roots_resolve_the_shared_child_inverse_locally(
 ) -> None:
     rows = list(reversed(PARENT_ROWS)) if reverse else PARENT_ROWS
     port = ScriptedAdapter(Read(rows=rows), Read(rows=[LINK_ROW]))
-    db = own_root(connect(port, INVERSE_MODEL)).using_database_login()
+    db = own_root(connect(port, INVERSE_MODEL, binding=TEST_BINDING)).using_database_login()
     query = InverseParent.where(InverseParent.all).include(InverseParent.links.parent)
     wire_query: dict[str, Any] = {
         "target": "InverseParent",
@@ -64,7 +65,7 @@ def test_equal_key_roots_resolve_the_shared_child_inverse_locally(
 
 def test_narrowed_inverse_admits_only_its_selected_concrete() -> None:
     port = ScriptedAdapter(Read(rows=PARENT_ROWS), Read(rows=[LINK_ROW]))
-    db = own_root(connect(port, INVERSE_MODEL)).using_database_login()
+    db = own_root(connect(port, INVERSE_MODEL, binding=TEST_BINDING)).using_database_login()
     roots = db.wire.find(
         {
             "target": "InverseParent",
@@ -87,7 +88,7 @@ def test_narrowed_inverse_admits_only_its_selected_concrete() -> None:
 
 def test_guarded_include_leaves_the_other_equal_key_root_unloaded() -> None:
     port = ScriptedAdapter(Read(rows=PARENT_ROWS), Read(rows=[LINK_ROW]))
-    db = own_root(connect(port, INVERSE_MODEL)).using_database_login()
+    db = own_root(connect(port, INVERSE_MODEL, binding=TEST_BINDING)).using_database_login()
     alpha, beta = (
         db.find(InverseParent.where(InverseParent.all).include(InverseAlpha.links.parent))
         .wire()
@@ -112,10 +113,16 @@ def test_public_broad_tpcs_children_report_same_root_witness_conflict(
             "InverseBeta": [{"id": 1, "label": "beta", "ownerId": 10}],
             "InverseLink": [{"id": 11, "parentId": 1}],
         },
+        TEST_BINDING,
     )
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, INVERSE_MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port,
+            INVERSE_MODEL,
+            lifecycle_provider=observation.provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     query = (
         InverseLink.where(InverseLink.all)
@@ -161,10 +168,16 @@ def test_public_wire_deeper_inverse_reuses_each_broad_child_on_a_live_database(
             "InverseBeta": [{"id": 2, "label": "beta", "ownerId": 10}],
             "InverseLink": [{"id": 11, "parentId": 1}, {"id": 12, "parentId": 2}],
         },
+        TEST_BINDING,
     )
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, INVERSE_MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port,
+            INVERSE_MODEL,
+            lifecycle_provider=observation.provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     query: dict[str, Any] = {
         "target": "InverseOwner",
@@ -211,10 +224,16 @@ def test_public_broad_to_one_child_reuses_the_root_link_as_its_inverse(
             "InverseAlpha": [{"id": 1, "label": "alpha", "ownerId": None}],
             "InverseLink": [{"id": 11, "parentId": 1}],
         },
+        TEST_BINDING,
     )
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, INVERSE_MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port,
+            INVERSE_MODEL,
+            lifecycle_provider=observation.provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     query = (
         InverseLink.where(InverseLink.all)

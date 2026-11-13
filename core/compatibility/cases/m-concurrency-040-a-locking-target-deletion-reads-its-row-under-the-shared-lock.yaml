@@ -20,10 +20,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: delete from account where id = ?
+        postgres: delete from px.account where id = ?
       binds: [1]
   tableState:
-    account:
-      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
-      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    px:
+      account:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
   databaseCalls: 2

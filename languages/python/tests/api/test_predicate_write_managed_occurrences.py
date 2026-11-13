@@ -24,6 +24,7 @@ from parallax.core import (
 )
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "managed.predicate"
@@ -78,8 +79,8 @@ def _typed_point(document: Document | None) -> Point | None:
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
 
 
 def _seed(db: ScopedDatabase, entity: type[Any]) -> None:

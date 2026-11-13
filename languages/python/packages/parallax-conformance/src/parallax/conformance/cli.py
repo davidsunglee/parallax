@@ -70,7 +70,11 @@ def _run_self_managed(
 
     with profile.provisioned() as run:
         meta = engine.load_case_setup_metamodel(case)
-        run.reset(meta, provision.load_fixtures(engine.case_setup_model_ref(case)))
+        run.reset(
+            meta,
+            provision.load_fixtures(engine.case_setup_model_ref(case)),
+            engine.case_binding(case),
+        )
         return adapter.run_case(case_path, run)
 
 

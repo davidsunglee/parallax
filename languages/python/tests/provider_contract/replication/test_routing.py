@@ -18,6 +18,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import BeginFailed, Committed, DatabaseConnection, RoutePolicy
 from parallax.postgres import PostgresRole
 from parallax.snapshot import ReadOnlyTxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import (
     LAYOUTS,
@@ -75,7 +76,7 @@ def test_the_standby_refuses_writes_and_serializable_natively(profile_run: Any) 
     try:
         with reader.new_context("reader_only") as connection, pytest.raises(DatabaseError) as write:
             connection.execute_write(
-                "insert into rv_ledger (id, memo) values (?, ?)", [9, "refused"]
+                "insert into px.rv_ledger (id, memo) values (?, ?)", [9, "refused"]
             )
         with reader.new_context("reader_only") as connection:
             serializable = connection.transaction(
@@ -97,7 +98,7 @@ def test_the_standby_refuses_writes_and_serializable_natively(profile_run: Any) 
 
 def test_a_committed_write_is_already_applied_on_the_standby(profile_run: Any) -> None:
     pair = replicated(profile_run)
-    db = own_root(connect(pair.adapter(), MODEL)).using_database_login()
+    db = own_root(connect(pair.adapter(), MODEL, binding=TEST_BINDING)).using_database_login()
 
     for entity in LAYOUTS.values():
         insert(db, entity, 3)
@@ -114,7 +115,9 @@ def test_each_read_shape_follows_its_scopes_policy_to_its_server(
 ) -> None:
     pair = replicated(profile_run)
     read, entity = READS[shape], LAYOUTS[layout]
-    db = own_root(connect(pair.adapter(synchronous_commit="local"), MODEL)).using_database_login()
+    db = own_root(
+        connect(pair.adapter(synchronous_commit="local"), MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
     with pair.paused_replay():
         insert(db, entity, 3)
@@ -137,7 +140,9 @@ def test_transactions_reach_the_server_their_routing_and_isolation_select(
     profile_run: Any,
 ) -> None:
     pair = replicated(profile_run)
-    db = own_root(connect(pair.adapter(synchronous_commit="local"), MODEL)).using_database_login()
+    db = own_root(
+        connect(pair.adapter(synchronous_commit="local"), MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     preferred = db.with_routing(read_policy="reader_preferred")
 
     with pair.paused_replay():
@@ -166,7 +171,7 @@ def test_a_principal_reads_through_the_standby_under_its_own_authorization(
     profile_run: Any,
 ) -> None:
     pair = replicated(profile_run)
-    root = own_root(connect(pair.adapter(synchronous_commit="local"), MODEL))
+    root = own_root(connect(pair.adapter(synchronous_commit="local"), MODEL, binding=TEST_BINDING))
     principal = root.using_principal(_Principal("replication", pair.authorization("role-b")))
 
     with pair.paused_replay():

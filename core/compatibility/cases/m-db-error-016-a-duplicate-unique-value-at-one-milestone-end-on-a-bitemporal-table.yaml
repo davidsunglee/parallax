@@ -9,12 +9,12 @@ shape: error
 then:
   statements:
     - sql:
-        postgres: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+        postgres: insert into px.assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [1, Y, a, 100, "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+        postgres: insert into px.assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
       binds: [2, Y, b, 200, "2024-03-01T00:00:00.000000Z", infinity, "2024-03-01T00:00:00.000000Z", infinity]
   errorClass: uniqueViolation
   nativeCode:

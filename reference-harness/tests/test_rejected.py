@@ -41,6 +41,7 @@ from reference_harness.case import (
 )
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import ALL_REJECTED_RULES, run_case
+from reference_harness.database_binding import BINDING_REJECTED_RULES
 from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
     INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN,
@@ -84,10 +85,7 @@ from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
-from reference_harness.storage_layout import (
-    STORAGE_LAYOUT_COLUMN_COLLISION,
-    STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
-)
+from reference_harness.storage_layout import STORAGE_LAYOUT_COLUMN_COLLISION
 from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import (
     BETWEEN_BOUNDS_INVERTED,
@@ -174,16 +172,14 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
         | MODEL_REJECTED_RULES
         | STORAGE_LAYOUT_MODEL_REJECTED_RULES
         | RELATIONSHIP_MODEL_REJECTED_RULES
+        | BINDING_REJECTED_RULES
     )
     assert not (unexpected := used - allowed), (
         f"model rejection rules are outside the closed owner vocabularies: {sorted(unexpected)}"
     )
     # Structural invariants that a family MUST reject have at least one witness.
     assert {INHERITANCE_UNKNOWN_PARENT, INHERITANCE_MISSING_ROOT} <= used
-    assert {
-        STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
-        STORAGE_LAYOUT_COLUMN_COLLISION,
-    } <= used
+    assert {"binding-table-collision", STORAGE_LAYOUT_COLUMN_COLLISION} <= used
     assert METAMODEL_MODEL_REJECTED_RULES <= used
     assert PK_GEN_MODEL_REJECTED_RULES <= used
     assert RELATIONSHIP_MODEL_REJECTED_RULES <= used

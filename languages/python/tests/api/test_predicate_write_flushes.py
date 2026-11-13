@@ -22,6 +22,7 @@ from parallax.core import (
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -118,9 +119,14 @@ _JAN, _APR = dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 4, 1, tzi
 
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants) or [_TA]))
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock(list(instants) or [_TA]),
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -148,13 +154,13 @@ def _member(entity: type[Any], member: str) -> str:
 
 def _stock_rows(profile_run: Any, stock: type[Any]) -> list[tuple[object, ...]]:
     members = ", ".join(_member(stock, name) for name in ("quantity", "label"))
-    sql = f"select id, {members} from {_TABLES[stock]} order by id"
+    sql = f"select id, {members} from px.{_TABLES[stock]} order by id"
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
 def _ledger_rows(profile_run: Any, ledger: type[Any]) -> list[tuple[object, ...]]:
     members = ", ".join(_member(ledger, name) for name in ("balance", "spec"))
-    sql = f"select id, {members}, version from {_TABLES[ledger]}"
+    sql = f"select id, {members}, version from px.{_TABLES[ledger]}"
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
@@ -263,16 +269,16 @@ def test_an_opening_edited_after_a_predicate_write_is_revised_at_one_instant(
     table = _TABLES[span]
     control = profile_run.control()
     try:
-        control.execute_write("create table pf_audit (current_rows int not null)", [])
-        control.execute_write("grant select on pf_audit to public", [])
+        control.execute_write("create table px.pf_audit (current_rows int not null)", [])
+        control.execute_write("grant select on px.pf_audit to public", [])
         control.execute_write(
             "create function pf_on_tag() returns trigger language plpgsql security definer "
-            "as $body$ begin insert into pf_audit (current_rows) select count(*) "
-            f"from {table} where id = 1 and out_z = 'infinity'; return new; end $body$",
+            "as $body$ begin insert into px.pf_audit (current_rows) select count(*) "
+            f"from px.{table} where id = 1 and out_z = 'infinity'; return new; end $body$",
             [],
         )
         control.execute_write(
-            "create trigger pf_tag_updated after update on pf_tag "
+            "create trigger pf_tag_updated after update on px.pf_tag "
             "for each row execute function pf_on_tag()",
             [],
         )
@@ -288,11 +294,11 @@ def test_an_opening_edited_after_a_predicate_write_is_revised_at_one_instant(
     db.transact(fn, concurrency=concurrency)
     # When the predicate write ran the opening stood alone; the edit then split
     # it.
-    assert list(profile_run.port.execute("select current_rows from pf_audit", [])) == [(1,)]
+    assert list(profile_run.port.execute("select current_rows from px.pf_audit", [])) == [(1,)]
     rows = profile_run.port.execute(
         f"select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {_member(span, 'amount')} "
-        f"from {table} order by from_z",
+        f"from px.{table} order by from_z",
         [],
     )
     assert [tuple(row) for row in rows] == [
@@ -305,7 +311,7 @@ def _span_rows(profile_run: Any, span: type[Any]) -> list[tuple[object, ...]]:
     rows = profile_run.port.execute(
         f"select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {_member(span, 'amount')} "
-        f"from {_TABLES[span]} order by from_z",
+        f"from px.{_TABLES[span]} order by from_z",
         [],
     )
     return [tuple(row) for row in rows]
@@ -373,7 +379,7 @@ def test_a_transaction_time_insert_edited_after_a_predicate_write_is_revised_in_
     db.transact(fn, concurrency=concurrency)
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(log, 'label')} from {_TABLES[log]}",
+        f"{_member(log, 'label')} from px.{_TABLES[log]}",
         [],
     )
     assert [tuple(row) for row in rows] == [(_TA, None, "after")]
@@ -395,7 +401,7 @@ def test_a_transaction_time_insert_removed_after_a_predicate_write_admits_reinse
     db.transact(fn)
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(log, 'label')} from {_TABLES[log]}",
+        f"{_member(log, 'label')} from px.{_TABLES[log]}",
         [],
     )
     assert [tuple(row) for row in rows] == [(_TA, None, "again")]

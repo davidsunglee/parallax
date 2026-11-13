@@ -20,6 +20,7 @@ from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "child.key.arrays"
@@ -50,10 +51,12 @@ _MODEL = DomainModel(WideHolder, WideItem, NarrowHolder, NarrowItem)
 
 def _child_level(profile_run: Any, holder: type[Any]) -> LoweredStatement:
     """The one child statement a read of two holders with small keys delivers."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port, _MODEL, lifecycle_provider=observation.provider, binding=TEST_BINDING
+        )
     ).using_database_login()
     item = WideItem if holder is WideHolder else NarrowItem
 

@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from parallax.conformance.engine import case_binding
 from parallax.core.internal import inheritance, read_planning
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.entity._layout import CatalogedModel
@@ -54,7 +55,15 @@ def _root(plan: ReadPlan) -> CompiledRead | EmptyRead:
 
 def test_every_corpus_read_case_plans_a_root_or_an_empty_read() -> None:
     roots = [
-        _root(_plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES))
+        _root(
+            _plan(
+                ReadPlanCache(0),
+                CatalogedModel(read.meta, case_binding(read.case)),
+                read,
+                read.query,
+                POSTGRES,
+            )
+        )
         for read in _CORPUS_READS
     ]
     empty = [root for root in roots if isinstance(root, EmptyRead)]
@@ -90,7 +99,7 @@ def test_a_read_rendered_from_a_template_seeded_by_other_values_is_its_cold_plan
     read: CorpusRead, dialect: Dialect
 ) -> None:
     cache = ReadPlanCache()
-    model = CatalogedModel(read.meta)
+    model = CatalogedModel(read.meta, case_binding(read.case))
     seed = varied(read.query)
 
     seeded = _plan(cache, model, read, seed, dialect)
@@ -166,7 +175,13 @@ def test_every_corpus_read_proves_exactly_the_levels_no_row_key_can_recur_at(
 ) -> None:
     # The proof is read off the compiled statements; this derives it again from
     # the include tree's targets, so the two descriptions of a level must agree.
-    plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
+    plan = _plan(
+        ReadPlanCache(0),
+        CatalogedModel(read.meta, case_binding(read.case)),
+        read,
+        read.query,
+        POSTGRES,
+    )
     schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
 
     repeating = frozenset(
@@ -192,7 +207,13 @@ def test_corpus_reads_that_merge_rows_prove_no_level_that_shares_a_row_key(
     case_id: str, repeating: set[int]
 ) -> None:
     (read,) = (read for read in _CORPUS_READS if read.case.case_id == case_id)
-    plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
+    plan = _plan(
+        ReadPlanCache(0),
+        CatalogedModel(read.meta, case_binding(read.case)),
+        read,
+        read.query,
+        POSTGRES,
+    )
     schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
 
     assert {

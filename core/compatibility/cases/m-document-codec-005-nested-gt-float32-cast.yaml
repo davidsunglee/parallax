@@ -14,14 +14,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as real) > ?
-        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from sample t0 where cast(json_value(t0.profile, ?) as float) > ?
+        postgres: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as real) > ?
+        mariadb: select t0.id, t0.label, not t0.profile is null, t0.profile from px.sample t0 where cast(json_value(t0.profile, ?) as float) > ?
       binds:
         postgres: [ratio, 2.0]
         mariadb: ['$.ratio', 2.0]
   referenceSql:
-    postgres: select id, label from sample where (profile ->> 'ratio')::real > 2
-    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.ratio')), 'null') + 0 > 2
+    postgres: select id, label from px.sample where (profile ->> 'ratio')::real > 2
+    mariadb: select id, label from px.sample where nullif(json_unquote(json_extract(profile, '$.ratio')), 'null') + 0 > 2
   rows:
     - { id: 2, label: Bo }
   databaseCalls: 1

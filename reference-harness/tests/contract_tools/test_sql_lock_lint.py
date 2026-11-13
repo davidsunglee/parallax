@@ -16,8 +16,8 @@ from reference_harness.sql_lint import lint_tree
 
 _REPO = Path(__file__).resolve().parents[3]
 _SCHEMAS, _REGISTRY = registry_for(_REPO / "core" / "compatibility")
-_ACCOUNT = "select t0.id, t0.version from account t0"
-_WALLET = "select t0.id, t0.account_id from wallet t0"
+_ACCOUNT = "select t0.id, t0.version from px.account t0"
+_WALLET = "select t0.id, t0.account_id from px.wallet t0"
 _SHARED = {"postgres": "for share of t0", "mariadb": "lock in share mode"}
 _MODEL = {
     "entities": [
@@ -269,7 +269,7 @@ def test_elided_include_and_no_sql_reads_require_no_invented_statements(tmp_path
 
 
 def test_exists_predicate_table_is_not_a_materialized_entity(tmp_path: Path) -> None:
-    sql = _ACCOUNT + " where exists (select t1.id from wallet t1 where t1.account_id = t0.id)"
+    sql = _ACCOUNT + " where exists (select t1.id from px.wallet t1 where t1.account_id = t0.id)"
     assert lint_tree(_corpus(tmp_path, [_step(sql)])) == []
 
 
@@ -284,7 +284,7 @@ def test_wrapped_stream_continuation_grades_only_outer_physical_lock(
     elif mutation == "inner-lock":
         sql = sql.replace("limit ?) union all", "limit ? for share of t0) union all", 1)
     elif mutation == "wrong-join":
-        sql = sql.replace("join account t0", "join wallet t0")
+        sql = sql.replace("join px.account t0", "join px.wallet t0")
     raw["when"]["scenario"][0]["statements"][1]["sql"]["postgres"] = sql
     (tmp_path / "cases" / "stream.yaml").write_text(yaml.safe_dump(raw))
     errors = lint_tree(tmp_path)
@@ -297,7 +297,7 @@ def test_wrapped_stream_continuation_grades_only_outer_physical_lock(
 
 
 @pytest.mark.parametrize(
-    "sql", ["select t0.id from unknown t0", "select u.id from (select t0.id from account t0) u"]
+    "sql", ["select t0.id from unknown t0", "select u.id from (select t0.id from px.account t0) u"]
 )
 def test_unmappable_emitted_reads_fail_with_precise_diagnostic(tmp_path: Path, sql: str) -> None:
     errors = _lock_errors(_corpus(tmp_path, [_step(sql)]))
@@ -336,10 +336,10 @@ def test_inherited_optimistic_gate_is_resolved_from_canonical_metadata(
     }
     if gate == "version":
         root["attributes"].append({"name": "version", "type": "int32", "optimisticLocking": True})
-        sql = "select t0.id, t0.version, t0.kind from account t0"
+        sql = "select t0.id, t0.version, t0.kind from px.account t0"
     else:
         root["temporality"] = "transaction-time"
-        sql = "select t0.id, t0.in_z, t0.out_z, t0.kind from account t0"
+        sql = "select t0.id, t0.in_z, t0.out_z, t0.kind from px.account t0"
     concrete = {
         "name": "Account",
         "inheritance": {"role": "concrete-subtype", "parent": "Base", "tagValue": "account"},
@@ -425,7 +425,7 @@ def test_rule_reuses_parses_metadata_include_resolution_and_corpus_pass(
 
 @pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
 def test_shared_lock_targets_only_root_rows(tmp_path: Path, dialect: str) -> None:
-    sql = _ACCOUNT + " join wallet t1 on t1.account_id = t0.id " + _SHARED[dialect]
+    sql = _ACCOUNT + " join px.wallet t1 on t1.account_id = t0.id " + _SHARED[dialect]
     root = _corpus(tmp_path, [_step(sql, dialect=dialect)], concurrency="locking")
     if dialect == "postgres":
         assert lint_tree(root) == []
@@ -574,7 +574,7 @@ def test_tph_document_partition_lock_is_graded_on_its_outer_base_select(
 def test_a_wrapped_single_select_stays_unmappable_outside_a_union_branch(
     tmp_path: Path,
 ) -> None:
-    sql = "select u.id from (select t0.id from account t0) u"
+    sql = "select u.id from (select t0.id from px.account t0) u"
     errors = _lock_errors(_read_corpus(tmp_path, [_entry(sql)], uow={}))
     assert len(errors) == 1
     assert "cannot map emitted read unambiguously" in errors[0]

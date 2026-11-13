@@ -39,8 +39,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
-        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        postgres: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 1
         - "2026-01-01T00:00:00.000000Z"
@@ -51,12 +51,12 @@ then:
             cargo: timber
           legs: []
     - sql:
-        postgres: update voyage set out_z = ? where id = ? and out_z = ?
-        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+        postgres: update px.voyage set out_z = ? where id = ? and out_z = ?
+        mariadb: update px.voyage set out_z = ? where id = ? and out_z = ?
       binds: ["2026-06-01T00:00:00.000000Z", 1, infinity]
     - sql:
-        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
-        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        postgres: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 1
         - "2026-06-01T00:00:00.000000Z"
@@ -67,23 +67,24 @@ then:
             cargo: timber
           legs: []
   tableState:
-    voyage:
-      - id: 1
-        in_z: "2026-01-01T00:00:00.000000Z"
-        out_z: "2026-06-01T00:00:00.000000Z"
-        payload:
-          title: Northern Run
-          crew: 4
-          manifest:
-            cargo: timber
-          legs: []
-      - id: 1
-        in_z: "2026-06-01T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          title: Southern Run
-          crew: 4
-          manifest:
-            cargo: timber
-          legs: []
+    px:
+      voyage:
+        - id: 1
+          in_z: "2026-01-01T00:00:00.000000Z"
+          out_z: "2026-06-01T00:00:00.000000Z"
+          payload:
+            title: Northern Run
+            crew: 4
+            manifest:
+              cargo: timber
+            legs: []
+        - id: 1
+          in_z: "2026-06-01T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            title: Southern Run
+            crew: 4
+            manifest:
+              cargo: timber
+            legs: []
   databaseCalls: 4

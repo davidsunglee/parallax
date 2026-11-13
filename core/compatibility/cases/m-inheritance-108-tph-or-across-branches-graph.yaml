@@ -27,9 +27,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from px.animal t0 where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
       binds: [5, dog, true, cat]
-  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from px.animal where (bark_volume > 5 and kind = 'dog') or (indoor = true and kind = 'cat')
   graph:
     Animal:
       - { id: 1, name: Rex, ownerId: 10, licenseId: L-100, barkVolume: 7, _type: parallax.compatibility.Dog }

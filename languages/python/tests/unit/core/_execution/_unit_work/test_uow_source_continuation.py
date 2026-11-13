@@ -62,6 +62,7 @@ from parallax.core.internal.write_plan import (
     VersionObservation,
 )
 from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
@@ -89,7 +90,9 @@ def _uow(
     *,
     settings: TransactionSettings | None = None,
 ) -> tuple[UnitOfWork, SimulatedWriteSteps]:
-    simulated = SimulatedWriteSteps(build_write_planner(meta).payloads, meta, POSTGRES)
+    simulated = SimulatedWriteSteps(
+        build_write_planner(bound_model(meta)).payloads, bound_model(meta), POSTGRES
+    )
     uow = UnitOfWork(
         settings=TransactionSettings() if settings is None else settings,
         lifetime=TxnAttemptLifetime(),
@@ -98,7 +101,7 @@ def _uow(
         execute_write_steps=simulated if steps is None else steps,
         execute_counted_step=simulated.counted,
         acquire_rows=HeldRows(meta),
-        planner=build_write_planner(meta),
+        planner=build_write_planner(bound_model(meta)),
         actor_identity=TEST_ACTOR_IDENTITY,
     )
     return uow, simulated
@@ -401,7 +404,11 @@ def test_a_pending_or_planned_write_keeps_its_source_until_released() -> None:
             gc.collect()
             seen.append(held[-1]() is not None)
 
-    simulated = SimulatedWriteSteps(build_write_planner(_PERSON).payloads, _PERSON, POSTGRES)
+    simulated = SimulatedWriteSteps(
+        build_write_planner(bound_model(_PERSON)).payloads,
+        bound_model(_PERSON),
+        POSTGRES,
+    )
     uow, _ = _uow(_PERSON, ObservedSteps(simulated, observe=observe))
     _reinserted(uow, 1)
     source = _published(uow, _person(1))
@@ -418,7 +425,11 @@ def test_a_pending_or_planned_write_keeps_its_source_until_released() -> None:
 
 def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_holds_them() -> None:
     failure = RuntimeError("the group failed")
-    simulated = SimulatedWriteSteps(build_write_planner(_ACCOUNT).payloads, _ACCOUNT, POSTGRES)
+    simulated = SimulatedWriteSteps(
+        build_write_planner(bound_model(_ACCOUNT)).payloads,
+        bound_model(_ACCOUNT),
+        POSTGRES,
+    )
     uow, _ = _uow(_ACCOUNT, ObservedSteps(simulated, failing=0, failure=failure))
     source = _published(uow, _account(1), version=1)
     held = weakref.ref(source)
@@ -486,7 +497,11 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     rows = _position_rows()
     entity = _entity(_POSITION, "WherePosition")
     failure = RuntimeError("the deferred group failed")
-    simulated = SimulatedWriteSteps(build_write_planner(_POSITION).payloads, _POSITION, POSTGRES)
+    simulated = SimulatedWriteSteps(
+        build_write_planner(bound_model(_POSITION)).payloads,
+        bound_model(_POSITION),
+        POSTGRES,
+    )
     held: list[weakref.ref[ReadEvidence]] = []
     alive: list[bool] = []
 
@@ -504,7 +519,7 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         acquire_rows=HeldRows(
             _POSITION, [PredecessorRow(members=row) for row in rows], overlapping=True
         ),
-        planner=build_write_planner(_POSITION),
+        planner=build_write_planner(bound_model(_POSITION)),
         actor_identity=TEST_ACTOR_IDENTITY,
     )
     prepared = prepare_wire_write(

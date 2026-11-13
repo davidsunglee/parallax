@@ -19,20 +19,20 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_ticket add column queue varchar(32)
-          - create index pxi_evolution_ticket_parallax_f4c1b40131df35c48a8a9dea83581b39 on evolution_ticket (queue)
+          - alter table px.evolution_ticket add column queue varchar(32)
+          - create index pxi_evolution_ticket_parallax_f4c1b40131df35c48a8a9dea83581b39 on px.evolution_ticket (queue)
         createdIndices:
           - physicalIndexName: pxi_evolution_ticket_parallax_f4c1b40131df35c48a8a9dea83581b39
-            physicalTable: evolution_ticket
+            physicalTable: { qualifier: [px], name: evolution_ticket }
             logicalIndexIdentity: parallax.compatibility.Ticket.ticket_queue
             unique: false
     mariadb:
       delta:
         statements:
-          - alter table evolution_ticket add column queue varchar(32)
-          - create index pxi_evolution_ticket_parallax_c_f4c1b40131df35c48a8a9dea83581b39 on evolution_ticket (queue)
+          - alter table px.evolution_ticket add column queue varchar(32)
+          - create index pxi_evolution_ticket_parallax_c_f4c1b40131df35c48a8a9dea83581b39 on px.evolution_ticket (queue)
         createdIndices:
           - physicalIndexName: pxi_evolution_ticket_parallax_c_f4c1b40131df35c48a8a9dea83581b39
-            physicalTable: evolution_ticket
+            physicalTable: { qualifier: [px], name: evolution_ticket }
             logicalIndexIdentity: parallax.compatibility.Ticket.ticket_queue
             unique: false

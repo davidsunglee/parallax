@@ -22,8 +22,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into sample(id, label, profile) values (?, ?, ?)
-        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+        postgres: insert into px.sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into px.sample(id, label, profile) values (?, ?, ?)
       binds:
         - 170
         - Midpoint
@@ -31,11 +31,12 @@ then:
           measure: 1.0000000596046448
           entries: []
   tableState:
-    sample:
-      - id: 170
-        label: Midpoint
-        profile:
-          ratio: 1.0
-          measure: 1.0000000596046448
-          entries: []
+    px:
+      sample:
+        - id: 170
+          label: Midpoint
+          profile:
+            ratio: 1.0
+            measure: 1.0000000596046448
+            entries: []
   databaseCalls: 1

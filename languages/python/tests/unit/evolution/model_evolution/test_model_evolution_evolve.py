@@ -1,6 +1,6 @@
 """`evolve_metamodels` over the two evolutions that need no matching logic.
 
-Provisioning from `ABSENT` and the evolution between equal models are the two
+Provisioning from px.`ABSENT` and the evolution between equal models are the two
 ends of the description: one where every Entity is an addition and nothing
 survives, one where everything survives and nothing changed. Both run through
 the same pipeline, so proving them here proves the pipeline is total rather than
@@ -43,9 +43,10 @@ from parallax.evolution.internal.model_evolution import (
     EntityAdded,
     EntityRemoved,
     UnilateralEvolution,
-    evolve_metamodels,
+    evolve_resolved,
 )
 from parallax.evolution.internal.model_evolution._matching import Matching
+from tests._support.bindings import bound_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _WIDGET = identity("Widget")
@@ -116,7 +117,7 @@ def _hierarchy() -> Metamodel:
 
 
 def test_provisioning_is_one_entity_level_addition_per_entity() -> None:
-    evolution = evolve_metamodels(ABSENT, _two_entities())
+    evolution = evolve_resolved(ABSENT, bound_model(_two_entities()))
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.operations == (EntityAdded(_GADGET), EntityAdded(_WIDGET))
 
@@ -124,13 +125,13 @@ def test_provisioning_is_one_entity_level_addition_per_entity() -> None:
 def test_provisioning_suppresses_every_member_of_the_entity_it_adds() -> None:
     # `Widget` declares a key, an Attribute, and an authored Index, and the one
     # parent addition describes all three.
-    assert evolve_metamodels(ABSENT, _widget()).operations == (EntityAdded(_WIDGET),)
+    assert evolve_resolved(ABSENT, bound_model(_widget())).operations == (EntityAdded(_WIDGET),)
 
 
 def test_provisioning_names_a_concrete_subtype_by_its_own_kind() -> None:
     # The generic Entity addition excludes concrete-subtype addition, so a family
     # provisions as one operation per participant in its own role's vocabulary.
-    assert evolve_metamodels(ABSENT, _hierarchy()).operations == (
+    assert evolve_resolved(ABSENT, bound_model(_hierarchy())).operations == (
         ConcreteSubtypeAdded(_LEAF),
         EntityAdded(_ROOT),
     )
@@ -138,10 +139,10 @@ def test_provisioning_names_a_concrete_subtype_by_its_own_kind() -> None:
 
 def test_provisioning_retains_no_earlier_endpoint_and_no_continuity_payload() -> None:
     later = _widget()
-    evolution = evolve_metamodels(ABSENT, later)
+    evolution = evolve_resolved(ABSENT, bound_model(later))
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.earlier is None
-    assert evolution.later is later
+    assert evolution.later.meta is later
     assert evolution.behavioral_impacts == ()
     assert evolution.overlap_visible_operations == ()
 
@@ -154,7 +155,7 @@ def test_equal_models_evolve_to_an_empty_unilateral_evolution(
     layout: str, build: Callable[[], Metamodel]
 ) -> None:
     model = build()
-    evolution = evolve_metamodels(model, model)
+    evolution = evolve_resolved(bound_model(model), bound_model(model))
     assert isinstance(evolution, UnilateralEvolution), layout
     assert evolution.operations == ()
     assert evolution.behavioral_impacts == ()
@@ -162,14 +163,15 @@ def test_equal_models_evolve_to_an_empty_unilateral_evolution(
 
 
 def test_an_evolution_between_equal_models_still_retains_both_endpoints() -> None:
-    # `evolve_metamodels` is total: equal models are an EMPTY evolution rather than a third
+    # `evolve_resolved` is total: equal models are an EMPTY evolution rather than a third
     # no-evolution result or a nullable return, and the endpoints stay reachable
     # so a consumer resolves identities the same way on every result.
     earlier = _widget()
     later = _widget()
-    evolution = evolve_metamodels(earlier, later)
-    assert evolution.earlier is earlier
-    assert evolution.later is later
+    evolution = evolve_resolved(bound_model(earlier), bound_model(later))
+    assert evolution.earlier is not None
+    assert evolution.earlier.meta is earlier
+    assert evolution.later.meta is later
 
 
 def _tpcs_hierarchy() -> Metamodel:
@@ -240,7 +242,9 @@ def _tph_with_a_second_subtype() -> Metamodel:
 def test_a_table_per_hierarchy_subtype_addition_is_unilateral_and_overlap_visible() -> None:
     # A later writer can place a new discriminator value in the SHARED Table that
     # an earlier reader cannot admit.
-    evolution = evolve_metamodels(_hierarchy(), _tph_with_a_second_subtype())
+    evolution = evolve_resolved(
+        bound_model(_hierarchy()), bound_model(_tph_with_a_second_subtype())
+    )
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.operations == (ConcreteSubtypeAdded(_EQUITY),)
     assert evolution.overlap_visible_operations == (ConcreteSubtypeAdded(_EQUITY),)
@@ -248,7 +252,9 @@ def test_a_table_per_hierarchy_subtype_addition_is_unilateral_and_overlap_visibl
 
 def test_a_table_per_concrete_subtype_addition_is_unilateral_and_not_overlap_visible() -> None:
     # The later subtype occupies a separate Table the earlier edition never reads.
-    evolution = evolve_metamodels(_tpcs_hierarchy(), _tpcs_with_a_second_subtype())
+    evolution = evolve_resolved(
+        bound_model(_tpcs_hierarchy()), bound_model(_tpcs_with_a_second_subtype())
+    )
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.operations == (ConcreteSubtypeAdded(_EQUITY),)
     assert evolution.overlap_visible_operations == ()
@@ -259,7 +265,7 @@ def test_removing_an_entity_makes_the_whole_evolution_coordinated() -> None:
     # operation, so the evolution carries one requirement for that operation —
     # and the addition beside it stays uncoordinated, with no requirement of its
     # own, because coordination is per operation rather than per evolution.
-    evolution = evolve_metamodels(_widget(), _hierarchy())
+    evolution = evolve_resolved(bound_model(_widget()), bound_model(_hierarchy()))
     assert isinstance(evolution, CoordinatedEvolution)
     assert evolution.operations == (
         ConcreteSubtypeAdded(_LEAF),
@@ -275,7 +281,9 @@ def test_removing_an_entity_makes_the_whole_evolution_coordinated() -> None:
 
 
 def test_removing_a_concrete_subtype_names_its_own_kind() -> None:
-    evolution = evolve_metamodels(_tph_with_a_second_subtype(), _hierarchy())
+    evolution = evolve_resolved(
+        bound_model(_tph_with_a_second_subtype()), bound_model(_hierarchy())
+    )
     assert isinstance(evolution, CoordinatedEvolution)
     assert evolution.operations == (ConcreteSubtypeRemoved(_EQUITY),)
 
@@ -299,7 +307,7 @@ def test_an_evolution_retains_its_endpoints_and_not_the_matching() -> None:
     # held result that could still reach the Matching would keep a second copy of
     # the model's structure alive for as long as the caller holds it.
     earlier = _widget()
-    evolution = evolve_metamodels(earlier, _widget())
+    evolution = evolve_resolved(bound_model(earlier), bound_model(_widget()))
     held = list(_reachable(evolution))
     assert any(item is earlier for item in held), "the endpoints are retained by design"
     assert not any(isinstance(item, Matching) for item in held)

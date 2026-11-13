@@ -3,24 +3,28 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Final, cast
 
-from parallax.conformance import _case_ingress, case_format
+from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import (
+    case_binding,
     case_entity,
     default_family_root,
     first_declared_entity,
     gate_read,
     load_case_metamodel,
 )
+from parallax.conformance.bindings import binding_document
 from parallax.core._execution._unit_work import instructions
 from parallax.core.internal.base import ParallaxError
+from parallax.core.internal.database_binding import BindingError, ResolvedBinding
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.core.internal.object_query import deserialize as deserialize_query
 from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.descriptor import domain_model_from_document, validate_inheritance_families
+from parallax.postgres import PostgresBinding
 
 __all__ = ["rejected_rule", "run_rejected_case"]
 
@@ -61,7 +65,7 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
 
 # The `rejected` shape's schema `oneOf`: exactly one of these keys, never zero
 # or more than one (m-case-format).
-_REJECTED_WHEN_KINDS: Final[tuple[str, ...]] = ("objectQuery", "model", "write")
+_REJECTED_WHEN_KINDS: Final[tuple[str, ...]] = ("objectQuery", "model", "write", "binding")
 
 
 def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> str:
@@ -76,7 +80,8 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
     if len(present) != 1:
         raise UnclassifiedEngineError(
             f"{case.path.name}: a `rejected` case must carry EXACTLY ONE of "
-            f"`when.objectQuery` / `when.model` / `when.write` (m-case-format schema "
+            f"`when.objectQuery` / `when.model` / `when.write` / `when.binding` "
+            f"(m-case-format schema "
             f"`oneOf`); found {present!r}"
         )
     return present[0]
@@ -137,6 +142,8 @@ def run_rejected_case(case: case_format.Case) -> str:
         return _rejected_object_query(case, when["objectQuery"], model)
     if kind == "model":
         return _rejected_model(case, cast("Mapping[str, object]", when["model"]))
+    if kind == "binding":
+        return _rejected_binding(case, when["binding"], model)
     return _rejected_write(case, when["write"], model)
 
 
@@ -157,7 +164,10 @@ def _rejected_object_query(
 def _rejected_model(case: case_format.Case, inline_model: Mapping[str, object]) -> str:
     try:
         validate_inheritance_families(inline_model)
-        domain_model_from_document(inline_model)
+        accepted = models.accepted_model_of(domain_model_from_document(inline_model))
+        ResolvedBinding(accepted, case_binding(case))
+    except BindingError as exc:
+        return _single_binding_issue(case, exc)
     except MetamodelValidationError as exc:
         codes = tuple(issue.code for issue in exc.issues)
         if len(codes) != 1:
@@ -172,6 +182,36 @@ def _rejected_model(case: case_format.Case, inline_model: Mapping[str, object]) 
         f"{case.path.name}: the model-aware validator accepted an inline model the case "
         "expects rejected pre-SQL"
     )
+
+
+def _rejected_binding(case: case_format.Case, bindings: object, model: AcceptedMetamodel) -> str:
+    """Read the case's PostgreSQL binding document and resolve it against the
+    case model, grading the one binding issue either phase refuses it with."""
+    documents = cast("Mapping[str, object]", bindings) if isinstance(bindings, Mapping) else None
+    if documents is None or "postgres" not in documents:
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: a rejected `when.binding` names the postgres binding this "
+            "implementation reads"
+        )
+    try:
+        binding = PostgresBinding.from_document(binding_document(documents, "postgres"))
+        ResolvedBinding(model, binding)
+    except BindingError as exc:
+        return _single_binding_issue(case, exc)
+    raise UnclassifiedEngineError(
+        f"{case.path.name}: the binding was read and resolved, but the case expects it "
+        "rejected pre-SQL"
+    )
+
+
+def _single_binding_issue(case: case_format.Case, refusal: BindingError) -> str:
+    codes = tuple(issue.code for issue in refusal.issues)
+    if len(codes) != 1:
+        raise UnclassifiedEngineError(
+            f"{case.path.name}: the binding produced {len(codes)} issues {codes!r}; a "
+            "rejected case must isolate exactly one rule"
+        ) from refusal
+    return codes[0]
 
 
 def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMetamodel) -> str:

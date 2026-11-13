@@ -17,9 +17,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not t0.id = any(cast(? as bigint[]))
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where not t0.id = any(cast(? as bigint[]))
       binds: [[1, 2, 42]]
-  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id not in (1, 2, 42)
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from px.orders where id not in (1, 2, 42)
   rows:
     - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }
     - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, ordered_on: 2024-04-20 }

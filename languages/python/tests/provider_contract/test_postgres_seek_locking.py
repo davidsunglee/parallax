@@ -15,6 +15,7 @@ from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.predicate import TrueNode
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.sql import (
     compile_nonempty_read as compile_read,
 )
@@ -51,12 +52,14 @@ def test_locking_continuation_binds_document_coordinates_in_projection_order(
         read_planning.plan(
             cold, metamodel, projection=read_planning.ReadProjectionRequest("none", False)
         ).root,
-        metamodel,
+        bound_model(metamodel),
         POSTGRES,
         shared_lock=True,
     )
     compiled = template.render(query=current)
-    profile_run.reset(metamodel, provision.load_fixtures("models/document-layout.yaml"))
+    profile_run.reset(
+        metamodel, provision.load_fixtures("models/document-layout.yaml"), TEST_BINDING
+    )
     with closing(profile_run.control(autocommit=False)) as connection:
         rows = connection.execute(
             compiled.statement.sql,
@@ -88,7 +91,7 @@ def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
         read_planning.plan(
             page, metamodel, projection=read_planning.ReadProjectionRequest("none", False)
         ).root,
-        metamodel,
+        bound_model(metamodel),
         POSTGRES,
         shared_lock=True,
     )
@@ -120,21 +123,25 @@ def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
         },
         {
             "B": ConcurrencyStep(
-                statements=(("update traversal_bike set gears = ? where id = ?", (22, 6)),),
+                statements=(("update px.traversal_bike set gears = ? where id = ?", (22, 6)),),
                 kind="write",
                 expect_rows=None,
             )
         },
         {
             "B": ConcurrencyStep(
-                statements=(("update traversal_car set seats = ? where id = ?", (2, locked_id)),),
+                statements=(
+                    ("update px.traversal_car set seats = ? where id = ?", (2, locked_id)),
+                ),
                 kind="write",
                 expect_rows=None,
                 blocks=True,
             )
         },
     )
-    profile_run.reset(metamodel, provision.load_fixtures("models/predicate-traversal.yaml"))
+    profile_run.reset(
+        metamodel, provision.load_fixtures("models/predicate-traversal.yaml"), TEST_BINDING
+    )
     with closing(profile_run.control(autocommit=True)) as observer:
         result = concurrency_runner.run_rounds(
             rounds,

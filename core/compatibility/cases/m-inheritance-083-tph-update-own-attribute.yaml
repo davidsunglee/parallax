@@ -16,11 +16,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: update payment set card_network = ? where id = ? and kind = ?
+        postgres: update px.payment set card_network = ? where id = ? and kind = ?
       binds: [Discover, 1, card]
   tableState:
-    payment:
-      - { id: 1, kind: card, amount: "100.00", card_network: Discover, tendered: null }
-      - { id: 2, kind: card, amount: "50.00", card_network: Amex, tendered: null }
-      - { id: 3, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
+    px:
+      payment:
+        - { id: 1, kind: card, amount: "100.00", card_network: Discover, tendered: null }
+        - { id: 2, kind: card, amount: "50.00", card_network: Amex, tendered: null }
+        - { id: 3, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
   databaseCalls: 2

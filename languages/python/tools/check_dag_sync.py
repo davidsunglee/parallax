@@ -163,6 +163,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.internal.sql_gen",
         "parallax.core.internal.write_plan",
         "parallax.core._stored_data",
+        "parallax.core.internal.database_binding",
     }
 )
 
@@ -229,7 +230,11 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # Its package is an unowned interface rather than a scope, so the model
     # evolution it hands the accepted models to is granted by name.
     "parallax.evolution._domain_models": frozenset(
-        {"parallax.core.internal.entity", "parallax.evolution.internal.model_evolution"}
+        {
+            "parallax.core.internal.entity",
+            "parallax.evolution.internal.model_evolution",
+            "parallax.core.internal.database_binding",
+        }
     ),
     "parallax.core.internal.entity": frozenset(
         {
@@ -241,6 +246,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.object_query",
             "parallax.core.internal.temporal_read",
             "parallax.core.internal.document_codec",
+            "parallax.core.internal.database_binding",
             "parallax.core._formation_profile",
         }
     ),
@@ -303,6 +309,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.metamodel",
             "parallax.core.internal.inheritance",
             "parallax.core.internal.relationship",
+            "parallax.core.internal.database_binding",
         }
     ),
     # The typed Object Query is generic over Entity Classes, so it reaches the
@@ -336,6 +343,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.read_planning",
             "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work.evidence",
+            "parallax.core.internal.database_binding",
         }
     ),
     # The page node a streamed read advances by: pure, and scoped apart from the
@@ -404,6 +412,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.entity",
             "parallax.core.internal.metamodel",
             "parallax.core.internal.relationship",
+            "parallax.core.internal.database_binding",
         }
     ),
     "parallax.core.internal.unit_work": frozenset({"parallax.core._execution._unit_work"}),
@@ -497,6 +506,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.entity",
             "parallax.core.internal.read_planning",
             "parallax.core._execution._unit_work",
+            "parallax.core.internal.database_binding",
         }
     ),
     # The evidence a source value carries between a read and a later write — its

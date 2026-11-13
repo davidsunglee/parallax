@@ -37,6 +37,7 @@ from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.unit_work import MISSING_TARGET
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -117,9 +118,11 @@ _CONCURRENCIES: tuple[_Concurrency, ...] = ("optimistic", "locking")
 
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock(list(instants or (_ATTEMPT,)))
-    return own_root(connect(profile_run.port, _MODEL, clock=clock)).using_database_login()
+    return own_root(
+        connect(profile_run.port, _MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _name(entity: type[Any]) -> str:
@@ -140,7 +143,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, "
         f"{_member(entity, 'amount')}, {_member(entity, 'spec')} "
-        f"from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -148,13 +151,13 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
 def _log_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(entity, 'label')} from {_TABLES[entity]} order by in_z, out_z"
+        f"{_member(entity, 'label')} from px.{_TABLES[entity]} order by in_z, out_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
 
 def _ledger_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
-    sql = f"select id, {_member(entity, 'label')}, version from {_TABLES[entity]} order by id"
+    sql = f"select id, {_member(entity, 'label')}, version from px.{_TABLES[entity]} order by id"
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
 

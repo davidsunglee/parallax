@@ -25,10 +25,10 @@ then:
     postgres:
       delta:
         statements:
-          - create table evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
+          - create table px.evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - create table evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
+          - create table px.evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
         createdIndices: []

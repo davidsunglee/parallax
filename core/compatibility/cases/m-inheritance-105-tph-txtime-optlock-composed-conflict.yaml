@@ -33,8 +33,8 @@ when:
       note: OUR unit of work observes meter reading 1's current milestone (20.00, known from 2024-01-01) through the concrete subtype — tag-guarded
       statements:
         - sql:
-            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
-            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from px.reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from px.reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
           binds: [1, infinity, meter]
       expectRows:
         - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, _type: parallax.compatibility.MeterReading }
@@ -52,8 +52,8 @@ when:
       note: a CONCURRENT unit of work observes the SAME milestone — the classic race
       statements:
         - sql:
-            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
-            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            postgres: select t0.id, t0.celsius, t0.in_z, t0.out_z from px.reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
+            mariadb: select t0.id, t0.celsius, t0.in_z, t0.out_z from px.reading t0 where t0.id = ? and t0.out_z = ? and t0.kind = ?
           binds: [1, infinity, meter]
       expectRows:
         - { id: 1, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, _type: parallax.compatibility.MeterReading }
@@ -69,12 +69,12 @@ when:
       note: the concurrent unit of work commits FIRST — its tag-guarded close gated on the in_z it observed, then the chained successor with the tag stamped at its slot, from the same instant; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
-            mariadb: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            postgres: update px.reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            mariadb: update px.reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
           binds: ["2024-06-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
         - sql:
-            postgres: insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
-            mariadb: insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
+            postgres: insert into px.reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
+            mariadb: insert into px.reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
           binds: [1, meter, "25.00", "2024-06-01T00:00:00.000000Z", infinity]
     - uow: ours
       write:
@@ -88,8 +88,8 @@ when:
       note: "our close carries the tag guard among its identity predicates and gates LAST on OUR observed in_z 2024-01-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
       statements:
         - sql:
-            postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
-            mariadb: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            postgres: update px.reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
+            mariadb: update px.reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
           binds: ["2024-09-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
 then:
   units:
@@ -100,6 +100,7 @@ then:
       outcome: committed
   databaseCalls: 5
   tableState:
-    reading:
-      - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
-      - { id: 1, kind: meter, celsius: "25.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+    px:
+      reading:
+        - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+        - { id: 1, kind: meter, celsius: "25.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }

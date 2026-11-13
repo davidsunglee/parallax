@@ -62,6 +62,7 @@ from parallax.core.internal.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.managed_rows import managed_row_of, row_selection_of
@@ -103,7 +104,7 @@ def test_an_insert_binds_one_document_at_the_structured_column() -> None:
             ),
         )
     )
-    assert statement.sql == "insert into person(id, payload) values (?, ?)"
+    assert statement.sql == "insert into px.person(id, payload) values (?, ?)"
     assert statement.binds[0] == 1
     assert _document(statement) == {
         "displayName": "Ada",
@@ -128,7 +129,7 @@ def test_an_entity_with_no_document_member_still_binds_the_empty_object() -> Non
     # The Structured Column is `NOT NULL` and every governed row carries a document,
     # so an insert binds it whether or not the Entity has anything to put inside.
     (statement,) = _lower(KeyedWriteInstruction("insert", "Marker", ({"id": 3},)))
-    assert statement.sql == "insert into marker(id, payload) values (?, ?)"
+    assert statement.sql == "insert into px.marker(id, payload) values (?, ?)"
     assert _document(statement) == {}
 
 
@@ -140,7 +141,7 @@ def test_an_update_patches_only_the_assigned_paths_in_canonical_order() -> None:
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
     )
     assert statement.sql == (
-        "update person set payload = "
+        "update px.person set payload = "
         "jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?"
     )
     assert statement.binds == ("{displayName}", '"Ada"', "{score}", "9", 1)
@@ -175,7 +176,7 @@ def test_a_predicate_replacement_completes_every_omitted_member_at_its_own_path(
     patch = "payload"
     for _ in range(5):
         patch = f"jsonb_set({patch}, ?, cast(? as jsonb))"
-    assert statement.sql == f"update person set payload = {patch} where id = ?"
+    assert statement.sql == f"update px.person set payload = {patch} where id = ?"
     assert statement.binds == (
         "{displayName}",
         "null",
@@ -199,7 +200,7 @@ def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() ->
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},))
     )
     assert statement.sql == (
-        "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
+        "update px.person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
     )
     assert statement.binds == ("{address}", StructuredDocument({"city": "Bodo"}), 1)
 
@@ -245,7 +246,7 @@ def test_a_direct_member_still_assigns_its_own_column() -> None:
     # The primary key is a direct role under either layout, so a delete keyed by it
     # names a Column and never extracts from the document.
     (statement,) = _lower(KeyedWriteInstruction("delete", "Person", ({"id": 1},)))
-    assert statement.sql == "delete from person where id = ?"
+    assert statement.sql == "delete from px.person where id = ?"
 
 
 def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() -> None:
@@ -255,11 +256,12 @@ def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() ->
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "displayName": "Ada", "tags": []},)),
         COLUMNS,
     )
-    assert statement.sql == "insert into person(id, display_name, tags) values (?, ?, ?)"
+    assert statement.sql == "insert into px.person(id, display_name, tags) values (?, ?, ?)"
 
 
 _DOCUMENT_ROWS: Final = (
-    "insert into person(id, payload) select * from unnest(cast(? as bigint[]), cast(? as jsonb[]))"
+    "insert into px.person(id, payload) select * from unnest(cast(? as bigint[]), cast(? as "
+    "jsonb[]))"
 )
 
 
@@ -281,7 +283,7 @@ def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
 def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> None:
     # Each entry's complete document binds whole and uncopied, and an entry
     # refused for its width binds neither its key cell nor its document.
-    payloads = LayoutPayloadPreparer(DOCUMENT)
+    payloads = LayoutPayloadPreparer(bound_model(DOCUMENT))
     entries = tuple(
         WriteRow(
             row=managed_row_of(
@@ -296,7 +298,7 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
         for key, name in ((1, "Ada"), (2, "Bo"), (3, "Cy"))
     )
     first, second, third = (payloads.row(PERSON, entry) for entry in entries)
-    builder = InsertStatementBuilder(first.slots, first.values, DOCUMENT, POSTGRES)
+    builder = InsertStatementBuilder(first.slots, first.values, bound_model(DOCUMENT), POSTGRES)
     builder.append(second.values)
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
@@ -304,7 +306,10 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
 
     statement = builder.finish()
     assert statement == lowered(
-        PlannedInsert(entity=PERSON, entries=entries[:2]), payloads, DOCUMENT, POSTGRES
+        PlannedInsert(entity=PERSON, entries=entries[:2]),
+        payloads,
+        bound_model(DOCUMENT),
+        POSTGRES,
     )
     assert statement.sql == _DOCUMENT_ROWS
     documents = _documents(statement)
@@ -324,7 +329,7 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
             "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7})
         )
     )
-    assert first.sql == second.sql == "insert into person(id, payload) values (?, ?)"
+    assert first.sql == second.sql == "insert into px.person(id, payload) values (?, ?)"
 
 
 def test_an_unnamed_many_occurrence_shares_a_statement_with_one_that_names_it() -> None:
@@ -361,7 +366,7 @@ def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
         COLUMNS,
     )
     assert statement.sql == (
-        "insert into person(id, display_name, tags) select * from "
+        "insert into px.person(id, display_name, tags) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
     assert _documents(statement) == [(), ()]
@@ -436,7 +441,14 @@ def _opened(
     step = PlannedInsert(
         entity=PERSON, entries=(WriteRow(row=row, origin=origin, executed=executed),)
     )
-    return _document(lowered(step, LayoutPayloadPreparer(DOCUMENT), DOCUMENT, POSTGRES))
+    return _document(
+        lowered(
+            step,
+            LayoutPayloadPreparer(bound_model(DOCUMENT)),
+            bound_model(DOCUMENT),
+            POSTGRES,
+        )
+    )
 
 
 def _successor(
@@ -631,16 +643,21 @@ def _columns_successor(changes: Mapping[str, object]) -> LoweredStatement:
         entity=PERSON,
         entries=(WriteRow(row=row, origin=ChangedFrom(predecessor), executed=executed),),
     )
-    return lowered(step, LayoutPayloadPreparer(COLUMNS), COLUMNS, POSTGRES)
+    return lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(COLUMNS)),
+        bound_model(COLUMNS),
+        POSTGRES,
+    )
 
 
 def test_a_columns_successor_states_no_column_for_an_occurrence_its_predecessor_omits() -> None:
     omitted = _columns_successor({"score": 21})
     nulled = _columns_successor({"score": 21, "address": None})
 
-    assert omitted.sql == "insert into person(id, display_name, score, tags) values (?, ?, ?, ?)"
+    assert omitted.sql == "insert into px.person(id, display_name, score, tags) values (?, ?, ?, ?)"
     assert ABSENT not in omitted.binds
     assert nulled.sql == (
-        "insert into person(id, display_name, score, address, tags) values (?, ?, ?, ?, ?)"
+        "insert into px.person(id, display_name, score, address, tags) values (?, ?, ?, ?, ?)"
     )
     assert nulled.binds[3] is None

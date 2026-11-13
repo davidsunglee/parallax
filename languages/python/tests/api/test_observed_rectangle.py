@@ -56,6 +56,7 @@ from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -77,9 +78,9 @@ _VP = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
 
 _CURRENT_ROWS = (
     "select from_z, case when thru_z = 'infinity' then null else thru_z end as valid_end, val "
-    "from position where out_z = 'infinity' order by from_z"
+    "from px.position where out_z = 'infinity' order by from_z"
 )
-_CLOSED_ROWS = "select from_z from position where out_z <> 'infinity' order by from_z"
+_CLOSED_ROWS = "select from_z from px.position where out_z <> 'infinity' order by from_z"
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
@@ -98,9 +99,11 @@ def test_a_close_settles_against_the_rectangle_it_read(
     # matches one row and reports success. Which row was closed is therefore the
     # only observable that separates the two outcomes, and it needs a real
     # database to read.
-    profile_run.reset(model_of(_POSITION), {})
+    profile_run.reset(model_of(_POSITION), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3]))
+        connect(
+            profile_run.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3]), binding=TEST_BINDING
+        )
     ).using_database_login()
 
     db.transact(
@@ -194,9 +197,11 @@ _CONCURRENCIES: tuple[_Concurrency, ...] = ("optimistic", "locking")
 
 
 def _attempt_db(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([_SEEDED, _ATTEMPT])
-    return own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    return own_root(
+        connect(profile_run.port, _ATTEMPT_MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _name(entity: type[Any]) -> str:
@@ -213,7 +218,7 @@ def _log_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         f"select in_z, case when out_z = 'infinity' then null else out_z end, "
         f"{_payload(entity, 'label')}, {_payload(entity, 'spec')} "
-        f"from {_LOG_TABLES[entity]} order by in_z, out_z"
+        f"from px.{_LOG_TABLES[entity]} order by in_z, out_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -223,7 +228,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, "
         f"{_payload(entity, 'amount')}, {_payload(entity, 'spec')} "
-        f"from {_SPAN_TABLES[entity]} order by in_z, out_z, from_z"
+        f"from px.{_SPAN_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [_plain(row) for row in profile_run.port.execute(sql, [])]
 
@@ -564,9 +569,11 @@ def test_an_unsubmitted_read_of_a_changed_row_continues_and_a_fresh_read_carries
 def test_an_own_change_leaves_reads_of_the_rectangle_it_changed_and_another_writable(
     profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
 ) -> None:
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([_SEEDED, _SEEDED, _ATTEMPT])
-    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _ATTEMPT_MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
     db.transact(
         lambda tx: tx.insert(entity(id=1, amount=50, spec=_SPEC), valid_from=_JAN, until=_MAR)
     )
@@ -605,9 +612,11 @@ def test_a_row_committed_at_a_repeated_instant_is_neither_revised_nor_closed_emp
     # interval, so that attempt is refused and its retry closes the row at the
     # clock's next instant.
     later = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([_ATTEMPT, _ATTEMPT, later])
-    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _ATTEMPT_MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
     db.transact(lambda tx: _log_update(tx, _log_find(tx, entity, "typed"), "typed", "first"))
@@ -656,9 +665,11 @@ def test_a_streamed_root_fetched_before_an_own_change_cannot_write_its_stale_sta
     # The page delivering both roots was fetched before the second root's row
     # changed; that root's evidence is built only when it is written from, and
     # is judged against the state its page acquired.
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([_SEEDED, _SEEDED, _ATTEMPT])
-    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _ATTEMPT_MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
     for key in (1, 2):
         db.transact(lambda tx, key=key: tx.insert(entity(id=key, label="seeded", spec=_SPEC)))
     name = _name(entity)
@@ -769,9 +780,11 @@ def _seeded_spans(
 ) -> ScopedDatabase:
     """A database holding one current rectangle per ``spans`` entry for key 1,
     each committed by its own transaction at the seeding instant."""
-    profile_run.reset(model_of(_ATTEMPT_MODEL), {})
+    profile_run.reset(model_of(_ATTEMPT_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([*([_SEEDED] * len(spans)), _ATTEMPT])
-    db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _ATTEMPT_MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
     for start, end, amount, spec in spans:
         row = entity(id=1, amount=amount, spec=spec)
         if end is None:

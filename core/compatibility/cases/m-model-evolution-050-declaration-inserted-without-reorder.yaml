@@ -19,10 +19,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_lot add column beta bigint
+          - alter table px.evolution_lot add column beta bigint
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_lot add column beta bigint
+          - alter table px.evolution_lot add column beta bigint
         createdIndices: []

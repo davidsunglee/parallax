@@ -17,7 +17,7 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: delete from wallet where balance < ?
+            postgres: delete from px.wallet where balance < ?
           binds: ["200.00"]
     - objectQuery:
         target: parallax.compatibility.Wallet
@@ -28,9 +28,9 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ?
+            postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.balance < ?
           binds: ["200.00"]
-      referenceSql: select id, owner, balance from wallet where balance < 200.00
+      referenceSql: select id, owner, balance from px.wallet where balance < 200.00
       expectRows: []
 then:
   databaseCalls: 2

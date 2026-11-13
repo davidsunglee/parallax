@@ -18,14 +18,14 @@ when:
       - A:
           statements:
             - sql:
-                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
-                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ? lock in share mode
               binds: [2]
       - B:
           statements:
             - sql:
-                postgres: update account set balance = ? where id = ?
-                mariadb: update account set balance = ? where id = ?
+                postgres: update px.account set balance = ? where id = ?
+                mariadb: update px.account set balance = ? where id = ?
               binds: ["999.00", 2]
 then:
   errorClass: lockWaitTimeout

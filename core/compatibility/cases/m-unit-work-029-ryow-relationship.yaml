@@ -24,10 +24,10 @@ when:
       note: observe order 1 WITH its items inside the unit of work the write below shares
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = ? for share of t0
           binds: [1]
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc for share of t0
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc for share of t0
           binds: [[1]]
       expectGraph:
         Order:
@@ -55,10 +55,10 @@ when:
       note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read
       statements:
         - sql:
-            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+            postgres: insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
           binds: [13, 1, D-130, 6]
         - sql:
-            postgres: update order_item set sku = ? where id = ?
+            postgres: update px.order_item set sku = ? where id = ?
           binds: [Rewritten, 11]
     - uow: observed-items
       objectQuery:
@@ -87,10 +87,10 @@ when:
               - { id: 11, orderId: 1, sku: Rewritten, quantity: 2, shippedOn: null }
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = ? for share of t0
           binds: [1]
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc for share of t0
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 where t0.order_id = any(cast(? as bigint[])) order by t0.id desc for share of t0
           binds: [[1]]
 then:
   databaseCalls: 6

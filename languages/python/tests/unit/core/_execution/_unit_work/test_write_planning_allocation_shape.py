@@ -59,6 +59,7 @@ from parallax.core.internal.unit_work import (
     object_key,
 )
 from parallax.core.internal.write_plan.plan import SettledWrite
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, settled_writes
 from tests._support.write_preparation import write_preparation_of
@@ -145,7 +146,7 @@ def _flush_of(entities: int, writes: int) -> Seam:
     their construction would measure the caller rather than the flush.
     """
     model = _model(entities)
-    planner = build_write_planner(model)
+    planner = build_write_planner(bound_model(model))
     request = WritePlanningRequest(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
@@ -213,7 +214,7 @@ def _source_free_plan_kept(writes: int) -> Seam:
     The request is built before the window, as :func:`_flush_of`'s is, so what
     the sample reaches is what the plan keeps of its own.
     """
-    planner = build_write_planner(SOURCE_FREE_MODEL)
+    planner = build_write_planner(bound_model(SOURCE_FREE_MODEL))
     request = _source_free_inserts(writes)
 
     def run(sample: Callable[[], None]) -> None:
@@ -228,7 +229,7 @@ def _source_free_plan_handed(writes: int) -> Seam:
     """:func:`_source_free_plan_kept` with the request built inside the window
     and dropped before the sample, so what survives of it is what the plan
     keeps of what it was handed."""
-    planner = build_write_planner(SOURCE_FREE_MODEL)
+    planner = build_write_planner(bound_model(SOURCE_FREE_MODEL))
 
     def run(sample: Callable[[], None]) -> None:
         request = _source_free_inserts(writes)
@@ -244,12 +245,13 @@ def _planner_over(entities: int) -> Seam:
     """One ``build_write_planner`` against a model of ``entities``, sampled while
     the planner it built is still alive.
 
-    The model is built before the window, so every byte still reachable at the
-    sample is a byte the planner's own construction allocated — a facet the
+    The model is built and resolved under its binding before the window, so
+    every byte still reachable at the sample is a byte the planner's own
+    construction allocated — a facet the
     model already carried is reached by reference and weighs nothing here, and an
     index derived from it weighs everything.
     """
-    model = _model(entities)
+    model = bound_model(_model(entities))
 
     def run(sample: Callable[[], None]) -> None:
         planner = build_write_planner(model)
@@ -335,7 +337,7 @@ def test_a_live_source_free_plan_keeps_its_settled_writes_and_nothing_it_was_han
     # shares the one empty evidence tuple rather than holding a collection of
     # its own; what the live plan keeps grows with those writes, and neither
     # an admitted write nor its prepared instruction survives beside them.
-    planner = build_write_planner(SOURCE_FREE_MODEL)
+    planner = build_write_planner(bound_model(SOURCE_FREE_MODEL))
     planned = {
         writes: settled_writes(planner.finalize(_source_free_inserts(writes)))
         for writes in SOURCE_FREE_ARMS

@@ -24,14 +24,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p1 where 1 = 0 or jsonb_extract_path_text(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p2 where jsonb_extract_path_text(p2.payload, ?) = ? or jsonb_extract_path_text(p2.payload, ?) = ?
-        mariadb: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from beast_document t0 where t0.kind = ? limit ?) p1 where 1 = 0 or json_value(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from beast_document t0 where t0.kind = ? limit ?) p2 where json_value(p2.payload, ?) = ? or json_value(p2.payload, ?) = ?
+        postgres: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from px.beast_document t0 where t0.kind = ? offset 0) p1 where 1 = 0 or jsonb_extract_path_text(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from px.beast_document t0 where t0.kind = ? offset 0) p2 where jsonb_extract_path_text(p2.payload, ?) = ? or jsonb_extract_path_text(p2.payload, ?) = ?
+        mariadb: select p1.id, p1.kind, p1.leader_id, not p1.payload is null, p1.payload from (select * from px.beast_document t0 where t0.kind = ? limit ?) p1 where 1 = 0 or json_value(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, not p2.payload is null, p2.payload from (select * from px.beast_document t0 where t0.kind = ? limit ?) p2 where json_value(p2.payload, ?) = ? or json_value(p2.payload, ?) = ?
       binds:
         postgres: [fox, name, Bruno, wolf, howl, aroo, name, Bruno]
         mariadb: [fox, 18446744073709551615, '$.name', Bruno, wolf, 18446744073709551615, '$.howl', aroo, '$.name', Bruno]
   referenceSql:
-    postgres: select id, kind, leader_id, payload from beast_document where kind = 'fox' and payload ->> 'name' = 'Bruno' union all select id, kind, leader_id, payload from beast_document where kind = 'wolf' and (payload ->> 'howl' = 'aroo' or payload ->> 'name' = 'Bruno')
-    mariadb: select id, kind, leader_id, payload from beast_document where kind = 'fox' and json_value(payload, '$.name') = 'Bruno' union all select id, kind, leader_id, payload from beast_document where kind = 'wolf' and (json_value(payload, '$.howl') = 'aroo' or json_value(payload, '$.name') = 'Bruno')
+    postgres: select id, kind, leader_id, payload from px.beast_document where kind = 'fox' and payload ->> 'name' = 'Bruno' union all select id, kind, leader_id, payload from px.beast_document where kind = 'wolf' and (payload ->> 'howl' = 'aroo' or payload ->> 'name' = 'Bruno')
+    mariadb: select id, kind, leader_id, payload from px.beast_document where kind = 'fox' and json_value(payload, '$.name') = 'Bruno' union all select id, kind, leader_id, payload from px.beast_document where kind = 'wolf' and (json_value(payload, '$.howl') = 'aroo' or json_value(payload, '$.name') = 'Bruno')
   graph:
     Beast:
       - { id: 1, name: Akela, leaderId: null, howl: aroo, _type: parallax.compatibility.Wolf }

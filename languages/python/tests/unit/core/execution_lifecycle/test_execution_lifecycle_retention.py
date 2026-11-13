@@ -221,6 +221,7 @@ from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
@@ -620,7 +621,9 @@ def _public_db(
 ) -> Generator[ScopedDatabase]:
     """A handle over ``port`` whose roots are opened by ``ScopedDatabase.transact``
     itself rather than at the seam, observed by ``provider``."""
-    with connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider) as root:
+    with connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider, binding=TEST_BINDING
+    ) as root:
         yield root.using_database_login()
 
 

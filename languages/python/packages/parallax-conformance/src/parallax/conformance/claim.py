@@ -87,6 +87,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-concurrency",
         "m-conformance-adapter",
         "m-core",
+        "m-database-binding",
         "m-db-error",
         "m-read-planning",
         "m-descriptor",

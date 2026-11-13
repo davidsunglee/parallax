@@ -49,8 +49,10 @@ _CONTACT_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Contact",
     "predicate": {"eq": {"path": "parallax.compatibility.Contact.id", "value": 1}},
 }
-_GATED_FULL = "update account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
-_INSERT = "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+_GATED_FULL = (
+    "update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?"
+)
+_INSERT = "insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)"
 
 
 def _calls(port: ScriptedAdapter) -> list[PortCall]:

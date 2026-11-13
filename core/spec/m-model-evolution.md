@@ -22,23 +22,24 @@ The decision record is
 ## The evolution algebra
 
 ```text
-evolve(earlier: Metamodel | ABSENT, later: Metamodel) -> Evolution
+evolve(earlier: (Metamodel, Binding) | ABSENT, later: (Metamodel, Binding)) -> Evolution
 
 Evolution = UnilateralEvolution | CoordinatedEvolution
 
 UnilateralEvolution
-  earlier                      the accepted earlier endpoint, absent only for ABSENT
-  later                        the accepted later endpoint
-  operations                   canonical Model Location order
+  earlier                      the earlier model under its resolved binding, absent only for ABSENT
+  later                        the later model under its resolved binding
+  operations                   logical operations in canonical Model Location order,
+                               then relocations in relocation order
   behavioralImpacts            closed variant order, then scope identity
   overlapVisibleOperations     canonical operation order
 
 CoordinatedEvolution
-  earlier, later               both accepted endpoints
-  operations                   canonical Model Location order
+  earlier, later               both resolved endpoints
+  operations                   as above
   behavioralImpacts            closed variant order, then scope identity
   coordinationRequirements     nonempty; one per coordinated operation,
-                               in canonical operation order
+                               in operation order
 ```
 
 `evolve` is **total**: two equal accepted models produce an empty
@@ -46,6 +47,15 @@ CoordinatedEvolution
 no-evolution result and no nullable return. Both variants retain their endpoints,
 so a consumer resolves any identity an operation names without holding a model of
 its own, and a generator cannot be handed an unrelated target.
+
+Each endpoint is an accepted model resolved under its own Database Binding
+(`m-database-binding`). The logical operations compare the two accepted models
+alone; the physical comparison then appends one `TableRelocated` or
+`SequenceRelocated` operation per relocation between the two resolved bindings,
+in relocation order, after every logical operation. Endpoints bound for
+different backends are refused as `evolution-backend-mismatch` before any
+comparison: equal components on two engines are no evidence of one physical
+object, and no cross-backend operation exists.
 
 `ABSENT` is the **explicit fresh-provisioning sentinel**. It is authored, never
 inferred from an accepted model that happens to declare nothing and never from
@@ -94,7 +104,13 @@ IndexAdded
 IndexRemoved
 IndexAltered
 DeclarationOrderChanged
+TableRelocated
+SequenceRelocated
 ```
+
+`TableRelocated` carries the mapping owner and its earlier and later physical
+tables; `SequenceRelocated` carries the logical allocator key and its earlier
+and later physical sequences, each a qualifier and a local name.
 
 The generic Entity add and remove variants **exclude** concrete-subtype add and
 remove; a surviving concrete subtype uses `EntityAltered`. Value Object
@@ -363,6 +379,17 @@ ancestry makes applicable.
   carrying that discriminator value in place, as a concrete subtype's removal does.
 - **Concrete subtypes.** Adding one is unilateral under either supported
   strategy.
+- **Storage containers and relocations.** A changed declared Table name
+  (`StorageContainerChanged`) is a logical change and unilateral by itself: a
+  declared name is only the binding's default physical name, so whether a table
+  moved is a physical fact. Every `TableRelocated` (a surviving mapping owner
+  whose resolved physical table differs) and `SequenceRelocated` (a surviving
+  logical allocator whose resolved physical sequence differs) requires
+  `DatabaseMigrationRequired`. A declared rename a binding masks by pinning the
+  local name therefore relocates nothing; a move between qualifiers preserves
+  every derived name; a physical local-name rename also changes the derived
+  constraint and index names the later endpoint expects. Reparenting compares the
+  mapping owner a position's rows are stored under, never its declared name.
 - **Declaration order.** Reordering preserves the model-facing operation surface
   and is unilateral.
 

@@ -14,13 +14,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into publication_book(id, payload) values (?, ?)
-        mariadb: insert into publication_book(id, payload) values (?, ?)
+        postgres: insert into px.publication_book(id, payload) values (?, ?)
+        mariadb: insert into px.publication_book(id, payload) values (?, ?)
       binds:
         - 11
         - { title: Compilers, detail: ISBN-11, pages: 480 }
   tableState:
-    publication_book:
-      - id: 11
-        payload: { title: Compilers, detail: ISBN-11, pages: 480 }
+    px:
+      publication_book:
+        - id: 11
+          payload: { title: Compilers, detail: ISBN-11, pages: 480 }
   databaseCalls: 1

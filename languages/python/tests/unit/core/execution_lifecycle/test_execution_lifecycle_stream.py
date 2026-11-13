@@ -57,6 +57,7 @@ from parallax.core.internal.execution import (
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -139,7 +140,13 @@ class _QuarantiningProvider:
 
 def _connected(adapter: DatabaseAdapter, model: Any, provider: Any) -> ScopedDatabase:
     return own_root(
-        connect(adapter, model, clock=FixedClock(_FIXED), lifecycle_provider=provider)
+        connect(
+            adapter,
+            model,
+            clock=FixedClock(_FIXED),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -548,7 +555,7 @@ def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_en
     # delivered at that entry states the edition — the one every page below it
     # is read under, however many pages follow.
     recorder = RecordingLifecycleProvider()
-    serving = ServingModel(prepare_model(ORDERS_MODEL, edition="orders-a"))
+    serving = ServingModel(prepare_model(ORDERS_MODEL, edition="orders-a", binding=TEST_BINDING))
     port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     db = own_root(
         connect(port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder)

@@ -30,6 +30,7 @@ from parallax.postgres._connection import (
     _NativeInfinityDumper,  # pyright: ignore[reportPrivateUsage] - the registered dumper is this module's subject
 )
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.driver_writes import RecordingCaseDatabase
 from tests._support.root_ownership import own_root
 from tests._support.sweep_goldens import wire_binds
@@ -119,10 +120,12 @@ def test_every_bind_route_stores_the_open_bound_as_native_infinity(
 def test_a_public_write_hands_the_driver_the_sentinel_under_unchanged_observations(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     recording = RecordingCaseDatabase(profile_run.port)
     clock = ScriptedClock([_INSERTED])
-    db = own_root(connect(recording, _MODEL, clock=clock)).using_database_login()
+    db = own_root(
+        connect(recording, _MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
     db.transact(lambda tx: tx.insert(Holding(id=1, units=3), valid_from=_VALID_FROM))
 

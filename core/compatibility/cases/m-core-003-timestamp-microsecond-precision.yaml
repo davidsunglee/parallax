@@ -13,10 +13,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into event(id, occurred_at) values (?, ?)
-        mariadb: insert into event(id, occurred_at) values (?, ?)
+        postgres: insert into px.event(id, occurred_at) values (?, ?)
+        mariadb: insert into px.event(id, occurred_at) values (?, ?)
       binds: [1, "2024-03-01T12:00:00.123456Z"]
   tableState:
-    event:
-      - { id: 1, occurred_at: "2024-03-01T12:00:00.123456Z" }
+    px:
+      event:
+        - { id: 1, occurred_at: "2024-03-01T12:00:00.123456Z" }
   databaseCalls: 1

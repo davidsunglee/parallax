@@ -38,6 +38,7 @@ from parallax.core.internal.entity import _layout as layout_module
 from parallax.core.internal.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -73,7 +74,9 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]), Transact(Write()))
-    db = own_root(connect(port, _ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        connect(port, _ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     _refuse_every_derivation(monkeypatch)
 
     assert db.find(mm.Account.where(mm.Account.id == 7)).result().owner == "Newton"
@@ -88,7 +91,9 @@ def test_a_wire_read_and_a_typed_projection_derive_nothing_after_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]), Read(rows=[NEW_ROW]))
-    db = own_root(connect(port, _ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        connect(port, _ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     _refuse_every_derivation(monkeypatch)
     query = mm.Account.where(mm.Account.id == 7)
 
@@ -98,7 +103,9 @@ def test_a_wire_read_and_a_typed_projection_derive_nothing_after_preparation(
 
 def test_a_descriptor_backed_connection_still_refuses_a_typed_read_before_io() -> None:
     db = own_root(
-        Database.connect(ScriptedAdapter(), _descriptor_backed(), clock=FixedClock(FIXED))
+        Database.connect(
+            ScriptedAdapter(), _descriptor_backed(), clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login()
     with raises_code(
         UsageError,
@@ -117,6 +124,7 @@ def _classless(
             _descriptor_backed(),
             clock=FixedClock(FIXED),
             lifecycle_provider=lifecycle_provider,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
 
@@ -184,7 +192,9 @@ def test_a_call_from_a_lifecycle_context_is_refused_before_its_model_or_query_is
 def test_a_standalone_stream_failure_names_the_edition_its_delivery_was_served_under() -> None:
     failure = DatabaseError(category=None, native_code=None, message="the later page failed")
     port = ScriptedAdapter(Read(rows=[NEW_ROW, {**NEW_ROW, "id": 8}]), Read(raises=failure))
-    db = own_root(connect(port, _ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        connect(port, _ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
 
     with db.stream(mm.Account.where(mm.Account.id >= 7), batch_size=1) as stream:
         edition = stream.edition
@@ -201,10 +211,17 @@ def test_a_standalone_stream_failure_names_the_edition_its_delivery_was_served_u
 
 def test_a_static_connection_prepares_once_under_a_generated_edition() -> None:
     first = own_root(
-        connect(ScriptedAdapter(Transact(), Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+        connect(
+            ScriptedAdapter(Transact(), Transact()),
+            _ACCOUNT,
+            clock=FixedClock(FIXED),
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     second = own_root(
-        connect(ScriptedAdapter(Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+        connect(
+            ScriptedAdapter(Transact()), _ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login()
     editions = {db.transact(lambda tx: tx.edition) for db in (first, second)}
     assert len(editions) == 2

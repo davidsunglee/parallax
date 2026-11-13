@@ -6,6 +6,7 @@ from typing import cast
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
+from parallax.conformance.bindings import binding_document
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.internal import inheritance
 from parallax.core.internal.entity import DomainModel
@@ -17,8 +18,10 @@ from parallax.core.internal.metamodel import CompiledEntity, entity_by_name
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.object_query import ObjectQueryNode
 from parallax.core.internal.temporal_read import scans_resolved_axis
+from parallax.postgres import PostgresBinding
 
 __all__ = [
+    "case_binding",
     "case_edition",
     "case_entity",
     "case_serving_model",
@@ -102,15 +105,27 @@ def case_edition(case: case_format.Case) -> str:
     return _case_model_path(case).stem
 
 
+def case_binding(case: case_format.Case) -> PostgresBinding:
+    """The PostgreSQL binding every database-backed observation of ``case``
+    resolves its model under: the case's own ``binding``, else the corpus default.
+    """
+    return PostgresBinding.from_document(binding_document(case.document.get("binding"), "postgres"))
+
+
 def case_serving_model(case: case_format.Case) -> ServingModel:
     """The Serving Model a case's Handles adopt from: its Domain Model prepared
-    explicitly under :func:`case_edition`, and never published to again.
+    explicitly under :func:`case_binding` and :func:`case_edition`, and never
+    published to again.
 
     The one place a case's model is prepared, so every Handle a lane builds
     over one case serves the same literal edition, which is what the case's
     lifecycle oracle asserts (`m-conformance-adapter`).
     """
-    return ServingModel(prepare_model(load_case_domain_model(case), edition=case_edition(case)))
+    return ServingModel(
+        prepare_model(
+            load_case_domain_model(case), binding=case_binding(case), edition=case_edition(case)
+        )
+    )
 
 
 def case_entity(model: AcceptedMetamodel, name: str) -> CompiledEntity:

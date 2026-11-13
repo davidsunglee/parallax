@@ -74,6 +74,7 @@ from parallax.snapshot import (
     pin_of,
     view,
 )
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import (
     CollectionKinds,
@@ -124,7 +125,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     typed instances.
     """
     case = corpus_case(case_id)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     apply_given_apply(case, profile_run.port)
     return MODELS[Path(case.model).stem]
 
@@ -140,7 +141,9 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     # A story's scripted-clock factory supplies this consumer with a fresh
     # clock independent of `test_write_no_drift.py`.
     clock = story.clock() if story.clock is not None else None
-    db = own_root(connect(profile_run.port, meta, clock=clock)).using_database_login()
+    db = own_root(
+        connect(profile_run.port, meta, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
     result = story.run(db)
     if result is not None:
@@ -155,13 +158,14 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     # A writeSequence story observes no rows; the committed table state must
     # equal the case's `then.tableState`, table for table.
     expected_state = cast(
-        "dict[str, list[dict[str, Any]]]",
+        "dict[str, dict[str, list[dict[str, Any]]]]",
         case_document(corpus_case(story.case_id))["then"]["tableState"],
     )
-    observed_state = engine.read_table_state(profile_run.port, model_of(meta))
+    observed_state = engine.read_table_state(profile_run.port, bound_model(model_of(meta)))
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
-    for table, expected_rows in expected_state.items():
-        compare_rows([dict(row) for row in observed_state[table]], expected_rows)
+    for qualifier, tables in expected_state.items():
+        for table, expected_rows in tables.items():
+            compare_rows([dict(row) for row in observed_state[qualifier][table]], expected_rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +201,13 @@ class _CountingDatabase(ScopedDatabase):
     def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
         observation = LifecycleObservation()
         root = own_root(
-            Database(adapter.open(), model, clock=clock, lifecycle_provider=observation.provider)
+            Database(
+                adapter.open(),
+                model,
+                clock=clock,
+                lifecycle_provider=observation.provider,
+                binding=TEST_BINDING,
+            )
         )
         scoped = cast("Any", root.using_database_login())
         object.__setattr__(self, "_execution", scoped._execution)
@@ -922,14 +932,14 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
 def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) -> None:
     meta = _reset_for("m-temporal-write-092", profile_run)
     db = _counting_connect(profile_run.port, meta)
-    before = engine.read_table_state(profile_run.port, model_of(meta))
+    before = engine.read_table_state(profile_run.port, bound_model(model_of(meta)))
     with raises_code(UsageError, "transaction-time-pin-read-only") as refused:
         a_finite_transaction_time_pinned_view_is_read_only(db)
     assert refused.value.code == "transaction-time-pin-read-only"
     # The case's own `databaseCalls: 0` on the mutate step, graded as durable state:
     # the superseded milestone and the current one stand exactly as they were, so
     # nothing appended and nothing was rewritten.
-    assert engine.read_table_state(profile_run.port, model_of(meta)) == before
+    assert engine.read_table_state(profile_run.port, bound_model(model_of(meta))) == before
 
 
 def test_history_of_a_concrete_temporal_node_distinguishes_milestones(profile_run: Any) -> None:
@@ -1615,7 +1625,7 @@ def test_statement_capture_forwards_document_read_metadata() -> None:
 def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_run: Any) -> None:
     meta = _reset_for(story.case_id, profile_run)
     port = _StatementCapturePort(profile_run.port)
-    db = own_root(connect(port, meta)).using_database_login()
+    db = own_root(connect(port, meta, binding=TEST_BINDING)).using_database_login()
     if story.concurrency is not None:
         snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:

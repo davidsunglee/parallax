@@ -35,8 +35,8 @@ from parallax.evolution.internal.model_evolution._values import (
     CoordinationReason,
     EntityAltered,
     EntityRemoved,
-    EvolutionOperation,
     InheritanceChanged,
+    LogicalOperation,
     MaximumLengthChanged,
     MultiplicityChanged,
     NullabilityChanged,
@@ -142,13 +142,13 @@ class Classification:
 
 
 def classify(
-    matching: Matching, operations: Sequence[EvolutionOperation]
+    matching: Matching, operations: Sequence[LogicalOperation]
 ) -> tuple[Classification, ...]:
     """Classify each operation, positionally."""
     return tuple(_classify_one(matching, operation) for operation in operations)
 
 
-def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classification:
+def _classify_one(matching: Matching, operation: LogicalOperation) -> Classification:
     match operation:
         case (
             ConcreteSubtypeAdded()
@@ -419,10 +419,15 @@ def _entity_alteration(
     overlap_visible = False
     for delta in operation.deltas:
         match delta:
-            case StorageContainerChanged() | StorageLayoutChanged():
-                # The two editions cannot address both physical locations
-                # through one compiled operation surface.
+            case StorageLayoutChanged():
+                # The two editions cannot address both physical shapes through
+                # one compiled operation surface.
                 reasons.add(_MIGRATION)
+            case StorageContainerChanged():
+                # A declared storage name is the binding's default, not a
+                # physical location: whether the table moved is decided by
+                # comparing the two endpoints' resolved bindings.
+                pass
             case PersistenceChanged():
                 reasons |= _persistence_reasons(earlier.family, later.family)
             case InheritanceChanged():
@@ -452,7 +457,7 @@ def _inheritance_reasons(position: _Position) -> set[CoordinationReason]:
     have taken on their own, and the members a departing ancestor withdraws are
     removals from a shape that survives. Moving a position out of an earlier
     branch invalidates a narrowing through that branch, and a strategy, tag, or
-    container change needs the rows themselves transformed. What survives on a
+    mapping-owner change needs the rows themselves transformed. What survives on a
     position keeping no stored shape is the member comparison, which a read
     targeting it still addresses.
     """
@@ -568,20 +573,29 @@ def _inherited_removal_reasons(position: _Position) -> set[CoordinationReason]:
 
 
 def _physically_compatible(position: _Position) -> bool:
-    """Whether the position's rows stay where they are, tagged as they were.
+    """Whether the position's rows stay in the same mapping owner's table, tagged
+    as they were.
 
     Only a shape stored under the position in both editions has data to carry
-    across, so a Table, strategy, or tag change moves nothing where the position
-    keeps none.
+    across, so an owner, strategy, or tag change moves nothing where the position
+    keeps none. Whether that owner's table itself moved is a physical fact the
+    resolved bindings answer, not a logical one.
     """
     if not position.keeps_a_stored_shape:
         return True
     return (
-        position.earlier.container == position.later.container
+        _table_owner(position.earlier) == _table_owner(position.later)
         and position.earlier.strategy == position.later.strategy
         and position.earlier.tag_column == position.later.tag_column
         and position.earlier.tag_value == position.later.tag_value
     )
+
+
+def _table_owner(view: InheritanceEntityView) -> EntityIdentity | None:
+    """The mapping owner of the table ``view``'s rows are stored in, if any."""
+    if view.container is None:
+        return None
+    return view.root if isinstance(view.strategy, TablePerHierarchy) else view.entity
 
 
 def _attribute_alteration(

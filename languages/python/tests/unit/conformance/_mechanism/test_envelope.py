@@ -20,7 +20,7 @@ from parallax.core.internal.sql_gen._context import (
 )
 from tests._support.errors import raises_code
 
-_UPDATE = "update account set balance = ?"
+_UPDATE = "update px.account set balance = ?"
 
 
 def _balance(value: object, declared: NeutralType | None = None) -> LoweredStatement:
@@ -46,6 +46,6 @@ def test_the_projection_follows_the_statements_own_type_metadata() -> None:
 
 
 def test_an_unannotated_non_wire_carrier_cannot_be_reported() -> None:
-    statement = LoweredStatement("insert into shift(span) values (?)", (dt.timedelta(hours=1),))
+    statement = LoweredStatement("insert into px.shift(span) values (?)", (dt.timedelta(hours=1),))
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="is not an ordinary Wire value"):
         Emission("/write", statement).to_json()
