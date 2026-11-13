@@ -27,6 +27,7 @@ from parallax.core.internal.metamodel import (
     CompiledEntity,
     EntityIdentity,
     Metamodel,
+    TablePerHierarchy,
 )
 from parallax.core.internal.predicate import StringOp
 from parallax.core.internal.predicate._execution_values import ExecutionValueSource, source_order
@@ -441,16 +442,17 @@ def table_layout(
     ever asked for.
     """
     view = facet.entity(entity)
-    container = None if view is None else view.container
-    if container is None:  # pragma: no cover - an abstract position never reads one table
+    if view is None or view.container is None:  # pragma: no cover - abstract: no one table
         raise InternalError(
             SQL_GENERATION_FAILED,
             f"{entity.canonical}: this inheritance position has no Table Layout",
         )
-    layout = storage.table(container)
-    if layout is None:  # pragma: no cover - every accepted Table compiles exactly one layout
+    mapping_owner = view.root if isinstance(view.strategy, TablePerHierarchy) else entity
+    layout = storage.table(mapping_owner)
+    if layout is None:  # pragma: no cover - every accepted mapping owner compiles one layout
         raise InternalError(
-            SQL_GENERATION_FAILED, f"{container.name}: the model compiles no layout for this table"
+            SQL_GENERATION_FAILED,
+            f"{mapping_owner.canonical}: the model compiles no layout for this mapping owner",
         )
     return layout
 

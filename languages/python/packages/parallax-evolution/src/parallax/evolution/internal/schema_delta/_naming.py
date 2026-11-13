@@ -8,10 +8,10 @@ from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     Column,
+    EntityIdentity,
     IndexIdentity,
     IndexLocation,
     ModelLocationKey,
-    Table,
     canonical_location_key,
 )
 from parallax.evolution.internal.schema_delta._order import order_key
@@ -187,20 +187,29 @@ def census(
 
 
 type _Identity = (
-    tuple[Table, IndexIdentity, tuple[AttributeIdentity, ...], bool]
-    | tuple[Table, str, tuple[Column, ...]]
+    tuple[EntityIdentity, IndexIdentity, tuple[AttributeIdentity, ...], bool]
+    | tuple[EntityIdentity, str, tuple[Column, ...]]
 )
 
 
 def _identity(definition: IndexDefinition | TemporalBackingIndex) -> _Identity:
-    """The facts a Physical Index Name is derived over, as a comparable key."""
+    """The holding Table's mapping owner and the definition's own named facts.
+
+    The owner, never the declared Table name, tells holding Tables apart, so
+    independent mappings stay distinct physical objects.
+    """
     if isinstance(definition, TemporalBackingIndex):
-        return (definition.table, definition.kind, definition.columns)
-    return (definition.table, definition.index, definition.column_attributes, definition.unique)
+        return (definition.mapping_owner, definition.kind, definition.columns)
+    return (
+        definition.mapping_owner,
+        definition.index,
+        definition.column_attributes,
+        definition.unique,
+    )
 
 
 def collision_groups(
-    census: Sequence[NamedIndex], surviving: Collection[Table]
+    census: Sequence[NamedIndex], surviving: Collection[EntityIdentity]
 ) -> tuple[CollisionGroup, ...]:
     """Every Physical Index Name two coexisting distinct definitions derived.
 
@@ -211,7 +220,8 @@ def collision_groups(
     collision the create and the drop that would bound two lifetimes are exactly
     the statements it fails to emit. ``surviving`` is the Tables the later
     endpoint still holds, because an Index the delta does not carry a Table
-    forward for is never dropped and so is present throughout.
+    forward for is never dropped and so is present throughout; each surviving
+    Table is named by its mapping owner.
 
     Ordered by name; each group's authored definitions in canonical
     logical-identity order and its temporal constraints by Table and kind,
@@ -271,7 +281,7 @@ def _reported(
     )
 
 
-def _coexist(entries: Sequence[NamedIndex], surviving: Collection[Table]) -> bool:
+def _coexist(entries: Sequence[NamedIndex], surviving: Collection[EntityIdentity]) -> bool:
     """Whether two of these definitions are ever objects in the database at once."""
     return any(
         _overlap(one, other, surviving)
@@ -280,7 +290,7 @@ def _coexist(entries: Sequence[NamedIndex], surviving: Collection[Table]) -> boo
     )
 
 
-def _overlap(one: NamedIndex, other: NamedIndex, surviving: Collection[Table]) -> bool:
+def _overlap(one: NamedIndex, other: NamedIndex, surviving: Collection[EntityIdentity]) -> bool:
     """Whether the database holds both of these definitions during some prefix.
 
     A definition either endpoint holds while the other does not is the only one
@@ -297,7 +307,7 @@ def _overlap(one: NamedIndex, other: NamedIndex, surviving: Collection[Table]) -
         and isinstance(created.definition, IndexDefinition)
         and dropped.presence is IndexPresence.EARLIER
         and created.presence is IndexPresence.LATER
-        and dropped.definition.table in surviving
+        and dropped.definition.mapping_owner in surviving
         and _drop_precedes_create(
             dropped.definition, dropped.name, created.definition, created.name
         )

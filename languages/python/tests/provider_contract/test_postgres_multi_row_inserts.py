@@ -61,7 +61,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
-from parallax.core.internal.metamodel import Table, TablePerConcreteSubtype
+from parallax.core.internal.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
@@ -612,7 +612,9 @@ def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
         tx.insert(Log(id=2, label="fresh"))
 
     error = _failure(database(mar), reopen)
-    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(Table("mri_log"))
+    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(
+        EntityIdentity(_NAMESPACE, Log.__name__)
+    )
     assert layout is not None and layout.temporal_constraints is not None
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
     assert error.constraint_name == layout.temporal_constraints.exclusion_name

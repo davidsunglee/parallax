@@ -29,7 +29,7 @@ from reference_harness.case_runner import (
 )
 from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.object_query_oracle import assert_case_read
-from reference_harness.storage_layout import derived_primary_key_index
+from reference_harness.storage_layout import derived_primary_key_index, observed_table
 from reference_harness.table_state import read_table
 from reference_harness.write_plan import has_temporal_gate, insert_value_rows
 
@@ -85,7 +85,7 @@ def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None
     # every model primary-key slot, then each temporal dimension's end slot in
     # canonical dimension rank (Valid Time before Transaction Time). Both end
     # slots keep their single Temporal-tier position in the complete sequence.
-    layout = _position_model().storage_layout.table("position")
+    layout = observed_table(_position_model().storage_layout, "position")
     assert layout is not None
     assert [slot.column for slot in layout.physical_primary_key] == ["pos_id", "thru_z", "out_z"]
     assert [slot.tier.value for slot in layout.physical_primary_key] == [
@@ -829,7 +829,7 @@ def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
     # physical primary key selects the two ends from the identity and temporal
     # tiers alike.
     case = _inheritance_case("m-inheritance-094")
-    layout = case.model.storage_layout.table("instrument")
+    layout = observed_table(case.model.storage_layout, "instrument")
     assert layout is not None
     provider = _RecordingReadProvider()
     read_table(cast("Any", provider), layout, declared_contributors(case.model))
@@ -845,7 +845,7 @@ def test_bitemporal_committed_rows_cover_every_shared_table_slot() -> None:
     # sequence, so a Bond row still records the sibling-only `ticker` column as null
     # rather than omitting it.
     case = _inheritance_case("m-inheritance-094")
-    layout = case.model.storage_layout.table("instrument")
+    layout = observed_table(case.model.storage_layout, "instrument")
     assert layout is not None
     columns = {slot.column for slot in layout.columns}
     assert "ticker" in columns

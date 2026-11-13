@@ -5,7 +5,13 @@ from typing import Literal
 
 from parallax.core.internal.base import NeutralType
 from parallax.core.internal.dialect import PhysicalIndexName
-from parallax.core.internal.metamodel import AttributeIdentity, Column, IndexIdentity, Table
+from parallax.core.internal.metamodel import (
+    AttributeIdentity,
+    Column,
+    EntityIdentity,
+    IndexIdentity,
+    Table,
+)
 from parallax.evolution.internal.model_evolution import EvolutionOperation
 from parallax.evolution.internal.schema_delta._values import PhysicalLocation
 
@@ -48,12 +54,14 @@ class PhysicalColumn:
 class IndexDefinition:
     """One authored Index as one physical Table holds it.
 
-    ``components`` retains the authored Attribute Identities, which a collision
-    report names. ``column_attributes`` is the Attribute behind each of
+    ``mapping_owner`` identifies the holding Table and ``table`` is its declared
+    name. ``components`` retains the authored Attribute Identities, which a
+    collision report names. ``column_attributes`` is the Attribute behind each of
     ``columns`` — the authored components, then a temporal Table's axis ends —
     from which the Physical Index Name is derived.
     """
 
+    mapping_owner: EntityIdentity
     table: Table
     index: IndexIdentity
     components: tuple[AttributeIdentity, ...]
@@ -91,9 +99,11 @@ class TemporalBackingIndex:
 
     It shares the schema's Index namespace with authored Indices, so the
     Physical Index Name census counts it, under the name the Table Layout
-    compiled for its constraint.
+    compiled for its constraint. ``mapping_owner`` identifies the holding Table
+    and ``table`` is its declared name.
     """
 
+    mapping_owner: EntityIdentity
     table: Table
     kind: Literal["primaryKey", "exclusion"]
     columns: tuple[Column, ...]

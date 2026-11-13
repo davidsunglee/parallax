@@ -37,6 +37,7 @@ def _definition(
     unique: bool = False,
 ) -> IndexDefinition:
     return IndexDefinition(
+        mapping_owner=_ENTITY,
         table=Table(name=table),
         index=IndexIdentity(_ENTITY, index),
         components=tuple(AttributeIdentity(_ENTITY, name) for name in components),

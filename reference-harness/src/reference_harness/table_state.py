@@ -18,14 +18,14 @@ from .case_assertions import CaseFailure, rows_equal
 from .ddl_builder import declared_contributors, quote_identifier
 from .document_codec import decode_stored
 from .providers import DatabaseProvider
-from .storage_layout import ColumnContributor, ColumnTier, TableLayout
+from .storage_layout import ColumnContributor, ColumnTier, TableLayout, observed_table
 
 __all__ = ["assert_table_state", "read_table", "read_tables", "table_layout"]
 
 
 def table_layout(case: Case, table: str) -> TableLayout:
     """The compiled layout of one physical *table* an observation reads back."""
-    layout = case.model.storage_layout.table(table)
+    layout = observed_table(case.model.storage_layout, table)
     if layout is None:
         raise CaseFailure(
             f"{case.path.name}: an observation names table {table!r} "

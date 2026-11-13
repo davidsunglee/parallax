@@ -39,7 +39,7 @@ from parallax.core.internal import storage_layout
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
-from parallax.core.internal.metamodel import Table
+from parallax.core.internal.metamodel import EntityIdentity
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import retry_notes
 from tests._support.retry import fast_retry
@@ -99,7 +99,9 @@ def _member(entity: type[Any], name: str) -> str:
 
 
 def _exclusion(entity: type[Any]) -> str:
-    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(Table(_TABLES[entity]))
+    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(
+        EntityIdentity(_NAMESPACE, entity.__name__)
+    )
     assert layout is not None and layout.temporal_constraints is not None
     return layout.temporal_constraints.exclusion_name
 

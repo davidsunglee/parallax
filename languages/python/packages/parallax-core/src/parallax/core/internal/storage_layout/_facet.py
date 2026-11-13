@@ -232,8 +232,15 @@ class TemporalHistoryConstraints:
 
 
 class TableLayout(Protocol):
-    """The complete canonical physical shape of one structural Table."""
+    """The complete canonical physical shape of one structural Table.
 
+    ``mapping_owner`` is the Table's identity: the standalone Entity,
+    table-per-hierarchy root, or table-per-concrete-subtype concrete Entity whose
+    declaration owns it. ``table`` is that owner's declared storage name.
+    """
+
+    @property
+    def mapping_owner(self) -> EntityIdentity: ...
     @property
     def table(self) -> Table: ...
     @property
@@ -325,7 +332,7 @@ class StorageLayoutFacet(Protocol):
 
     @property
     def tables(self) -> Sequence[TableLayout]: ...
-    def table(self, table: Table) -> TableLayout | None: ...
+    def table(self, mapping_owner: EntityIdentity) -> TableLayout | None: ...
     def entity(self, entity: EntityIdentity) -> EntityLayoutView | None: ...
     def position(
         self, concrete_entities: Sequence[EntityIdentity]
@@ -334,6 +341,7 @@ class StorageLayoutFacet(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _TableLayout:
+    mapping_owner: EntityIdentity
     table: Table
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
@@ -374,6 +382,7 @@ class _TableLayout:
 
 
 def table_layout(
+    mapping_owner: EntityIdentity,
     table: Table,
     columns: Sequence[ColumnSlot],
     primary_key_index: PhysicalIndex | None,
@@ -397,6 +406,7 @@ def table_layout(
         else (primary_key_index, *secondary_indices)
     )
     return _TableLayout(
+        mapping_owner,
         table,
         tuple(columns),
         () if primary_key_index is None else primary_key_index.columns,
@@ -488,7 +498,7 @@ class _StorageLayoutFacet:
     __slots__ = ("__weakref__", "_entities", "_families", "_table_values", "_tables")
 
     _table_values: tuple[TableLayout, ...]
-    _tables: Mapping[Table, TableLayout]
+    _tables: Mapping[EntityIdentity, TableLayout]
     _entities: Mapping[EntityIdentity, StorageLayoutEntityFacts]
     _families: Mapping[EntityIdentity, StorageLayoutFamilyFacts]
 
@@ -499,7 +509,9 @@ class _StorageLayoutFacet:
         families: Sequence[StorageLayoutFamilyFacts],
     ) -> None:
         self._table_values = tuple(layouts)
-        self._tables = MappingProxyType({layout.table: layout for layout in self._table_values})
+        self._tables = MappingProxyType(
+            {layout.mapping_owner: layout for layout in self._table_values}
+        )
         self._entities = MappingProxyType({facts.entity: facts for facts in entities})
         self._families = MappingProxyType({facts.root: facts for facts in families})
 
@@ -507,8 +519,8 @@ class _StorageLayoutFacet:
     def tables(self) -> tuple[TableLayout, ...]:
         return self._table_values
 
-    def table(self, table: Table) -> TableLayout | None:
-        return self._tables.get(table)
+    def table(self, mapping_owner: EntityIdentity) -> TableLayout | None:
+        return self._tables.get(mapping_owner)
 
     def entity(self, entity: EntityIdentity) -> EntityLayoutView | None:
         facts = self._entities.get(entity)
@@ -553,12 +565,12 @@ class _StorageLayoutFacet:
         )
         members = tuple(facts.member for facts in member_facts)
 
-        branch_entities: dict[Table, list[EntityIdentity]] = {}
+        branch_entities: dict[EntityIdentity, list[EntityIdentity]] = {}
         for facts in entity_facts:
-            branch_entities.setdefault(facts.layout.table, []).append(facts.entity)
+            branch_entities.setdefault(facts.layout.mapping_owner, []).append(facts.entity)
         branches: list[PositionBranch] = []
-        for table, entities in branch_entities.items():
-            layout = self._tables[table]
+        for mapping_owner, entities in branch_entities.items():
+            layout = self._tables[mapping_owner]
             branch_set = frozenset(entities)
             slots = tuple(
                 (

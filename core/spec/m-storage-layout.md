@@ -275,9 +275,11 @@ are `DirectColumn(slot)` and `DocumentPath(slot, path)`, whose `path` is a nonem
 sequence of `MemberName`.
 
 A **Table Layout** (`TableLayout`) is the composed physical shape of one Table: its
-`columns`, its `physicalPrimaryKey`, its `indices` with their `primaryKeyIndex` and
-`uniqueKeys`, and its `temporalConstraints`. It answers a Column's slot and
-position, a contributor's slot, and a member's Member Placement.
+`mappingOwner`, its declared `table`, its `columns`, its `physicalPrimaryKey`, its
+`indices` with their `primaryKeyIndex` and `uniqueKeys`, and its
+`temporalConstraints`. It answers a Column's slot and position, a contributor's
+slot, and a member's Member Placement. The mapping owner is the Table's identity;
+the declared `table` is that owner's storage name, carried as data.
 
 `MemberName` is a canonical local declared member name — the same spelling the
 Metamodel and a materialized result use. A `DocumentPath` therefore names no
@@ -296,9 +298,10 @@ occurrence — is placed over the slot it contributes.
 `TableLayout.columns` is the complete physical Table sequence and is the sole
 physical order exposed to consumers. `physicalPrimaryKey` selects the same
 immutable slot values from `columns`.
-The structural identity of a slot is `(Table, ColumnContributor)`. An inherited
-Attribute in two table-per-concrete-subtype Tables therefore has one distinct
-slot per Table even though both slots reference the same declaration identity.
+The structural identity of a slot is `(mapping owner, ColumnContributor)`. An
+inherited Attribute in two table-per-concrete-subtype Tables therefore has one
+distinct slot per Table even though both slots reference the same declaration
+identity.
 Python object identity or any other implementation allocation identity is not
 contractual.
 
@@ -668,9 +671,10 @@ Index Names are `m-schema-delta`'s separate convention.
 ## Entity and position views
 
 The facet exposes table layouts plus selections that reference their existing
-slots. `tables` is deterministic and contains exactly one layout per physical Table.
-`table(...)` is total and returns absent only for a Table outside the accepted
-layout graph.
+slots. `tables` is deterministic and contains exactly one layout per mapping
+owner. `table(mappingOwner)` is total and returns absent for any Entity that owns
+no Table: an unknown Entity, a table-per-hierarchy descendant, or a
+table-per-concrete-subtype abstract position.
 
 `entity(...)` returns an **Entity Layout** for a standalone or concrete row-owning
 Entity and returns absent for an unknown or rowless abstract Entity. It names its
@@ -703,8 +707,8 @@ Object contributor, its tier, and its declaring owner. `columns` excludes physic
 discriminators because a TPCS position has none and `_type` remains a
 result concern.
 
-Each branch names one physical Table represented in the position and the selected
-concretes stored in it, and aligns its
+Each branch names one physical Table represented in the position, by its mapping
+owner's layout, and the selected concretes stored in it, and aligns its
 `slots` with the logical `columns`. An entry references that Table's slot when
 the contributor applies to at least one selected concrete in the branch and is
 absent otherwise. TPH has one shared-table branch; TPCS has one branch per

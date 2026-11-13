@@ -47,6 +47,7 @@ from .storage_layout import (
     RelationalDocument,
     TableLayout,
     ValueObjectContributor,
+    observed_table,
 )
 from .value_object_resolve import RejectionError
 
@@ -511,7 +512,7 @@ def _expected_table_state(case: Case) -> None:
     for table_name, rows in state.items():
         if not isinstance(table_name, str):
             continue
-        layout = case.model.storage_layout.table(table_name)
+        layout = observed_table(case.model.storage_layout, table_name)
         if layout is None or not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
             continue
         for index, row in enumerate(rows):

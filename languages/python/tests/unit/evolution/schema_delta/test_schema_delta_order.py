@@ -134,6 +134,7 @@ _COUNT = PhysicalColumn(Column(name="count"), INT32, None, nullable=True)
 
 def _index(name: str, column: PhysicalColumn = _CODE) -> IndexDefinition:
     return IndexDefinition(
+        mapping_owner=_ENTITY,
         table=_TABLE,
         index=IndexIdentity(_ENTITY, name),
         components=(AttributeIdentity(_ENTITY, column.column.name),),

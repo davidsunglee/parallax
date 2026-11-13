@@ -29,13 +29,16 @@ from parallax.core.internal.dialect import (
     POSTGRES,
     Dialect,
 )
-from parallax.core.internal.metamodel import Column, Table
+from parallax.core.internal.metamodel import Column, EntityIdentity, Table
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.storage_layout import ColumnSlot
 from parallax.descriptor._ingest import ingest_document
+from parallax.descriptor._records import Attribute, Entity
+from parallax.descriptor._records import Metamodel as DescribedMetamodel
 from parallax.evolution.internal.model_evolution import (
     ABSENT,
     CoordinatedEvolution,
+    EntityAdded,
     UnilateralEvolution,
     evolve_metamodels,
 )
@@ -251,6 +254,40 @@ def test_a_surviving_temporal_table_gains_no_check() -> None:
     unchanged = evolve_metamodels(later, later)
     assert isinstance(unchanged, UnilateralEvolution)
     assert schema_delta(unchanged, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+
+
+def _owning_shared(name: str) -> AcceptedMetamodel:
+    """``name`` alone, owning a Table declared ``shared``."""
+    return formed(
+        DescribedMetamodel(
+            entities=(
+                Entity(
+                    name=name,
+                    namespace="parallax.test",
+                    table="shared",
+                    attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+                ),
+            )
+        )
+    )
+
+
+def test_an_earlier_table_of_another_mapping_owner_is_never_carried_forward() -> None:
+    # Hand-built: removing an Entity is coordinated, so no accepted evolution
+    # reaches this pair. A later Table is matched to its earlier self by mapping
+    # owner, so an equal declared name held by another owner is not its survivor.
+    later_owner = EntityIdentity("parallax.test", "Zither")
+    evolution = UnilateralEvolution(
+        earlier=_owning_shared("Anvil"),
+        later=_owning_shared(later_owner.name),
+        operations=(EntityAdded(later_owner),),
+        behavioral_impacts=(),
+        overlap_visible_operations=(),
+    )
+    (created,) = plan(evolution, POSTGRES).operations
+    assert isinstance(created, CreateTable)
+    assert created.table == Table("shared")
+    assert created.caused_by == (EntityAdded(later_owner),)
 
 
 def test_creating_a_table_delegates_its_check_spelling_to_the_dialect() -> None:

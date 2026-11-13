@@ -39,10 +39,13 @@ from reference_harness.storage_layout import (
     InheritanceDiscriminator,
     MemberAddress,
     RelationalDocument,
+    StorageLayout,
+    TableLayout,
     ValueObjectContributor,
     _interned,
     _interned_ordinal_selection,
     compile_storage_layout,
+    observed_table,
     validate_storage_layout,
 )
 from reference_harness.temporality import derive_temporal_structure
@@ -63,6 +66,13 @@ class _RecordingProvider:
 
     def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
         self.loads.append((table, list(columns), [list(row) for row in rows]))
+
+
+def _table(layout: StorageLayout, table: str) -> TableLayout | None:
+    """The layout declaring ``table``, which its mapping owner also reaches."""
+    found = observed_table(layout, table)
+    assert found is None or layout.table(found.mapping_owner) is found
+    return found
 
 
 def _storage_layout_model() -> Model:
@@ -388,7 +398,7 @@ def _mapping_owner(category: str, prefix: str, table: str) -> tuple[list[dict[st
 def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() -> None:
     definition = _standalone_definition()
     facet = compile_storage_layout([definition])
-    layout = facet.table("record")
+    layout = _table(facet, "record")
     assert layout is not None
     assert [slot.column for slot in layout.columns] == [
         "id",
@@ -420,7 +430,7 @@ def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() ->
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
 def test_physical_key_temporal_ends_follow_dimension_rank(mapping: str) -> None:
     definitions, table, root = _ranked_temporal_definitions(mapping)
-    layout = compile_storage_layout(definitions).table(table)
+    layout = _table(compile_storage_layout(definitions), table)
     assert layout is not None
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor(root, "id"),
@@ -436,7 +446,7 @@ def test_temporal_axes_and_authored_indices_resolve_onto_the_tables_own_slots(
     definitions, table, root = _ranked_temporal_definitions(mapping)
     definitions[0]["attributes"].insert(1, _attribute("code"))
     definitions[0]["indices"] = [{"name": "ranked_code", "attributes": ["code"], "unique": True}]
-    layout = compile_storage_layout(definitions).table(table)
+    layout = _table(compile_storage_layout(definitions), table)
     assert layout is not None
     assert [
         (axis.dimension, axis.start.column, axis.end.column) for axis in layout.temporal_axes
@@ -465,7 +475,7 @@ def test_temporal_axes_and_authored_indices_resolve_onto_the_tables_own_slots(
 
 def test_a_non_temporal_table_has_no_axes_and_indices_over_their_components_alone() -> None:
     model = load_model(_COMPATIBILITY_ROOT, "models/error-cases.yaml")
-    layout = model.storage_layout.table("tag")
+    layout = _table(model.storage_layout, "tag")
     assert layout is not None
     assert layout.temporal_axes == ()
     assert layout.axis_ends == ()
@@ -482,7 +492,7 @@ def test_a_tph_descendant_index_ends_with_the_roots_ends_on_the_shared_table() -
     definitions[2]["indices"] = [
         {"name": "beta_value_uq", "attributes": ["betaValue"], "unique": True}
     ]
-    layout = compile_storage_layout(definitions).table("record")
+    layout = _table(compile_storage_layout(definitions), "record")
     assert layout is not None
     assert [
         (index.declaration.owner, [slot.column for slot in index.columns])
@@ -506,7 +516,7 @@ def test_tpcs_temporal_indices_reach_only_tables_carrying_their_components() -> 
         {"name": "invoice_detail_uq", "attributes": ["invoiceDetail"], "unique": True}
     ]
     facet = compile_storage_layout(definitions)
-    invoice, memo = facet.table("invoice"), facet.table("memo")
+    invoice, memo = _table(facet, "invoice"), _table(facet, "memo")
     assert invoice is not None and memo is not None
     # Memo carries the root's ends but not Invoice's component.
     assert [index.declaration.name for index in invoice.secondary_indices] == [
@@ -551,7 +561,7 @@ def test_audit_classifier_covers_all_six_tiers_and_deduplicates_temporal_alias()
     audit = AttributeContributor("example.Record", "revisedBy")
     tx_start = AttributeContributor("example.Record", "txStart")
     facet = compile_storage_layout([definition], audit_designations=frozenset({audit, tx_start}))
-    layout = facet.table("record")
+    layout = _table(facet, "record")
     assert layout is not None
     assert [slot.tier for slot in layout.columns] == [
         ColumnTier.IDENTITY,
@@ -592,7 +602,7 @@ def test_tph_layout_accumulates_applicability_and_effective_nullability() -> Non
 
 def _customer_layout() -> Any:
     model = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml")
-    layout = compile_storage_layout(model.entity_defs).table("customer")
+    layout = _table(compile_storage_layout(model.entity_defs), "customer")
     assert layout is not None
     return layout
 
@@ -632,7 +642,7 @@ def test_a_conventional_value_object_leaf_is_placed_inside_its_own_structured_co
 
 def test_a_document_layout_contributes_one_shared_not_null_structured_column_last() -> None:
     definitions = _document_hierarchy()
-    layout = compile_storage_layout(definitions).table("record")
+    layout = _table(compile_storage_layout(definitions), "record")
     assert layout is not None
     assert [slot.column for slot in layout.columns] == ["id", "kind", "doc"]
     structured = layout.columns[-1]
@@ -647,7 +657,7 @@ def test_a_document_layout_contributes_one_shared_not_null_structured_column_las
 
 def test_document_resident_members_are_placed_at_one_segment_under_the_shared_column() -> None:
     definitions = _document_hierarchy()
-    layout = compile_storage_layout(definitions).table("record")
+    layout = _table(compile_storage_layout(definitions), "record")
     assert layout is not None
     structured = layout.columns[-1]
     root = "example.Record"
@@ -717,7 +727,7 @@ def test_every_corpus_document_member_is_the_placement_the_layout_compiled() -> 
         facet = model.storage_layout
         for entity in model.entities:
             document = facet.document(entity.canonical_name)
-            layout = facet.table(entity.table) if entity.table else None
+            layout = _table(facet, entity.table) if entity.table else None
             if not document.column:
                 continue
             assert layout is not None
@@ -744,7 +754,7 @@ def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> No
         ("invoice", "example.Invoice", "invoiceDetail"),
         ("memo", "example.Memo", "memoDetail"),
     ):
-        layout = facet.table(table)
+        layout = _table(facet, table)
         assert layout is not None
         assert [slot.column for slot in layout.columns] == ["id", "doc"]
         structured = layout.contribution(RelationalDocument(root))
@@ -1073,7 +1083,7 @@ def test_a_document_tpcs_family_has_one_structured_column_per_branch() -> None:
     validate_storage_layout(definitions)
     layout = compile_storage_layout(definitions)
     for table in ("invoice", "memo"):
-        branch = layout.table(table)
+        branch = _table(layout, table)
         assert branch is not None
         assert [slot.column for slot in branch.columns][-1] == "doc"
 
@@ -1241,7 +1251,7 @@ def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it()
     # concrete Table carries the Column the join needs.
     definitions = _document_family_joined_through_an_inherited_endpoint()
     validate_storage_layout(definitions)
-    layout = compile_storage_layout(definitions).table("entry")
+    layout = _table(compile_storage_layout(definitions), "entry")
     assert layout is not None
     assert [slot.column for slot in layout.columns] == ["id", "owner_key", "doc"]
     owner = MemberAddress("example.Ledger", ("ownerId",))
@@ -1254,17 +1264,48 @@ def test_tph_participants_are_one_owner_and_tpcs_sibling_columns_may_repeat() ->
     validate_storage_layout(_tpcs_definitions())
 
 
+def test_table_layouts_are_keyed_by_their_mapping_owner_alone() -> None:
+    tph = compile_storage_layout(_tph_definitions())
+    (shared,) = tph.tables
+    assert shared.mapping_owner == "example.Record"
+    assert tph.table("example.Record") is shared
+    assert tph.table("example.AlphaRecord") is None
+    assert tph.table("record") is None
+    tpcs = compile_storage_layout(_tpcs_definitions())
+    assert [layout.mapping_owner for layout in tpcs.tables] == ["example.Invoice", "example.Memo"]
+    assert tpcs.table("example.Document") is None
+    for concrete in ("example.Invoice", "example.Memo"):
+        layout = tpcs.table(concrete)
+        view = tpcs.entity(concrete)
+        assert layout is not None and view is not None
+        assert view.layout is layout
+
+
+def test_position_branches_carry_each_mapping_owners_own_layout() -> None:
+    tpcs = compile_storage_layout(_tpcs_definitions())
+    position = tpcs.position(("example.Invoice", "example.Memo"))
+    assert position is not None
+    assert [
+        (branch.layout.mapping_owner, branch.concrete_entities) for branch in position.branches
+    ] == [("example.Invoice", ("example.Invoice",)), ("example.Memo", ("example.Memo",))]
+    tph = compile_storage_layout(_tph_definitions())
+    shared = tph.position(("example.AlphaRecord", "example.BetaRecord"))
+    assert shared is not None
+    (branch,) = shared.branches
+    assert branch.layout.mapping_owner == "example.Record"
+
+
 def test_unknown_noncanonical_empty_and_cross_family_lookups_are_total() -> None:
     definitions = [*_tpcs_definitions(), _standalone_definition()]
     definitions[-1]["table"] = "standalone"
     facet = compile_storage_layout(definitions)
-    assert facet.table("absent") is None
+    assert facet.table("example.Absent") is None
     assert facet.entity("example.Absent") is None
     assert facet.position(()) == facet.position(())
     assert facet.position(("example.Memo", "example.Invoice")) is None
     assert facet.position(("example.Invoice", "example.Invoice")) is None
     assert facet.position(("example.Invoice", "example.Record")) is None
-    layout = facet.table("standalone")
+    layout = _table(facet, "standalone")
     assert layout is not None
     assert layout.column("absent") is None
     assert layout.contribution(AttributeContributor("example.Record", "absent")) is None
@@ -1339,7 +1380,7 @@ def test_entity_columns_are_materialized_on_demand_without_retained_position_gro
 def test_ddl_renders_the_complete_shared_table_in_canonical_slot_order() -> None:
     model = _storage_layout_model()
     statement = _create_table_ddl(model, "layout_payment")
-    layout = model.storage_layout.table("layout_payment")
+    layout = _table(model.storage_layout, "layout_payment")
     assert layout is not None
     emitted = [
         stripped.split(" ")[0]
@@ -1703,6 +1744,7 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "ValueObjectContributor",
         "is_scalar_collection",
         "member_address",
+        "observed_table",
         "position_projection",
         "position_view",
         "validate_storage_layout",

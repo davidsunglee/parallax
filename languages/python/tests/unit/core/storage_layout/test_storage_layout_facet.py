@@ -86,8 +86,8 @@ def _shape(name: str = "text") -> ValueObjectShapeDeclaration:
 def _require_layout(
     facet: storage_layout.StorageLayoutFacet, table: str
 ) -> storage_layout.TableLayout:
-    layout = facet.table(Table(table))
-    assert layout is not None
+    (layout,) = (layout for layout in facet.tables if layout.table == Table(table))
+    assert facet.table(layout.mapping_owner) is layout
     return layout
 
 
@@ -1362,6 +1362,46 @@ def test_tpcs_compiles_one_ancestry_derived_layout_per_concrete_table() -> None:
     assert _require_entity(facet, invoice).discriminator is None
 
 
+def test_table_layouts_are_keyed_by_their_mapping_owner_alone() -> None:
+    tph, record, alpha, beta = _tiered_tph_model()
+    tph_facet = storage_layout.storage_layout_facet_of(tph)
+    (shared,) = tph_facet.tables
+    assert shared.mapping_owner == record
+    assert tph_facet.table(record) is shared
+    assert tph_facet.table(alpha) is None
+    assert tph_facet.table(beta) is None
+    assert _require_entity(tph_facet, alpha).layout is shared
+
+    tpcs, document, invoice, memo = _tpcs_model()
+    tpcs_facet = storage_layout.storage_layout_facet_of(tpcs)
+    assert [layout.mapping_owner for layout in tpcs_facet.tables] == [invoice, memo]
+    assert tpcs_facet.table(document) is None
+    for concrete in (invoice, memo):
+        layout = tpcs_facet.table(concrete)
+        assert layout is not None
+        assert layout.mapping_owner == concrete
+        assert _require_entity(tpcs_facet, concrete).layout is layout
+
+
+def test_position_branches_carry_each_mapping_owners_own_layout() -> None:
+    model, _, invoice, memo = _tpcs_model()
+    facet = storage_layout.storage_layout_facet_of(model)
+    position = facet.position((invoice, memo))
+    assert position is not None
+    assert [
+        (branch.layout.mapping_owner, branch.concrete_entities) for branch in position.branches
+    ] == [(invoice, (invoice,)), (memo, (memo,))]
+    assert all(
+        branch.layout is facet.table(branch.layout.mapping_owner) for branch in position.branches
+    )
+
+    tph, record, alpha, beta = _tiered_tph_model()
+    tph_position = storage_layout.storage_layout_facet_of(tph).position((alpha, beta))
+    assert tph_position is not None
+    (branch,) = tph_position.branches
+    assert (branch.layout.mapping_owner, branch.concrete_entities) == (record, (alpha, beta))
+
+
 def test_tpcs_position_has_one_logical_order_and_slot_or_absence_branch_maps() -> None:
     model, root, invoice, memo = _tpcs_model()
     position = storage_layout.storage_layout_facet_of(model).position((invoice, memo))
@@ -1441,7 +1481,7 @@ def test_unknown_table_column_contributor_and_entity_lookups_return_absence() ->
     model, root, _, _ = _tiered_tph_model()
     facet = storage_layout.storage_layout_facet_of(model)
     layout = _require_layout(facet, "record")
-    assert facet.table(Table("absent")) is None
+    assert facet.table(EntityIdentity(None, "Absent")) is None
     assert facet.entity(EntityIdentity(None, "Absent")) is None
     assert layout.column(Column("absent")) is None
     assert layout.contribution(AttributeIdentity(root, "absent")) is None
