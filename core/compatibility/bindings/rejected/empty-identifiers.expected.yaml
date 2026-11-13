@@ -1,0 +1,6 @@
+reader: postgres
+issues:
+  - { code: binding-identifier-invalid, path: [default, schema] }
+  - { code: binding-identifier-invalid, path: [entities, commerce.Customer, table] }
+  - { code: binding-sequence-key-invalid, path: [sequences, ""] }
+  - { code: binding-identifier-invalid, path: [sequences, documentNumbers, schema] }

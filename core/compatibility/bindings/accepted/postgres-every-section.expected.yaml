@@ -1,0 +1,17 @@
+# Every section and every partial entry form: a location alone, a name alone,
+# and both. `audit` and `audit.billing` are distinct exact namespaces.
+reader: postgres
+normalized:
+  format_version: 1
+  backend: postgres
+  default: { schema: app }
+  namespaces:
+    audit: { schema: audit }
+    audit.billing: { schema: billing }
+  entities:
+    Ledger: { schema: finance }
+    audit.Archive: { table: audit_archive }
+    commerce.Customer: { schema: legacy_crm, table: customer_master }
+  sequences:
+    documentNumbers: { schema: shared, sequence: document_numbers }
+    invoice_seq: { sequence: invoice_numbers }

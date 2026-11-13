@@ -1,0 +1,5 @@
+# An unreadable format version decides nothing about the sections, so their
+# shape is not judged.
+reader: postgres
+issues:
+  - { code: binding-version-unsupported, path: [format_version] }

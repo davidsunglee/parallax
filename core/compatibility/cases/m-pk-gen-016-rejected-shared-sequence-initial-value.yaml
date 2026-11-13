@@ -1,0 +1,18 @@
+# Equal allocator keys disagreeing only on the initial value. An omitted
+# setting takes its schema default before the declarations are compared.
+model: models/pk-sequence.yaml
+tags: [m-pk-gen, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Badge
+        table: badge
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq } }
+      - name: Ticket
+        table: ticket
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq, initialValue: 1000 } }
+then:
+  rejectedRule: pk-gen-sequence-conflict

@@ -1,0 +1,9 @@
+# A null is an invalid value, not an omission: omission is leaving the key out.
+reader: postgres
+issues:
+  - { code: binding-value-invalid, path: [default] }
+  - { code: binding-value-invalid, path: [entities, commerce.Customer] }
+  - { code: binding-value-invalid, path: [entities, commerce.Order, schema] }
+  - { code: binding-value-invalid, path: [entities, commerce.Order, table] }
+  - { code: binding-value-invalid, path: [namespaces] }
+  - { code: binding-value-invalid, path: [sequences, documentNumbers, sequence] }

@@ -1,0 +1,5 @@
+reader: postgres
+normalized:
+  format_version: 1
+  backend: postgres
+  default: { schema: tenant_acme }

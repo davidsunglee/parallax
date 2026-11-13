@@ -1,0 +1,9 @@
+# Owner keys are exact canonical Entity identities: a lowercase local name, an
+# uppercase namespace segment, a member path, and an underscore in a namespace
+# are each refused, while the well-formed key beside them is not reported.
+reader: postgres
+issues:
+  - { code: binding-entity-key-invalid, path: [entities, Commerce.Customer] }
+  - { code: binding-entity-key-invalid, path: [entities, commerce.Order.id] }
+  - { code: binding-entity-key-invalid, path: [entities, commerce.customer] }
+  - { code: binding-entity-key-invalid, path: [entities, commerce_sales.Order] }

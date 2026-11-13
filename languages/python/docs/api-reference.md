@@ -46,6 +46,7 @@ Declare models, configure and observe execution, and handle errors.
 - `AllPredicate`: A predicate that matches every row of an Entity, written `Entity.all`.
 - `ApplicationAssigned`: Key generation where the application supplies each primary-key value.
 - `Attr`: The annotation that declares a scalar or Value Object member on an Entity class.
+- `BindingIssue`: One binding problem, located by its path into the binding document.
 - `Bitemporal`: Base class for an Entity with both Valid Time and Transaction Time history.
 - `Boolean`: Column type for true or false values.
 - `Bytes`: Column type for binary data.
@@ -106,6 +107,7 @@ Declare models, configure and observe execution, and handle errors.
 
 ### Errors
 
+- `BindingError`: A database binding was refused; `issues` lists every problem.
 - `ConflictError`: The work collided with stored state another writer changed.
 - `ConnectionAcquisitionError`: No database connection could be acquired; `reason` says why.
 - `CredentialResolutionError`: A source could not produce a credential, so no connection was authenticated.
@@ -382,8 +384,12 @@ Connect Parallax to PostgreSQL.
 - `OnDemandOptions`: Keep no connection between operations.
 - `PoolOptions`: Keep connections between operations, within a bounded capacity.
 - `PostgresAdapter`: How to reach a Postgres deployment, and the budgets its runtime spends.
+- `PostgresBinding`: Where one deployment places a model's tables and sequences in PostgreSQL.
 - `PostgresEndpoint`: Where one route connects, how it logs in, and how it keeps connections.
+- `PostgresLocation`: A PostgreSQL schema within the database the adapter's endpoint selects.
 - `PostgresRole`: A non-empty PostgreSQL role name bound to principal execution.
+- `PostgresSequence`: Overrides one logical allocator's schema, sequence name, or both.
+- `PostgresTable`: Overrides one mapping owner's schema, table name, or both.
 
 ## `parallax.snapshot`
 

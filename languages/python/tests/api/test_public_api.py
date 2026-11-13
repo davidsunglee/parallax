@@ -419,6 +419,7 @@ _ERROR_SURFACE: Final[dict[str, frozenset[str]]] = {
             "UnsupportedError",
             "EditError",
             "MetamodelValidationError",
+            "BindingError",
             "UnloadedRelationshipError",
             "NoResultFound",
             "TooManyResultsFound",
@@ -503,7 +504,7 @@ def _shipped_exceptions() -> list[type[BaseException]]:
 
 def test_every_application_error_is_rooted_in_parallax_error() -> None:
     assert all(issubclass(kind, ParallaxError) for kind in _error_surface())
-    assert len(_error_surface()) == 21
+    assert len(_error_surface()) == 22
     root = import_module("parallax.core")
     assert {
         name

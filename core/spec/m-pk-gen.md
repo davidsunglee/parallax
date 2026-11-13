@@ -33,5 +33,28 @@ counter, so a non-integral generated key has no meaning.
 Invalid generator/type combinations are unconstructible in normalized Attribute Metadata before the Unresolved Metamodel seam. Public descriptors reject them through the schema's attribute `type` conditional; native language declarations translate construction failure at their declaration boundary.
 Sequence defaults are resolved there as well (`batchSize`, `initialValue`,
 and `incrementSize` default to `1`, fixed by the schema).
-`m-pk-gen` therefore contributes no Model Formation Rule Set, Issue Code, or
-facet.
+
+## Logical allocators
+
+A `sequence` declaration's `name` is a **logical allocator key**: an exact,
+case-sensitive, model-wide key, independent of Entity Namespaces and of the
+Table that stores the declaring Entity. It names an allocator, not a physical
+database object; where an allocator physically lives is a deployment fact the
+model does not carry. Declarations with equal keys deliberately share one
+allocator, so they MUST agree on everything that allocator hands out: the
+batch size, the initial value, the increment size, and the key's declared
+neutral type, which together fix the key range. A disagreeing declaration is
+reported as `pk-gen-sequence-conflict` at its own Attribute, related to the
+first declaration of the key in canonical Entity order and then declaration
+order; every disagreeing declaration is reported.
+
+A family's primary key and its generation are declared once, by the ancestor
+that introduces the key (`m-inheritance`), and every position of the family
+inherits that one declaration. It therefore counts once toward this rule
+however many positions inherit it, including under a table-per-concrete-subtype
+root that owns no table, and the family resolves one allocator even when its
+concrete tables are stored apart.
+
+`m-pk-gen` contributes this Model Formation Rule Set and no facet. The rule
+reads only declared metadata; it neither creates nor consults a database
+object.

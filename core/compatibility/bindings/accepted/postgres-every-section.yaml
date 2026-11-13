@@ -1,0 +1,13 @@
+format_version: 1
+backend: postgres
+default: { schema: app }
+namespaces:
+  audit: { schema: audit }
+  audit.billing: { schema: billing }
+entities:
+  commerce.Customer: { schema: legacy_crm, table: customer_master }
+  audit.Archive: { table: audit_archive }
+  Ledger: { schema: finance }
+sequences:
+  documentNumbers: { schema: shared, sequence: document_numbers }
+  invoice_seq: { sequence: invoice_numbers }

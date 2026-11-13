@@ -1,0 +1,4 @@
+reader: postgres
+issues:
+  - { code: binding-field-missing, path: [backend] }
+  - { code: binding-field-missing, path: [format_version] }

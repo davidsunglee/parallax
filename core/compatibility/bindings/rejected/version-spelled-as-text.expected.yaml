@@ -1,0 +1,3 @@
+reader: postgres
+issues:
+  - { code: binding-version-unsupported, path: [format_version] }

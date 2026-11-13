@@ -1,0 +1,1 @@
+{"backend": "postgres", "format_version": 1, "default": {"schema": "tenant_acme"}}

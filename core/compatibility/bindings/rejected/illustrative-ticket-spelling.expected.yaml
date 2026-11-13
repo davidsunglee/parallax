@@ -1,0 +1,8 @@
+# The section and field names a draft spelled are not binding vocabulary:
+# `default` holds one location, `entities` holds owner overrides, and a
+# sequence entry overrides its `sequence` name.
+reader: postgres
+issues:
+  - { code: binding-field-unknown, path: [defaults] }
+  - { code: binding-field-unknown, path: [mappings] }
+  - { code: binding-field-unknown, path: [sequences, documentNumbers, name] }

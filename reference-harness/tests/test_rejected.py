@@ -74,6 +74,7 @@ from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
 from reference_harness.object_query_validate import validate_object_query
+from reference_harness.pk_gen import MODEL_REJECTED_RULES as PK_GEN_MODEL_REJECTED_RULES
 from reference_harness.predicate_validate import validate_query_predicate
 from reference_harness.relationship import (
     MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES,
@@ -169,6 +170,7 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
     used = {c.rejected_rule for c in model_cases}
     allowed = (
         METAMODEL_MODEL_REJECTED_RULES
+        | PK_GEN_MODEL_REJECTED_RULES
         | MODEL_REJECTED_RULES
         | STORAGE_LAYOUT_MODEL_REJECTED_RULES
         | RELATIONSHIP_MODEL_REJECTED_RULES
@@ -183,6 +185,7 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
         STORAGE_LAYOUT_COLUMN_COLLISION,
     } <= used
     assert METAMODEL_MODEL_REJECTED_RULES <= used
+    assert PK_GEN_MODEL_REJECTED_RULES <= used
     assert RELATIONSHIP_MODEL_REJECTED_RULES <= used
 
 

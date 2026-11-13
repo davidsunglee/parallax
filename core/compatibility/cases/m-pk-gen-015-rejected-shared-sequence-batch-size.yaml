@@ -1,0 +1,19 @@
+# Two standalone Entities deliberately share one logical allocator but declare
+# different batch sizes, so no single allocator can reserve blocks for both.
+# Formation rejects the later canonical declaration, related to the first.
+model: models/pk-sequence.yaml
+tags: [m-pk-gen, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Badge
+        table: badge
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq } }
+      - name: Ticket
+        table: ticket
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq, batchSize: 10 } }
+then:
+  rejectedRule: pk-gen-sequence-conflict

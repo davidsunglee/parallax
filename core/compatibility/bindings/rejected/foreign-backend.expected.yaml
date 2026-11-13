@@ -1,0 +1,4 @@
+# A PostgreSQL reader does not judge another backend's location shape.
+reader: postgres
+issues:
+  - { code: binding-backend-mismatch, path: [backend] }

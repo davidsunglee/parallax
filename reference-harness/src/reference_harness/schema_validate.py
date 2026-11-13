@@ -62,6 +62,7 @@ from .keyed_write_validate import (
     validate_keyed_write_shape,
 )
 from .metamodel import validate_foundations
+from .pk_gen import validate_shared_allocators
 from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
 from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
@@ -1105,6 +1106,7 @@ def _validate_models(
         model_entities[model_path.name] = entity_defs
         try:
             validate_foundations(entity_defs)
+            validate_shared_allocators(entity_defs)
             validate_family_defs(entity_defs)
             validate_storage_layout(entity_defs)
             validate_relationship_types(entity_defs)

@@ -18,6 +18,8 @@ dependencies = [
     # The companion pool the runtime owns: the same project, released
     # separately.
     "psycopg-pool>=3.3.1",
+    # Reads and writes YAML binding documents; imported only by those calls.
+    "pyyaml>=6.0",
 ]
 
 [project.urls]

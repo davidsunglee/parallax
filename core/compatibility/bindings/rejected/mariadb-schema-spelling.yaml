@@ -1,0 +1,5 @@
+format_version: 1
+backend: mariadb
+default: { schema: px }
+entities:
+  commerce.Customer: { schema: crm, table: customer_master }

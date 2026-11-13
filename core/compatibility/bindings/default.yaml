@@ -1,0 +1,11 @@
+# The corpus-wide default binding, one binding document per dialect. A case
+# that is not about placement runs under its dialect's entry. Both dialects use
+# the same qualifier name so qualified table state stays dialect-neutral.
+postgres:
+  format_version: 1
+  backend: postgres
+  default: { schema: px }
+mariadb:
+  format_version: 1
+  backend: mariadb
+  default: { database: px }

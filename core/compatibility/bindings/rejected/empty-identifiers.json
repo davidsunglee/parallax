@@ -1,0 +1,7 @@
+{
+  "format_version": 1,
+  "backend": "postgres",
+  "default": {"schema": ""},
+  "entities": {"commerce.Customer": {"schema": "crm", "table": ""}},
+  "sequences": {"": {"sequence": "numbers"}, "documentNumbers": {"schema": ""}}
+}
