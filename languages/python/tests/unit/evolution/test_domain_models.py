@@ -14,7 +14,7 @@ from typing import Any, assert_type
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import Attr, DomainModel, Entity, attr, index
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import model_of
@@ -25,12 +25,14 @@ from parallax.evolution import (
     Evolution,
     UnilateralEvolution,
     evolve,
+    schema_delta,
 )
 from parallax.evolution.internal.model_evolution import (
     EntityAdded,
     EntityRemoved,
     evolve_resolved,
 )
+from parallax.postgres import PostgresBinding, PostgresLocation, PostgresTable
 from tests._support.bindings import TEST_BINDING, binding_for, bound_model
 
 
@@ -112,3 +114,28 @@ def test_endpoints_bound_for_different_backends_are_refused_before_comparison() 
     with pytest.raises(UsageError) as refused:
         evolve(_WIDGETS, _WIDGETS, earlier_binding=TEST_BINDING, later_binding=other_backend)
     assert refused.value.code == "evolution-backend-mismatch"
+
+
+class Labelled(Entity, table="labelled", namespace="shop", indices=(index("by_label", "label"),)):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+def _index_names(binding: PostgresBinding) -> tuple[str, ...]:
+    delta = schema_delta(evolve(ABSENT, DomainModel(Labelled), later_binding=binding))
+    return tuple(created.physical_index_name.value for created in delta.created_indices)
+
+
+def test_authored_index_names_follow_the_resolved_local_name_alone() -> None:
+    declared = _index_names(TEST_BINDING)
+    moved = _index_names(PostgresBinding(default=PostgresLocation(schema="elsewhere")))
+    renamed = _index_names(
+        PostgresBinding(
+            default=PostgresLocation(schema="px"),
+            entities={"shop.Labelled": PostgresTable(name="tagged")},
+        )
+    )
+    assert moved == declared
+    assert renamed != declared
+    assert all(name.startswith("pxi_labelled_") for name in declared)
+    assert all(name.startswith("pxi_tagged_") for name in renamed)

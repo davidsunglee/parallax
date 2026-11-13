@@ -323,3 +323,44 @@ def test_an_owner_only_one_side_holds_is_never_a_relocation() -> None:
     assert later.table(EntityIdentity("billing", "Refund")).physical == PhysicalTable(
         ("next",), "refund"
     )
+
+
+_ESCROW_YAML: Final = """
+entity:
+  name: Escrow
+  namespace: vault
+  table: {table}
+  temporality: transaction-time
+  attributes:
+    - {{ name: id, type: int64, primaryKey: true }}
+"""
+_ESCROW: Final = EntityIdentity("vault", "Escrow")
+
+
+def _escrow_names(declared: str, binding: PostgresBinding) -> tuple[str, ...]:
+    model = model_of(domain_model_from_yaml(_ESCROW_YAML.format(table=declared)))
+    constraints = ResolvedBinding(model, binding).table(_ESCROW).temporal_constraints
+    assert constraints is not None
+    return (
+        constraints.primary_key_name,
+        constraints.transaction_check_name,
+        constraints.exclusion_name,
+    )
+
+
+def test_temporal_constraint_names_follow_the_resolved_local_name_alone() -> None:
+    declared = _escrow_names("escrow", PostgresBinding(default=_APP))
+    moved = _escrow_names("escrow", PostgresBinding(default=PostgresLocation(schema="elsewhere")))
+    renamed = _escrow_names(
+        "escrow",
+        PostgresBinding(default=_APP, entities={"vault.Escrow": PostgresTable(name="vault")}),
+    )
+    masked = _escrow_names(
+        "escrow_archive",
+        PostgresBinding(default=_APP, entities={"vault.Escrow": PostgresTable(name="escrow")}),
+    )
+    assert moved == declared
+    assert masked == declared
+    assert renamed != declared
+    assert renamed == _escrow_names("vault", PostgresBinding(default=_APP))
+    assert all("escrow" in name for name in declared)
