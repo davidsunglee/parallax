@@ -24,6 +24,7 @@ from .storage_layout import (
     RelationalDocument,
     TableLayout,
     ValueObjectContributor,
+    observed_table,
 )
 
 
@@ -198,7 +199,11 @@ def _insert_layout(case: Case, tree: Expr) -> TableLayout | None:
     if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
         return None
     table = tree.this.this
-    return case.model.storage_layout.table(table.name) if isinstance(table, exp.Table) else None
+    return (
+        observed_table(case.model.storage_layout, table.name)
+        if isinstance(table, exp.Table)
+        else None
+    )
 
 
 def _insert_columns(tree: exp.Insert) -> tuple[str, ...]:
@@ -284,7 +289,7 @@ def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
     if not isinstance(unnest, exp.Unnest):
         return None
     alias = unnest.args.get("alias")
-    layout = case.model.storage_layout.table(tree.this.name)
+    layout = observed_table(case.model.storage_layout, tree.this.name)
     if not isinstance(alias, exp.TableAlias) or layout is None:
         return None
     arguments = dict(
@@ -783,7 +788,7 @@ def _column_slot(
         )
         return (matches[0] if len(matches) == 1 else None), {}
     table, scopes = source
-    layout = None if table is None else case.model.storage_layout.table(table.name)
+    layout = None if table is None else observed_table(case.model.storage_layout, table.name)
     if table is None or layout is None:
         return None, {}
     return layout.column(column.name), _guarded_values(table, scopes, binds)

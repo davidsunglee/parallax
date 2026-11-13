@@ -17,8 +17,11 @@ _INTERVAL = (("lt", (Column("in_z"), Column("out_z"))),)
 
 
 def _layout(model: Metamodel, table: str) -> TableLayout:
-    layout = storage_layout.storage_layout_facet_of(model).table(Table(table))
-    assert layout is not None
+    (layout,) = (
+        layout
+        for layout in storage_layout.storage_layout_facet_of(model).tables
+        if layout.table == Table(table)
+    )
     return layout
 
 

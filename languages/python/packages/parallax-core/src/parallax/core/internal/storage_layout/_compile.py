@@ -579,6 +579,7 @@ def _layout(
         for declaration in index.family_indices.get(group.root, ())
     )
     return table_layout(
+        group.mapping_owner,
         group.table,
         columns,
         physical_key,
@@ -700,11 +701,9 @@ def compile_facet(
         )
         for group in groups
     )
-    by_table = {layout.table: layout for layout in layouts}
     entity_facts: list[StorageLayoutEntityFacts] = []
     ordinal_selection_intern: dict[int, SlotOrdinalSelection] = {}
-    for group in groups:
-        layout = by_table[group.table]
+    for group, layout in zip(groups, layouts, strict=True):
         discriminator_slot = layout.contribution(InheritanceDiscriminator(group.root))
         for concrete in group.row_owners:
             inherited = _entity_view(index.inheritance, concrete)

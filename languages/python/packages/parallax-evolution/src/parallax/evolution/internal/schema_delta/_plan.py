@@ -7,14 +7,18 @@ from typing import Final
 from parallax.core.internal import storage_layout
 from parallax.core.internal.base import JSON, STRING, NeutralType
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
-from parallax.core.internal.inheritance import InheritanceFacet, inheritance_facet_of
+from parallax.core.internal.inheritance import (
+    InheritanceEntityView,
+    InheritanceFacet,
+    inheritance_facet_of,
+)
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     IndexIdentity,
     Metamodel,
-    Table,
+    TablePerHierarchy,
     inheritance_parent,
 )
 from parallax.core.internal.storage_layout import (
@@ -120,7 +124,7 @@ def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
                 earlier_temporal=() if earlier is None else temporal_backing_indices(earlier.facet),
                 later_temporal=temporal_backing_indices(later.facet),
             ),
-            surviving=frozenset(layout.table for layout in later.facet.tables),
+            surviving=frozenset(layout.mapping_owner for layout in later.facet.tables),
         ),
     )
 
@@ -157,6 +161,7 @@ def temporal_backing_indices(facet: StorageLayoutFacet) -> tuple[TemporalBacking
         exclusion = _exclusion(constraints)
         held.append(
             TemporalBackingIndex(
+                mapping_owner=layout.mapping_owner,
                 table=layout.table,
                 kind="primaryKey",
                 columns=tuple(slot.column for slot in constraints.primary_key.columns),
@@ -165,6 +170,7 @@ def temporal_backing_indices(facet: StorageLayoutFacet) -> tuple[TemporalBacking
         )
         held.append(
             TemporalBackingIndex(
+                mapping_owner=layout.mapping_owner,
                 table=layout.table,
                 kind="exclusion",
                 columns=(
@@ -203,9 +209,9 @@ def _lower(
     the algebra has no case for it.
     """
     defined = tuple(_index_definitions(later.model, layout))
-    before = None if earlier is None else earlier.table(layout.table)
+    before = None if earlier is None else earlier.facet.table(layout.mapping_owner)
     if before is None or earlier is None:
-        yield from _create(layout, later, defined, causes.table(layout.table), dialect)
+        yield from _create(layout, later, defined, causes.table(layout.mapping_owner), dialect)
         return
     yield from _columns(layout, before, later, earlier, causes)
     yield from _indices(tuple(_index_definitions(earlier.model, before)), defined, causes, dialect)
@@ -227,17 +233,14 @@ class _Endpoint:
             family=inheritance_facet_of(model),
         )
 
-    def table(self, table: Table) -> TableLayout | None:
-        return self.facet.table(table)
-
-    def rows(self) -> Mapping[EntityIdentity, Table]:
-        """The Table each row-owning Entity's own rows sit in.
+    def rows(self) -> Mapping[EntityIdentity, EntityIdentity]:
+        """The mapping owner of the Table each row-owning Entity's own rows sit in.
 
         A rowless abstract position has no entry: it owns no row, so the Columns
         it declares are answered for by the concrete subtypes that do.
         """
         return {
-            entity.identity: view.layout.table
+            entity.identity: view.layout.mapping_owner
             for entity in self.model.entities
             if (view := self.facet.entity(entity.identity)) is not None
         }
@@ -269,8 +272,8 @@ class _Endpoint:
             if (parent := inheritance_parent(entity.inheritance)) is not None
         }
 
-    def materialized(self) -> Mapping[EntityIdentity, frozenset[Table]]:
-        """The Tables whose Columns hold each Entity's declarations.
+    def materialized(self) -> Mapping[EntityIdentity, frozenset[EntityIdentity]]:
+        """The Tables whose Columns hold each Entity's declarations, by mapping owner.
 
         An Entity's declarations materialize where its own position is stored and
         wherever a concrete descendant repeats them, which is one Table for a
@@ -285,20 +288,32 @@ class _Endpoint:
         }
         return {
             identity: frozenset(
-                container
+                owner
                 for position in (view, *(views[concrete] for concrete in view.concrete_subtypes))
-                if (container := position.container) is not None
+                if (owner := _mapping_owner(position)) is not None
             )
             for identity, view in views.items()
         }
 
-    def holds(self) -> Mapping[Table, frozenset[EntityIdentity]]:
-        """The ancestry each Table materializes, as Entities whose declarations it holds."""
-        held: dict[Table, set[EntityIdentity]] = {}
-        for identity, tables in self.materialized().items():
-            for table in tables:
-                held.setdefault(table, set()).add(identity)
-        return {table: frozenset(identities) for table, identities in held.items()}
+    def holds(self) -> Mapping[EntityIdentity, frozenset[EntityIdentity]]:
+        """The ancestry each Table materializes, keyed by its mapping owner, as
+        Entities whose declarations it holds."""
+        held: dict[EntityIdentity, set[EntityIdentity]] = {}
+        for identity, owners in self.materialized().items():
+            for owner in owners:
+                held.setdefault(owner, set()).add(identity)
+        return {owner: frozenset(identities) for owner, identities in held.items()}
+
+
+def _mapping_owner(position: InheritanceEntityView) -> EntityIdentity | None:
+    """The owner of the Table ``position`` is stored in, or absence where it has none.
+
+    A table-per-hierarchy position is stored in its root's shared Table; any
+    other position holding a Table owns it.
+    """
+    if position.container is None:
+        return None
+    return position.root if isinstance(position.strategy, TablePerHierarchy) else position.entity
 
 
 def _create(
@@ -384,7 +399,7 @@ def _columns(
             yield AddColumn(
                 table=layout.table,
                 column=target,
-                caused_by=causes.column(layout.table, slot),
+                caused_by=causes.column(layout.mapping_owner, slot),
             )
             continue
         source = _physical_column(earlier.model, held)
@@ -399,7 +414,7 @@ def _columns(
             earlier=source,
             later=target,
             caused_by=causes.domain(
-                layout.table, slot, moved_nullability=source.nullable != target.nullable
+                layout.mapping_owner, slot, moved_nullability=source.nullable != target.nullable
             ),
         )
 
@@ -479,17 +494,20 @@ class _Causes:
     was because the declared domain moved, or because the set of shapes the Table
     stores changed — a Column required of every shape a Table stored is nullable
     once it stores one more.
+
+    Every Table here is named by its mapping owner, never by its declared name,
+    so independent mappings are never one Table.
     """
 
     operations: tuple[EvolutionOperation, ...]
-    later_rows: Mapping[EntityIdentity, Table]
-    earlier_rows: Mapping[EntityIdentity, Table]
+    later_rows: Mapping[EntityIdentity, EntityIdentity]
+    earlier_rows: Mapping[EntityIdentity, EntityIdentity]
     later_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
-    later_materialized: Mapping[EntityIdentity, frozenset[Table]]
-    earlier_held: Mapping[Table, frozenset[EntityIdentity]]
+    later_materialized: Mapping[EntityIdentity, frozenset[EntityIdentity]]
+    earlier_held: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     earlier_parents: Mapping[EntityIdentity, EntityIdentity]
     later_parents: Mapping[EntityIdentity, EntityIdentity]
-    declared_in: Mapping[Table, frozenset[EntityIdentity]]
+    declared_in: Mapping[EntityIdentity, frozenset[EntityIdentity]]
 
     @staticmethod
     def over(
@@ -505,12 +523,12 @@ class _Causes:
             earlier_parents={} if earlier is None else earlier.parents(),
             later_parents=later.parents(),
             declared_in={
-                layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
+                layout.mapping_owner: frozenset(slot.declaring_owner for slot in layout.columns)
                 for layout in later.facet.tables
             },
         )
 
-    def table(self, table: Table) -> tuple[EvolutionOperation, ...]:
+    def table(self, table: EntityIdentity) -> tuple[EvolutionOperation, ...]:
         """Why ``table`` exists now and did not before.
 
         An Entity brings a Table when it owns rows there or declares one of its
@@ -530,7 +548,7 @@ class _Causes:
             )
         )
 
-    def _adds_to(self, operation: EvolutionOperation, table: Table) -> bool:
+    def _adds_to(self, operation: EvolutionOperation, table: EntityIdentity) -> bool:
         """Whether ``operation`` adds an Entity owning rows in ``table`` or declaring a Column."""
         return isinstance(operation, (EntityAdded, ConcreteSubtypeAdded)) and (
             self.later_rows.get(operation.entity) == table
@@ -579,7 +597,7 @@ class _Causes:
             position = self.later_parents.get(position)
         return frozenset(standing)
 
-    def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
+    def column(self, table: EntityIdentity, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
         """Why ``slot``'s Column is in ``table`` now and was not before.
 
         Both halves are named together when both were needed: a member added on
@@ -595,7 +613,7 @@ class _Causes:
         )
 
     def domain(
-        self, table: Table, slot: ColumnSlot, *, moved_nullability: bool
+        self, table: EntityIdentity, slot: ColumnSlot, *, moved_nullability: bool
     ) -> tuple[EvolutionOperation, ...]:
         """Why ``slot``'s stored domain is not the one it was.
 
@@ -627,11 +645,13 @@ class _Causes:
                 isinstance(operation, (EntityAdded, ConcreteSubtypeAdded))
                 and operation.entity == definition.index.entity
             )
-            or self._carries_declarations(operation, definition.table, definition.index.entity)
+            or self._carries_declarations(
+                operation, definition.mapping_owner, definition.index.entity
+            )
         )
 
     def _carries_declarations(
-        self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
+        self, operation: EvolutionOperation, table: EntityIdentity, owner: EntityIdentity
     ) -> bool:
         """Whether ``operation`` is why ``table`` materializes ``owner``.
 
@@ -657,7 +677,7 @@ class _Causes:
             and owner not in self.earlier_held.get(table, frozenset())
         )
 
-    def _changes_stored_shapes(self, operation: EvolutionOperation, table: Table) -> bool:
+    def _changes_stored_shapes(self, operation: EvolutionOperation, table: EntityIdentity) -> bool:
         """Whether ``operation`` moves a row-owning shape into or out of ``table``."""
         return isinstance(operation, (EntityAdded, ConcreteSubtypeAdded, EntityAltered)) and (
             (self.later_rows.get(operation.entity) == table)
@@ -758,6 +778,7 @@ def _index_definitions(model: Metamodel, layout: TableLayout) -> Iterator[IndexD
         if physical == layout.primary_key_index:
             continue
         yield IndexDefinition(
+            mapping_owner=layout.mapping_owner,
             table=layout.table,
             index=physical.declaration.identity,
             components=physical.declaration.attributes,

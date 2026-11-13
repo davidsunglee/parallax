@@ -14,6 +14,7 @@ from reference_harness.storage_layout import (
     MemberAddress,
     TableLayout,
     ValueObjectContributor,
+    observed_table,
 )
 
 # reference-harness/tests/ -> reference-harness/ -> repo root
@@ -116,7 +117,7 @@ def _entity_projection(entity: Entity, layout: TableLayout | None) -> EntityProj
 
 def _entity_layout(model: Model, entity: Entity) -> TableLayout | None:
     """The Table Layout carrying ``entity``'s rows, or absent for a tableless node."""
-    return model.storage_layout.table(entity.table) if entity.table else None
+    return observed_table(model.storage_layout, entity.table) if entity.table else None
 
 
 def _corpus_projection(model_paths: list[Path]) -> CorpusProjection:

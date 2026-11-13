@@ -327,7 +327,7 @@ class ActualWireProjection:
             entity
             for entity in self._model.entities
             if (entity_view := facet.entity(entity.identity)) is not None
-            and entity_view.layout.table == layout.table
+            and entity_view.layout.mapping_owner == layout.mapping_owner
         )
 
     def _table_row_entity(self, layout: TableLayout, row: Mapping[str, object]) -> CompiledEntity:

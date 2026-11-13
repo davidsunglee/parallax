@@ -29,7 +29,6 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     MemberIdentity,
     Multiplicity,
-    Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     ValueObjectIdentity,
@@ -677,7 +676,7 @@ class ReadRoot:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalReadRoot:
-    table: Table
+    mapping_owner: EntityIdentity
     concrete: EntityIdentity | None
 
 
@@ -699,7 +698,7 @@ class ReadShapeFacts:
 
 def read_shape_facts(shape: SingleTableReadPlan | TpcsUnionReadPlan) -> ReadShapeFacts:
     return ReadShapeFacts(
-        tuple(PhysicalReadRoot(root.table.table, root.concrete) for root in shape.roots),
+        tuple(PhysicalReadRoot(root.table.mapping_owner, root.concrete) for root in shape.roots),
         shape.variant,
     )
 

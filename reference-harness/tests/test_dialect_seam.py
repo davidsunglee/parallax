@@ -42,6 +42,7 @@ from reference_harness.providers.mariadb import (
 from reference_harness.providers.postgres import _load_authored_json
 from reference_harness.sql_canonical import sqlglot_dialect
 from reference_harness.sql_normalize import is_canonical, normalize
+from reference_harness.storage_layout import observed_table
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -301,7 +302,7 @@ def test_both_dialects_render_the_same_selected_slots_and_nullability() -> None:
     # nullability, and physical key; only the column type spelling and the
     # identifier quote character are its own decisions.
     model = load_model(COMPATIBILITY_ROOT, "models/storage-layout.yaml")
-    layout = model.storage_layout.table("layout_payment")
+    layout = observed_table(model.storage_layout, "layout_payment")
     assert layout is not None
     expected = [(slot.column, not slot.effective_nullable) for slot in layout.columns]
     rendered = {

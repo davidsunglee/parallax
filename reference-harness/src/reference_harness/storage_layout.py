@@ -257,11 +257,13 @@ class PhysicalTemporalAxis:
 class TableLayout:
     """The complete physical shape and immutable indices of one Table.
 
-    ``temporal_axes`` follow canonical dimension order, and
+    ``mapping_owner`` identifies the Table; ``table`` is the name that owner
+    declares. ``temporal_axes`` follow canonical dimension order, and
     ``secondary_indices`` holds every authored Index the Table carries in
     canonical declaring-Entity order and then declaration order.
     """
 
+    mapping_owner: str
     table: str
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
@@ -816,7 +818,9 @@ def _validate_groups(groups: Sequence[_Group], roles_of_group: Mapping[str, _Dir
         if group.table in multiply_owned:
             continue
         claimed: dict[str, ColumnContributor] = {}
-        for column, contributor in _diagnostic_claims(group, roles_of_group.get(group.table)):
+        for column, contributor in _diagnostic_claims(
+            group, roles_of_group.get(group.mapping_owner)
+        ):
             existing = claimed.get(column)
             if existing is not None and existing != contributor:
                 raise RejectionError(
@@ -833,7 +837,7 @@ def _validate_document_members(
 ) -> None:
     """Refuse a Column Override that contradicts the layout it is declared under."""
     for group in groups:
-        roles = roles_of_group.get(group.table)
+        roles = roles_of_group.get(group.mapping_owner)
         if roles is None:
             continue
         members: tuple[tuple[str, str, str], ...] = (
@@ -868,7 +872,7 @@ def _validate_document_indices(
     shared Structured Column, or a scalar collection's own structured Column."""
     resident: dict[tuple[str, str], str] = {}
     for group in groups:
-        roles = roles_of_group.get(group.table)
+        roles = roles_of_group.get(group.mapping_owner)
         if roles is None:
             continue
         for owner, attribute in _declared_attributes(group.declarations):
@@ -894,11 +898,11 @@ def _validate_document_indices(
                 )
 
 
-def _roles_by_table(index: _ModelIndex, groups: Sequence[_Group]) -> dict[str, _DirectRoles]:
-    """The direct-column roles of every Table a ``Document`` layout governs."""
+def _roles_by_owner(index: _ModelIndex, groups: Sequence[_Group]) -> dict[str, _DirectRoles]:
+    """The direct-column roles of every Table a ``Document`` layout governs, by mapping owner."""
     joined = _joined_attributes(index)
     return {
-        group.table: _direct_roles(index, group, joined)
+        group.mapping_owner: _direct_roles(index, group, joined)
         for group in groups
         if group.document_column is not None
     }
@@ -908,7 +912,7 @@ def validate_storage_layout(entity_defs: Sequence[dict[str, Any]]) -> None:
     """Reject mapping ownership, then Columns, then the layout's own consequences."""
     index = _model_index(entity_defs)
     groups = _project_groups(index)
-    roles_of_group = _roles_by_table(index, groups)
+    roles_of_group = _roles_by_owner(index, groups)
     _validate_groups(groups, roles_of_group)
     _validate_document_members(groups, roles_of_group)
     _validate_document_indices(index, groups, roles_of_group)
@@ -1191,6 +1195,7 @@ def _compile_layout(
     )
     axis_ends = tuple(dict.fromkeys(axis.end for axis in axes))
     return TableLayout(
+        group.mapping_owner,
         group.table,
         columns,
         tuple(physical_key),
@@ -1290,9 +1295,29 @@ def _entity_document(
     )
 
 
+def _stored_owners(index: _ModelIndex, groups: Sequence[_Group]) -> dict[str, str]:
+    """The mapping owner of the Table each Entity's position is stored in.
+
+    A table-per-hierarchy family's positions answer its root, and a standalone
+    Entity or table-per-concrete-subtype concrete answers itself; any other
+    position has no entry.
+    """
+    owners: dict[str, str] = {}
+    for group in groups:
+        stored = (
+            tuple(_identity(member) for member in _family_members(index, group.root))
+            if group.tag_column is not None
+            else (group.mapping_owner,)
+        )
+        for identity in stored:
+            owners[identity] = group.mapping_owner
+    return owners
+
+
 def _compile_documents(
     index: _ModelIndex,
-    by_table: Mapping[str, TableLayout],
+    groups: Sequence[_Group],
+    by_owner: Mapping[str, TableLayout],
 ) -> dict[str, EntityDocument]:
     """Every Entity's document, keyed by canonical identity.
 
@@ -1301,6 +1326,7 @@ def _compile_documents(
     shares, while a tableless one answers the empty document.
     """
     definitions = list(index.definitions)
+    owners = _stored_owners(index, groups)
     documents: dict[str, EntityDocument] = {}
     for definition in definitions:
         identity = _identity(definition)
@@ -1309,10 +1335,10 @@ def _compile_documents(
             if inheritance_of(definition) is not None
             else definition
         )
-        layout = by_table.get(effective.get("table", ""))
-        if layout is None:
+        owner = owners.get(identity) if effective.get("table") else None
+        if owner is None:
             continue
-        documents[identity] = _entity_document(index.family, layout, identity, effective)
+        documents[identity] = _entity_document(index.family, by_owner[owner], identity, effective)
     return documents
 
 
@@ -1335,9 +1361,9 @@ class StorageLayout:
     def __deepcopy__(self, memo: dict[int, Any]) -> StorageLayout:
         return self
 
-    def table(self, table: str) -> TableLayout | None:
-        """Return one structural Table's layout, or absent."""
-        return self._tables.get(table)
+    def table(self, mapping_owner: str) -> TableLayout | None:
+        """Return the layout of the Table ``mapping_owner`` owns, or absent."""
+        return self._tables.get(mapping_owner)
 
     def entity(self, entity: str) -> EntityLayoutView | None:
         """Return one concrete row owner's layout selection, or absent."""
@@ -1379,10 +1405,10 @@ class StorageLayout:
         members = tuple(facts.member for facts in member_facts)
         branch_entities: dict[str, list[str]] = {}
         for view in entity_views:
-            branch_entities.setdefault(view.layout.table, []).append(view.entity)
+            branch_entities.setdefault(view.layout.mapping_owner, []).append(view.entity)
         branches: list[PositionBranch] = []
-        for table, entities in branch_entities.items():
-            layout = self._tables[table]
+        for mapping_owner, entities in branch_entities.items():
+            layout = self._tables[mapping_owner]
             branch_set = frozenset(entities)
             branches.append(
                 PositionBranch(
@@ -1512,24 +1538,23 @@ def compile_storage_layout(
     index = _model_index(entity_defs)
     family = index.family
     groups = _project_groups(index)
-    roles_of_group = _roles_by_table(index, groups)
+    roles_of_group = _roles_by_owner(index, groups)
     _validate_groups(groups, roles_of_group)
     applicability_intern: dict[frozenset[str], frozenset[str]] = {}
     layouts = tuple(
         _compile_layout(
             family,
             group,
-            roles_of_group.get(group.table),
+            roles_of_group.get(group.mapping_owner),
             audit_designations,
             applicability_intern,
         )
         for group in groups
     )
-    by_table = {layout.table: layout for layout in layouts}
+    by_owner = {layout.mapping_owner: layout for layout in layouts}
     entity_views: list[EntityLayoutView] = []
     ordinal_selection_intern: dict[int, _OrdinalSelection] = {}
-    for group in groups:
-        layout = by_table[group.table]
+    for group, layout in zip(groups, layouts, strict=True):
         discriminator_slot = layout.contribution(InheritanceDiscriminator(group.root))
         for concrete in group.row_owners:
             discriminator = None
@@ -1556,20 +1581,30 @@ def compile_storage_layout(
     family_facts = _compile_family_facts(
         index,
         {
-            group.root: roles_of_group[group.table]
+            group.root: roles_of_group[group.mapping_owner]
             for group in groups
-            if group.table in roles_of_group
+            if group.mapping_owner in roles_of_group
         },
         audit_designations,
         applicability_intern,
     )
     return StorageLayout(
         tables=layouts,
-        _tables=MappingProxyType({layout.table: layout for layout in layouts}),
+        _tables=MappingProxyType(by_owner),
         _entities=MappingProxyType({view.entity: view for view in entity_views}),
-        _documents=MappingProxyType(_compile_documents(index, by_table)),
+        _documents=MappingProxyType(_compile_documents(index, groups, by_owner)),
         _families=MappingProxyType({facts.root: facts for facts in family_facts}),
     )
+
+
+def observed_table(layout: StorageLayout, table: str) -> TableLayout | None:
+    """The layout of the Table a case observation names by its declared name.
+
+    Corpus observations spell Tables by declared name, which names one Table
+    while independent owners cannot declare equal names. Every other lookup goes
+    through the mapping owner, :meth:`StorageLayout.table`.
+    """
+    return next((candidate for candidate in layout.tables if candidate.table == table), None)
 
 
 def position_view(

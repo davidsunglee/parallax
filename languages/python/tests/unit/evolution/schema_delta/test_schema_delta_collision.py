@@ -56,10 +56,21 @@ _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
 _OTHER = EntityIdentity(namespace="parallax.test", name="Gadget")
 
 
+def _owner(table: str) -> EntityIdentity:
+    """The standalone Entity owning ``table``."""
+    return EntityIdentity(namespace="parallax.test", name=table.title())
+
+
 def _definition(
-    entity: EntityIdentity, index: str, *, unique: bool = False, table: str | None = None
+    entity: EntityIdentity,
+    index: str,
+    *,
+    unique: bool = False,
+    table: str | None = None,
+    owner: EntityIdentity | None = None,
 ) -> IndexDefinition:
     return IndexDefinition(
+        mapping_owner=owner or (entity if table is None else _owner(table)),
         table=Table(name=table or entity.name.lower()),
         index=IndexIdentity(entity, index),
         components=(AttributeIdentity(entity, "code"),),
@@ -87,7 +98,7 @@ def _entry(
 
 def _groups(entries: Sequence[NamedIndex]) -> tuple[CollisionGroup, ...]:
     """``entries`` grouped with every Table they name carried into the later model."""
-    return collision_groups(entries, {entry.definition.table for entry in entries})
+    return collision_groups(entries, {entry.definition.mapping_owner for entry in entries})
 
 
 def test_two_definitions_deriving_one_name_are_reported_as_a_group() -> None:
@@ -210,7 +221,7 @@ def test_a_name_on_a_Table_the_delta_leaves_behind_is_never_freed() -> None:
             _entry(stranded, presence=IndexPresence.EARLIER),
             _entry(taken, presence=IndexPresence.LATER),
         ],
-        {taken.table},
+        {taken.mapping_owner},
     )
     assert len(group.definitions) == 2
 
@@ -366,6 +377,7 @@ def _backing(
     kind: Literal["primaryKey", "exclusion"], table: str = "widget"
 ) -> TemporalBackingIndex:
     return TemporalBackingIndex(
+        mapping_owner=_owner(table),
         table=Table(name=table),
         kind=kind,
         columns=(Column(name="id"), Column(name="out_z")),
@@ -397,10 +409,24 @@ def test_a_temporal_constraint_is_never_dropped_so_it_never_frees_its_name() -> 
             _entry(_backing("primaryKey", "a"), presence=IndexPresence.EARLIER),
             _entry(taken, presence=IndexPresence.LATER),
         ],
-        {Table(name="a"), taken.table},
+        {_owner("a"), taken.mapping_owner},
     )
     assert [entry.presence for entry in group.definitions] == [IndexPresence.LATER]
     assert [entry.presence for entry in group.temporal_constraints] == [IndexPresence.EARLIER]
+
+
+def test_the_census_tells_holding_tables_apart_by_mapping_owner_not_declared_name() -> None:
+    # One root-declared Index on two table-per-concrete-subtype concretes whose
+    # declared names are equal still names two physical objects, so neither
+    # endpoint's definition is mistaken for the other's survivor.
+    first = _definition(_ENTITY, "code_ix", table="shared", owner=_ENTITY)
+    second = dataclasses.replace(first, mapping_owner=_OTHER)
+    entries = census((first,), (second,), POSTGRES)
+    assert [(entry.definition, entry.presence) for entry in entries] == [
+        (first, IndexPresence.EARLIER),
+        (second, IndexPresence.LATER),
+    ]
+    assert entries[0].name == entries[1].name
 
 
 def test_an_unchanged_temporal_constraint_is_one_entry_present_throughout() -> None:
@@ -411,7 +437,7 @@ def test_an_unchanged_temporal_constraint_is_one_entry_present_throughout() -> N
         ("pxc_pk_", IndexPresence.BOTH),
         ("pxc_exc", IndexPresence.BOTH),
     ]
-    assert collision_groups(entries, {Table(name="balance")}) == ()
+    assert collision_groups(entries, {backing.mapping_owner for backing in later}) == ()
 
 
 def test_a_generated_delta_counts_temporal_constraints_in_the_census(
