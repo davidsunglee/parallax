@@ -1,0 +1,51 @@
+# Each endpoint resolves its OWN binding (m-model-evolution, m-database-binding):
+# the case binding places the widget in `px_archive`, the earlier endpoint
+# names a binding of its own that keeps it in `px`, and the later endpoint names
+# none, so it inherits the case binding. The relocation exists only because the
+# earlier endpoint reads its own binding and the later one inherits the case's;
+# reading either endpoint's binding from the other leaves an empty evolution.
+tags: [m-model-evolution, m-database-binding, evolution, entity, slice-snapshot-1]
+shape: evolution
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Widget: { schema: px_archive }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Widget: { database: px_archive }
+when:
+  evolve:
+    earlier: models/evolution-widget-v1.yaml
+    later: models/evolution-widget-v1.yaml
+    earlierBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: TableRelocated
+        entity: parallax.compatibility.Widget
+        earlier: { qualifier: [px], name: evolution_widget }
+        later: { qualifier: [px_archive], name: evolution_widget }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: TableRelocated
+          entity: parallax.compatibility.Widget
+          earlier: { qualifier: [px], name: evolution_widget }
+          later: { qualifier: [px_archive], name: evolution_widget }
+        reasons: [DatabaseMigrationRequired]

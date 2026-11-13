@@ -1,0 +1,84 @@
+# Keyed writes to a Document-layout Entity whose exact namespace default places
+# it in `px_docs`: the insert and the path-patching update both reach the bound
+# table, which keeps every key the update does not assign.
+model: models/document-layout.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    namespaces:
+      parallax.compatibility: { schema: px_docs }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    namespaces:
+      parallax.compatibility: { database: px_docs }
+tags: [m-database-binding, m-storage-layout, m-dialect, m-sql, write-sequence, update, json, document-layout, binding, slice-snapshot-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Traveler
+      statements: 1
+      note: seed one complete row so the update has keys it must NOT touch
+      rows:
+        - id: 6
+          displayName: Frida
+          score: 4
+          joinedOn: '2026-04-01'
+          note: west wing
+          address:
+            city: Alta
+            geo:
+              country: "NO"
+          tags:
+            - { label: scout }
+    - mutation: amend
+      entity: parallax.compatibility.Traveler
+      statements: 1
+      note: assign two scalars — two ordered path patches inside the one Structured Column
+      rows:
+        - id: 6
+          displayName: Dagny
+          score: 21
+then:
+  statements:
+    - sql:
+        postgres: insert into px_docs.traveler(id, payload) values (?, ?)
+        mariadb: insert into px_docs.traveler(id, payload) values (?, ?)
+      binds:
+        - 6
+        - displayName: Frida
+          score: 4
+          joinedOn: '2026-04-01'
+          note: west wing
+          address:
+            city: Alta
+            geo:
+              country: "NO"
+          tags:
+            - { label: scout }
+    - sql:
+        postgres: update px_docs.traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+        mariadb: update px_docs.traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{displayName}', Dagny, '{score}', 21, 6]
+        mariadb: ['$.displayName', Dagny, '$.score', 21, 6]
+  tableState:
+    px_docs:
+      traveler:
+        - id: 6
+          payload:
+            displayName: Dagny
+            score: 21
+            joinedOn: '2026-04-01'
+            note: west wing
+            address:
+              city: Alta
+              geo:
+                country: "NO"
+            tags:
+              - { label: scout }
+  databaseCalls: 3

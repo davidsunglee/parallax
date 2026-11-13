@@ -1,0 +1,21 @@
+# A NUL byte inside a physical table name: no dialect can spell it, so
+# resolution refuses the component before anything is rendered or served.
+model: models/binding-identifiers.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      entities:
+        parallax.compatibility.Entry: { table: "ord\0er" }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      entities:
+        parallax.compatibility.Entry: { table: "ord\0er" }
+then:
+  rejectedRule: binding-identifier-invalid

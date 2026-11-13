@@ -1,0 +1,55 @@
+# A join between two owners that share the local table name `ledger` and their
+# keys: the sales ledger in `px` joins, filters on, and then fetches its audit
+# entry in `px_audit`. Each statement reads the owner's own table, so the predicate
+# sees audit notes and the fetched peers carry audit columns, never sales rows.
+model: models/binding-ledgers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.AuditLedger: { schema: px_audit }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.AuditLedger: { database: px_audit }
+tags: [m-database-binding, m-navigate, m-snapshot-read, m-sql, exists, one-to-one, relationship, graph, binding, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the SalesLedger.audit IN-list binds are the sales ledger ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.SalesLedger
+    predicate:
+      and:
+        operands:
+          - exists:
+              path: parallax.compatibility.SalesLedger.audit
+          - eq:
+              path: parallax.compatibility.SalesLedger.audit.note
+              value: reviewed
+    includes:
+      - segments:
+          - rel: parallax.compatibility.SalesLedger.audit
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.amount from px.ledger t0 left join px_audit.ledger t1 on t1.id = t0.id where not t1.id is null and t1.note = ?
+        mariadb: select t0.id, t0.amount from px.ledger t0 left join px_audit.ledger t1 on t1.id = t0.id where not t1.id is null and t1.note = ?
+      binds: [reviewed]
+    - sql:
+        postgres: select t0.id, t0.note from px_audit.ledger t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.note from px_audit.ledger t0 where t0.id in (?)
+      binds: { postgres: [[2]], mariadb: [2] }
+  referenceSql: select id, amount from px.ledger where id in (select id from px_audit.ledger where note = 'reviewed')
+  graph:
+    SalesLedger:
+      - id: 2
+        amount: "20.00"
+        audit: { id: 2, note: reviewed }
+  databaseCalls: 2

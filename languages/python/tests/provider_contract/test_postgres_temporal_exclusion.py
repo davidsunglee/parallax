@@ -22,11 +22,16 @@ from parallax.conformance import models, provision
 from parallax.conformance.models import default_models_dir
 from parallax.core import Attr, Bitemporal, DomainModel, Int32, TxTemporal, attr
 from parallax.core.internal.base import INFINITY
-from parallax.core.internal.database_binding import ResolvedTemporalConstraints
+from parallax.core.internal.database_binding import (
+    PhysicalTable,
+    ResolvedBinding,
+    ResolvedTemporalConstraints,
+)
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.storage_layout import TemporalHistoryConstraints
+from parallax.postgres import PostgresBinding, PostgresLocation, PostgresTable
 from tests._support.bindings import TEST_BINDING, TEST_SCHEMA, bound_model
 
 _JAN, _FEB, _MAR, _APR, _JUN, _SEP = (
@@ -193,6 +198,31 @@ def test_each_concrete_table_constrains_only_its_own_rows(profile_run: Any) -> N
         [1, 2, _MAR, _JUN, _FEB, INFINITY],
     )
     assert error.constraint_name == _constraints(model, "loan_rate").exclusion_name
+
+
+def test_an_overlap_in_a_bound_schema_names_its_physical_table_by_component(
+    profile_run: Any,
+) -> None:
+    # The schema and the local name each need quoting, and the schema holds a
+    # dot and a quote character, so the driver's structured schema and table
+    # diagnostics are the only faithful account of where the refused row was.
+    model = models.load_model(default_models_dir() / "position.yaml")
+    binding = PostgresBinding(
+        default=PostgresLocation(schema='Px.Hist"q'),
+        entities={"parallax.compatibility.Position": PostgresTable(name="Position.Live")},
+    )
+    resolved = ResolvedBinding(model, binding)
+    (table,) = resolved.tables
+    assert table.temporal_constraints is not None
+    profile_run.reset(model, {}, binding)
+    insert = (
+        f"insert into {table.sql} (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
+        "values (?, ?, ?, ?, ?, ?, ?)"
+    )
+    profile_run.port.execute_write(insert, [1, "A", 1, _MAR, _SEP, _JAN, INFINITY])
+    error = _refused(profile_run, insert, [1, "A", 2, _JUN, INFINITY, _FEB, INFINITY])
+    assert error.constraint_name == table.temporal_constraints.exclusion_name
+    assert error.constraint_table == PhysicalTable(('Px.Hist"q',), "Position.Live")
 
 
 class Int32Keyed(TxTemporal, table="excl_int32", namespace="temporal.exclusion"):

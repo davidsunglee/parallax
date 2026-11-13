@@ -1,0 +1,59 @@
+# Milestone chaining on a Transaction-Time table the binding places in
+# `px_hist`: the opening insert, the close of the current milestone, and the
+# chained successor all address the bound table, which keeps the full history.
+model: models/balance.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Balance: { schema: px_hist }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Balance: { database: px_hist }
+tags: [m-database-binding, m-temporal-write, m-sql, write-sequence, update, audit-only, binding, slice-snapshot-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the write settles against the milestone an earlier entry stored, so its emissions depend on a query result"
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: open the original current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: "100.00" }
+      at: "2024-01-01T00:00:00.000000Z"
+    - mutation: amend
+      entity: parallax.compatibility.Balance
+      statements: 2
+      note: close the current row, then chain a new current milestone with the new value
+      rows:
+        - { id: 1, acctNum: A, value: "150.00" }
+      at: "2024-06-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: insert into px_hist.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into px_hist.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: update px_hist.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+        mariadb: update px_hist.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+      binds: ["2024-06-01T00:00:00.000000Z", 1, infinity, "2024-01-01T00:00:00.000000Z"]
+    - sql:
+        postgres: insert into px_hist.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into px_hist.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, "150.00", "2024-06-01T00:00:00.000000Z", infinity]
+  tableState:
+    px_hist:
+      balance:
+        - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+        - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+  databaseCalls: 4

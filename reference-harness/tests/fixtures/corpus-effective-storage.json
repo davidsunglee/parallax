@@ -96,6 +96,57 @@
       "valueObject": {}
     }
   },
+  "models/binding-fleet.yaml": {
+    "parallax.compatibility.Car": {
+      "attribute": {
+        "doors": "doors"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Depot": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Truck": {
+      "attribute": {
+        "axles": "axles"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vehicle": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/binding-identifiers.yaml": {
+    "parallax.compatibility.Entry": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tick": {
+      "attribute": {
+        "entryId": "entry_id",
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/binding-ledgers.yaml": {
     "parallax.compatibility.AuditLedger": {
       "attribute": {
@@ -109,6 +160,28 @@
       "attribute": {
         "amount": "amount",
         "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/binding-temporal-ledgers.yaml": {
+    "parallax.compatibility.AuditHandle": {
+      "attribute": {
+        "code": "code",
+        "id": "id",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SalesHandle": {
+      "attribute": {
+        "code": "code",
+        "id": "id",
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}

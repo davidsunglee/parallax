@@ -1,0 +1,41 @@
+# A narrowed to-one hop across qualifiers: the parking spot in `px` reaches its
+# vehicle through one correlated scalar subquery per concrete candidate, and the
+# case binding places each candidate's table in a schema of its own. Every
+# branch reads the candidate table its binding resolves.
+model: models/predicate-traversal.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Bike: { schema: px_fleet }
+      parallax.compatibility.Car: { schema: px_crm }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Bike: { database: px_fleet }
+      parallax.compatibility.Car: { database: px_crm }
+tags: [m-database-binding, m-predicate, m-sql, narrow, relationship, to-one, m-inheritance, table-per-concrete-subtype, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Parking
+    predicate:
+      narrow:
+        path: parallax.compatibility.Parking.vehicle
+        to: [parallax.compatibility.Car]
+        operand:
+          'true': {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.vehicle_id from px.traversal_parking t0 where coalesce((select false from px_fleet.traversal_bike t1 where t1.id = t0.vehicle_id union all select true from px_crm.traversal_car t2 where t2.id = t0.vehicle_id), false)
+        mariadb: select t0.id, t0.vehicle_id from px.traversal_parking t0 where coalesce((select false from px_fleet.traversal_bike t1 where t1.id = t0.vehicle_id union all select true from px_crm.traversal_car t2 where t2.id = t0.vehicle_id), false)
+  referenceSql: select id, vehicle_id from px.traversal_parking where vehicle_id in (select id from px_crm.traversal_car)
+  rows:
+    - { id: 30, vehicle_id: 5 }
+    - { id: 33, vehicle_id: 7 }
+  databaseCalls: 1

@@ -1,0 +1,25 @@
+# Two independent Transaction-Time Entities that declare one table name and one
+# temporal key shape. Their derived temporal constraint names hash only the
+# physical local name and the constraint's own columns, so placed in two
+# schemas the two tables carry identical constraint and backing-index names,
+# each legal within its own schema. Their authored indices share an authored
+# name but not an owner, so their Physical Index Names differ.
+entities:
+  - name: SalesHandle
+    namespace: parallax.compatibility
+    table: handle
+    temporality: transaction-time
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: code, type: string, maxLength: 32 }
+    indices:
+      - { name: handle_code, attributes: [code], unique: true }
+  - name: AuditHandle
+    namespace: parallax.compatibility
+    table: handle
+    temporality: transaction-time
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: code, type: string, maxLength: 32 }
+    indices:
+      - { name: handle_code, attributes: [code], unique: true }

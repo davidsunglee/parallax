@@ -10,8 +10,10 @@ from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 from .case import Case, Model, load_model_metadata
+from .database_binding import PhysicalTable
 from .inheritance import Family, resolve_clamped_narrow
 from .references import split_reference
+from .sql_tables import physical_table_of
 from .temporality import temporal_axes
 
 
@@ -53,15 +55,12 @@ class _ModelReads:
             self.hops[key] = self.position(target, narrow)
         return self.hops[key]
 
-    def candidates(self, query: dict[str, Any]) -> dict[str, set[str]]:
+    def candidates(self, query: dict[str, Any]) -> frozenset[str]:
         names = set(self.position(query["target"], query.get("narrowTo")))
         for include in query.get("includes", []):
             for segment in include["segments"]:
                 names.update(self.hop(segment))
-        tables: dict[str, set[str]] = {}
-        for name in sorted(names):
-            tables.setdefault(self.entities[name].table, set()).add(name)
-        return tables
+        return frozenset(names)
 
 
 class LockConsistency:
@@ -79,10 +78,11 @@ class LockConsistency:
         if not step.get("statements"):
             return None
         metadata = self._metadata(raw)
+        case = Case(Path(""), raw, metadata.model)
         preference = None
         if sequence == "scenario" and isinstance(step.get("uow"), str):
-            preference = Case(Path(""), raw, metadata.model).concurrency_mode
-        return _read_locks(metadata, step["objectQuery"], preference)
+            preference = case.concurrency_mode
+        return _read_locks(metadata, case, step["objectQuery"], preference)
 
     def top_level_read(self, raw: dict[str, Any]) -> ReadLocks | None:
         """The lock expectation of a case's ``when.objectQuery`` graded by ``then.statements``.
@@ -98,11 +98,12 @@ class LockConsistency:
         if not isinstance(then, dict) or not then.get("statements"):
             return None
         metadata = self._metadata(raw)
+        case = Case(Path(""), raw, metadata.model)
         uow = when.get("uow")
         preference = None
         if isinstance(uow, dict) and uow.get("accessMode") != "read-only":
-            preference = Case(Path(""), raw, metadata.model).concurrency_mode
-        return _read_locks(metadata, when["objectQuery"], preference)
+            preference = case.concurrency_mode
+        return _read_locks(metadata, case, when["objectQuery"], preference)
 
     def _metadata(self, raw: dict[str, Any]) -> _ModelReads:
         model_rel = raw["model"]
@@ -112,27 +113,39 @@ class LockConsistency:
         return self.models[model_path]
 
 
-def _read_locks(metadata: _ModelReads, query: dict[str, Any], preference: str | None) -> ReadLocks:
+def _read_locks(
+    metadata: _ModelReads, case: Case, query: dict[str, Any], preference: str | None
+) -> ReadLocks:
     try:
-        return ReadLocks(metadata, metadata.candidates(query), preference)
+        return ReadLocks(metadata, case, metadata.candidates(query), preference)
     except (KeyError, ValueError) as exc:
-        return ReadLocks(metadata, {}, preference, str(exc))
+        return ReadLocks(metadata, case, frozenset(), preference, str(exc))
 
 
 @dataclass(frozen=True)
 class ReadLocks:
     metadata: _ModelReads
-    candidates: dict[str, set[str]]
+    case: Case
+    candidates: frozenset[str]
     preference: str | None
     mapping_error: str | None = None
 
-    def _required(self, tree: Expr) -> tuple[bool, set[str]]:
+    def _placed(self, dialect: str) -> dict[PhysicalTable, set[str]]:
+        """Each candidate Entity under the physical table *dialect*'s case
+        binding places its rows in."""
+        tables: dict[PhysicalTable, set[str]] = {}
+        for name in sorted(self.candidates):
+            tables.setdefault(self.case.entity_table(name, dialect), set()).add(name)
+        return tables
+
+    def _required(self, tree: Expr, dialect: str) -> tuple[bool, set[PhysicalTable]]:
         if self.mapping_error:
             raise ValueError(self.mapping_error)
+        placed = self._placed(dialect)
         tables = _read_tables(tree)
         names: set[str] = set()
-        for table in sorted(tables):
-            matches = self.candidates.get(table, set())
+        for table in sorted(tables, key=lambda table: (table.qualifier, table.name)):
+            matches = placed.get(table, set())
             if not matches:
                 raise ValueError(f"table {table!r} is outside the authored root/includes")
             # TPH variants share a canonical family position and strategy.
@@ -154,7 +167,7 @@ class ReadLocks:
     def check(self, tree: Expr, text: str, dialect: str) -> str | None:
         """Return a diagnostic for the borrowed, unmodified parse tree, or None."""
         try:
-            required, tables = self._required(tree)
+            required, tables = self._required(tree, dialect)
         except ValueError as exc:
             return f"lock consistency: cannot map emitted read unambiguously: {exc}"
         locks = list(tree.find_all(exp.Lock))
@@ -183,7 +196,9 @@ class ReadLocks:
             sources = _direct_tables(tree)
             if dialect == "mariadb" and len(sources) != 1:
                 return "lock consistency: MariaDB shared lock must cover only the physical root"
-            if not any(table.alias == "t0" and table.name in tables for table in sources):
+            if not any(
+                table.alias == "t0" and physical_table_of(table) in tables for table in sources
+            ):
                 return "lock consistency: required lock must target the outer physical root t0"
         else:
             return "lock consistency: a UNION read cannot carry the required shared lock"
@@ -197,7 +212,7 @@ def _direct_tables(select: exp.Select) -> list[exp.Table]:
     return [node for node in nodes if isinstance(node, exp.Table)]
 
 
-def _read_tables(tree: Expr, *, branch: bool = False) -> set[str]:
+def _read_tables(tree: Expr, *, branch: bool = False) -> set[PhysicalTable]:
     """The physical tables one emitted read selects from.
 
     A ``union all`` branch may read its variant's tag-filtered partition of a
@@ -210,14 +225,14 @@ def _read_tables(tree: Expr, *, branch: bool = False) -> set[str]:
     if isinstance(tree, exp.Select):
         source = tree.args.get("from_")
         if source is not None and isinstance(source.this, exp.Table):
-            return {source.this.name}
+            return {physical_table_of(source.this)}
         if source is not None and isinstance(source.this, exp.Subquery):
             inner = source.this.this
             if branch and isinstance(inner, exp.Select) and not tree.args.get("joins"):
                 return _read_tables(inner)
             if isinstance(inner, exp.Union):
                 tables = _read_tables(inner)
-                joined = {table.name for table in _direct_tables(tree)}
+                joined = {physical_table_of(table) for table in _direct_tables(tree)}
                 if joined and joined != tables:
                     raise ValueError("wrapped continuation joins a different physical root")
                 return tables

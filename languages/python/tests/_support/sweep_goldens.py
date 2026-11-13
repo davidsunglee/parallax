@@ -16,8 +16,9 @@ from parallax.core.internal.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import case_document, wire_value_deep
 
-_SCALAR_READS: Final[frozenset[str]] = frozenset(
-    {"m-core-001", "m-core-011", "m-descriptor-001", "m-database-binding-011"}
+_SCALAR_READS: Final[frozenset[str]] = frozenset({"m-core-001", "m-core-011", "m-descriptor-001"})
+_BINDING_PLACEMENT_READS: Final[frozenset[str]] = frozenset(
+    f"m-database-binding-{n:03d}" for n in (11, 12, 13, 14, 18, 22, 23, 24, 28)
 )
 _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 48, 49, 54, 55)
@@ -123,6 +124,7 @@ _DORMANT_POSITION_READS: Final[frozenset[str]] = frozenset(
 )
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
+    | _BINDING_PLACEMENT_READS
     | _DOCUMENT_CODEC_READS
     | _VALUE_OBJECT_PREDICATE_READS
     | _VALUE_OBJECT_TO_MANY_READS
@@ -253,7 +255,7 @@ _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     }
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
-    frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002", "m-database-binding-010"})
+    frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
@@ -282,8 +284,13 @@ _EXECUTION_LIFECYCLE_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-execution-lifecycle-002", "m-execution-lifecycle-003", "m-execution-lifecycle-011"}
 )
 
+_BINDING_PLACEMENT_WRITES: Final[frozenset[str]] = frozenset(
+    f"m-database-binding-{n:03d}" for n in (10, 17, 20, 21, 25, 26, 29)
+)
+
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
+    | _BINDING_PLACEMENT_WRITES
     | _EXECUTION_LIFECYCLE_SCENARIOS
     | _LAYOUT_TWIN_WRITES
     | _WRITE_SEQUENCES

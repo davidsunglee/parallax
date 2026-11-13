@@ -1,0 +1,24 @@
+# Every table has its own location, but the binding has no default and no
+# sequence entry: the `fleetIds` allocator never follows its consuming tables
+# or their schemas, so nothing places its sequence and resolution refuses it.
+model: models/binding-fleet.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      entities:
+        parallax.compatibility.Car: { schema: px_eu }
+        parallax.compatibility.Truck: { schema: px_us }
+        parallax.compatibility.Depot: { schema: px }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      entities:
+        parallax.compatibility.Car: { database: px_eu }
+        parallax.compatibility.Truck: { database: px_us }
+        parallax.compatibility.Depot: { database: px }
+then:
+  rejectedRule: binding-sequence-unresolved

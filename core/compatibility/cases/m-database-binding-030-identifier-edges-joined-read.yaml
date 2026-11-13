@@ -1,0 +1,54 @@
+# A correlated existence test and a deep fetch between physical identifiers
+# that need component-wise quoting (see m-database-binding-029): the entry in
+# `Px.Edge"q`.`order` tests, and then fetches, its ticks in `px`.`Tick`Mark`.
+model: models/binding-identifiers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Entry: { schema: 'Px.Edge"q', table: order }
+      parallax.compatibility.Tick: { table: "Tick`Mark" }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Entry: { database: 'Px.Edge"q', table: order }
+      parallax.compatibility.Tick: { table: "Tick`Mark" }
+tags: [m-database-binding, m-dialect, m-navigate, m-snapshot-read, m-sql, exists, relationship, graph, quoting, binding, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Entry.ticks IN-list binds are the entry ids gathered from the root query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Entry
+    predicate:
+      any:
+        path: parallax.compatibility.Entry.ticks
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Entry.ticks
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from "Px.Edge""q"."order" t0 where exists (select 1 from px."Tick`Mark" t1 where t1.entry_id = t0.id)
+        mariadb: select t0.id, t0.label from `Px.Edge"q`.`order` t0 where exists (select 1 from px.`Tick``Mark` t1 where t1.entry_id = t0.id)
+    - sql:
+        postgres: select t0.id, t0.entry_id, t0.note from px."Tick`Mark" t0 where t0.entry_id = any(cast(? as bigint[])) order by t0.id asc
+        mariadb: select t0.id, t0.entry_id, t0.note from px.`Tick``Mark` t0 where t0.entry_id in (?) order by t0.id asc
+      binds: { postgres: [[1]], mariadb: [1] }
+  referenceSql:
+    postgres: select id, label from "Px.Edge""q"."order" where id in (select entry_id from px."Tick`Mark")
+    mariadb: select id, label from `Px.Edge"q`.`order` where id in (select entry_id from px.`Tick``Mark`)
+  graph:
+    Entry:
+      - id: 1
+        label: a
+        ticks:
+          - { id: 11, entryId: 1, note: x }
+          - { id: 12, entryId: 1, note: "y" }
+  databaseCalls: 2

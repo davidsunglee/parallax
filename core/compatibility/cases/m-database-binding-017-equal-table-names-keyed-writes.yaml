@@ -1,0 +1,52 @@
+# Keyed writes to two owners that share the local table name `ledger` and the
+# key 2: the sales amendment reaches `px.ledger` and the audit deletion reaches
+# `px_audit.ledger`, so neither write lands on the other owner's row.
+model: models/binding-ledgers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.AuditLedger: { schema: px_audit }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.AuditLedger: { database: px_audit }
+tags: [m-database-binding, m-batch-write, m-sql, write-sequence, update, delete, binding, slice-snapshot-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: amend
+      entity: parallax.compatibility.SalesLedger
+      statements: 1
+      rows:
+        - { id: 2, amount: "25.00" }
+    - mutation: delete
+      entity: parallax.compatibility.AuditLedger
+      statements: 1
+      rows:
+        - { id: 2 }
+then:
+  statements:
+    - sql:
+        postgres: update px.ledger set amount = ? where id = ?
+        mariadb: update px.ledger set amount = ? where id = ?
+      binds: ["25.00", 2]
+    - sql:
+        postgres: delete from px_audit.ledger where id = ?
+        mariadb: delete from px_audit.ledger where id = ?
+      binds: [2]
+  tableState:
+    px:
+      ledger:
+        - { id: 1, amount: "10.00" }
+        - { id: 2, amount: "25.00" }
+    px_audit:
+      ledger:
+        - { id: 1, note: opened }
+  databaseCalls: 4

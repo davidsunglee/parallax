@@ -1,0 +1,42 @@
+# A logical allocator RELOCATED once (m-model-evolution, m-database-binding,
+# m-pk-gen): `fleetIds` is declared by a tableless table-per-concrete-subtype
+# root, inherited by two leaves, and shared by a standalone depot, yet it is one
+# allocator with one physical sequence. The later binding gives it its own
+# entry, so one sequence relocation coordinates the evolution, never one per
+# consuming table, and no table moves with it.
+tags: [m-model-evolution, m-database-binding, m-pk-gen, m-inheritance, evolution, table-per-concrete-subtype, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/binding-fleet.yaml
+    later: models/binding-fleet.yaml
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        sequences:
+          fleetIds: { schema: px_keys, sequence: fleet_ids }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        sequences:
+          fleetIds: { database: px_keys, sequence: fleet_ids }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: SequenceRelocated
+        sequence: fleetIds
+        earlier: { qualifier: [px], name: fleetIds }
+        later: { qualifier: [px_keys], name: fleet_ids }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: SequenceRelocated
+          sequence: fleetIds
+          earlier: { qualifier: [px], name: fleetIds }
+          later: { qualifier: [px_keys], name: fleet_ids }
+        reasons: [DatabaseMigrationRequired]
