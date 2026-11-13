@@ -18,9 +18,9 @@ from parallax.conformance.provision import (
     install_authority_fixtures,
     reset_database,
 )
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from parallax.core.internal.metamodel import Metamodel
 from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint
-from tests._support.bindings import bound_model
 
 
 class WheelDatabase:
@@ -28,6 +28,7 @@ class WheelDatabase:
         self._dsn = dsn
         self._session = self.control()
         self._ledger = RuntimeLedger()
+        self._owned: frozenset[str] = frozenset()
         try:
             ((observed,),) = self._session.execute("show server_version", [])
             if str(observed).split()[0] != version:
@@ -65,8 +66,12 @@ class WheelDatabase:
             self._dsn, autocommit=True, prepare_threshold=None
         )
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        reset_database(self._session, bound_model(model), fixtures)
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        self._owned = reset_database(
+            self._session, ResolvedBinding(model, binding), fixtures, owned=self._owned
+        )
 
     def release_case_runtimes(self) -> int:
         return self._ledger.release()
