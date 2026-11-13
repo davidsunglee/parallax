@@ -1,0 +1,6 @@
+# A location names its schema; a table name belongs to an owner entry.
+reader: postgres
+issues:
+  - { code: binding-field-missing, path: [default, schema] }
+  - { code: binding-field-missing, path: [namespaces, audit, schema] }
+  - { code: binding-field-unknown, path: [namespaces, audit, table] }

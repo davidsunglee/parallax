@@ -1,0 +1,9 @@
+format_version: 1
+backend: postgres
+default: { schema: app }
+entities:
+  commerce.customer: { table: customer }
+  Commerce.Customer: { table: customer }
+  commerce.Order.id: { table: orders }
+  commerce_sales.Order: { table: orders }
+  commerce.Order: { table: orders }

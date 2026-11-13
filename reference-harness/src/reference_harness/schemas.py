@@ -36,6 +36,7 @@ SCHEMA_FILES = (
     "compatibility-case.schema.json",
     "conformance-adapter.schema.json",
     "write-instruction.schema.json",
+    "database-binding.schema.json",
 )
 
 

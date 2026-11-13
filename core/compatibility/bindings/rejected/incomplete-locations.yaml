@@ -1,0 +1,5 @@
+format_version: 1
+backend: postgres
+default: {}
+namespaces:
+  audit: { table: audit }

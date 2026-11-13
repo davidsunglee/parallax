@@ -1,0 +1,19 @@
+# Equal allocator keys with equal settings but different key types: an Int64
+# consumer can be handed a key an Int32 consumer of the same allocator cannot
+# hold, so the key ranges disagree.
+model: models/pk-sequence.yaml
+tags: [m-pk-gen, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Badge
+        table: badge
+        attributes:
+          - { name: id, type: int32, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq } }
+      - name: Ticket
+        table: ticket
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq } }
+then:
+  rejectedRule: pk-gen-sequence-conflict

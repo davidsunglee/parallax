@@ -95,6 +95,7 @@ _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 # behavioral-scope table, less the one pytest-bounded row below).
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.internal.base",
+    "m-database-binding": "parallax.core.internal.database_binding",
     "m-wire": "parallax.core.internal.wire",
     "m-metamodel": "parallax.core.internal.metamodel",
     "m-edit": "parallax.core.internal.entity._edit",
@@ -199,6 +200,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.internal.metamodel",
             "parallax.core.internal.model_formation",
+            "parallax.core.internal.pk_gen",
             "parallax.core.internal.inheritance",
             "parallax.core.internal.storage_layout",
             "parallax.core.internal.value_object",
@@ -586,9 +588,11 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.internal.base",
             "parallax.core.internal.wire",
+            "parallax.core.internal.metamodel",
             "parallax.core.internal.db_port",
             "parallax.core.internal.db_error",
             "parallax.core.internal.dialect",
+            "parallax.core.internal.database_binding",
         }
     ),
 }

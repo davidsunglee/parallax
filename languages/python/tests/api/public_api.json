@@ -12,6 +12,8 @@
     "AllPredicate",
     "ApplicationAssigned",
     "Attr",
+    "BindingError",
+    "BindingIssue",
     "Bitemporal",
     "Boolean",
     "Bytes",
@@ -293,9 +295,18 @@
     "OnDemandOptions",
     "PoolOptions",
     "PostgresAdapter",
+    "PostgresBinding",
     "PostgresEndpoint",
+    "PostgresLocation",
     "PostgresRole",
+    "PostgresSequence",
+    "PostgresTable",
     "isolation_spelling"
+  ],
+  "parallax.postgres:PostgresBinding": [
+    "from_document",
+    "from_json",
+    "from_yaml"
   ],
   "parallax.snapshot": [
     "CheckedSnapshot",

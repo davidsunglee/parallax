@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/database-binding.schema.json",
+  "title": "Parallax Database Binding document (m-database-binding)",
+  "description": "One deployment's physical placement of a model's tables and sequences, independent of any model. `format_version` names this document format and `backend` selects the location shape every section uses: a PostgreSQL location names a `schema` inside the database the adapter's endpoint selects, and a MariaDB location names a `database` on the connected server. `default` places every table and sequence nothing more specific places; `namespaces` places the tables of each exact Entity Namespace; `entities` overrides one mapping owner's location, table name, or both, keyed by its exact canonical Entity identity; `sequences` overrides one logical allocator's location, sequence name, or both, keyed by its exact allocator key. An omitted section is empty. Placement semantics and diagnostics are owned by m-database-binding; whether every key names something a model declares is decided only when the binding is resolved against that model. `identity.schema.json` owns the namespace and Entity grammars these keys repeat; this schema keeps local copies so it validates standalone.",
+  "type": "object",
+  "required": ["format_version", "backend"],
+  "properties": {
+    "format_version": { "const": 1 },
+    "backend": { "enum": ["postgres", "mariadb"] }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/postgresBinding" },
+    { "$ref": "#/$defs/mariadbBinding" }
+  ],
+  "$defs": {
+    "namespace": {
+      "description": "An exact Entity Namespace (`identity.schema.json` `$defs/namespaceSegment`).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+    },
+    "canonicalEntity": {
+      "description": "An exact canonical Entity identity: `<namespace>.<Entity>`, or `<Entity>` for an unnamespaced Entity. Never resolved relative to a model.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
+    },
+    "allocatorKey": {
+      "description": "An exact logical allocator key (`m-pk-gen`): a `sequence` declaration's nonempty `name`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "description": "One physical identifier component, spelled raw and quoted by the backend; a dot is part of the name, never qualification.",
+      "type": "string",
+      "minLength": 1
+    },
+    "postgresLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema"],
+      "properties": { "schema": { "$ref": "#/$defs/identifier" } }
+    },
+    "postgresTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "$ref": "#/$defs/identifier" },
+        "table": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "postgresSequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "$ref": "#/$defs/identifier" },
+        "sequence": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "postgresBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format_version": true,
+        "backend": { "const": "postgres" },
+        "default": { "$ref": "#/$defs/postgresLocation" },
+        "namespaces": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/namespace" },
+          "additionalProperties": { "$ref": "#/$defs/postgresLocation" }
+        },
+        "entities": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/canonicalEntity" },
+          "additionalProperties": { "$ref": "#/$defs/postgresTable" }
+        },
+        "sequences": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/allocatorKey" },
+          "additionalProperties": { "$ref": "#/$defs/postgresSequence" }
+        }
+      }
+    },
+    "mariadbLocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database"],
+      "properties": { "database": { "$ref": "#/$defs/identifier" } }
+    },
+    "mariadbTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "database": { "$ref": "#/$defs/identifier" },
+        "table": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "mariadbSequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "database": { "$ref": "#/$defs/identifier" },
+        "sequence": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "mariadbBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format_version": true,
+        "backend": { "const": "mariadb" },
+        "default": { "$ref": "#/$defs/mariadbLocation" },
+        "namespaces": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/namespace" },
+          "additionalProperties": { "$ref": "#/$defs/mariadbLocation" }
+        },
+        "entities": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/canonicalEntity" },
+          "additionalProperties": { "$ref": "#/$defs/mariadbTable" }
+        },
+        "sequences": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/allocatorKey" },
+          "additionalProperties": { "$ref": "#/$defs/mariadbSequence" }
+        }
+      }
+    }
+  }
+}

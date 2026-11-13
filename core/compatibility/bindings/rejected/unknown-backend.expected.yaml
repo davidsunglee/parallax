@@ -1,0 +1,3 @@
+reader: mariadb
+issues:
+  - { code: binding-backend-mismatch, path: [backend] }

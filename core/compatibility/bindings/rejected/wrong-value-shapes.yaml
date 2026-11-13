@@ -1,0 +1,10 @@
+format_version: 1
+backend: postgres
+default: app
+namespaces:
+  - audit
+entities:
+  commerce.Customer: customer_master
+  commerce.Order: { schema: 5, table: null }
+sequences:
+  documentNumbers: { sequence: [document_numbers] }

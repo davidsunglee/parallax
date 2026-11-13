@@ -59,6 +59,7 @@ from parallax.core.internal.base import (
     UsageError,
     Uuid,
 )
+from parallax.core.internal.database_binding import BindingError, BindingIssue
 from parallax.core.internal.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.internal.db_port import (
     DRIVER_MANAGED,
@@ -140,6 +141,8 @@ __all__ = [
     "AllPredicate",
     "ApplicationAssigned",
     "Attr",
+    "BindingError",
+    "BindingIssue",
     "Bitemporal",
     "Boolean",
     "Bytes",

@@ -63,6 +63,21 @@ is deliberate: the same generated class is configured differently in prod vs. te
 </MithraRuntime>
 ```
 
+**Simulated sequences are shared by name and validated on registration.** `MithraPrimaryKeyGenerator`
+(`mithra/MithraPrimaryKeyGenerator.java:34-110`) registers each simulated sequence by
+`(sequenceName, sequenceObjectFactoryName)`. A second object type joining the same key must match
+the first one's `incrementSize`, `initialValue`, and source-attribute type, or registration throws
+`MithraException("Could not initialize MithraSequences")`; `batchSize` is not compared.
+`AccountTransaction.xml` and `SpecialAccountTransaction.xml` (`reladomo/src/test/reladomo-xml/`)
+share `AccountTransactionSequence`, and the docbook says one sequence can serve "many tables"
+(`reladomo/src/doc/docbook/primaryKeyGenerator/PrimaryKeyGenerator.xml:46`). `Max` generation is
+keyed per type and source attribute and never shared (`MaxFromTablePrimaryKeyGenerator.java`,
+`MithraPrimaryKeyGenerator.java:163`). Subclasses clone superclass attributes, generator
+configuration included (`generator/MithraObjectTypeWrapper.java:1648-1720`,
+`AbstractAttribute.java:655-670`); a redeclaration is compared only on Java type and the primary-key
+flag (`AbstractAttribute.java:604-621`), and no dedicated experiment covers a subclass overriding
+the inherited generator.
+
 ## Testing patterns
 
 The metamodel is validated end-to-end by `reladomogenutil`'s `GeneratorTestSuite`

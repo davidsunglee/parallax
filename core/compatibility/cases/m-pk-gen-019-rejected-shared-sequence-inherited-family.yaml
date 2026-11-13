@@ -1,0 +1,37 @@
+# A table-per-concrete-subtype root, which owns no table, declares the family
+# key on `vehicle_seq`; both concrete subtypes inherit that one declaration. A
+# standalone Entity sorting first declares the same allocator with a different
+# batch size. The family's declaration counts once, so formation reports exactly
+# one issue, at the root's key, rather than one per inheriting position.
+model: models/pk-sequence.yaml
+tags: [m-pk-gen, m-inheritance, m-model-formation, m-descriptor, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Fleet
+        table: fleet
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: vehicle_seq } }
+      - name: Vehicle
+        inheritance:
+          strategy: table-per-concrete-subtype
+          role: root
+        attributes:
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: vehicle_seq, batchSize: 4 } }
+      - name: Car
+        table: car
+        inheritance:
+          role: concrete-subtype
+          parent: Vehicle
+        attributes:
+          - { name: seats, type: int32 }
+      - name: Truck
+        table: truck
+        inheritance:
+          role: concrete-subtype
+          parent: Vehicle
+        attributes:
+          - { name: axles, type: int32 }
+then:
+  rejectedRule: pk-gen-sequence-conflict

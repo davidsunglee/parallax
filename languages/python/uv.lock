@@ -1046,6 +1046,7 @@ dependencies = [
     { name = "parallax-core" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -1053,6 +1054,7 @@ requires-dist = [
     { name = "parallax-core", editable = "packages/parallax-core" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6,<3.4" },
     { name = "psycopg-pool", specifier = ">=3.3.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

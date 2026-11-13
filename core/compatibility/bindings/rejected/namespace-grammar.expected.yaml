@@ -1,0 +1,6 @@
+reader: postgres
+issues:
+  - { code: binding-namespace-key-invalid, path: [namespaces, Audit] }
+  - { code: binding-namespace-key-invalid, path: [namespaces, audit.] }
+  - { code: binding-namespace-key-invalid, path: [namespaces, audit.Billing] }
+  - { code: binding-namespace-key-invalid, path: [namespaces, audit_log] }

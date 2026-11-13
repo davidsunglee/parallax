@@ -1,0 +1,10 @@
+# An empty section normalizes to its omission, while an empty entry is kept:
+# whether its key names a mapping owner is decided at resolution. A binding
+# without a default is well-formed; whether it places every table is decided
+# at resolution too.
+reader: postgres
+normalized:
+  format_version: 1
+  backend: postgres
+  entities:
+    commerce.Order: {}

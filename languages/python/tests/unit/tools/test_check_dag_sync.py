@@ -581,9 +581,11 @@ def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
         {
             "parallax.core.internal.base",
             "parallax.core.internal.wire",
+            "parallax.core.internal.metamodel",
             "parallax.core.internal.db_port",
             "parallax.core.internal.db_error",
             "parallax.core.internal.dialect",
+            "parallax.core.internal.database_binding",
         }
     )
     # The lifecycle extension's one Python-only edge is the Entity frontend its
@@ -860,16 +862,16 @@ def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path)
 # --------------------------------------------------------------------------
 # The execution scope and its narrower children.
 # --------------------------------------------------------------------------
-def test_no_runtime_scope_reaches_primary_key_generation() -> None:
-    # Nothing in execution or the lifecycle extension imports primary-key
-    # generation, and no edge reaches it, so the complement forbids it.
+def test_runtime_scopes_reach_primary_key_generation_only_through_formation() -> None:
+    # Primary-key generation contributes a Model Formation Rule Set, so the
+    # formation composition root is granted it; execution and the lifecycle
+    # extension reach it only through the Entity frontend that forms models.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    forbidden = dag.compute_forbidden(adjacency)
+    pk_gen = "parallax.core.internal.pk_gen"
+    assert pk_gen in adjacency["parallax.core._formation_profile"]
     for scope in ("parallax.core._execution", "parallax.snapshot"):
-        assert "parallax.core.internal.pk_gen" not in dag.transitive_closure(adjacency, scope), (
-            scope
-        )
-        assert "parallax.core.internal.pk_gen" in forbidden[scope], scope
+        assert pk_gen not in adjacency[scope], scope
+        assert "parallax.core._formation_profile" not in adjacency[scope], scope
 
 
 def test_readless_policy_is_below_unit_work_and_reaches_no_planner() -> None:

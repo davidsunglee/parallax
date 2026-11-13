@@ -1699,6 +1699,7 @@
             "metamodel-index-attribute-not-local",
             "metamodel-index-attribute-duplicate",
             "metamodel-temporal-member-reserved",
+            "pk-gen-sequence-conflict",
             "inheritance-unknown-parent",
             "inheritance-cycle",
             "inheritance-missing-root",

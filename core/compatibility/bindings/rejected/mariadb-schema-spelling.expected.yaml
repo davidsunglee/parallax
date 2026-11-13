@@ -1,0 +1,6 @@
+# A MariaDB location names a database; `schema` is PostgreSQL's location key.
+reader: mariadb
+issues:
+  - { code: binding-field-missing, path: [default, database] }
+  - { code: binding-field-unknown, path: [default, schema] }
+  - { code: binding-field-unknown, path: [entities, commerce.Customer, schema] }

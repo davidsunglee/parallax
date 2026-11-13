@@ -61,7 +61,7 @@ from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, is_view_lo
 
 ## One root and a few classes
 
-Twenty-one classes cover every error Parallax raises for what you ask of it. Only an
+Twenty-two classes cover every error Parallax raises for what you ask of it. Only an
 argument of the wrong kind, such as `None` where a transaction option belongs, raises
 Python's own `TypeError` or `ValueError`, and constructing an entity validates its
 values with Pydantic, whose `ValidationError` it raises.
@@ -72,6 +72,7 @@ ParallaxError
 │   ├── InvalidValueError            a stated value doesn't fit its member
 │   ├── EditError
 │   ├── MetamodelValidationError
+│   ├── BindingError
 │   ├── DescriptorError
 │   └── UnloadedRelationshipError    also an AttributeError
 ├── UnsupportedError                 a reasonable request this version can't serve
@@ -718,7 +719,7 @@ isn't caught: the client asked for something reasonable, so it reaches
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, descriptor, query, edit, write or value, such as a class's, query's or write's `UsageError`, `MetamodelValidationError`, `DescriptorError`, `EditError` or `InvalidValueError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, binding, descriptor, query, edit, write or value, such as a class's, query's or write's `UsageError`, `MetamodelValidationError`, `BindingError`, `DescriptorError`, `EditError` or `InvalidValueError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | A `UsageError` whose `code` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |

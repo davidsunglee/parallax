@@ -1,0 +1,8 @@
+format_version: 1
+backend: postgres
+namespaces:
+  Audit: { schema: audit }
+  audit_log: { schema: audit }
+  audit.: { schema: audit }
+  audit.Billing: { schema: billing }
+  audit.billing2: { schema: billing }

@@ -106,6 +106,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-storage-layout` | Canonical physical Table composition and column layout | active | cases |
+| `m-database-binding` | Deployment placement of tables and logical allocators: binding documents and their normalization | deferred | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
@@ -161,6 +162,7 @@ m-descriptor --> m-core
 m-descriptor --> m-metamodel
 m-descriptor --> m-inheritance
 m-pk-gen --> m-metamodel
+m-pk-gen --> m-model-formation
 m-inheritance --> m-metamodel
 m-inheritance --> m-model-formation
 m-storage-layout --> m-metamodel
@@ -194,6 +196,8 @@ m-sql --> m-wire
 m-sql --> m-write-plan
 m-sql --> m-read-planning
 m-dialect --> m-core
+m-database-binding --> m-metamodel
+m-database-binding --> m-dialect
 m-db-port --> m-core
 m-db-port --> m-dialect
 m-db-error --> m-db-port

@@ -5,8 +5,9 @@ from parallax.core.internal.metamodel import (
     CompiledEntity,
     Sequence,
 )
+from parallax.core.internal.pk_gen._rules import ISSUE_CODES, PK_GEN_MODULE, RULE_SET
 
-__all__ = []
+__all__ = ["ISSUE_CODES", "PK_GEN_MODULE", "RULE_SET"]
 
 # The two column roles of a simulated-sequence registry table (e.g. the corpus
 # `PkSequence` entity): the sequence-name key and the next-value counter. The

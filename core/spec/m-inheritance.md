@@ -589,7 +589,9 @@ owns the complete code-set declaration; this module owns each code's meaning.
 - **One family primary key** — the applicable ancestry chain contains exactly
   one primary-key Attribute (`inheritance-primary-key-missing` /
   `inheritance-primary-key-multiple`). Declaration identity stays with the
-  ancestor that introduced it.
+  ancestor that introduced it, and so does the key's generation: every
+  position inherits that one declaration, so a family draws its generated keys
+  from one logical allocator (`m-pk-gen`).
 - **Root-only strategy** — a non-root does not redeclare the strategy
   (`inheritance-strategy-redeclared`).
 - **Tag presence** — under table-per-hierarchy, **every** concrete subtype

@@ -1,0 +1,9 @@
+format_version: 1
+backend: mariadb
+default: { database: app }
+namespaces:
+  audit: { database: audit }
+entities:
+  commerce.Customer: { database: legacy_crm, table: customer_master }
+sequences:
+  documentNumbers: { database: shared, sequence: document_numbers }

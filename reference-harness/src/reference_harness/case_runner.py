@@ -106,6 +106,8 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
+from .pk_gen import MODEL_REJECTED_RULES as PK_GEN_MODEL_REJECTED_RULES
+from .pk_gen import validate_shared_allocators
 from .predicate_validate import validate_query_predicate
 from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_predicate_write
 from .providers import Catalog, DatabaseProvider
@@ -175,6 +177,7 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
 ALL_REJECTED_RULES = (
     REJECTED_RULES
     | METAMODEL_MODEL_REJECTED_RULES
+    | PK_GEN_MODEL_REJECTED_RULES
     | MODEL_REJECTED_RULES
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
     | RELATIONSHIP_MODEL_REJECTED_RULES
@@ -676,7 +679,8 @@ def _assert_rejected(case: Case) -> None:
     OBJECT carrying one form's carriers, so :func:`_rejected_write_input` refuses
     anything else before dispatch. Inline
     models run the foundational resolver oracles (``validate_foundations``) before
-    the semantic rule sets — Inheritance's ``validate_family`` and Storage Layout’s
+    the semantic rule sets — Primary-Key Generation's shared-allocator rule,
+    Inheritance's ``validate_family``, and Storage Layout’s
     ``validate_storage_layout``, including standalone Table ownership and Column
     claims, then defining-join type equality and each relationship declaration's
     own coherence. The referenced top-level model
@@ -735,6 +739,7 @@ def _assert_rejected(case: Case) -> None:
                 inline_entity = inline_model.get("entity")
                 inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
             validate_foundations(inline_entities)
+            validate_shared_allocators(inline_entities)
             validate_family(inline_model)
             validate_storage_layout(inline_entities)
             validate_relationship_types(inline_entities)

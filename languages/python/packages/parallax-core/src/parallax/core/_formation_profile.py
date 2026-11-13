@@ -31,9 +31,11 @@ from parallax.core.internal.model_formation import (
     ModelCompiler,
     ModelCompilerRequirement,
     ModelRuleSet,
-    ModuleIdentity,
     form,
 )
+from parallax.core.internal.pk_gen import ISSUE_CODES as PK_GEN_ISSUE_CODES
+from parallax.core.internal.pk_gen import PK_GEN_MODULE
+from parallax.core.internal.pk_gen import RULE_SET as PK_GEN_RULE_SET
 from parallax.core.internal.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
 from parallax.core.internal.relationship import ISSUE_CODES as RELATIONSHIP_ISSUE_CODES
 from parallax.core.internal.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
@@ -56,15 +58,6 @@ __all__ = ["form_metamodel"]
 # here so a caller granted only this composition root (never `m-model-formation`
 # directly) can catch the one error its own `form_metamodel` call can produce.
 
-_PK_GEN_MODULE: Final[ModuleIdentity] = "m-pk-gen"
-"""The one manifest owner this file names without importing it.
-
-Primary-key generation contributes neither a Rule Set nor a compiler — its
-invalid generator states are unconstructible in normalized Metadata — so it has
-nothing to supply and no reason to be imported here. Its row still belongs in the
-manifest, because catalog completeness is measured against the manifest rather
-than against whichever contributors happen to exist."""
-
 BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
     (
         FormationManifestEntry(
@@ -74,8 +67,10 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             compiler=METADATA_COMPILER_REQUIRED,
         ),
         FormationManifestEntry(
-            owner=_PK_GEN_MODULE,
-            required_modules=frozenset({METAMODEL_MODULE}),
+            owner=PK_GEN_MODULE,
+            rule_set=REQUIRED_RULE_SET,
+            issue_codes=PK_GEN_ISSUE_CODES,
+            required_modules=frozenset({METAMODEL_MODULE, MODEL_FORMATION_MODULE}),
         ),
         FormationManifestEntry(
             owner=INHERITANCE_MODULE,
@@ -151,6 +146,7 @@ class _BuiltinProfile:
 
 BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
     rule_sets=(
+        PK_GEN_RULE_SET,
         INHERITANCE_RULE_SET,
         STORAGE_LAYOUT_RULE_SET,
         VALUE_OBJECT_RULE_SET,

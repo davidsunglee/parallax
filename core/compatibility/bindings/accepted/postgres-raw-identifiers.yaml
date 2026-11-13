@@ -1,0 +1,6 @@
+format_version: 1
+backend: postgres
+default: { schema: Tenant.Acme }
+entities:
+  commerce.Customer: { schema: 'legacy "crm"', table: order }
+  commerce.Order: { table: Order.Lines }
