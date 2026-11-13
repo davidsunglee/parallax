@@ -1,9 +1,3 @@
-# A default change that pins NOTHING (m-model-evolution, m-database-binding,
-# m-pk-gen): one model, and a later binding whose default moves from `px` to
-# `px_next`. Every owner and allocator the default alone placed moves with it,
-# so Invoice's table and the `invoiceNumbers` sequence each relocate, tables
-# before sequences, with structured earlier and later locations. Owners placed
-# by a namespace default or their own entry stay where they were.
 tags: [m-model-evolution, m-database-binding, m-pk-gen, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:

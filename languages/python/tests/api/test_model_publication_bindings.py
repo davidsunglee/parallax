@@ -1,13 +1,4 @@
-"""Binding changes released through publication, against real Postgres.
-
-A Serving Model publishes a candidate prepared under a changed binding exactly as
-it publishes an edition: the deployment provisions what the candidate places,
-the application publishes, and each execution keeps the selection it adopted.
-Nothing checks the schema at publication, and a candidate that moves a
-surviving table or sequence is refused; moving one is a coordinated migration
-behind a replacement root, whose derived names the deployment reconciles when a
-physical local name changes.
-"""
+"""Binding changes released through publication, against real Postgres."""
 
 from __future__ import annotations
 
@@ -18,6 +9,7 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.boundary_runner import fault_injecting_adapter
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
@@ -37,6 +29,7 @@ from parallax.core import (
     prepare_model,
 )
 from parallax.core.internal.database_binding import ResolvedBinding
+from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.evolution import (
@@ -83,12 +76,9 @@ class Charge(Entity, table="mpb_charge", namespace=_BILLING):
 
 _R1: Final = DomainModel(Invoice, Refund, Entry)
 _R2: Final = DomainModel(Invoice, Refund, Entry, Credit, Charge)
-"""Release 2 adds Credit under the default and Charge, the first Entity of `billing`."""
 _R3: Final = DomainModel(Invoice, Entry)
-"""Release 3 removes Refund, the one Entity its binding maps explicitly."""
 
 _NOT_IN_THE_MODEL: Final = "write-instruction-invalid"
-"""A write naming an Entity the adopted selection's model does not declare."""
 
 _PX: Final = PostgresLocation(schema="px")
 _AUDIT_SCHEMA: Final = PostgresLocation(schema="px_audit")
@@ -101,7 +91,6 @@ _B2: Final = PostgresBinding(
     namespaces={_AUDIT: _AUDIT_SCHEMA, _BILLING: PostgresLocation(schema="px_billing")},
     entities={f"{_SHOP}.Refund": _REFUNDS},
 )
-"""Binding 2 ships the `billing` namespace key with that namespace's first Entity."""
 _B3: Final = PostgresBinding(default=_PX, namespaces={_AUDIT: _AUDIT_SCHEMA})
 
 
@@ -125,8 +114,6 @@ def _provisioned(
 
 
 def _deploy(profile_run: Any, statements: Iterable[str], schemas: Iterable[str]) -> None:
-    """The deployment's part: run the release's statements, then grant the
-    service's role what it needs in every schema the release places tables in."""
     role = POSTGRES.quote(profile_run.default_role.name)
     with closing(profile_run.control()) as control:
         for statement in statements:
@@ -153,11 +140,6 @@ def _growth_statements() -> tuple[str, ...]:
     evolution = evolve(_R1, _R2, earlier_binding=_B1, later_binding=_B2)
     assert isinstance(evolution, UnilateralEvolution)
     return schema_delta(evolution).statements
-
-
-# --------------------------------------------------------------------------- #
-# Growth publishes hot: migrate, publish, and let each execution adopt.        #
-# --------------------------------------------------------------------------- #
 
 
 def test_binding_growth_publishes_once_migrated_and_every_root_sharing_the_holder_adopts_it(
@@ -231,23 +213,26 @@ def test_publication_checks_no_schema_so_the_first_write_finds_the_missing_table
     _deploy(profile_run, (), ("px_billing",))
     r1, r2 = _prepared(_R1, _B1, "r1"), _prepared(_R2, _B2, "r2")
     serving = ServingModel(r1)
-    db = _serving(profile_run, serving)
+    acquired: list[DatabaseConnection] = []
 
-    # Publishing before the migration is the application's mistake, and nothing
-    # catches it until a statement reaches the table that isn't there.
+    def observed(connection: DatabaseConnection) -> DatabaseConnection:
+        acquired.append(connection)
+        return connection
+
+    port = DecoratingAdapter(profile_run.port, observed)
+    db = own_root(connect(port, serving)).using_database_login()
+    before = len(acquired)
+
     serving.publish(r2, expected=r1)
+    assert len(acquired) == before
     with pytest.raises(DatabaseError) as missing:
         db.transact(lambda tx: tx.insert(Charge(id=1, amount=5)))
     assert missing.value.native_code == "42P01"
+    assert len(acquired) > before
 
     _deploy(profile_run, _growth_statements(), ("px", "px_billing"))
     db.transact(lambda tx: tx.insert(Charge(id=1, amount=5)))
     assert _rows(profile_run, "select id from px_billing.mpb_charge") == [(1,)]
-
-
-# --------------------------------------------------------------------------- #
-# Removal publishes with its binding entries; adopted work keeps its mapping.  #
-# --------------------------------------------------------------------------- #
 
 
 def test_removing_an_owner_needs_its_entry_removed_and_publishes_hot() -> None:
@@ -281,13 +266,9 @@ def test_a_transaction_and_a_stream_keep_the_mapping_they_adopted_across_a_remov
                     tx.insert(Refund(id=4, invoice_id=1))
                     return tx.edition
 
-                # This transaction opened under r1, so it still writes Refund
-                # where r1's binding placed it after r3 is published.
                 assert db.transact(publish_then_write) == "r1"
             assert stream.edition == "r1"
 
-    # Every later page still reads the table r1 placed, and finds the row the
-    # r1 transaction committed there after the publication.
     assert streamed == [1, 2, 3, 4]
     assert _rows(profile_run, "select id from px_refunds.mpb_refund order by id") == [
         (1,),
@@ -298,11 +279,6 @@ def test_a_transaction_and_a_stream_keep_the_mapping_they_adopted_across_a_remov
     with raises_code(UsageError, _NOT_IN_THE_MODEL, match="shop.Refund"):
         db.transact(lambda tx: tx.wire.insert(f"{_SHOP}.Refund", {"id": 5, "invoiceId": 1}))
     assert db.transact(lambda tx: tx.edition) == "r3"
-
-
-# --------------------------------------------------------------------------- #
-# Concurrent publishers: the loser rebases and is judged against the winner.   #
-# --------------------------------------------------------------------------- #
 
 
 def test_a_stale_binding_publisher_is_refused_and_its_rebase_is_judged_against_the_winner() -> None:
@@ -330,18 +306,12 @@ def test_a_stale_binding_publisher_is_refused_and_its_rebase_is_judged_against_t
     assert serving.current() is winner
 
 
-# --------------------------------------------------------------------------- #
-# Declared table renames: masked ones publish, unmasked ones relocate.         #
-# --------------------------------------------------------------------------- #
-
-
 class Vault(TxTemporal, table="mpb_vault", namespace=_SHOP):
     id: Attr[int] = attr(primary_key=True)
     label: Attr[str] = attr(max_length=16)
 
 
 def _renamed_vault(table: str) -> Any:
-    """A Vault class equal to :class:`Vault` but for its declared table."""
     return type(
         "Vault",
         (TxTemporal,),
@@ -365,7 +335,6 @@ _DEFAULT: Final = PostgresBinding(default=_PX)
 _MASKING: Final = PostgresBinding(
     default=_PX, entities={_VAULT_KEY: PostgresTable(name="mpb_vault")}
 )
-"""The binding pinning the physical local name the declared rename would change."""
 _JAN, _MAR, _MAY, _JUN = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 5, 6))
 
 
@@ -378,7 +347,6 @@ def test_an_unmasked_declared_rename_relocates_and_publication_refuses_it() -> N
 
 
 def _seed_a_terminated_vault(profile_run: Any, serving: ServingModel) -> None:
-    """The vault was known from January until its termination in May."""
     _serving(profile_run, serving, clock=ScriptedClock([_JAN])).transact(
         lambda tx: tx.insert(Vault(id=1, label="seeded"))
     )
@@ -428,11 +396,6 @@ def test_a_masked_declared_rename_publishes_and_its_temporal_conflicts_stay_reco
         (_JAN, _MAY, "seeded"),
         (_JUN, None, "again"),
     ]
-
-
-# --------------------------------------------------------------------------- #
-# Relocation: a coordinated migration behind a replacement root.               #
-# --------------------------------------------------------------------------- #
 
 
 def _relocation_refused(earlier: ModelSelection, later: ModelSelection) -> None:
@@ -508,8 +471,6 @@ def test_a_local_name_rename_serves_only_once_its_derived_names_are_reconciled(
 
 
 def _reconciled_names(earlier: PostgresBinding, later: PostgresBinding) -> list[str]:
-    """The deployment's renames of every derived temporal name, from the names the
-    earlier local name derived to the ones the later binding's resolution expects."""
     before, after = (
         ResolvedBinding(model_of(_VAULTS), binding).table(_VAULT) for binding in (earlier, later)
     )

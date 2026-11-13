@@ -1,10 +1,3 @@
-# Binding GROWTH that publishes hot (m-model-evolution, m-database-binding,
-# m-schema-delta): the release adds Credit under the unchanged binding
-# default, Note under the existing `audit` namespace default, and Charge as the
-# first Entity of `billing`, whose namespace key the later binding ships with
-# it. Every surviving owner and the allocator resolve where they did, so
-# nothing relocates and the evolution is unilateral; its statements create each
-# new table qualified where its binding entry places it.
 tags: [m-model-evolution, m-database-binding, m-schema-delta, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:

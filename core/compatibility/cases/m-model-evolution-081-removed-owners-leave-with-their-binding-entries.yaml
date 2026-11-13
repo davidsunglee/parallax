@@ -1,10 +1,3 @@
-# Owners REMOVED together with their binding entries (m-model-evolution,
-# m-database-binding): the release removes Refund, which the earlier binding
-# maps explicitly, and Statement, the last Entity of the `archive` namespace,
-# and the later binding drops both keys. An owner only one endpoint holds was
-# removed, not relocated, so the evolution reports the two logical removals
-# with their authoring coordination and no relocation; publication judges the
-# same pair by relocation alone.
 tags: [m-model-evolution, m-database-binding, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:

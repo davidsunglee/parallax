@@ -692,7 +692,6 @@ _BINDING_RELEASE = (
     "end of a described evolution no developer surface builds or executes; the binding "
     "publication API stories declare their releases in classes of their own"
 )
-"""Why each release of the binding-release endpoint family is unmirrored."""
 
 _BUFFERED_SEQUENCE_TWIN = (
     "no mirror authored; its Bitemporal, versioned and unversioned Entities repeat the "
