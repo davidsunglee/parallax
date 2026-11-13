@@ -519,6 +519,23 @@ def test_exported_text_is_byte_identical_on_repeat_and_re_ingests() -> None:
     assert export_document(domain_model_from_yaml(as_yaml)) == export_document(built)
 
 
+def test_yaml_export_round_trips_a_next_line_character_in_free_text_names() -> None:
+    document = {
+        "entities": [
+            {
+                "name": "Author",
+                "namespace": "bookshop",
+                "table": "auth\x85or",
+                "attributes": [
+                    {"name": "id", "type": "int64", "primaryKey": True, "column": "i\x85d"}
+                ],
+            }
+        ]
+    }
+    built = domain_model_from_document(document)
+    assert export_document(domain_model_from_yaml(export_yaml(built))) == export_document(built)
+
+
 def test_export_reads_a_json_compatible_tree_of_ordinary_containers() -> None:
     document = export_document(domain_model_from_yaml(_YAML))
     assert type(document) is dict
@@ -549,7 +566,7 @@ def test_a_serialization_defect_surfaces_as_an_export_error_with_no_partial_outp
         def dumps(*_args: object, **_kwargs: object) -> str:
             raise TypeError("induced serialization defect")
 
-        safe_dump = dumps
+        dump = dumps
 
     monkeypatch.setattr(hub_module, serializer, _Broken)
     with raises_code(InternalError, "descriptor-export-failed") as caught:
