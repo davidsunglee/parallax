@@ -45,6 +45,7 @@ from snapshot_delivery_reading import (
     repeated_fanout_query,
     scalar_address,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _scalar_type_support as scalar_support
@@ -154,7 +155,7 @@ def test_catalog_port_preserves_child_fanout_for_offset_parent_keys() -> None:
     port = CatalogPort(workload, 2)
 
     returned = port.execute(
-        "select t0.id, t0.order_id from order_item t0", [ArrayBind(INT64, list(parents))]
+        "select t0.id, t0.order_id from px.order_item t0", [ArrayBind(INT64, list(parents))]
     )
 
     expected = rows.entity("parallax.compatibility.OrderItem")
@@ -294,7 +295,7 @@ def test_a_scalar_type_read_publishes_every_stored_leaf_as_its_wire_spelling() -
             port = scalar_support.ScalarTypePort(
                 scalar_support.entity_class(scalar_type, layout), 2
             )
-            root = own_root(Database(port.open(), scalar_support.MODEL))
+            root = own_root(Database(port.open(), scalar_support.MODEL, binding=TEST_BINDING))
             results = root.using_database_login().wire.find(
                 scalar_support.read_query(scalar_type, layout)
             )
@@ -491,7 +492,11 @@ def test_the_typed_twins_canonicalize_to_their_fixture_queries() -> None:
 def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions() -> None:
     roots = 12
     root = own_root(
-        Database(control_support.GuardedPort(roots).open(), control_support.GUARDED_MODEL)
+        Database(
+            control_support.GuardedPort(roots).open(),
+            control_support.GUARDED_MODEL,
+            binding=TEST_BINDING,
+        )
     )
     database = root.using_database_login()
     for width in control_support.GUARD_WIDTHS:

@@ -233,7 +233,7 @@ def _scenario_document(write: list[Any], **top: Any) -> dict[str, Any]:
         **top,
         "when": {"scenario": [{"uow": "g", "write": write, "databaseCalls": 0}]},
         "then": {
-            "tableState": {"order_item": []},
+            "tableState": {"px": {"order_item": []}},
             "units": {"g": {"outcome": "committed"}},
         },
     }
@@ -288,7 +288,7 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
         "when": {"scenario": steps},
         "then": {
-            "tableState": {"order_item": []},
+            "tableState": {"px": {"order_item": []}},
             "units": {"g": {"outcome": "committed"}},
         },
     }

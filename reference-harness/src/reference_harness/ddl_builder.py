@@ -26,6 +26,7 @@ from pathlib import Path
 
 from ._declared_contributor import DeclaredContributor
 from .case import Model
+from .database_binding import PhysicalTable, Placement
 from .paths import schemas_dir
 from .storage_layout import (
     AttributeContributor,
@@ -115,6 +116,12 @@ def quote_identifier(name: str, dialect: str) -> str:
         return name
     char = _QUOTE_CHAR.get(dialect, '"')
     return f"{char}{name.replace(char, char * 2)}{char}"
+
+
+def qualified_table(table: PhysicalTable, dialect: str) -> str:
+    """*table*'s SQL reference: every qualifier component and the local name,
+    each quoted alone (m-dialect), joined by dots."""
+    return ".".join(quote_identifier(part, dialect) for part in (*table.qualifier, table.name))
 
 
 def _postgres_column_type(neutral_type: str, max_length: int | None) -> str:
@@ -384,12 +391,12 @@ def _columns(slots: Sequence[ColumnSlot], dialect: str) -> str:
     return ", ".join(quote_identifier(slot.column, dialect) for slot in slots)
 
 
-def _interval_checks(layout: TableLayout, dialect: str) -> list[str]:
+def _interval_checks(layout: TableLayout, local_name: str, dialect: str) -> list[str]:
     """The PostgreSQL interval check of each of ``layout``'s As-Of Axes."""
     clauses = []
     for axis in layout.temporal_axes:
         start, end = axis.start.column, axis.end.column
-        name = interval_check_name(layout.table, _INTERVAL_CHECK_KIND[axis.dimension], start, end)
+        name = interval_check_name(local_name, _INTERVAL_CHECK_KIND[axis.dimension], start, end)
         clauses.append(
             f"constraint {quote_identifier(name, dialect)} check "
             f"({quote_identifier(start, dialect)} < {quote_identifier(end, dialect)})"
@@ -397,7 +404,7 @@ def _interval_checks(layout: TableLayout, dialect: str) -> list[str]:
     return clauses
 
 
-def _exclusion(layout: TableLayout, dialect: str) -> str:
+def _exclusion(layout: TableLayout, local_name: str, dialect: str) -> str:
     """The PostgreSQL non-overlap exclusion over ``layout``'s logical key.
 
     The logical key is the primary key without the axis ends it derives from
@@ -408,7 +415,7 @@ def _exclusion(layout: TableLayout, dialect: str) -> str:
     logical = [slot.column for slot in layout.physical_primary_key if slot not in ends]
     ranges = [(axis.start.column, axis.end.column) for axis in layout.temporal_axes]
     name = temporal_constraint_name(
-        layout.table,
+        local_name,
         "excl",
         [("eq", logical), *(("overlap", [start, end]) for start, end in ranges)],
     )
@@ -423,7 +430,10 @@ def _exclusion(layout: TableLayout, dialect: str) -> str:
 
 
 def _create_table(
-    layout: TableLayout, declarations: Mapping[ColumnContributor, DeclaredContributor], dialect: str
+    layout: TableLayout,
+    table: PhysicalTable,
+    declarations: Mapping[ColumnContributor, DeclaredContributor],
+    dialect: str,
 ) -> str:
     """One physical table's ``create table``, keyed inline.
 
@@ -434,7 +444,8 @@ def _create_table(
     nullability (m-storage-layout); this only renders selected values per
     dialect. Only PostgreSQL names a temporal table's primary key and carries its
     interval checks and non-overlap exclusion: MariaDB's generated tables enforce
-    no temporal constraint natively.
+    no temporal constraint natively. Every derived constraint name is taken
+    from the raw physical local name the binding resolves, never its qualifier.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
     constrained = dialect == "postgres" and bool(layout.temporal_axes)
@@ -443,36 +454,37 @@ def _create_table(
         named = ""
         if constrained:
             name = temporal_constraint_name(
-                layout.table, "pk", [("unique", [slot.column for slot in key])]
+                table.name, "pk", [("unique", [slot.column for slot in key])]
             )
             named = f"constraint {quote_identifier(name, dialect)} "
         columns.append(f"{named}primary key ({_columns(key, dialect)})")
     if constrained:
-        columns.extend(_interval_checks(layout, dialect))
-        columns.append(_exclusion(layout, dialect))
+        columns.extend(_interval_checks(layout, table.name, dialect))
+        columns.append(_exclusion(layout, table.name, dialect))
 
     column_clause = ",\n  ".join(columns)
-    return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
+    return f"create table {qualified_table(table, dialect)} (\n  {column_clause}\n)"
 
 
-def _create_indices(layout: TableLayout, dialect: str) -> list[str]:
+def _create_indices(layout: TableLayout, physical: PhysicalTable, dialect: str) -> list[str]:
     """Every authored Index this table holds, each under its derived name.
 
     An Index declared on an ancestor of several table-per-concrete-subtype
     concretes resolves into each of their tables, and the physical table is one
     of the facts the name is derived over, so the repetitions are distinct
-    objects rather than a clash.
+    objects rather than a clash. The name derives from the raw physical local
+    name; an index lands in its table's qualifier, so the name stays unqualified.
     """
     statements = []
-    table = quote_identifier(layout.table, dialect)
+    table = qualified_table(physical, dialect)
     for index in layout.secondary_indices:
         keyword = "create unique index" if index.declaration.unique else "create index"
-        name = quote_identifier(physical_index_name(index, layout.table, dialect), dialect)
+        name = quote_identifier(physical_index_name(index, physical.name, dialect), dialect)
         statements.append(f"{keyword} {name} on {table} ({_columns(index.columns, dialect)})")
     return statements
 
 
-def ddl_for(model: Model, dialect: str) -> list[str]:
+def ddl_for(model: Model, placement: Placement) -> list[str]:
     """Return the ordered DDL statements that create every physical table.
 
     One ``CREATE TABLE`` per compiled Table Layout, so a `table-per-hierarchy`
@@ -484,11 +496,16 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     leave behind are what a delta cell is graded by. Foreign keys are
     intentionally omitted: relationships are a query concern (navigation/join
     derivation), and leaving FK constraints out keeps fixture-load order
-    unconstrained.
+    unconstrained. *placement* resolves each table's physical location and
+    selects the dialect.
     """
+    dialect = placement.dialect
     declarations = declared_contributors(model)
     tables = model.storage_layout.tables
-    created = [_create_table(layout, declarations, dialect) for layout in tables]
+    created = [
+        _create_table(layout, placement.table(layout.mapping_owner), declarations, dialect)
+        for layout in tables
+    ]
     prerequisite = (
         [_EXCLUSION_PREREQUISITE]
         if dialect == "postgres" and any(layout.temporal_axes for layout in tables)
@@ -497,5 +514,9 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     return (
         prerequisite
         + created
-        + [statement for layout in tables for statement in _create_indices(layout, dialect)]
+        + [
+            statement
+            for layout in tables
+            for statement in _create_indices(layout, placement.table(layout.mapping_owner), dialect)
+        ]
     )

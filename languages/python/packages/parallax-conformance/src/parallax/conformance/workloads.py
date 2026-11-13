@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Final, Protocol, cast, overload
 
 from parallax.conformance import _case_ingress, case_format, models
+from parallax.conformance.bindings import DEFAULT_BINDING
 from parallax.conformance.budget import BudgetContract
 from parallax.core import ObjectQuery
 from parallax.core.internal import (
@@ -20,6 +21,7 @@ from parallax.core.internal import (
     storage_layout,
     temporal_read,
 )
+from parallax.core.internal.database_binding import DatabaseBinding
 from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.entity._authored_resolver import object_query_node
 from parallax.core.internal.metamodel import Metamodel
@@ -206,7 +208,9 @@ def scalar_type_digest() -> str:
 
 
 class Provisioning(Protocol):
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None: ...
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +429,7 @@ class Workload:
 
     def provision(self, database: Provisioning, roots: int) -> None:
         rows = self.rows(roots)
-        database.reset(self.model, cast("Mapping[str, object]", rows.entities))
+        database.reset(self.model, cast("Mapping[str, object]", rows.entities), DEFAULT_BINDING)
 
 
 @cache

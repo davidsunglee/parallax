@@ -589,29 +589,31 @@ def test_run_case_write_sequence_reports_table_state_and_database_calls() -> Non
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "tableState": {
-            "orders": [
-                {
-                    "id": 7,
-                    "name": None,
-                    "sku": None,
-                    "qty": None,
-                    "price": None,
-                    "active": None,
-                    "ordered_on": None,
-                }
-            ],
-            "order_item": [
-                {
-                    "id": 7,
-                    "order_id": None,
-                    "sku": None,
-                    "quantity": None,
-                    "shipped_on": None,
-                }
-            ],
-            "order_note": [{"id": 7, "order_id": None, "body": None, "resolved_on": None}],
-            "order_status": [{"id": 7, "order_id": None, "order_item_id": None, "code": None}],
-            "order_tag": [{"id": 7, "order_id": None, "label": None, "priority": None}],
+            "px": {
+                "orders": [
+                    {
+                        "id": 7,
+                        "name": None,
+                        "sku": None,
+                        "qty": None,
+                        "price": None,
+                        "active": None,
+                        "ordered_on": None,
+                    }
+                ],
+                "order_item": [
+                    {
+                        "id": 7,
+                        "order_id": None,
+                        "sku": None,
+                        "quantity": None,
+                        "shipped_on": None,
+                    }
+                ],
+                "order_note": [{"id": 7, "order_id": None, "body": None, "resolved_on": None}],
+                "order_status": [{"id": 7, "order_id": None, "order_item_id": None, "code": None}],
+                "order_tag": [{"id": 7, "order_id": None, "label": None, "priority": None}],
+            },
         },
         "databaseCalls": 2,
     }

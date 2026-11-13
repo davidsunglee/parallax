@@ -26,6 +26,7 @@ from parallax.core.internal.db_port import DatabaseAdapter, MappingRow
 from parallax.core.internal.entity import DomainModel, Entity
 from parallax.core.internal.execution import prepare_model
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -50,14 +51,16 @@ _TARGET_ROW: MappingRow = {
 
 
 def _db(adapter: DatabaseAdapter, domain_model: DomainModel = ACCOUNT_MODEL) -> ScopedDatabase:
-    return own_root(connect(adapter, domain_model, clock=FixedClock(FIXED))).using_database_login()
+    return own_root(
+        connect(adapter, domain_model, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
 
 
 # The second source takes a prepared selection, as the source under test does;
 # the edition is a literal here because nothing in these suites grades it.
-_ACCOUNT = prepare_model(ACCOUNT_MODEL, edition="account")
-_ORDERS = prepare_model(ORDERS_MODEL, edition="orders")
-_CUSTOMER = prepare_model(vo_models.CUSTOMER_MODEL, edition="customer")
+_ACCOUNT = prepare_model(ACCOUNT_MODEL, edition="account", binding=TEST_BINDING)
+_ORDERS = prepare_model(ORDERS_MODEL, edition="orders", binding=TEST_BINDING)
+_CUSTOMER = prepare_model(vo_models.CUSTOMER_MODEL, edition="customer", binding=TEST_BINDING)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
@@ -67,7 +70,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     steps = write_value_runner.write_value_steps(case)
     port = ScriptedAdapter(*_outside_reads(steps), _writing_transaction(steps))
     foreign = ForeignLifecycleSource(
-        prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port
+        prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case), binding=TEST_BINDING), port
     )
     domain_model = (
         vo_models.CUSTOMER_MODEL if Path(case.model).stem == "customer" else ACCOUNT_MODEL
@@ -167,7 +170,8 @@ def test_the_second_source_takes_only_a_class_backed_selection() -> None:
     descriptor_backed = models.load_domain_model(models.default_models_dir() / "account.yaml")
     with pytest.raises(ValueError, match="class-backed Domain Model"):
         ForeignLifecycleSource(
-            prepare_model(descriptor_backed, edition="account"), RefusingAdapter()
+            prepare_model(descriptor_backed, edition="account", binding=TEST_BINDING),
+            RefusingAdapter(),
         )
 
 

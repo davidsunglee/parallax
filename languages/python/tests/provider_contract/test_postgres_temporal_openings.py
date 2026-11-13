@@ -53,6 +53,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
@@ -125,7 +126,7 @@ def _database(
 ) -> ScopedDatabase:
     """A root over the server, whose connections report a dialect binding no
     arrays unless ``grouped``, so no opening joins another."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     port = (
         profile_run.port
         if grouped
@@ -137,7 +138,13 @@ def _database(
         )
     )
     return own_root(
-        connect(port, _MODEL, clock=ScriptedClock([_T0, _TA]), lifecycle_provider=provider)
+        connect(
+            port,
+            _MODEL,
+            clock=ScriptedClock([_T0, _TA]),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -163,7 +170,7 @@ def _rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     return [
         tuple(row)
         for row in profile_run.port.execute(
-            f"select * from {_TABLES[entity]} order by in_z, out_z, from_z", []
+            f"select * from px.{_TABLES[entity]} order by in_z, out_z, from_z", []
         )
     ]
 
@@ -236,12 +243,12 @@ def _conflicting_amendment(
     control = profile_run.control()
     try:
         control.execute_write(
-            f"alter table {_TABLES[entity]} add constraint opn_span_account "
-            "foreign key (account) references opn_account (code) not valid",
+            f"alter table px.{_TABLES[entity]} add constraint opn_span_account "
+            "foreign key (account) references px.opn_account (code) not valid",
             [],
         )
         control.execute_write(
-            f"alter table {_TABLES[entity]} add constraint opn_span_amount "
+            f"alter table px.{_TABLES[entity]} add constraint opn_span_amount "
             "check (amount <> 150) not valid",
             [],
         )
@@ -369,7 +376,7 @@ def _ledgers(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDa
     control = profile_run.control()
     try:
         control.execute_write(
-            "alter table opn_ledger add constraint opn_ledger_amount "
+            "alter table px.opn_ledger add constraint opn_ledger_amount "
             "check (amount <> 150) not valid",
             [],
         )
@@ -381,7 +388,7 @@ def _ledgers(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDa
 def _ledger_rows(profile_run: Any) -> list[_Row]:
     return [
         tuple(row)
-        for row in profile_run.port.execute("select * from opn_ledger order by id, in_z", [])
+        for row in profile_run.port.execute("select * from px.opn_ledger order by id, in_z", [])
     ]
 
 
@@ -415,7 +422,7 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
     # Every object's close in one grouped effect, and every object's successor
     # in one statement, presented once and never replayed.
     close, insert = _writes(events)
-    assert close.startswith("update opn_ledger t set out_z = v.c")
+    assert close.startswith("update px.opn_ledger t set out_z = v.c")
     assert " select * from unnest(" in insert
     assert _inserted_rows(events) == [3]
     failed = [
@@ -448,7 +455,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
         other = profile_run.control()
         try:
             other.execute_write(
-                "update opn_ledger set in_z = in_z + interval '1 microsecond' "
+                "update px.opn_ledger set in_z = in_z + interval '1 microsecond' "
                 "where id = 2 and out_z = 'infinity'",
                 [],
             )
@@ -471,7 +478,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
         assert isinstance(cause, ConflictError)
         assert cause.code == OPTIMISTIC_LOCK_CONFLICT
         assert cause.key == {"id": 2}
-        assert all(write.startswith("update opn_ledger") for write in writes)
+        assert all(write.startswith("update px.opn_ledger") for write in writes)
     else:
         assert isinstance(cause, DatabaseError)
         assert cause.native_code == "23514"

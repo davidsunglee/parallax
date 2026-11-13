@@ -90,6 +90,7 @@ from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.core.internal.execution import AdaptiveBackoff, RetryPolicy
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
@@ -102,7 +103,7 @@ from tests.unit._transact_support import ACCOUNT, FIXED, deadlock, new_account
 EXECUTION = RootExecution(uuid4(), "read")
 TRANSACTION = RootExecution(uuid4(), "transaction_invocation")
 STREAM = RootExecution(uuid4(), "stream")
-STATEMENT = LoweredStatement("select id from account where id = ?", (7,))
+STATEMENT = LoweredStatement("select id from px.account where id = ?", (7,))
 
 _STANDARD: Final = frozenset(
     vars(logging.LogRecord("logger", logging.INFO, "path", 0, "message", None, None))
@@ -186,7 +187,13 @@ def _attempt_failure(*, retry_eligible: bool) -> AttemptFailure:
 
 def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
     return own_root(
-        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+        connect(
+            adapter,
+            ACCOUNT,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 

@@ -16,6 +16,7 @@ import pytest
 
 from parallax.core._execution._write_step_executor import recoverable_conflict
 from parallax.core.internal import storage_layout
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.db_error import Category, DatabaseError
 from parallax.core.internal.db_port import (
     OrderedWriteResultComplete,
@@ -24,6 +25,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.write_plan.steps import PlannedStep
+from tests._support.bindings import bound_model
 from tests._support.db_port import Ordered, ScriptedAdapter, Write
 from tests.unit.core._execution._write_step_support import (
     POSITION,
@@ -36,23 +38,32 @@ from tests.unit.core._execution._write_step_support import (
 
 _VIEW = storage_layout.storage_layout_facet_of(POSITION_META).entity(POSITION)
 assert _VIEW is not None
-_CONSTRAINTS = _VIEW.layout.temporal_constraints
+_TABLE = bound_model(POSITION_META).table(_VIEW.layout.mapping_owner)
+_CONSTRAINTS = _TABLE.temporal_constraints
 assert _CONSTRAINTS is not None
 _EXCLUSION: Final = _CONSTRAINTS.exclusion_name
-_CHECK: Final = _CONSTRAINTS.transaction_axis.interval_check_name
+_CHECK: Final = _CONSTRAINTS.transaction_check_name
 
 
-def _violation(code: str, name: str | None, category: Category | None) -> DatabaseError:
+def _violation(
+    code: str,
+    name: str | None,
+    category: Category | None,
+    table: PhysicalTable | None = _TABLE.physical,
+) -> DatabaseError:
     return DatabaseError(
         category=category,
         native_code=code,
         message="violation",
         constraint_name=name,
+        constraint_table=table,
     )
 
 
-def _exclusion(name: str = _EXCLUSION) -> DatabaseError:
-    return _violation("23P01", name, "constraintViolation")
+def _exclusion(
+    name: str = _EXCLUSION, table: PhysicalTable | None = _TABLE.physical
+) -> DatabaseError:
+    return _violation("23P01", name, "constraintViolation", table)
 
 
 def _executed(
@@ -92,6 +103,8 @@ def test_an_ordered_statement_failure_is_recognized_against_its_own_step() -> No
         _exclusion("pxc_excl_elsewhere_00000000000000000000000000000000"),
         _exclusion(_EXCLUSION.upper()),
         _violation("23P01", None, "constraintViolation"),
+        _exclusion(table=PhysicalTable(("elsewhere",), _TABLE.physical.name)),
+        _exclusion(table=None),
     ],
     ids=[
         "check",
@@ -101,10 +114,12 @@ def test_an_ordered_statement_failure_is_recognized_against_its_own_step() -> No
         "another-tables-exclusion",
         "not-the-exact-name",
         "unnamed-exclusion",
+        "the-same-name-on-another-schemas-table",
+        "no-reported-table",
     ],
 )
 def test_any_other_failure_is_left_to_its_category(failure: DatabaseError) -> None:
     raised, recognized = _executed(ScriptedAdapter(Write(raises=failure)), opening(3))
     assert raised is failure
     assert recognized == []
-    assert not recoverable_conflict(opening(3), failure, POSITION_META, POSTGRES)
+    assert not recoverable_conflict(opening(3), failure, bound_model(POSITION_META), POSTGRES)

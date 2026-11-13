@@ -8,6 +8,7 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import LATEST
 from parallax.snapshot import Database
 from tests._support import live_read_workloads as workloads
+from tests._support.bindings import TEST_BINDING
 
 
 @pytest.mark.parametrize("workload", workloads.WORKLOAD_IDS)
@@ -20,6 +21,7 @@ def test_frozen_live_reads_match_their_exact_oracle_in_every_delivery(
         profile_run.port,
         workloads.domain_model(workload),
         lifecycle_provider=observation.provider,
+        binding=TEST_BINDING,
     ) as root:
         database = root.using_database_login()
         counts = workloads.verify(database, workload, observation)
@@ -40,7 +42,9 @@ def test_history_fixture_discriminates_current_and_out_of_window_rows(
     profile_run: Any, workload: str, entity: type[Any]
 ) -> None:
     workloads.provision(workload, profile_run)
-    with Database.connect(profile_run.port, workloads.domain_model(workload)) as root:
+    with Database.connect(
+        profile_run.port, workloads.domain_model(workload), binding=TEST_BINDING
+    ) as root:
         database = root.using_database_login()
         query = entity.where(entity.all)
         if workload == "historical-bitemporal":

@@ -64,7 +64,7 @@ from tests.unit._transact_support import (
 ACCOUNT_META = model_of(ACCOUNT)
 # `Account` is versioned, so the default `optimistic` preference resolves it to
 # the Optimistic strategy and every keyed update binds the observed version last.
-UPDATE_SQL = "update account set balance = ?, version = ? where id = ? and version = ?"
+UPDATE_SQL = "update px.account set balance = ?, version = ? where id = ? and version = ?"
 ACCOUNT_ROW: MappingRow = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
@@ -226,7 +226,7 @@ def test_a_surviving_write_changes_its_own_claims_state() -> None:
 
 _PERSON_ROW: MappingRow = {"id": 1, "name": "Ada"}
 _PERSON_UPDATE: tuple[str, tuple[object, ...]] = (
-    "update person set name = ? where id = ?",
+    "update px.person set name = ? where id = ?",
     ("Grace", 1),
 )
 _REPRESENTATIONS = ["typed", "wire"]

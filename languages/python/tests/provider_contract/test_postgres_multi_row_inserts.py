@@ -55,7 +55,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     TransactionAttemptFinished,
 )
-from parallax.core.internal import storage_layout
 from parallax.core.internal.base import INT64, JSON, Json
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
@@ -64,6 +63,7 @@ from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import EntityIdentity, TablePerConcreteSubtype
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import (
     AMENDED_AT,
@@ -269,9 +269,11 @@ def _wide(row: int) -> dict[str, object]:
 
 
 def _database(profile_run: Any, observation: LifecycleObservation) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     return own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port, _MODEL, lifecycle_provider=observation.provider, binding=TEST_BINDING
+        )
     ).using_database_login()
 
 
@@ -324,7 +326,7 @@ def test_every_scalar_type_null_and_document_inserts_past_the_limit_in_one_state
     )
     ((sql_nulls, json_nulls),) = profile_run.port.execute(
         f"select count(*) filter (where {place} is null), "
-        f"count(*) filter (where jsonb_typeof({place}) = 'null') from {table}",
+        f"count(*) filter (where jsonb_typeof({place}) = 'null') from px.{table}",
         [],
     )
     assert (sql_nulls, json_nulls) == stored_nulls
@@ -333,7 +335,7 @@ def test_every_scalar_type_null_and_document_inserts_past_the_limit_in_one_state
 def test_a_document_array_holds_one_document_per_element_none_being_sql_null(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     documents: list[object] = [None, JSON_NULL, {"kind": "object"}, ["nested", None], []]
     rows = profile_run.port.execute(
         "select t.v is null, jsonb_typeof(t.v), t.v::text, array_ndims(?::jsonb[]) "
@@ -354,7 +356,7 @@ def _stored_places(profile_run: Any) -> list[tuple[object, ...]]:
     return [
         tuple(row)
         for row in profile_run.port.execute(
-            "select id, place is null, jsonb_typeof(place) from mri_wide order by id", []
+            "select id, place is null, jsonb_typeof(place) from px.mri_wide order by id", []
         )
     ]
 
@@ -392,13 +394,13 @@ def test_a_null_value_object_is_sql_null_whether_written_alone_or_in_a_column_ar
 def test_a_literal_json_null_document_stays_json_null_alone_and_in_a_column_array(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     profile_run.port.execute_write(
-        "insert into mri_wide(id, place, tags, counts) values (?, ?, ?, ?)",
+        "insert into px.mri_wide(id, place, tags, counts) values (?, ?, ?, ?)",
         [1, StructuredDocument(None), StructuredDocument([]), StructuredDocument([])],
     )
     profile_run.port.execute_write(
-        "insert into mri_wide(id, place, tags, counts) select * from unnest("
+        "insert into px.mri_wide(id, place, tags, counts) select * from unnest("
         "cast(? as bigint[]), cast(? as jsonb[]), cast(? as jsonb[]), cast(? as jsonb[]))",
         [
             ArrayBind(INT64, [2, 3]),
@@ -470,6 +472,7 @@ def test_a_ranged_write_opens_every_successor_in_one_statement(profile_run: Any)
                 for row in seeded
             ]
         },
+        TEST_BINDING,
     )
     observation = LifecycleObservation()
     db = own_root(
@@ -478,6 +481,7 @@ def test_a_ranged_write_opens_every_successor_in_one_statement(profile_run: Any)
             _MODEL,
             clock=FixedClock(AMENDED_AT),
             lifecycle_provider=observation.provider,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     start, end = window(milestones)
@@ -498,7 +502,7 @@ def test_a_ranged_write_opens_every_successor_in_one_statement(profile_run: Any)
     stored = ordered_history(
         HistoryRow(*row)
         for row in profile_run.port.execute(
-            "select id, from_z, thru_z, in_z, out_z, label, amount from mri_opened", []
+            "select id, from_z, thru_z, in_z, out_z, label, amount from px.mri_opened", []
         )
     )
     assert stored == ordered_history(expected)
@@ -571,7 +575,7 @@ def test_an_element_assignment_refuses_rather_than_truncates_or_rounds(
     db = _database(profile_run, observation)
     control = profile_run.control()
     try:
-        control.execute_write(f"alter table mri_coded {alteration}", [])
+        control.execute_write(f"alter table px.mri_coded {alteration}", [])
     finally:
         control.close()
 
@@ -580,14 +584,14 @@ def test_an_element_assignment_refuses_rather_than_truncates_or_rounds(
     assert error.native_code == native_code
     (statement,) = _inserts(observation)
     _assert_rows(statement, len(rows))
-    assert profile_run.port.execute("select count(*) from mri_coded", []) == [(0,)]
+    assert profile_run.port.execute("select count(*) from px.mri_coded", []) == [(0,)]
 
 
 def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
     profile_run: Any,
 ) -> None:
     jan, mar, may, jun = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 5, 6))
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
 
     def database(*instants: dt.datetime, provider: Any = None) -> ScopedDatabase:
         return own_root(
@@ -596,6 +600,7 @@ def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
                 _MODEL,
                 clock=ScriptedClock(list(instants)),
                 lifecycle_provider=provider,
+                binding=TEST_BINDING,
             )
         ).using_database_login()
 
@@ -612,12 +617,11 @@ def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
         tx.insert(Log(id=2, label="fresh"))
 
     error = _failure(database(mar), reopen)
-    layout = storage_layout.storage_layout_facet_of(model_of(_MODEL)).table(
-        EntityIdentity(_NAMESPACE, Log.__name__)
-    )
-    assert layout is not None and layout.temporal_constraints is not None
+    table = bound_model(model_of(_MODEL)).table(EntityIdentity(_NAMESPACE, Log.__name__))
+    assert table.temporal_constraints is not None
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
-    assert error.constraint_name == layout.temporal_constraints.exclusion_name
+    assert error.constraint_name == table.temporal_constraints.exclusion_name
+    assert error.constraint_table == table.physical
 
     provider = RecordingLifecycleProvider()
     database(mar, jun, provider=provider).transact(reopen)
@@ -643,6 +647,6 @@ def test_an_exclusion_conflict_of_one_statement_is_recognized_and_retried(
     _assert_rows(started.statement, 2)
     assert profile_run.port.execute(
         "select id, label, in_z, case when out_z = 'infinity' then null else out_z end "
-        "from mri_log order by id, in_z",
+        "from px.mri_log order by id, in_z",
         [],
     ) == [(1, "seeded", jan, may), (1, "again", jun, None), (2, "fresh", jun, None)]

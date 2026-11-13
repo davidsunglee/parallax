@@ -25,6 +25,7 @@ from parallax.core.internal.read_delivery._row_decoding import member_classifier
 from parallax.core.internal.read_planning import ResolvedReadProjection
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
@@ -63,7 +64,7 @@ def _classifiers(
     meta: Metamodel, compiled: CompiledRead
 ) -> dict[str, Callable[[object], tuple[object, tuple[object, ...]]]]:
     """``compiled``'s prepared classifiers for its target, by member name."""
-    layout = CatalogedModel(meta).layouts.entity(compiled.target)
+    layout = CatalogedModel(meta, TEST_BINDING).layouts.entity(compiled.target)
     sources = compiled.result_contract.sources(compiled.target)
     return {
         (
@@ -87,7 +88,11 @@ def _classifiers(
 
 def test_document_classification_reads_the_resolved_member_off_a_folded_carrier() -> None:
     document = compile_read(
-        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+        oa.TrueNode(),
+        bound_model(DOCUMENT),
+        POSTGRES,
+        entity(DOCUMENT, "Person"),
+        result_form="instance",
     )
     classifiers = _classifiers(DOCUMENT, document)
     assert set(classifiers) == {"displayName", "score", "joinedOn", "address", "tags"}
@@ -101,7 +106,11 @@ def test_document_classification_reads_the_resolved_member_off_a_folded_carrier(
     )
 
     columns = compile_read(
-        oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+        oa.TrueNode(),
+        bound_model(COLUMNS),
+        POSTGRES,
+        entity(COLUMNS, "Person"),
+        result_form="instance",
     )
     column_classifiers = _classifiers(COLUMNS, columns)
     assert set(column_classifiers) == {"address", "tags"}
@@ -112,8 +121,8 @@ def test_document_classification_reads_the_resolved_member_off_a_folded_carrier(
 
 
 def test_binding_refuses_sources_laid_out_for_another_member_order() -> None:
-    orders = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-    item = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    orders = compile_read(oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
+    item = compile_read(oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     (sources,) = orders.result_contract.entity_sources
     (item_sources,) = item.result_contract.entity_sources
     misaligned = replace(
@@ -127,7 +136,7 @@ def test_binding_refuses_sources_laid_out_for_another_member_order() -> None:
         ),
     )
     with pytest.raises(ValueError, match="not this model's member order"):
-        bind(CatalogedModel(ORDERS), misaligned, orders.projection)
+        bind(CatalogedModel(ORDERS, TEST_BINDING), misaligned, orders.projection)
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -155,12 +164,14 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
     holder_model = formed(Metamodel(entities=(holder,)))
     compiled = compile_read(
         oa.TrueNode(),
-        holder_model,
+        bound_model(holder_model),
         POSTGRES,
         entity(holder_model, "Holder"),
         result_form="instance",
     )
-    converter = bind(CatalogedModel(holder_model), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(holder_model, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         converter.record_row(
             (1, {"profile": {"label": "x"}}), PageBuilder(ViewSchema.of()), source=ROOT_LEVEL
@@ -169,7 +180,11 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
 
 def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
     compiled = compile_read(
-        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"), result_form="instance"
+        oa.TrueNode(),
+        bound_model(DOCUMENT),
+        POSTGRES,
+        entity(DOCUMENT, "Marker"),
+        result_form="instance",
     )
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="not a DocumentRead"):
         row_identity(compiled.result_contract, (1, {}))
@@ -179,9 +194,13 @@ def test_binding_prepares_each_occurrence_selection_once_rather_than_per_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     compiled = compile_read(
-        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+        oa.TrueNode(),
+        bound_model(DOCUMENT),
+        POSTGRES,
+        entity(DOCUMENT, "Person"),
+        result_form="instance",
     )
-    model = CatalogedModel(DOCUMENT)
+    model = CatalogedModel(DOCUMENT, TEST_BINDING)
     checked: list[ValueObjectIdentity] = []
     includes = ResolvedReadProjection.includes_value_object
 

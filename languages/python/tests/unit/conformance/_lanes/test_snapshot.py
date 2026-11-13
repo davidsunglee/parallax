@@ -401,12 +401,12 @@ def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> Non
         case,
         document={
             **case.document,
-            "given": {"apply": [{"sql": "update orders set qty = ?", "binds": [9]}]},
+            "given": {"apply": [{"sql": "update px.orders set qty = ?", "binds": [9]}]},
         },
     )
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
     _run(with_apply, port)
-    assert port.writes == [("update orders set qty = ?", [9])]
+    assert port.writes == [("update px.orders set qty = ?", [9])]
 
 
 # --------------------------------------------------------------------------- #
@@ -907,7 +907,7 @@ def test_compile_scenario_case_lowers_a_snapshot_lane_write_step() -> None:
         "/scenario/0/objectQuery",
         "/scenario/2/write",
     ]
-    assert emissions[1].sql == "update orders set name = ? where id = ?"
+    assert emissions[1].sql == "update px.orders set name = ? where id = ?"
     assert database_calls == 2
 
 
@@ -942,8 +942,8 @@ def test_only_the_run_lane_reaches_a_temporal_close_of_a_fixture_milestone() -> 
     run = _run(case, port)
 
     assert [e.sql for e in run.emissions[1:]] == [
-        "update ledger set out_z = ? where led_id = ? and out_z = ? and in_z = ?",
-        "insert into ledger(led_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
+        "update px.ledger set out_z = ? where led_id = ? and out_z = ? and in_z = ?",
+        "insert into px.ledger(led_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
     ]
     # The close addresses the fixture milestone's own edge and the successor
     # carries its acct_num forward: both come from the row the run read.

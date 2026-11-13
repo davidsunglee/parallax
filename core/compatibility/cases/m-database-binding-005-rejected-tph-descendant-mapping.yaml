@@ -1,0 +1,21 @@
+# A table-per-hierarchy family has one mapping owner, its root: an override
+# keyed by the concrete Dog would compete for the family table, so it is refused.
+model: models/animal.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      entities:
+        parallax.compatibility.Dog: { table: dog }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      entities:
+        parallax.compatibility.Dog: { table: dog }
+then:
+  rejectedRule: binding-entity-owns-no-table

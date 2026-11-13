@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.internal.base import UnsupportedError
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.dialect import PhysicalIndexName
-from parallax.core.internal.metamodel import AttributeIdentity, Column, IndexIdentity, Table
+from parallax.core.internal.metamodel import AttributeIdentity, Column, IndexIdentity
 from parallax.evolution.internal.model_evolution import EvolutionOperation
 
 __all__ = [
@@ -15,8 +16,8 @@ __all__ = [
     "CollisionGroup",
     "CreatedIndex",
     "IndexPresence",
-    "PhysicalLocation",
     "SchemaDelta",
+    "SchemaTarget",
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",
 ]
@@ -27,7 +28,7 @@ class CreatedIndex:
     """An index a schema change creates, so a later violation can be traced to it."""
 
     physical_index_name: PhysicalIndexName
-    physical_table: Table
+    physical_table: PhysicalTable
     logical_index_identity: IndexIdentity
     unique: bool
 
@@ -48,14 +49,14 @@ class SchemaDelta:
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalLocation:
+class SchemaTarget:
     """The table and member, or database extension, a schema operation acts on.
 
-    Where one physical operation acts: its Table and the member within it,
-    or the database-wide ``extension`` a tableless prerequisite installs.
+    Where one physical operation acts: its physical table and the member within
+    it, or the database-wide ``extension`` a tableless prerequisite installs.
     """
 
-    table: Table | None = None
+    table: PhysicalTable | None = None
     column: Column | None = None
     index: PhysicalIndexName | None = None
     extension: str | None = None
@@ -71,7 +72,7 @@ class UnsupportedSchemaOperation:
     """
 
     kind: str
-    location: PhysicalLocation
+    location: SchemaTarget
     reason: str
     caused_by: tuple[EvolutionOperation, ...]
 
@@ -111,7 +112,7 @@ class IndexPresence(enum.Enum):
 class CollidingIndex:
     """One definition of a collision group, in the terms the model authored it."""
 
-    table: Table
+    table: PhysicalTable
     index: IndexIdentity
     components: tuple[AttributeIdentity, ...]
     unique: bool
@@ -127,7 +128,7 @@ class CollidingTemporalConstraint:
     covers in constraint order.
     """
 
-    table: Table
+    table: PhysicalTable
     kind: Literal["primaryKey", "exclusion"]
     columns: tuple[Column, ...]
     presence: IndexPresence

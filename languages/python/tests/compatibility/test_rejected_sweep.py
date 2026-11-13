@@ -69,11 +69,11 @@ class _RefusingPort(ConnectsAsItself):
 
 def _when_kind(case: case_format.Case) -> str:
     when = cast("dict[str, Any]", case_document(case).get("when") or {})
-    for kind in ("objectQuery", "model", "write"):
+    for kind in ("objectQuery", "model", "write", "binding"):
         if kind in when:
             return kind
     raise AssertionError(
-        f"{case.case_id}: rejected case carries none of objectQuery/model/write"
+        f"{case.case_id}: rejected case carries none of objectQuery/model/write/binding"
     )  # pragma: no cover
 
 
@@ -94,11 +94,11 @@ def test_reachable_rejected_population_is_non_empty() -> None:
 
 
 def test_reachable_rejected_population_spans_every_when_kind() -> None:
-    # `objectQuery` / `model` / `write` inputs are all exercised above. All three
-    # kinds should be present in the reachable set so no dispatch case silently
-    # goes untested.
+    # `objectQuery` / `model` / `write` / `binding` inputs are all exercised
+    # above. Every kind should be present in the reachable set so no dispatch
+    # case silently goes untested.
     kinds = {_when_kind(case) for case in _REACHABLE_REJECTED}
-    assert kinds == {"objectQuery", "model", "write"}, kinds
+    assert kinds == {"objectQuery", "model", "write", "binding"}, kinds
 
 
 def _write_form(write: dict[str, Any]) -> str:

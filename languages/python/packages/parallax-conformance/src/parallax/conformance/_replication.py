@@ -32,11 +32,13 @@ from parallax.conformance.provision import (
     install_authority_fixtures,
     reset_database,
 )
+from parallax.core.internal.database_binding import ResolvedBinding
 
 if TYPE_CHECKING:
     from testcontainers.core.container import DockerContainer
 
     from parallax.conformance._database_control import DriverControl
+    from parallax.core.internal.database_binding import DatabaseBinding
     from parallax.core.internal.db_port import Password
     from parallax.core.internal.metamodel import Metamodel
     from parallax.postgres import PostgresEndpoint, PostgresRole
@@ -140,6 +142,7 @@ class ReplicationPair:
         self._pacing = pacing
         self._ledger = RuntimeLedger()
         self._closed = False
+        self._owned: frozenset[str] = frozenset()
 
     @classmethod
     def open(
@@ -242,9 +245,14 @@ class ReplicationPair:
             pool=PoolOptions(min_size=0, num_workers=1),
         )
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the primary's schema and fixtures, and wait for the standby to apply them."""
-        reset_database(self._primary, model, fixtures)
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        """Reset the primary's bound schemas and fixtures, and wait for the standby
+        to apply them."""
+        self._owned = reset_database(
+            self._primary, ResolvedBinding(model, binding), fixtures, owned=self._owned
+        )
         self.wait_replayed(self.writer_lsn())
 
     def writer_lsn(self) -> str:

@@ -96,6 +96,24 @@
       "valueObject": {}
     }
   },
+  "models/binding-ledgers.yaml": {
+    "parallax.compatibility.AuditLedger": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.SalesLedger": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/branch.yaml": {
     "parallax.compatibility.Branch": {
       "attribute": {
@@ -2936,6 +2954,30 @@
         "body": "body",
         "id": "id",
         "title": "title"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-temporal-container-v1.yaml": {
+    "parallax.compatibility.Escrow": {
+      "attribute": {
+        "id": "id",
+        "reference": "reference",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-temporal-container-v2.yaml": {
+    "parallax.compatibility.Escrow": {
+      "attribute": {
+        "id": "id",
+        "reference": "reference",
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}

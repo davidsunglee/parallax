@@ -32,6 +32,7 @@ from parallax.core.internal.sql_gen._inheritance import (
 )
 from parallax.core.internal.sql_gen._select_list import SelectListBuilder
 from parallax.core.internal.storage_layout import RelationalDocument
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_read
@@ -136,7 +137,9 @@ def test_no_compiled_read_retains_the_select_list_it_was_built_from(
         return real(self, *args, **kwargs)
 
     monkeypatch.setattr(SelectListBuilder, "result_contract", recording)
-    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    compiled = compile_read(
+        oa.TrueNode(), bound_model(DOCUMENT), POSTGRES, target(DOCUMENT, "Document")
+    )
 
     (select_list,) = built
     assert reaches_compilation_state(select_list)
@@ -178,7 +181,12 @@ def test_union_branches_selecting_different_cells_are_refused(
 
     monkeypatch.setattr(SelectListBuilder, "emit_variant", doubled_after_the_first_branch)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on their cells"):
-        compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+        compile_read(
+            oa.TrueNode(),
+            bound_model(DOCUMENT),
+            POSTGRES,
+            target(DOCUMENT, "Document"),
+        )
 
 
 def test_union_branches_naming_one_contributor_differently_are_refused(
@@ -200,7 +208,12 @@ def test_union_branches_naming_one_contributor_differently_are_refused(
 
     monkeypatch.setattr(SelectListBuilder, "emit_branch", renamed_in_a_later_branch)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree on the cell 'id'"):
-        compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+        compile_read(
+            oa.TrueNode(),
+            bound_model(DOCUMENT),
+            POSTGRES,
+            target(DOCUMENT, "Document"),
+        )
 
 
 def test_a_null_tail_branch_selecting_other_cells_than_the_ordinary_branch_is_refused(
@@ -255,7 +268,7 @@ def test_a_select_list_carrying_no_cell_for_a_fetched_member_is_refused(
     with raises_code(
         InternalError, SQL_GENERATION_FAILED, match="carries no source for the fetched member 'sku'"
     ):
-        compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+        compile_read(oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
 
 
 def test_a_select_list_carrying_no_tag_for_a_tagged_read_is_refused(
@@ -263,7 +276,7 @@ def test_a_select_list_carrying_no_tag_for_a_tagged_read_is_refused(
 ) -> None:
     _without_column(monkeypatch, lambda column: column.column == "kind")
     with pytest.raises(ValueError, match="row identity carrier is required"):
-        compile_read(oa.TrueNode(), ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
+        compile_read(oa.TrueNode(), bound_model(ANIMAL), POSTGRES, target(ANIMAL, "Animal"))
 
 
 def test_a_select_list_carrying_no_planned_shared_document_is_refused(
@@ -275,7 +288,7 @@ def test_a_select_list_carrying_no_planned_shared_document_is_refused(
     ):
         compile_read(
             oa.TrueNode(),
-            DOCUMENT_LAYOUT,
+            bound_model(DOCUMENT_LAYOUT),
             POSTGRES,
             target(DOCUMENT_LAYOUT, "Charter"),
             temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},

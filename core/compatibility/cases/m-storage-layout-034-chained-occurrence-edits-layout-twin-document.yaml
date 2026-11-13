@@ -23,8 +23,8 @@ when:
       note: the first edit restates the whole occurrence to add a stop
       statements:
         - sql:
-            postgres: update write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-            mariadb: update write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+            postgres: update px.write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update px.write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
               - '{spec}'
@@ -54,8 +54,8 @@ when:
       note: the restated occurrence is what item 2 holds when the second edit arrives
       statements:
         - sql:
-            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ?
-            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ?
+            postgres: select t0.id, not t0.payload is null, t0.payload from px.write_twin t0 where t0.id = ?
+            mariadb: select t0.id, not t0.payload is null, t0.payload from px.write_twin t0 where t0.id = ?
           binds: [2]
       expectRows:
         - id: 2
@@ -82,8 +82,8 @@ when:
       note: the second edit names two members, so it destroys what the first edit had just stored
       statements:
         - sql:
-            postgres: update write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-            mariadb: update write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+            postgres: update px.write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update px.write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
               - '{spec}'
@@ -107,8 +107,8 @@ when:
       note: only the second edit's own value survives, and `label` and `marks` are untouched throughout
       statements:
         - sql:
-            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ?
-            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id = ?
+            postgres: select t0.id, not t0.payload is null, t0.payload from px.write_twin t0 where t0.id = ?
+            mariadb: select t0.id, not t0.payload is null, t0.payload from px.write_twin t0 where t0.id = ?
           binds: [2]
       expectRows:
         - id: 2
@@ -122,25 +122,26 @@ when:
 then:
   databaseCalls: 6
   tableState:
-    write_twin:
-      - id: 1
-        payload:
-          label: north
-          spec:
-            title: Atlas
-            note: first
-            origin: { country: "NO" }
-            stops:
-              - { port: Oslo }
-          marks:
-            - { code: A }
-            - { code: B }
-      - id: 2
-        payload:
-          label: south
-          spec:
-            title: Meridian
-            stops:
-              - { port: Kiel }
-          marks:
-            - { code: C }
+    px:
+      write_twin:
+        - id: 1
+          payload:
+            label: north
+            spec:
+              title: Atlas
+              note: first
+              origin: { country: "NO" }
+              stops:
+                - { port: Oslo }
+            marks:
+              - { code: A }
+              - { code: B }
+        - id: 2
+          payload:
+            label: south
+            spec:
+              title: Meridian
+              stops:
+                - { port: Kiel }
+            marks:
+              - { code: C }

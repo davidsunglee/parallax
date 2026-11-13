@@ -8,6 +8,7 @@ from decimal import Decimal
 from parallax.conformance.story_models import Account
 from parallax.core import DomainModel
 from parallax.core.internal.db_port import DatabaseAdapter
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 
 __all__ = [
@@ -28,7 +29,7 @@ class CreditReport:
 
 
 def a_credit_overtaken_by_another_writer_is_replayed_from_a_fresh_read(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> CreditReport:
     """Credit an account while another writer changes it mid-transaction.
 
@@ -40,7 +41,7 @@ def a_credit_overtaken_by_another_writer_is_replayed_from_a_fresh_read(
     callback: the replay reads the other writer's balance and credits on top of
     it. Nothing asks for the replay; the Retry Policy only bounds it.
     """
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         query = Account.where(Account.id == _TARGET_ID)
         balances_read: list[Decimal] = []

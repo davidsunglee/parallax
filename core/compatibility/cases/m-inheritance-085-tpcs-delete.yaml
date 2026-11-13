@@ -16,9 +16,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: delete from invoice where id = ?
+        postgres: delete from px.invoice where id = ?
       binds: [1]
   tableState:
-    invoice:
-      - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: "80.00" }
+    px:
+      invoice:
+        - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: "80.00" }
   databaseCalls: 2

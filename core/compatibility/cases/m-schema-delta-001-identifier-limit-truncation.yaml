@@ -19,20 +19,20 @@ then:
     postgres:
       delta:
         statements:
-          - create table evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
-          - create index pxi_evolution_identifier_trunc_1a5a228fca735d19c5f2943d1f604b6f on evolution_identifier_truncation (label)
+          - create table px.evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_identifier_trunc_1a5a228fca735d19c5f2943d1f604b6f on px.evolution_identifier_truncation (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_identifier_trunc_1a5a228fca735d19c5f2943d1f604b6f
-            physicalTable: evolution_identifier_truncation
+            physicalTable: { qualifier: [px], name: evolution_identifier_truncation }
             logicalIndexIdentity: parallax.compatibility.LongIdentifierTruncationWitness.evolution_identifier_truncation_label_lookup
             unique: false
     mariadb:
       delta:
         statements:
-          - create table evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
-          - create index pxi_evolution_identifier_trunca_1a5a228fca735d19c5f2943d1f604b6f on evolution_identifier_truncation (label)
+          - create table px.evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_identifier_trunca_1a5a228fca735d19c5f2943d1f604b6f on px.evolution_identifier_truncation (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_identifier_trunca_1a5a228fca735d19c5f2943d1f604b6f
-            physicalTable: evolution_identifier_truncation
+            physicalTable: { qualifier: [px], name: evolution_identifier_truncation }
             logicalIndexIdentity: parallax.compatibility.LongIdentifierTruncationWitness.evolution_identifier_truncation_label_lookup
             unique: false

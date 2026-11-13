@@ -19,22 +19,23 @@ when:
 then:
   statements:
     - sql:
-        postgres: update ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
-        mariadb: update ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+        postgres: update px.ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        mariadb: update px.ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
       binds:
         postgres: ['{label}', closing, 2, 100, 1]
         mariadb: ['$.label', closing, 2, 100, 1]
   tableState:
-    ledger:
-      - id: 100
-        version: 2
-        payload:
-          label: closing
-          balance: '250.00'
-          details: { code: opening }
-      - id: 200
-        version: 1
-        payload:
-          balance: '40.00'
-          details: { code: settled }
+    px:
+      ledger:
+        - id: 100
+          version: 2
+          payload:
+            label: closing
+            balance: '250.00'
+            details: { code: opening }
+        - id: 200
+          version: 1
+          payload:
+            balance: '40.00'
+            details: { code: settled }
   databaseCalls: 2

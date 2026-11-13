@@ -9,13 +9,14 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance._lanes import evolution
-from parallax.core.internal.metamodel import EntityIdentity, Table
+from parallax.core.internal.metamodel import EntityIdentity
 from parallax.evolution.internal.model_evolution import EntityAdded
 from parallax.evolution.internal.schema_delta import (
-    PhysicalLocation,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
+from tests._support.bindings import physical_table
 from tests._support.case_corpus import case as corpus_case
 
 
@@ -30,14 +31,14 @@ def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(
     # that turns a refusal into a cell has no corpus witness until a dialect that
     # refuses one ships. The engine must report the refusal AS the cell rather
     # than letting it escape as a run failure.
-    def _refuse(evolution: object, dialect: object) -> object:
-        del evolution, dialect
+    def _refuse(evolution: object) -> object:
+        del evolution
         raise UnsupportedSchemaEvolutionError(
             "postgres",
             (
                 UnsupportedSchemaOperation(
                     kind="CreateIndex",
-                    location=PhysicalLocation(table=Table(name="evolution_widget")),
+                    location=SchemaTarget(table=physical_table("evolution_widget")),
                     reason="a refusing renderer",
                     caused_by=(
                         EntityAdded(entity=EntityIdentity("parallax.compatibility", "Widget")),
@@ -53,7 +54,9 @@ def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(
             "operations": [
                 {
                     "kind": "CreateIndex",
-                    "physicalLocation": {"table": "evolution_widget"},
+                    "physicalLocation": {
+                        "table": {"qualifier": ["px"], "name": "evolution_widget"}
+                    },
                     "causedBy": [
                         {"kind": "EntityAdded", "entity": "parallax.compatibility.Widget"}
                     ],

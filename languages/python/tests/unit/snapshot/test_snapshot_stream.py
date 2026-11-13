@@ -74,6 +74,7 @@ from parallax.snapshot import (
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._wire import read_evidence_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -145,7 +146,7 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
     # "outside the scope, everything raises" is one rule rather than one rule
     # with an exception.
     stream = (
-        own_root(Database(RefusingAdapter(), ORDERS_MODEL))
+        own_root(Database(RefusingAdapter(), ORDERS_MODEL, binding=TEST_BINDING))
         .using_database_login()
         .stream(_all_orders())
     )
@@ -305,7 +306,9 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
     # a target the connected model does not declare is refused at entry, by a
     # port that raises if it is touched at all.
     stream = (
-        own_root(Database(RefusingAdapter(), ACCOUNT)).using_database_login().stream(_all_orders())
+        own_root(Database(RefusingAdapter(), ACCOUNT, binding=TEST_BINDING))
+        .using_database_login()
+        .stream(_all_orders())
     )
     with raises_code(UsageError, "query-target-not-in-model"):
         stream.__enter__()
@@ -399,7 +402,7 @@ def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
     # A stream reports what it is and where it stands. Nothing about the page
     # plan, the cursor, or the port is readable off it.
     stream = (
-        own_root(Database(RefusingAdapter(), ORDERS_MODEL))
+        own_root(Database(RefusingAdapter(), ORDERS_MODEL, binding=TEST_BINDING))
         .using_database_login()
         .stream(_all_orders())
     )
@@ -1388,7 +1391,7 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
         raises_code(
             UnsupportedError, "execution-feature-deferred", match="snapshot-history-includes"
         ),
-        own_root(Database(RefusingAdapter(), POLICY_MODEL))
+        own_root(Database(RefusingAdapter(), POLICY_MODEL, binding=TEST_BINDING))
         .using_database_login()
         .stream(query, batch_size=2),
     ):
@@ -1528,8 +1531,8 @@ def test_the_lookahead_root_is_never_paired_with_the_page_that_read_it() -> None
 # Adoption: at entry, not at construction, and retained through every page.    #
 # --------------------------------------------------------------------------- #
 def _editions() -> tuple[Any, Any, ServingModel]:
-    a = prepare_model(ORDERS_MODEL, edition="orders-a")
-    b = prepare_model(ORDERS_MODEL, edition="orders-b")
+    a = prepare_model(ORDERS_MODEL, edition="orders-a", binding=TEST_BINDING)
+    b = prepare_model(ORDERS_MODEL, edition="orders-b", binding=TEST_BINDING)
     return a, b, ServingModel(a)
 
 

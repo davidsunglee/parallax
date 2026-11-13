@@ -20,8 +20,8 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
-                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
               binds: [1]
           expectRows:
             - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -29,8 +29,8 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: update account set balance = ?, version = ? where id = ? and version = ?
-                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+                postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
               binds: ["999.00", 2, 2, 1]
           affectedRows: [1]
       - B:
@@ -39,13 +39,14 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: update account set balance = ?, version = ? where id = ? and version = ?
-                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+                postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
               binds: ["300.00", 2, 2, 1]
           affectedRows: [0]
 then:
   tableState:
-    account:
-      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
-      - { id: 2, owner: Linus, balance: "999.00", version: 2 }
-      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }

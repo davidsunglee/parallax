@@ -8,12 +8,12 @@ shape: error
 then:
   statements:
     - sql:
-        postgres: insert into widget(id, label) values (?, ?)
-        mariadb: insert into widget(id, label) values (?, ?)
+        postgres: insert into px.widget(id, label) values (?, ?)
+        mariadb: insert into px.widget(id, label) values (?, ?)
       binds: [7, "seed"]
     - sql:
-        postgres: insert into widget(id, label) values (?, ?)
-        mariadb: insert into widget(id, label) values (?, ?)
+        postgres: insert into px.widget(id, label) values (?, ?)
+        mariadb: insert into px.widget(id, label) values (?, ?)
       binds: [7, "collide"]
   errorClass: uniqueViolation
   nativeCode:

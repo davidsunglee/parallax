@@ -18,21 +18,21 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.parking_id from traversal_ticket t0
-        mariadb: select t0.id, t0.parking_id from traversal_ticket t0
+        postgres: select t0.id, t0.parking_id from px.traversal_ticket t0
+        mariadb: select t0.id, t0.parking_id from px.traversal_ticket t0
     - sql:
-        postgres: select t0.id, t0.vehicle_id from traversal_parking t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id, t0.vehicle_id from traversal_parking t0 where t0.id in (?, ?, ?, ?)
+        postgres: select t0.id, t0.vehicle_id from px.traversal_parking t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.vehicle_id from px.traversal_parking t0 where t0.id in (?, ?, ?, ?)
       binds: { postgres: [[30, 31, 32, 33]], mariadb: [30, 31, 32, 33] }
     - sql:
-        postgres: select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as int) seats, 'Bike' family_variant from traversal_bike t0 where t0.id = any(cast(? as bigint[])) union all select t0.id, t0.maker, t0.dealer_id, cast(null as int) gears, t0.seats, 'Car' family_variant from traversal_car t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as signed) seats, 'Bike' family_variant from traversal_bike t0 where t0.id in (?, ?, ?) union all select t0.id, t0.maker, t0.dealer_id, cast(null as signed) gears, t0.seats, 'Car' family_variant from traversal_car t0 where t0.id in (?, ?, ?)
+        postgres: select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as int) seats, 'Bike' family_variant from px.traversal_bike t0 where t0.id = any(cast(? as bigint[])) union all select t0.id, t0.maker, t0.dealer_id, cast(null as int) gears, t0.seats, 'Car' family_variant from px.traversal_car t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as signed) seats, 'Bike' family_variant from px.traversal_bike t0 where t0.id in (?, ?, ?) union all select t0.id, t0.maker, t0.dealer_id, cast(null as signed) gears, t0.seats, 'Car' family_variant from px.traversal_car t0 where t0.id in (?, ?, ?)
       binds: { postgres: [[5, 6, 7], [5, 6, 7]], mariadb: [5, 6, 7, 5, 6, 7] }
     - sql:
-        postgres: select t0.id, t0.name from traversal_dealer t0 where t0.id = any(cast(? as bigint[]))
-        mariadb: select t0.id, t0.name from traversal_dealer t0 where t0.id in (?, ?)
+        postgres: select t0.id, t0.name from px.traversal_dealer t0 where t0.id = any(cast(? as bigint[]))
+        mariadb: select t0.id, t0.name from px.traversal_dealer t0 where t0.id in (?, ?)
       binds: { postgres: [[40, 41]], mariadb: [40, 41] }
-  referenceSql: select id, parking_id from traversal_ticket
+  referenceSql: select id, parking_id from px.traversal_ticket
   graph:
     Ticket:
       - id: 50

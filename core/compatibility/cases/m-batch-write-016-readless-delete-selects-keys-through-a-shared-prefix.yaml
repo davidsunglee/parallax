@@ -21,16 +21,17 @@ when:
       expectAffectedRows: 1
       statements:
         - sql:
-            postgres: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
-            mariadb: delete from order_status where id in (select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id left join orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
+            postgres: delete from px.order_status where id in (select t0.id from px.order_status t0 left join px.order_item t1 on t1.id = t0.order_item_id left join px.orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
+            mariadb: delete from px.order_status where id in (select t0.id from px.order_status t0 left join px.order_item t1 on t1.id = t0.order_item_id left join px.orders t2 on t2.id = t1.order_id where t2.name = ? and case when t1.id is null then false else (t1.quantity < ?) is true end)
           binds: [Ada, 2]
 then:
   databaseCalls: 1
   tableState:
-    order_status:
-      - { id: 101, order_id: 1, order_item_id: null, code: NEW }
-      - { id: 102, order_id: 2, order_item_id: null, code: SHIPPED }
-      - { id: 142, order_id: 42, order_item_id: null, code: NEW }
-      - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
-      - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
-      - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }
+    px:
+      order_status:
+        - { id: 101, order_id: 1, order_item_id: null, code: NEW }
+        - { id: 102, order_id: 2, order_item_id: null, code: SHIPPED }
+        - { id: 142, order_id: 42, order_item_id: null, code: NEW }
+        - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
+        - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }
+        - { id: 204, order_id: 42, order_item_id: 421, code: PICKED }

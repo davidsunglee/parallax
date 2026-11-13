@@ -34,7 +34,7 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation, Li
 from parallax.conformance._mechanism import case_document, envelope
 from parallax.conformance._mechanism.envelope import ScenarioRun, UnclassifiedEngineError
 from parallax.conformance._mechanism.given_state import apply_given_apply
-from parallax.conformance._mechanism.model_facts import case_serving_model
+from parallax.conformance._mechanism.model_facts import case_binding, case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
 from parallax.conformance._wire_submission import WireSubmitter
 from parallax.conformance.scripted_clock import FixedClock
@@ -362,6 +362,7 @@ def run_interleaved_scenario_case(
     context = CaseContext(
         serving,
         model,
+        case_binding(case),
         concurrency,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
@@ -454,7 +455,7 @@ def run_interleaved_scenario_case(
     observed_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
     then = case.document.get("then")
     table_state = (
-        read_table_state(port, model)
+        read_table_state(port, context.resolved)
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )

@@ -209,6 +209,9 @@ class EntityRowScope:
     def dialect(self) -> Dialect:
         return self.ctx.dialect
 
+    def table_sql(self, layout: TableLayout) -> str:
+        return self.ctx.table_sql(layout)
+
     def own_column(self, column: str) -> str:
         """Render one of THIS scope's own columns, honoring :attr:`unaliased`.
 
@@ -1768,7 +1771,7 @@ def _owner_results(
     on = " and ".join(
         f"{dialect.qualified(relation, key)} = {owner.own_column(key)}" for key in keys
     )
-    selected = f"select {', '.join(cells)} from {owner.layout.table.name} {token}"
+    selected = f"select {', '.join(cells)} from {owner.table_sql(owner.layout)} {token}"
     return f"left join ({selected}) {relation} on {on}".replace(token, alias)
 
 

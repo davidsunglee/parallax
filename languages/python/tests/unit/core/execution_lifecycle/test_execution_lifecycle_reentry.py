@@ -29,6 +29,7 @@ from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -63,7 +64,13 @@ as no start."""
 
 def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
     return own_root(
-        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+        connect(
+            adapter,
+            ACCOUNT,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 

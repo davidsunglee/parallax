@@ -50,6 +50,7 @@ from parallax.core.internal.entity import UnloadedRelationshipError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import Database, ScopedDatabase, connect, edge_of, is_view_loaded
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -86,8 +87,8 @@ def _seed_orders(db: ScopedDatabase) -> None:
 def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_ORDERS), {})
-    db = own_root(connect(profile_run.port, _ORDERS)).using_database_login()
+    profile_run.reset(model_of(_ORDERS), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ORDERS, binding=TEST_BINDING)).using_database_login()
     _seed_orders(db)
 
     included, unincluded = read_to_one_relationship_states(db)
@@ -121,8 +122,8 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
 def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_PAYMENT), {})
-    db = own_root(connect(profile_run.port, _PAYMENT)).using_database_login()
+    profile_run.reset(model_of(_PAYMENT), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _PAYMENT, binding=TEST_BINDING)).using_database_login()
     db.transact(
         lambda tx: (
             tx.insert(CardPayment(id=1, amount=Decimal("200.00"), card_network="visa")),
@@ -145,8 +146,8 @@ def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(
 def test_a_table_per_concrete_subtype_family_materializes_its_declared_concretes(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_DOCUMENT), {})
-    db = own_root(connect(profile_run.port, _DOCUMENT)).using_database_login()
+    profile_run.reset(model_of(_DOCUMENT), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _DOCUMENT, binding=TEST_BINDING)).using_database_login()
     db.transact(
         lambda tx: (
             tx.insert(
@@ -208,8 +209,8 @@ def _seed_streamed_orders(db: ScopedDatabase, count: int) -> None:
 
 
 def test_an_eager_typed_read_projects_to_canonical_wire_form(profile_run: Any) -> None:
-    profile_run.reset(model_of(_ACCOUNT), {})
-    db = own_root(connect(profile_run.port, _ACCOUNT)).using_database_login()
+    profile_run.reset(model_of(_ACCOUNT), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ACCOUNT, binding=TEST_BINDING)).using_database_login()
     db.transact(lambda tx: tx.insert(Account(id=1, owner="Ada", balance=Decimal("100.00"))))
 
     projected = publish_typed_read_as_wire(db)
@@ -225,8 +226,8 @@ def test_an_eager_typed_read_projects_to_canonical_wire_form(profile_run: Any) -
 def test_a_typed_stream_projects_each_root_to_wire_through_the_shipped_adapter(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_ORDERS), {})
-    db = own_root(connect(profile_run.port, _ORDERS)).using_database_login()
+    profile_run.reset(model_of(_ORDERS), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ORDERS, binding=TEST_BINDING)).using_database_login()
     _seed_streamed_orders(db, 3)
     published: list[Any] = []
 
@@ -249,8 +250,8 @@ def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
     # one that does not, and one larger than the whole of it — must agree on the
     # summed child quantities and on the roots' order, which is the Continuation
     # Order the delivery derived from a query that declared none.
-    profile_run.reset(model_of(_ORDERS), {})
-    db = own_root(connect(profile_run.port, _ORDERS)).using_database_login()
+    profile_run.reset(model_of(_ORDERS), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ORDERS, binding=TEST_BINDING)).using_database_login()
     _seed_streamed_orders(db, 7)
 
     readings = [stream_a_result_one_root_at_a_time(db, page) for page in (2, 3, 16)]
@@ -265,8 +266,8 @@ def test_a_streamed_delivery_is_scope_bound_and_single_pass(profile_run: Any) ->
     # What the recipe's `with` block is for, stated as the two refusals a caller
     # earns by leaving it: there is no whole-result accessor to reach for, and a
     # delivery hands its roots to one view, once.
-    profile_run.reset(model_of(_ORDERS), {})
-    db = own_root(connect(profile_run.port, _ORDERS)).using_database_login()
+    profile_run.reset(model_of(_ORDERS), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ORDERS, binding=TEST_BINDING)).using_database_login()
     _seed_streamed_orders(db, 3)
 
     with db.stream(Order.where(Order.all), batch_size=2) as orders:
@@ -284,8 +285,8 @@ def test_a_participating_delivery_writes_every_root_exactly_once(profile_run: An
     # because the Continuation Order over an unordered query is the primary key and
     # no write moves one. The committed rows are what says so, read back after the
     # boundary rather than from the values the loop held.
-    profile_run.reset(model_of(_ACCOUNT), {})
-    db = own_root(connect(profile_run.port, _ACCOUNT)).using_database_login()
+    profile_run.reset(model_of(_ACCOUNT), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _ACCOUNT, binding=TEST_BINDING)).using_database_login()
     db.transact(
         lambda tx: [
             tx.insert(Account(id=n, owner=f"owner-{n}", balance=Decimal("100.00")))
@@ -308,9 +309,14 @@ _LATER = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 def test_a_write_conditioned_on_a_read_milestone_applies_only_while_it_stands(
     profile_run: Any,
 ) -> None:
-    profile_run.reset(model_of(_BALANCE), {})
+    profile_run.reset(model_of(_BALANCE), {}, TEST_BINDING)
     db = own_root(
-        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_OPENED, _AMENDED, _LATER]))
+        connect(
+            profile_run.port,
+            _BALANCE,
+            clock=ScriptedClock([_OPENED, _AMENDED, _LATER]),
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
     db.transact(lambda tx: tx.insert(Balance(id=1, acct_num="A-1", value=Decimal("5.00"))))
     displayed = db.wire.find(Balance.where(Balance.id == 1)).result()
@@ -569,7 +575,11 @@ def _conditioned_write_of_one_balance(db: ScopedDatabase) -> None:
 def test_every_recipe_runs_through_the_shipped_surface(
     recipe: Callable[[ScopedDatabase], Any], model: str, port: Callable[[], Any]
 ) -> None:
-    recipe(own_root(Database.connect(port(), MODELS[model])).using_database_login())
+    recipe(
+        own_root(
+            Database.connect(port(), MODELS[model], binding=TEST_BINDING)
+        ).using_database_login()
+    )
 
 
 def test_every_recipe_the_module_exports_has_a_driver() -> None:

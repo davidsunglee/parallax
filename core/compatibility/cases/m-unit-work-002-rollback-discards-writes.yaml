@@ -20,7 +20,7 @@ when:
       note: observe account 1 (balance 100.00, version 1) before the aborted write, inside the doomed unit of work
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -34,7 +34,7 @@ when:
       note: "apply a new balance for the OBSERVED account 1; the group's fate is rolledBack, so it ROLLS BACK after this, its last step"
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["999.00", 2, 1, 1]
     - objectQuery:
         target: parallax.compatibility.Account
@@ -46,7 +46,7 @@ when:
       note: the SAME find, UNGROUPED, re-resolves after the group's rollback and MUST observe 100.00, not 999.00
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }

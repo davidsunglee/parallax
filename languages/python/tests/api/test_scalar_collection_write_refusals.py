@@ -23,6 +23,7 @@ from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity import AttributeAssignment
 from parallax.core.internal.entity._expressions import AttributeRef
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
 
@@ -40,7 +41,7 @@ _ORDER = f"{_NS}.Order"
 
 def _refusal(work: Callable[[TxnContext], object]) -> UsageError:
     port = ScriptedAdapter(Transact())
-    database = own_root(connect(port, _MODEL)).using_database_login()
+    database = own_root(connect(port, _MODEL, binding=TEST_BINDING)).using_database_login()
     with pytest.raises(UsageError) as caught:
         database.transact(work)
     return caught.value

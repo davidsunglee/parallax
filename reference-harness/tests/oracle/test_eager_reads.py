@@ -272,7 +272,7 @@ def test_a_bytes_cell_a_wrapped_union_carries_grades_in_either_case(
     damaged_case: CaseLoader,
 ) -> None:
     case = damaged_case(_BYTES_CELL)
-    arm = "select t0.id, hex(t0.payload) payload_hex from bytes_cell t0"
+    arm = "select t0.id, hex(t0.payload) payload_hex from px.bytes_cell t0"
     case.then["statements"][0]["sql"]["mariadb"] = (
         f"select u.id, u.payload_hex from (({arm} where t0.id = 1) union all ({arm})) u"
     )
@@ -377,7 +377,7 @@ def test_a_union_branch_reading_the_wrong_table_fails(damaged_case: CaseLoader) 
     case = damaged_case(_TPCS_NO_DOCUMENT_SLOT)
     for dialect, sql in case.then["statements"][0]["sql"].items():
         case.then["statements"][0]["sql"][dialect] = sql.replace(
-            "from receipt t0", "from invoice t0"
+            "from px.receipt t0", "from px.invoice t0"
         )
     reads = ScriptedReads(results=[_tpcs_rows(case)])
 
@@ -530,7 +530,7 @@ def test_a_locked_partitioned_document_read_without_its_outer_base_join_fails(
     entry = case.then["statements"][0]
     entry["sql"][dialect] = (
         entry["sql"][dialect]
-        .replace("from payment_document t0 join (", "from (", 1)
+        .replace("from px.payment_document t0 join (", "from (", 1)
         .replace(") u on u.id = t0.id", ") t0", 1)
     )
 

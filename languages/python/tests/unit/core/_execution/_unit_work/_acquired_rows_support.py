@@ -31,6 +31,7 @@ from parallax.core.internal.write_plan.plan import (
     TemporalWriteOwnership,
     WritePlan,
 )
+from tests._support.bindings import bound_model
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row
 
@@ -111,7 +112,7 @@ def range_bindings(
     """The scoped binding a flush binds ``plan``'s deferred entries ``[start,
     stop)`` through, reading through ``acquire_rows`` under ``ownership``,
     their retained rows judged by ``current``."""
-    planner = build_write_planner(model)
+    planner = build_write_planner(bound_model(model))
     return RangeBindings(
         plan,
         start=start,

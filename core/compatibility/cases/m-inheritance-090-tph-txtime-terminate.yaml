@@ -28,12 +28,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
+        postgres: insert into px.reading(id, kind, celsius, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, meter, "20.00", "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ?
+        postgres: update px.reading set out_z = ? where id = ? and kind = ? and out_z = ?
       binds: ["2024-08-01T00:00:00.000000Z", 1, meter, infinity]
   tableState:
-    reading:
-      - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+    px:
+      reading:
+        - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
   databaseCalls: 3

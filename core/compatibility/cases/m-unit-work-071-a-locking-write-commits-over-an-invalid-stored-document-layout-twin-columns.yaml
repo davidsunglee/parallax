@@ -9,7 +9,7 @@ compileEligibility:
 given:
   fixtures: true
   apply:
-    - sql: update sequence_account set memo = ? where id = ?
+    - sql: update px.sequence_account set memo = ? where id = ?
       binds:
         - { note: 7 }
         - 1
@@ -28,5 +28,6 @@ then:
   units:
     written: { outcome: committed }
   tableState:
-    sequence_account:
-      - { id: 1, balance: 20, memo: { note: replaced }, version: 2 }
+    px:
+      sequence_account:
+        - { id: 1, balance: 20, memo: { note: replaced }, version: 2 }

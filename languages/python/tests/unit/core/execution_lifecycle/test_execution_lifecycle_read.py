@@ -48,6 +48,7 @@ from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     ConnectsAsItself,
     Read,
@@ -89,7 +90,13 @@ ACCOUNT_TARGET: Final = _StaticTarget()
 
 def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
     return own_root(
-        connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+        connect(
+            adapter,
+            model,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 

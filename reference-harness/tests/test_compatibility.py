@@ -275,19 +275,19 @@ def test_lock_waits_reports_a_session_waiting_on_its_peers_row_lock(provider) ->
     # The lock-wait view is what lets a choreography prove a blocking step waits.
     # The waiting session lifts its budget first, so the wait outlasts the polls
     # (InnoDB refreshes its view only after 100 ms without a reader).
-    provider.reset()
-    provider.apply_ddl(["create table gauge (id bigint primary key, v int not null)"])
-    provider.execute("insert into gauge (id, v) values (?, ?)", [1, 0])
+    provider.reset([("px",)])
+    provider.apply_ddl(["create table px.gauge (id bigint primary key, v int not null)"])
+    provider.execute("insert into px.gauge (id, v) values (?, ?)", [1, 0])
     finished: list[int] = []
     with (
         provider.open_session("read-committed") as holder,
         provider.open_session("read-committed") as waiter,
     ):
-        holder.execute("update gauge set v = ? where id = ?", [1, 1])
+        holder.execute("update px.gauge set v = ? where id = ?", [1, 1])
         waiter.extend_lock_wait()
         statement = threading.Thread(
             target=lambda: finished.append(
-                waiter.execute("update gauge set v = ? where id = ?", [2, 1])
+                waiter.execute("update px.gauge set v = ? where id = ?", [2, 1])
             )
         )
         statement.start()
@@ -311,23 +311,23 @@ def test_every_connection_counts_matched_rows_unchanged_ones_included(provider) 
     # predicate matched, a row it left unchanged included; one matching nothing
     # reports zero; a DELETE reports the rows it removed. The provider's own
     # connection, a held session, and a peer all answer so.
-    provider.reset()
-    provider.apply_ddl(["create table gauge (id bigint primary key, v int not null)"])
-    provider.execute("insert into gauge (id, v) values (?, ?), (?, ?)", [1, 0, 2, 5])
+    provider.reset([("px",)])
+    provider.apply_ddl(["create table px.gauge (id bigint primary key, v int not null)"])
+    provider.execute("insert into px.gauge (id, v) values (?, ?), (?, ?)", [1, 0, 2, 5])
 
     def counts(executor) -> list[int]:
         return [
-            executor.execute("update gauge set v = ? where id = ?", [7, 1]),
-            executor.execute("update gauge set v = ? where id = ?", [7, 1]),
-            executor.execute("update gauge set v = v where id < ?", [3]),
-            executor.execute("update gauge set v = ? where id = ?", [7, 99]),
+            executor.execute("update px.gauge set v = ? where id = ?", [7, 1]),
+            executor.execute("update px.gauge set v = ? where id = ?", [7, 1]),
+            executor.execute("update px.gauge set v = v where id < ?", [3]),
+            executor.execute("update px.gauge set v = ? where id = ?", [7, 99]),
         ]
 
     observed = [counts(provider)]
     with provider.open_session("read-committed") as session:
         observed.append(counts(session))
         session.commit()
-    assert provider.execute("delete from gauge where v < ?", [7]) == 1
+    assert provider.execute("delete from px.gauge where v < ?", [7]) == 1
     assert observed == [[1, 1, 2, 0]] * 2
 
 
@@ -434,7 +434,7 @@ def test_a_to_one_hop_reaching_two_candidates_fails_through_the_database(
     provision(case, provider)
     execution = CaseExecution(case, provider)
     execution.execute(
-        "insert into traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
+        "insert into px.traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
     )
     (statement,) = _statements(case)
     sql, binds = statement["sql"][provider.dialect], statement.get("binds", [])
@@ -453,7 +453,7 @@ def test_a_relationship_match_over_two_candidates_answers(provider) -> None:
     provision(case, provider)
     execution = CaseExecution(case, provider)
     execution.execute(
-        "insert into traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
+        "insert into px.traversal_bike (id, maker, gears) values (?, ?, ?)", [5, "Twin", 3]
     )
     (statement,) = _statements(case)
     sql, binds = statement["sql"][provider.dialect], statement.get("binds", [])

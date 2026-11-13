@@ -40,10 +40,10 @@ from parallax.evolution.internal.model_evolution import (
     EntityAdded,
     EntityAltered,
     EntityRemoved,
-    EvolutionOperation,
     IndexAdded,
     IndexAltered,
     IndexRemoved,
+    LogicalOperation,
     NullabilityChanged,
     RelationshipAdded,
     RelationshipAltered,
@@ -74,7 +74,7 @@ _CONTACT = ValueObjectIdentity(_ORDER, ("contact",))
 _NESTED = ValueObjectIdentity(_ORDER, ("address", "geo"))
 
 
-def _one_of_every_kind() -> tuple[EvolutionOperation, ...]:
+def _one_of_every_kind() -> tuple[LogicalOperation, ...]:
     """One operation of every kind the closed algebra admits.
 
     No two share a logical identity, because add, remove, and alter cannot tie

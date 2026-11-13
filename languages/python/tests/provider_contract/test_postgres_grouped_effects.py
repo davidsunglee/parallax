@@ -54,6 +54,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.storage_layout import storage_layout_facet_of
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
@@ -139,7 +140,7 @@ def _database(
     arrays unless ``grouped``, so every effect runs alone, its Tables reset
     first where ``reset``."""
     if reset:
-        profile_run.reset(model_of(_MODEL), {})
+        profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     port = (
         profile_run.port
         if grouped
@@ -151,7 +152,13 @@ def _database(
         )
     )
     return own_root(
-        connect(port, _MODEL, clock=ScriptedClock(instants), lifecycle_provider=provider)
+        connect(
+            port,
+            _MODEL,
+            clock=ScriptedClock(instants),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -167,7 +174,7 @@ def _seed(db: ScopedDatabase) -> None:
 
 def _rows(profile_run: Any, table: str) -> list[_Row]:
     return [
-        tuple(row) for row in profile_run.port.execute(f"select * from {table} order by id", [])
+        tuple(row) for row in profile_run.port.execute(f"select * from px.{table} order by id", [])
     ]
 
 
@@ -248,7 +255,7 @@ def test_a_grouped_amendment_stores_a_null_value_object_as_one_alone_does(
                 tuple(row)
                 for row in profile_run.port.execute(
                     f"select id, {place} is null, jsonb_typeof({place}), {place}->>'city' "
-                    f"from {table} order by id",
+                    f"from px.{table} order by id",
                     [],
                 )
             ]
@@ -322,7 +329,7 @@ def test_a_check_violation_fails_the_whole_grouped_update_and_rolls_it_back(
     control = profile_run.control()
     try:
         control.execute_write(
-            "alter table grp_order add constraint grp_order_total check (total <> 30) not valid",
+            "alter table px.grp_order add constraint grp_order_total check (total <> 30) not valid",
             [],
         )
     finally:
@@ -363,8 +370,8 @@ def test_a_unique_value_handed_between_objects_succeeds_in_authored_order(
     # updates assigning no unique member share one grouped update.
     sql = [event.statement.sql for event in _writes(provider)]
     assert len(sql) == 3
-    assert sql[0].startswith("update grp_seat t set seat_no = v.c2 from unnest(")
-    assert sql[1:] == ["update grp_seat set holder = ?, seat_no = ? where id = ?"] * 2
+    assert sql[0].startswith("update px.grp_seat t set seat_no = v.c2 from unnest(")
+    assert sql[1:] == ["update px.grp_seat set holder = ?, seat_no = ? where id = ?"] * 2
 
 
 def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
@@ -378,7 +385,7 @@ def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
     _seed(db)
     control = profile_run.control()
     try:
-        control.execute_write("create unique index grp_seat_no on grp_seat (seat_no)", [])
+        control.execute_write("create unique index grp_seat_no on px.grp_seat (seat_no)", [])
     finally:
         control.close()
     before = _rows(profile_run, "grp_seat")
@@ -393,7 +400,9 @@ def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
     assert (cause.category, cause.native_code) == ("uniqueViolation", "23505")
     assert cause.constraint_name == "grp_seat_no"
     (statement,) = _writes(provider)
-    assert statement.statement.sql.startswith("update grp_seat t set seat_no = v.c2 from unnest(")
+    assert statement.statement.sql.startswith(
+        "update px.grp_seat t set seat_no = v.c2 from unnest("
+    )
     assert _rows(profile_run, "grp_seat") == before
 
 
@@ -408,7 +417,7 @@ def _history(profile_run: Any, table: str) -> list[_Row]:
     order = _HISTORY_ORDER.get(table, "id, in_z, out_z, from_z")
     return [
         tuple(row)
-        for row in profile_run.port.execute(f"select * from {table} order by {order}", [])
+        for row in profile_run.port.execute(f"select * from px.{table} order by {order}", [])
     ]
 
 
@@ -460,7 +469,7 @@ def test_grouped_deletes_remove_what_each_delete_alone_removes(
     assert [row[0] for row in grouped] == [1]
     assert len(alone_writes) == 4
     (statement,) = grouped_writes
-    assert statement.startswith("delete from grp_order t using unnest(")
+    assert statement.startswith("delete from px.grp_order t using unnest(")
 
 
 def _seed_books(tx: TxnContext) -> None:
@@ -487,9 +496,9 @@ def test_grouped_transaction_time_closes_store_the_history_each_close_stores(
     assert len(grouped) == 2 * len(_KEYS)
     assert len(alone_writes) == 2 * len(_KEYS)
     close, insert = grouped_writes
-    assert close.startswith("update grp_book t set out_z = v.c")
+    assert close.startswith("update px.grp_book t set out_z = v.c")
     assert (" and t.in_z = v.c" in close) is (concurrency == "optimistic")
-    assert insert.startswith("insert into grp_book(")
+    assert insert.startswith("insert into px.grp_book(")
 
 
 def test_grouped_guards_match_every_unchanged_milestone_and_change_nothing(
@@ -512,7 +521,7 @@ def test_grouped_guards_match_every_unchanged_milestone_and_change_nothing(
     assert len(grouped) == len(_KEYS)
     assert len(alone_writes) == len(_KEYS)
     (guard,) = grouped_writes
-    assert guard.startswith("update grp_book t set in_z = t.in_z from unnest(")
+    assert guard.startswith("update px.grp_book t set in_z = t.in_z from unnest(")
 
 
 def _seed_spans(entity: type[Any]) -> Callable[[TxnContext], None]:
@@ -556,8 +565,8 @@ def test_grouped_bitemporal_interior_splits_store_the_history_each_alone_stores(
     assert len(grouped) == 4 * len(_KEYS)
     assert len(alone_writes) == len(_KEYS) + 3 * len(_KEYS)
     close, insert = grouped_writes
-    assert close.startswith(f"update {table} t set out_z = v.c")
-    assert insert.startswith(f"insert into {table}(")
+    assert close.startswith(f"update px.{table} t set out_z = v.c")
+    assert insert.startswith(f"insert into px.{table}(")
 
 
 def _two_rectangles(tx: TxnContext) -> None:
@@ -590,8 +599,8 @@ def test_grouped_closes_of_deferred_ranges_reach_every_rectangle_each_write_acqu
     closes = [sql for sql in alone_writes if sql.startswith("update")]
     assert len(closes) == 2 * len(_KEYS)
     close, insert = grouped_writes
-    assert close.startswith("update grp_span t set out_z = v.c")
-    assert insert.startswith("insert into grp_span(")
+    assert close.startswith("update px.grp_span t set out_z = v.c")
+    assert insert.startswith("insert into px.grp_span(")
 
 
 def _revise_and_remove(tx: TxnContext) -> None:
@@ -617,8 +626,8 @@ def test_grouped_same_attempt_revisions_and_removals_store_what_each_alone_store
     (alone, _alone_writes), (grouped, grouped_writes) = runs
     assert grouped == alone
     later = grouped_writes[2:]
-    assert any(sql.startswith("update grp_span t set ") for sql in later)
-    assert any(sql.startswith("delete from grp_span t using unnest(") for sql in later)
+    assert any(sql.startswith("update px.grp_span t set ") for sql in later)
+    assert any(sql.startswith("delete from px.grp_span t using unnest(") for sql in later)
 
 
 def _advance_book(db: ScopedDatabase, key: int) -> None:
@@ -686,13 +695,17 @@ def test_an_exclusion_refusal_fails_the_whole_grouped_close_as_a_recoverable_con
     db = _database(profile_run, provider)
     db.transact(_seed_books)
     view = storage_layout_facet_of(model_of(_MODEL)).entity(Book.identity)
-    assert view is not None and view.layout.temporal_constraints is not None
-    name = view.layout.temporal_constraints.exclusion_name
+    assert view is not None
+    constraints = (
+        bound_model(model_of(_MODEL)).table(view.layout.mapping_owner).temporal_constraints
+    )
+    assert constraints is not None
+    name = constraints.exclusion_name
     control = profile_run.control()
     try:
-        control.execute_write(f"alter table grp_book drop constraint {name}", [])
+        control.execute_write(f"alter table px.grp_book drop constraint {name}", [])
         control.execute_write(
-            f"alter table grp_book add constraint {name} exclude using btree (out_z with =) "
+            f"alter table px.grp_book add constraint {name} exclude using btree (out_z with =) "
             "where (out_z <> 'infinity')",
             [],
         )

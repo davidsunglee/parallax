@@ -102,6 +102,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.document_reads import folded_names
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_entity_query
@@ -267,7 +268,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     """
     return compile_read(
         oa.TrueNode(),
-        model,
+        bound_model(model),
         POSTGRES,
         target(model, name),
         narrow_to=tuple(target(model, narrowed).identity for narrowed in narrow_to) or None,
@@ -281,7 +282,11 @@ type _Prepared = partial[tuple[ReadRowConverter, Row]]
 def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> _Prepared:
     """The read of ``name``, compiled once and bound as a find binds it, for the
     cells each stored row carries."""
-    return partial(bound_cells, CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
+    return partial(
+        bound_cells,
+        CatalogedModel(model, TEST_BINDING),
+        _compiled(model, name, narrow_to=narrow_to),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,7 +362,7 @@ def test_a_narrowed_read_converts_rows_of_every_entity_it_can_resolve() -> None:
     # resolve to the whole family — and a row of the position and a row outside
     # it each convert under their own concrete.
     compiled = _compiled(ANIMAL, "Animal", narrow_to=("Dog",))
-    prepared = partial(bound_cells, CatalogedModel(ANIMAL), compiled)
+    prepared = partial(bound_cells, CatalogedModel(ANIMAL, TEST_BINDING), compiled)
     rex = _converted(
         prepared,
         {
@@ -567,7 +572,7 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
     token = _encoded_member("token")
     builder = PageBuilder(ViewSchema.of())
     index = convert_cells(
-        CatalogedModel(ENCODED_IDENTITY),
+        CatalogedModel(ENCODED_IDENTITY, TEST_BINDING),
         uncarried(compiled_read(ENCODED_IDENTITY, "EncodedIdentity"), "token"),
         {"id": KEY, "token_hex": "0e", "address": None},
         builder,
@@ -590,7 +595,7 @@ def test_a_rejected_correlation_cell_routes_nothing_and_is_diagnosed_once(proved
     builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
     with recorded_conversion_dependencies() as calls:
         index = convert_cells(
-            CatalogedModel(ENCODED_IDENTITY),
+            CatalogedModel(ENCODED_IDENTITY, TEST_BINDING),
             compiled_read(ENCODED_IDENTITY, "EncodedIdentity"),
             {"id": KEY, "token_hex": "zz", "address": None},
             builder,
@@ -612,7 +617,7 @@ def test_a_rejected_correlation_verdict_is_released_with_its_fetched_row() -> No
     # each at its last use while a later root's verdict is still pending.
     token = _encoded_member("token")
     builder = PageBuilder(ViewSchema.of())
-    cataloged = CatalogedModel(ENCODED_IDENTITY)
+    cataloged = CatalogedModel(ENCODED_IDENTITY, TEST_BINDING)
     compiled = compiled_read(ENCODED_IDENTITY, "EncodedIdentity")
     fetched = tuple(
         convert_cells(
@@ -636,7 +641,7 @@ def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
     payload, f32 = AttributeIdentity(identity, "payload"), AttributeIdentity(identity, "f32")
     builder = PageBuilder(ViewSchema.of())
     index = convert_cells(
-        CatalogedModel(SCALARS),
+        CatalogedModel(SCALARS, TEST_BINDING),
         compiled_read(SCALARS, "ScalarThing"),
         {**_SCALAR_THING, "payload_hex": "0a1b", "f32": 1.5},
         builder,
@@ -681,7 +686,11 @@ def test_a_sibling_occurrence_does_not_enter_the_concrete_entity_state(
     # statement selected no such column, or the driver null-padded it, or
     # returned a SQL-null document marker.
     tug = _observed(
-        partial(bound_cells, CatalogedModel(CRAFT), projected_read(CRAFT, "Craft", value_objects)),
+        partial(
+            bound_cells,
+            CatalogedModel(CRAFT, TEST_BINDING),
+            projected_read(CRAFT, "Craft", value_objects),
+        ),
         {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"}), **stored},
     )
     assert tug["berth"] == {"quay": "7"}
@@ -771,7 +780,9 @@ def test_a_sibling_occurrence_of_the_same_spelling_is_not_bound_by_that_spelling
     compiled = compile_entity_query(
         query, projection_support.MATRIX_META, POSTGRES, result_form="instance"
     )
-    prepared = partial(bound_cells, CatalogedModel(projection_support.MATRIX_META), compiled)
+    prepared = partial(
+        bound_cells, CatalogedModel(projection_support.MATRIX_META, TEST_BINDING), compiled
+    )
 
     left = _converted(prepared, _matrix_row(strategy, "Left"))
     right = _converted(prepared, _matrix_row(strategy, "Right"))
@@ -813,13 +824,13 @@ def test_a_row_outside_a_narrowed_position_binds_no_occurrence_the_narrow_left_o
     meta = projection_support.MATRIX_META
     narrowed = compile_read(
         oa.TrueNode(),
-        meta,
+        bound_model(meta),
         POSTGRES,
         projection_support.matrix_entity("tph", layout, "Root"),
         narrow_to=(projection_support.matrix_entity("tph", layout, "Left").identity,),
         result_form="instance",
     )
-    prepared = partial(bound_cells, CatalogedModel(meta), narrowed)
+    prepared = partial(bound_cells, CatalogedModel(meta, TEST_BINDING), narrowed)
 
     left = _converted(prepared, _narrowed_matrix_row(layout, "Left"))
     sibling = _converted(prepared, _narrowed_matrix_row(layout, "Right"))
@@ -913,7 +924,9 @@ def _delivered(
     model: Metamodel, entity: str, cells: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
 ) -> _Delivered:
     prepared, row = bound_cells(
-        CatalogedModel(model), uncarried(compiled_read(model, entity), *uncarrying), cells
+        CatalogedModel(model, TEST_BINDING),
+        uncarried(compiled_read(model, entity), *uncarrying),
+        cells,
     )
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document = prepared.record_row(row, builder, source=ROOT_LEVEL)
@@ -1049,7 +1062,9 @@ def test_a_row_without_its_key_column_still_publishes_what_it_carried() -> None:
     keyed = _converted(_prepared(ORDERS, "Order"), _ORDER)
     unkeyed = _converted(
         partial(
-            bound_cells, CatalogedModel(ORDERS), uncarried(compiled_read(ORDERS, "Order"), "id")
+            bound_cells,
+            CatalogedModel(ORDERS, TEST_BINDING),
+            uncarried(compiled_read(ORDERS, "Order"), "id"),
         ),
         _ORDER,
     )
@@ -1116,7 +1131,7 @@ def test_a_rejected_temporal_end_is_diagnosed_once_its_state_is_judged(
     # when a Root View first needs the state. Either way it is judged once.
     builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
     converter, row = bound_cells(
-        CatalogedModel(POSITION),
+        CatalogedModel(POSITION, TEST_BINDING),
         _POSITION_READ,
         _position(**{column: stored}),
         singleton=proved,
@@ -1329,7 +1344,7 @@ def _held(
     correlations named in reverse attribute order, as a plan may select them,
     through a read carrying no source for ``uncarrying``."""
     return convert_cells(
-        CatalogedModel(HOLDINGS),
+        CatalogedModel(HOLDINGS, TEST_BINDING),
         uncarried(compiled_read(HOLDINGS, "CorrelatedHolding"), *uncarrying),
         row,
         builder,
@@ -1549,7 +1564,7 @@ def _workload(
     tuple[CompiledRead | None, ...],
     tuple[tuple[Row, ...], ...],
 ]:
-    model = CatalogedModel(metamodel(layout))
+    model = CatalogedModel(metamodel(layout), TEST_BINDING)
     plan = read_plan(model, query(layout, model.meta))
     reads = compiled_levels(layout, plan)
     return model, reads, rows_per_level(layout, model, plan, reads, owners)

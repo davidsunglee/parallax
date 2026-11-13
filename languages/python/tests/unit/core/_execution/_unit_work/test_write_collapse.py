@@ -43,6 +43,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
 )
 from parallax.descriptor import _records
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
@@ -108,7 +109,9 @@ def _flush_and_lower(
     """Plan ``buffer`` with the production wiring, then lower the plan."""
     return [
         statement
-        for _step, statement in _flush_and_lower_steps(buffer, model, LayoutPayloadPreparer(model))
+        for _step, statement in _flush_and_lower_steps(
+            buffer, model, LayoutPayloadPreparer(bound_model(model))
+        )
     ]
 
 
@@ -116,7 +119,7 @@ class _CountingPreparer(LayoutPayloadPreparer):
     """The layout preparer, counting the Assignment Payloads it prepares."""
 
     def __init__(self, model: Metamodel) -> None:
-        super().__init__(model)
+        super().__init__(bound_model(model))
         self.assignments_prepared = 0
 
     def assignments(
@@ -134,7 +137,7 @@ def _flush_and_lower_steps(
     """Plan ``buffer`` with the production wiring, then lower each planned step
     through ``payloads``."""
     instant = inert_instant()
-    plan = build_write_planner(model).finalize(
+    plan = build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
@@ -170,7 +173,7 @@ def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
     ]
     statements = _flush_and_lower(buffer, model)
     assert [statement.sql for statement in statements] == [
-        "delete from wallet where id = any(cast(? as bigint[]))"
+        "delete from px.wallet where id = any(cast(? as bigint[]))"
     ]
     assert [statement.binds for statement in statements] == [(ArrayBind(INT64, [10, 11]),)]
 
@@ -188,8 +191,8 @@ def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
     ]
     statements = _flush_and_lower(buffer, model)
     assert [statement.sql for statement in statements] == [
-        "update wallet set balance = ? where id = any(cast(? as bigint[]))",
-        "update wallet set owner = ? where id = any(cast(? as bigint[]))",
+        "update px.wallet set balance = ? where id = any(cast(? as bigint[]))",
+        "update px.wallet set owner = ? where id = any(cast(? as bigint[]))",
     ]
     assert [statement.binds for statement in statements] == [
         (Decimal("5.00"), ArrayBind(INT64, [10, 11])),
@@ -238,7 +241,7 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
         ),
     ]
     assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
-        "insert into wallet(id, owner, balance) select * from "
+        "insert into px.wallet(id, owner, balance) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     ]
 

@@ -189,7 +189,7 @@ def _write(
 ) -> tuple[_Observation, WriteCall]:
     observation, calls = _run(_MODEL, (Write(),), lambda tx, _source: write(tx))
     (call,) = calls
-    assert call.sql.startswith(f"insert into {entity.__name__.lower()}(")
+    assert call.sql.startswith(f"insert into px.{entity.__name__.lower()}(")
     return observation, call
 
 
@@ -524,5 +524,5 @@ def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
     assert observation.count(_GENERAL, _STORED_STATE) <= 1
     # The close, then one milestone insert of every successor it opens.
     close, opening = calls
-    assert close.sql.startswith("update where_position")
-    assert opening.sql.startswith("insert into where_position(")
+    assert close.sql.startswith("update px.where_position")
+    assert opening.sql.startswith("insert into px.where_position(")

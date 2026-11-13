@@ -23,6 +23,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-concurrency",
         "m-conformance-adapter",
         "m-core",
+        "m-database-binding",
         "m-db-error",
         "m-descriptor",
         "m-dialect",
@@ -61,7 +62,7 @@ _STORAGE_LAYOUT_CONTRACT_CASES = {
     "core/compatibility/cases/m-storage-layout-002-rejected-tpcs-inherited-column-collision.yaml",
     "core/compatibility/cases/m-storage-layout-003-rejected-tph-sibling-column-collision.yaml",
     "core/compatibility/cases/m-storage-layout-004-rejected-tph-tag-column-collision.yaml",
-    "core/compatibility/cases/m-storage-layout-005-rejected-table-mapping-collision.yaml",
+    "core/compatibility/cases/m-database-binding-001-rejected-default-binding-table-collision.yaml",
 }
 
 _MATERIALIZATION_KEY_CASES = {
@@ -94,8 +95,8 @@ def test_storage_layout_rejected_witnesses_pin_distinct_issue_namespaces() -> No
         "m-storage-layout-004-rejected-tph-tag-column-collision.yaml": (
             "storage-layout-column-collision"
         ),
-        "m-storage-layout-005-rejected-table-mapping-collision.yaml": (
-            "storage-layout-table-mapping-collision"
+        "m-database-binding-001-rejected-default-binding-table-collision.yaml": (
+            "binding-table-collision"
         ),
     }
 
@@ -105,9 +106,9 @@ def test_storage_layout_rejected_witnesses_pin_distinct_issue_namespaces() -> No
         assert case["then"]["rejectedRule"] == expected_rule
 
     mapping_case = yaml.safe_load(
-        (cases_dir / "m-storage-layout-005-rejected-table-mapping-collision.yaml").read_text(
-            encoding="utf-8"
-        )
+        (
+            cases_dir / "m-database-binding-001-rejected-default-binding-table-collision.yaml"
+        ).read_text(encoding="utf-8")
     )
     entities = mapping_case["when"]["model"]["entities"]
     assert [entity["name"] for entity in entities] == ["FirstRecord", "SecondRecord"]

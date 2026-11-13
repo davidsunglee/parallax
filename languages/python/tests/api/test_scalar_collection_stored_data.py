@@ -26,6 +26,7 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.snapshot import ScopedDatabase, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection.stored"
@@ -62,15 +63,16 @@ _ENTITIES: dict[Layout, Any] = {"columns": Order, "document": Sheet}
 
 def _served(profile_run: Any, layout: Layout, member: str, stored: str) -> ScopedDatabase:
     """A database holding one row whose ``member`` is stored as the JSON ``stored``."""
-    profile_run.reset(model_of(_MODEL), {})
-    db = own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
     entity = _ENTITIES[layout]
     db.transact(lambda tx: tx.insert(entity(id=1, counts=(1,), detail=Detail(labels=("a",)))))
     if layout == "columns":
-        sql = f"update scs_order set {member} = '{stored}'::jsonb"
+        sql = f"update px.scs_order set {member} = '{stored}'::jsonb"
     else:
         sql = (
-            f"update scs_sheet set payload = jsonb_set(payload, '{{{member}}}', '{stored}'::jsonb)"
+            f"update px.scs_sheet set payload = jsonb_set(payload, '{{{member}}}', "
+            f"'{stored}'::jsonb)"
         )
     profile_run.port.execute_write(sql, [])
     return db
@@ -117,10 +119,10 @@ def test_json_null_and_the_empty_array_read_as_the_empty_collection(
 
 
 def test_a_missing_document_key_reads_as_the_empty_collection(profile_run: Any) -> None:
-    profile_run.reset(model_of(_MODEL), {})
-    db = own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
     db.transact(lambda tx: tx.insert(Sheet(id=1, counts=(1,))))
-    profile_run.port.execute_write("update scs_sheet set payload = payload - 'counts'", [])
+    profile_run.port.execute_write("update px.scs_sheet set payload = payload - 'counts'", [])
 
     assert db.find(Sheet.where(Sheet.id == 1)).result().counts == ()
 

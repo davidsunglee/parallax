@@ -356,7 +356,7 @@ def test_inserts_of_distinct_objects_share_a_statement_where_their_members_agree
     cards = [
         call
         for call in port.calls
-        if isinstance(call, WriteCall) and call.sql.startswith("insert into wgh_card")
+        if isinstance(call, WriteCall) and call.sql.startswith("insert into px.wgh_card")
     ]
     assert [inserted_rows(call) for call in cards] == [((1, "a"), (2, "b")), ((3,),)]
 

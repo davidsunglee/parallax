@@ -22,7 +22,7 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: update wallet set owner = ?, balance = ? where balance < ?
+            postgres: update px.wallet set owner = ?, balance = ? where balance < ?
           binds: [Replaced, "150.00", "200.00"]
     - objectQuery:
         target: parallax.compatibility.Wallet
@@ -33,9 +33,9 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.owner = ?
+            postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.owner = ?
           binds: [Replaced]
-      referenceSql: select id, owner, balance from wallet where owner = 'Replaced'
+      referenceSql: select id, owner, balance from px.wallet where owner = 'Replaced'
       expectRows:
         - { id: 1, owner: Replaced, balance: "150.00" }
         - { id: 3, owner: Replaced, balance: "150.00" }

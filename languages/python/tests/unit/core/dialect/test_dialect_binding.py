@@ -29,6 +29,7 @@ from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING, binding_for
 from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
@@ -104,7 +105,7 @@ def test_an_aborting_port_reports_the_dialect_of_the_port_it_decorates() -> None
 
 def test_a_connection_compiles_against_the_dialect_its_own_port_declares() -> None:
     port = _SpellingPort(BACKTICKED)
-    own_root(connect(port, ACCOUNT)).using_database_login().find(
+    own_root(connect(port, ACCOUNT, binding=binding_for(BACKTICKED))).using_database_login().find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
     (statement,) = port.statements
@@ -113,13 +114,17 @@ def test_a_connection_compiles_against_the_dialect_its_own_port_declares() -> No
 
 
 def test_two_connections_over_one_model_execute_in_their_own_ports_dialects() -> None:
-    # Nothing beside the port selects the spelling, so one model served by two
-    # ports produces two spellings without either connection being configured.
+    # One model served by two ports under bindings for their backends produces
+    # two spellings, each its own port's.
     postgres_port = _SpellingPort(POSTGRES)
     backticked_port = _SpellingPort(BACKTICKED)
     query = mm.Account.where(mm.Account.id == 7)
-    own_root(connect(postgres_port, ACCOUNT)).using_database_login().find(query).result()
-    own_root(connect(backticked_port, ACCOUNT)).using_database_login().find(query).result()
+    own_root(connect(postgres_port, ACCOUNT, binding=TEST_BINDING)).using_database_login().find(
+        query
+    ).result()
+    own_root(
+        connect(backticked_port, ACCOUNT, binding=binding_for(BACKTICKED))
+    ).using_database_login().find(query).result()
     assert "`" not in postgres_port.statements[0]
     assert "t0.`id`" in backticked_port.statements[0]
 

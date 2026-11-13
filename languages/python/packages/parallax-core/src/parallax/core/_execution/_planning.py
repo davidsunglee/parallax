@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import NoReturn, overload
 
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
+from parallax.core.internal.database_binding import (
+    REQUIRED,
+    DatabaseBinding,
+    ResolvedBinding,
+    require_binding,
+)
 from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
 from parallax.core.internal.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.internal.entity._model import class_index, model_of
@@ -30,10 +37,29 @@ from parallax.core.internal.write_payload import LayoutPayloadPreparer
 __all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "wire_model_facts"]
 
 
-def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
-    """Prepare one complete immutable model selection without database I/O."""
+@overload
+def prepare_model(
+    model: DomainModel, *, binding: DatabaseBinding, edition: str
+) -> ModelSelection: ...
+
+
+@overload
+def prepare_model(model: DomainModel, *, edition: str) -> NoReturn: ...
+
+
+def prepare_model(
+    model: DomainModel, *, binding: object = REQUIRED, edition: str
+) -> ModelSelection:
+    """Prepare one complete immutable model selection under ``binding``, without
+    database I/O.
+
+    Resolving the binding is structural: it checks no schema, grant, or
+    object's existence, and refuses an omitted, invalid, or unplaceable binding
+    with :class:`~parallax.core.BindingError` before anything is served.
+    """
+    placement = require_binding(binding, "prepare_model")
     check_edition(edition)
-    catalog = CatalogedModel(model_of(model))
+    catalog = CatalogedModel(model_of(model), placement)
     classes = class_index(model)
     if classes is None:
         construction = None
@@ -50,7 +76,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         wire=wire_model_facts(catalog),
         narrowed_view_keys=narrowed_view_keys(catalog.meta),
         preparation=build_write_preparation(catalog.meta, positional=positional),
-        planner=build_write_planner(catalog.meta),
+        planner=build_write_planner(catalog.resolved),
     )
 
 
@@ -150,17 +176,17 @@ def build_write_preparation(
     return WritePreparation(model, absent=ABSENT, positional=positional)
 
 
-def build_write_planner(model: Metamodel) -> WritePlanner:
-    """One ``WritePlanner`` for ``model``, wired with production strategies and
-    the model's write payload preparer, which every flush it plans is lowered
-    through.
+def build_write_planner(resolved: ResolvedBinding) -> WritePlanner:
+    """One ``WritePlanner`` for ``resolved``'s model, wired with production
+    strategies and the payload preparer of the model under its binding, which
+    every flush it plans is lowered through.
 
     Called once per prepared model selection (:func:`prepare_model`) and
     identically by the conformance engine's compile lane, so the two lanes plan
     and prepare through the same deterministic computation.
     """
     return WritePlanner._wired(  # pyright: ignore[reportPrivateUsage] - the composition root calls the planner's own private constructor
-        model,
+        resolved.meta,
         audit=NO_AUDIT,
-        payloads=LayoutPayloadPreparer(model),
+        payloads=LayoutPayloadPreparer(resolved),
     )

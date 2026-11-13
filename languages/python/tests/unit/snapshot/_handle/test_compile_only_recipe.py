@@ -24,6 +24,7 @@ from parallax.core.internal.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.core.internal.write_plan import WritePlan
 from parallax.snapshot import Database, TxnContext
+from tests._support.bindings import bound_model
 from tests._support.planner_probes import plan_steps
 from tests._support.repo import REPO_ROOT
 
@@ -64,7 +65,10 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
         statement
         for value in planned
         for statement in stream_physical(
-            plan_steps(value), LayoutPayloadPreparer(model), model, POSTGRES
+            plan_steps(value),
+            LayoutPayloadPreparer(bound_model(model)),
+            bound_model(model),
+            POSTGRES,
         )
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [

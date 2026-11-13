@@ -10,7 +10,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from payment t0
+        postgres: select t0.id, t0.kind, t0.amount, t0.card_network, t0.tendered from px.payment t0
   rows:
     - { id: 1, amount: "100.00", card_network: Visa, tendered: null, _type: parallax.compatibility.CardPayment }
     - { id: 2, amount: "50.00", card_network: Amex, tendered: null, _type: parallax.compatibility.CardPayment }

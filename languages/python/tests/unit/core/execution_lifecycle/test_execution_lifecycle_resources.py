@@ -71,6 +71,7 @@ from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.core.internal.dialect import POSTGRES
 from parallax.snapshot import Database, ScopedDatabase, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -86,7 +87,9 @@ _STEP: Final = 1_000
 
 
 def _db(adapter: Any, provider: Any = None, model: Any = ACCOUNT) -> Database[Any]:
-    return connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+    return connect(
+        adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider, binding=TEST_BINDING
+    )
 
 
 def _read(db: ScopedDatabase) -> None:

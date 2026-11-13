@@ -14,9 +14,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)
+        postgres: insert into px.payment(id, kind, amount, card_network) values (?, ?, ?, ?)
       binds: [10, card, "200.00", Mastercard]
   tableState:
-    payment:
-      - { id: 10, kind: card, amount: "200.00", card_network: Mastercard, tendered: null }
+    px:
+      payment:
+        - { id: 10, kind: card, amount: "200.00", card_network: Mastercard, tendered: null }
   databaseCalls: 1

@@ -19,15 +19,15 @@ then:
     postgres:
       delta:
         statements:
-          - create index pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14 on evolution_archive (body)
-          - create index pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c on evolution_excerpt (passage)
+          - create index pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14 on px.evolution_archive (body)
+          - create index pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c on px.evolution_excerpt (passage)
         createdIndices:
           - physicalIndexName: pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14
-            physicalTable: evolution_archive
+            physicalTable: { qualifier: [px], name: evolution_archive }
             logicalIndexIdentity: parallax.compatibility.Archive.archive_body
             unique: false
           - physicalIndexName: pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c
-            physicalTable: evolution_excerpt
+            physicalTable: { qualifier: [px], name: evolution_excerpt }
             logicalIndexIdentity: parallax.compatibility.Excerpt.excerpt_passage
             unique: false
     mariadb:
@@ -35,13 +35,13 @@ then:
         operations:
           - kind: CreateIndex
             physicalLocation:
-              table: evolution_archive
+              table: { qualifier: [px], name: evolution_archive }
               index: pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14
             causedBy:
               - { kind: IndexAdded, index: parallax.compatibility.Archive.archive_body }
           - kind: CreateIndex
             physicalLocation:
-              table: evolution_excerpt
+              table: { qualifier: [px], name: evolution_excerpt }
               index: pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c
             causedBy:
               - { kind: IndexAdded, index: parallax.compatibility.Excerpt.excerpt_passage }

@@ -8,6 +8,7 @@ from parallax.conformance.story_models import Account, Wallet
 from parallax.core import DomainModel
 from parallax.core.internal.db_port import DatabaseAdapter
 from parallax.core.internal.unit_work import WritePreconditionError
+from parallax.postgres import PostgresBinding
 from parallax.snapshot import TxnContext, connect
 
 __all__ = [
@@ -30,7 +31,7 @@ class ClosingReport:
 
 
 def reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> ClosingReport:
     """Close every account a caller reviewed in an earlier read-only transaction.
 
@@ -41,7 +42,7 @@ def reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
     deleted. A failed precondition is never retried: the stated version stays
     what the review saw.
     """
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         reviewed = db.read_only(
             lambda rtx: list(
@@ -73,7 +74,7 @@ def reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
 
 
 def an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction(
-    adapter: DatabaseAdapter, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel, binding: PostgresBinding
 ) -> Decimal:
     """Top up a wallet, an Entity with no version and no temporal history.
 
@@ -82,7 +83,7 @@ def an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction(
     earlier read; the write reads the wallet in the writing transaction
     instead, where the shared lock the read takes protects it until commit.
     """
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         query = Wallet.where(Wallet.id == 1)
 

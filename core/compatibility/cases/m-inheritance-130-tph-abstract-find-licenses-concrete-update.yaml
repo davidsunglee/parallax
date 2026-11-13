@@ -22,7 +22,7 @@ when:
       note: observe vehicle 1 through the abstract root; the row resolves to the concrete Car
       statements:
         - sql:
-            postgres: select t0.id, t0.kind, t0.name, t0.version, t0.doors, t0.axles from vehicle t0 where t0.id = ?
+            postgres: select t0.id, t0.kind, t0.name, t0.version, t0.doors, t0.axles from px.vehicle t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, name: Sedan, version: 5, doors: 4, axles: null, _type: parallax.compatibility.Car }
@@ -36,7 +36,7 @@ when:
       note: no authored observedVersion - the gate binds the version step 0 observed
       statements:
         - sql:
-            postgres: update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+            postgres: update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
           binds: [Coupe, 6, 1, car, 5]
     - uow: observe-and-update
       objectQuery:
@@ -49,7 +49,7 @@ when:
       note: read the renamed row back as the concrete the write named; the group COMMITS after this
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.version, t0.doors from vehicle t0 where t0.id = ? and t0.kind = ?
+            postgres: select t0.id, t0.name, t0.version, t0.doors from px.vehicle t0 where t0.id = ? and t0.kind = ?
           binds: [1, car]
       expectRows:
         - { id: 1, name: Coupe, version: 6, doors: 4, _type: parallax.compatibility.Car }

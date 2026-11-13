@@ -23,14 +23,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?, ?) is null and not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1) order by t0.id asc
-        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where json_value(t0.address, ?) is null and not coalesce(json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?, ?) order by t0.id asc
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where jsonb_extract_path_text(t0.address, ?, ?) is null and not exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1) order by t0.id asc
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where json_value(t0.address, ?) is null and not coalesce(json_type(json_extract(t0.address, ?)) = ? and json_length(t0.address, ?) > ?, ?) order by t0.id asc
       binds:
         postgres: [geo, country, phones, 'array', phones, '[]']
         mariadb: ['$.geo.country', '$.phones', 'ARRAY', '$.phones', 0, 0]
   referenceSql:
-    postgres: select id, name from customer where address -> 'geo' ->> 'country' is null and case when jsonb_typeof(address -> 'phones') = 'array' then jsonb_array_length(address -> 'phones') = 0 else true end
-    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.geo.country')), 'null') is null and (json_type(json_extract(address, '$.phones')) is null or json_type(json_extract(address, '$.phones')) <> 'ARRAY' or not exists (select 1 from json_table(address, '$.phones[*]' columns (v json path '$')) jt))
+    postgres: select id, name from px.customer where address -> 'geo' ->> 'country' is null and case when jsonb_typeof(address -> 'phones') = 'array' then jsonb_array_length(address -> 'phones') = 0 else true end
+    mariadb: select id, name from px.customer where nullif(json_unquote(json_extract(address, '$.geo.country')), 'null') is null and (json_type(json_extract(address, '$.phones')) is null or json_type(json_extract(address, '$.phones')) <> 'ARRAY' or not exists (select 1 from json_table(address, '$.phones[*]' columns (v json path '$')) jt))
   graph:
     Customer:
       - id: 4

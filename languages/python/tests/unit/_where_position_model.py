@@ -1,7 +1,7 @@
 """The write suites' local Bitemporal Entity.
 
 `models/position.yaml` has a shared mirror (`parallax.conformance.story_models.Position`),
-but it is not a drop-in: it maps to table `position` with columns `pos_id`/`val`,
+but it is not a drop-in: it maps to table px.`position` with columns `pos_id`/`val`,
 while the suites using this one pin emitted SQL against `where_position`/`id`/`value`.
 """
 

@@ -1,0 +1,21 @@
+# A resolved name longer than the backend stores (63 bytes on PostgreSQL, 64
+# on MariaDB) is refused offline rather than truncated into another name.
+model: models/wallet.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      entities:
+        parallax.compatibility.Wallet: { table: wallet_name_that_is_much_longer_than_any_backend_stores_as_one_identifier }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      entities:
+        parallax.compatibility.Wallet: { table: wallet_name_that_is_much_longer_than_any_backend_stores_as_one_identifier }
+then:
+  rejectedRule: binding-identifier-invalid

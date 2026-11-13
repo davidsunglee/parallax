@@ -43,6 +43,7 @@ from parallax.core.internal.write_plan import (
 from parallax.core.internal.write_plan.steps import (
     ChangedFrom,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -73,7 +74,7 @@ def _plan(
     concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return build_write_planner(model).finalize(
+    return build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
@@ -150,7 +151,12 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
     )
     documents = [
         cast("Mapping[str, Any]", bind.document)
-        for bind in lowered(changed, LayoutPayloadPreparer(model), model, POSTGRES).binds
+        for bind in lowered(
+            changed,
+            LayoutPayloadPreparer(bound_model(model)),
+            bound_model(model),
+            POSTGRES,
+        ).binds
         if isinstance(bind, StructuredDocument)
     ]
     assert documents == [

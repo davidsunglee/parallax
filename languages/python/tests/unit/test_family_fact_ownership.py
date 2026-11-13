@@ -77,6 +77,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, edge_of, pin_of
 from parallax.snapshot._handle._read import typed_publication, wire_publication
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import (
     Read,
@@ -221,7 +222,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
     monkeypatch: pytest.MonkeyPatch, concurrency: ConcurrencyPreference
 ) -> None:
     prepared = _prepared_writes()
-    planner = build_write_planner(_MODEL)
+    planner = build_write_planner(bound_model(_MODEL))
     callers = _trace_declarations(monkeypatch, _MODEL)
 
     plan = planner.finalize(
@@ -233,14 +234,16 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
         )
     )
     lowered: list[tuple[PlannedStep, LoweredStatement]] = list(
-        lowered_steps(plan_steps(plan), LayoutPayloadPreparer(_MODEL), _MODEL, POSTGRES)
+        lowered_steps(
+            plan_steps(plan), LayoutPayloadPreparer(bound_model(_MODEL)), _MODEL, POSTGRES
+        )
     )
 
     assert callers == []
     settled = _settled_versions([step for step, _statement in lowered])
     assert {entity.name for entity, _version in settled} == {"Account", "Fridge"}
     assert all(version is _owner_version(entity) for entity, version in settled)
-    assert "update wallet set balance = ? where id = any(cast(? as bigint[]))" in [
+    assert "update px.wallet set balance = ? where id = any(cast(? as bigint[]))" in [
         statement.sql for _step, statement in lowered
     ]
 
@@ -286,7 +289,7 @@ def _temporal_writes() -> list[ComposedWrite]:
 def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_family_shape(
     monkeypatch: pytest.MonkeyPatch, concurrency: ConcurrencyPreference
 ) -> None:
-    planner = build_write_planner(_TEMPORAL_MODEL)
+    planner = build_write_planner(bound_model(_TEMPORAL_MODEL))
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
 
     instant = instant_at("2024-06-01T00:00:00+00:00")
@@ -300,7 +303,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
     )
     steps = list(plan_steps(plan))
     assert list(plan_steps(plan)) == steps
-    payloads = LayoutPayloadPreparer(_TEMPORAL_MODEL)
+    payloads = LayoutPayloadPreparer(bound_model(_TEMPORAL_MODEL))
     lowered = list(lowered_steps(plan_steps(plan), payloads, _TEMPORAL_MODEL, POSTGRES))
 
     assert callers == []
@@ -326,7 +329,12 @@ def test_a_typed_temporal_insert_admits_and_flushes_from_the_family_shape(
 ) -> None:
     port = ScriptedAdapter(Transact(Write(times=1)))
     database = own_root(
-        Database.connect(port, RATE, clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)))
+        Database.connect(
+            port,
+            RATE,
+            clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+            binding=TEST_BINDING,
+        )
     )
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
 
@@ -337,7 +345,7 @@ def test_a_typed_temporal_insert_admits_and_flushes_from_the_family_shape(
 
     assert callers == []
     (write,) = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert write.sql.startswith("insert into deposit_rate")
+    assert write.sql.startswith("insert into px.deposit_rate")
 
 
 def _deposit_rate_row(id_: int) -> Mapping[str, object]:
@@ -426,7 +434,7 @@ class _PreparedPage:
         meta = model_of(domain)
         fixture = PageFixture(domain, model=meta)
         self.page = fixture.page(fixture.node(entity, conforming), fixture.node(entity, invalid))
-        self.cataloged = CatalogedModel(meta)
+        self.cataloged = CatalogedModel(meta, TEST_BINDING)
         self.construction = graph_construction_for(domain)
         self.view_keys = prepared_view_keys_for(domain)
         self.identity = identity_of(meta, entity)
@@ -549,7 +557,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
     meta = model_of(domain)
     identity = identity_of(meta, entity)
     judged = judged_rows(meta, identity, columns)
-    planner = build_write_planner(meta)
+    planner = build_write_planner(bound_model(meta))
     callers = _trace_declarations(monkeypatch, meta)
 
     uow = UnitOfWork(

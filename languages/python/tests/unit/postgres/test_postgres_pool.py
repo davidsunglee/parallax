@@ -1096,7 +1096,11 @@ def _began(port: DatabaseConnection) -> object:
 class _NamedCheckViolation(psycopg.errors.CheckViolation):
     @property
     def diag(self) -> Any:
-        return type("Diagnostic", (), {"constraint_name": "pxc_t_window"})()
+        return type(
+            "Diagnostic",
+            (),
+            {"constraint_name": "pxc_t_window", "schema_name": None, "table_name": None},
+        )()
 
 
 @pytest.mark.parametrize(

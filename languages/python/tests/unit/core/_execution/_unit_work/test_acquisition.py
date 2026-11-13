@@ -47,6 +47,7 @@ from parallax.core.internal.unit_work import (
     UnitOfWork,
 )
 from parallax.core.internal.write_plan import ObjectKey, PredecessorRow
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
@@ -76,8 +77,8 @@ def _uow(
     *,
     concurrency: ConcurrencyPreference = "optimistic",
 ) -> tuple[UnitOfWork, _Flushes]:
-    planner = build_write_planner(meta)
-    flushes = _Flushes(SimulatedWriteSteps(planner.payloads, meta, POSTGRES))
+    planner = build_write_planner(bound_model(meta))
+    flushes = _Flushes(SimulatedWriteSteps(planner.payloads, bound_model(meta), POSTGRES))
     uow = UnitOfWork(
         lifetime=TxnAttemptLifetime(),
         settings=TransactionSettings(preference=concurrency),

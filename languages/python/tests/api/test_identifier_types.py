@@ -45,6 +45,7 @@ from parallax.core.internal.metamodel import (
 from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.descriptor import DescriptorError, domain_model_from_document, domain_model_from_yaml
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, case_fixtures
 from tests._support.errors import raises_code
@@ -231,10 +232,12 @@ def test_every_identifier_executes_its_matching_graph(
         (models.default_models_dir() / f"{story.model}.yaml").read_text()
     )
     domain = descriptor if descriptor_backed else MODELS[story.model]
-    profile_run.reset(model_of(domain), case_fixtures(case))
+    profile_run.reset(model_of(domain), case_fixtures(case), TEST_BINDING)
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, domain, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port, domain, lifecycle_provider=observation.provider, binding=TEST_BINDING
+        )
     ).using_database_login()
     if descriptor_backed:
         roots = db.wire.find(document["when"]["objectQuery"]).results()

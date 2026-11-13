@@ -10,7 +10,7 @@ compileEligibility:
   note: "single-connection concurrency/locking intent (given.apply)"
 given:
   apply:
-    - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+    - sql: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 7
         - "2026-01-01T00:00:00.000000Z"
@@ -36,12 +36,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
-        mariadb: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+        postgres: update px.voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+        mariadb: update px.voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
       binds: ["2026-06-01T00:00:00.000000Z", 7, infinity, "2026-01-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
-        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        postgres: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into px.voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 7
         - "2026-06-01T00:00:00.000000Z"
@@ -54,27 +54,28 @@ then:
             sealNumber: S-4021
           legs: []
   tableState:
-    voyage:
-      - id: 7
-        in_z: "2026-01-01T00:00:00.000000Z"
-        out_z: "2026-06-01T00:00:00.000000Z"
-        payload:
-          title: Coastal Run
-          crew: 6
-          charterCode: NB-118
-          manifest:
-            cargo: grain
-            sealNumber: S-4021
-          legs: []
-      - id: 7
-        in_z: "2026-06-01T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          title: Coastal Return
-          crew: 6
-          charterCode: NB-118
-          manifest:
-            cargo: grain
-            sealNumber: S-4021
-          legs: []
+    px:
+      voyage:
+        - id: 7
+          in_z: "2026-01-01T00:00:00.000000Z"
+          out_z: "2026-06-01T00:00:00.000000Z"
+          payload:
+            title: Coastal Run
+            crew: 6
+            charterCode: NB-118
+            manifest:
+              cargo: grain
+              sealNumber: S-4021
+            legs: []
+        - id: 7
+          in_z: "2026-06-01T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            title: Coastal Return
+            crew: 6
+            charterCode: NB-118
+            manifest:
+              cargo: grain
+              sealNumber: S-4021
+            legs: []
   databaseCalls: 3

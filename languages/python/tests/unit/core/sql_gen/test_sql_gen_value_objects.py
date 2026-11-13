@@ -23,6 +23,7 @@ from parallax.core.internal.base import STRING, UsageError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.object_query import History
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed, model, target
@@ -33,7 +34,7 @@ CUSTOMER = model("customer")
 def test_dotted_null_check_and_membership() -> None:
     is_null = compile_read(
         oa.NullCheck(op="isNull", subject=oa.FieldSubject("Customer.address.city")),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -42,7 +43,7 @@ def test_dotted_null_check_and_membership() -> None:
         oa.Membership(
             op="in", subject=oa.FieldSubject("Customer.address.city"), values=("Oslo", "Boston")
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -58,12 +59,12 @@ def test_a_dotted_range_lowers_to_one_between_with_the_typed_cast() -> None:
     # different predicate (m-predicate).
     compiled = compile_read(
         oa.Range(subject=oa.FieldSubject("Customer.address.geo.elevation"), lower=5, upper=12),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     assert compiled.statement.sql == (
-        "select t0.id, t0.name from customer t0 where "
+        "select t0.id, t0.name from px.customer t0 where "
         "cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?"
     )
     assert compiled.statement.binds == ("geo", "elevation", 5, 12)
@@ -74,7 +75,7 @@ def test_dotted_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() 
     # positive tag emits, with the same bind list (m-sql).
     positive = compile_read(
         oa.Membership(op="in", subject=oa.FieldSubject("Customer.address.city"), values=("Oslo",)),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -82,7 +83,7 @@ def test_dotted_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() 
         oa.Membership(
             op="notIn", subject=oa.FieldSubject("Customer.address.city"), values=("Oslo",)
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -108,7 +109,7 @@ def test_a_range_inside_a_quantifier_binds_one_element() -> None:
             "Customer.address.phones",
             oa.Range(subject=oa.FieldSubject("number"), lower="555-0000", upper="555-1234"),
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -141,7 +142,7 @@ def test_range_and_negated_membership_lower_inside_a_quantifier() -> None:
             )
         ),
     )
-    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    compiled = compile_read(op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
     assert compiled.statement.sql.count("jsonb_array_elements(") == 1
     assert compiled.statement.sql.endswith(
         "where jsonb_extract_path_text(t1.value, ?) between ? and ? "
@@ -179,7 +180,7 @@ def test_dotted_string_predicates_reuse_the_scalar_pattern_rules(
     # — the leaf is a String member by the non-string-member rule.
     compiled = compile_read(
         oa.StringMatch(op=tag, subject=oa.FieldSubject("Customer.address.city"), value=value),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -196,7 +197,7 @@ def test_a_dotted_affix_pattern_escapes_only_when_the_literal_carries_a_wildcard
         oa.StringMatch(
             op="contains", subject=oa.FieldSubject("Customer.address.street"), value="50%"
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -206,7 +207,7 @@ def test_a_dotted_affix_pattern_escapes_only_when_the_literal_carries_a_wildcard
         oa.StringMatch(
             op="contains", subject=oa.FieldSubject("Customer.address.street"), value="50"
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -222,7 +223,7 @@ def test_a_case_insensitive_dotted_string_predicate_folds_both_sides() -> None:
             value="OSLO",
             case_insensitive=True,
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -241,7 +242,7 @@ def test_string_predicates_lower_inside_a_quantifier() -> None:
             "Customer.address.phones",
             oa.StringMatch(op="startsWith", subject=oa.FieldSubject("number"), value="555-1"),
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -258,7 +259,7 @@ def test_string_predicates_lower_inside_a_quantifier() -> None:
                 )
             ),
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -319,23 +320,24 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
     meta = formed(Metamodel(entities=(site,)))
     instance = compile_read(
         oa.TrueNode(),
-        meta,
+        bound_model(meta),
         POSTGRES,
         target(meta, "Site"),
         temporal={"transaction-time": History()},
         result_form="instance",
     )
     assert instance.statement.sql == (
-        "select t0.id, t0.label, t0.in_z, t0.out_z, not t0.address is null, t0.address from site t0"
+        "select t0.id, t0.label, t0.in_z, t0.out_z, not t0.address is null, t0.address from "
+        "px.site t0"
     )
     row_form = compile_read(
         oa.TrueNode(),
-        meta,
+        bound_model(meta),
         POSTGRES,
         target(meta, "Site"),
         temporal={"transaction-time": History()},
     )
-    assert row_form.statement.sql == "select t0.id, t0.label, t0.in_z, t0.out_z from site t0"
+    assert row_form.statement.sql == "select t0.id, t0.label, t0.in_z, t0.out_z from px.site t0"
 
 
 def test_a_top_level_many_value_object_quantifier_needs_no_path_descent() -> None:
@@ -370,12 +372,12 @@ def test_a_top_level_many_value_object_quantifier_needs_no_path_descent() -> Non
         oa.Quantifier(
             "any", "Doc.tags", oa.Comparison(op="eq", subject=oa.FieldSubject("label"), value="x")
         ),
-        meta,
+        bound_model(meta),
         POSTGRES,
         target(meta, "Doc"),
     )
     assert compiled.statement.sql == (
-        "select t0.id from doc t0 where exists (select 1 from jsonb_array_elements("
+        "select t0.id from px.doc t0 where exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) "
         "t1 where jsonb_extract_path_text(t1.value, ?) = ?)"
     )
@@ -388,12 +390,12 @@ def test_a_top_level_many_value_object_quantifier_needs_no_path_descent() -> Non
 def test_a_bare_any_is_a_non_empty_test_no_where() -> None:
     compiled = compile_read(
         oa.Quantifier("any", path="Customer.address.phones"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     assert compiled.statement.sql == (
-        "select t0.id, t0.name from customer t0 where exists (select 1 from "
+        "select t0.id, t0.name from px.customer t0 where exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
         "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1)"
     )
@@ -406,12 +408,12 @@ def test_a_bare_none_negates_with_no_coalesce() -> None:
     # `coalesce` wrap at all.
     compiled = compile_read(
         oa.Quantifier("none", path="Customer.address.phones"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     assert compiled.statement.sql.startswith(
-        "select t0.id, t0.name from customer t0 where not exists ("
+        "select t0.id, t0.name from px.customer t0 where not exists ("
     )
     assert "coalesce" not in compiled.statement.sql
     assert compiled.statement.binds == ("phones", "array", "phones", "[]")
@@ -431,10 +433,10 @@ def test_one_quantifier_where_reuses_one_alias_for_every_conjunct() -> None:
             )
         ),
     )
-    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    compiled = compile_read(op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
     assert compiled.statement.sql.count("jsonb_array_elements(") == 1  # ONE guarded unnest, not two
     assert compiled.statement.sql == (
-        "select t0.id, t0.name from customer t0 where exists (select 1 from "
+        "select t0.id, t0.name from px.customer t0 where exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? "
         "then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
         "jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)"
@@ -457,9 +459,9 @@ def test_none_where_negates_the_same_element_check() -> None:
         path="Customer.address.phones",
         where=oa.Comparison(op="eq", subject=oa.FieldSubject("number"), value="555-0000"),
     )
-    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    compiled = compile_read(op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
     assert compiled.statement.sql.startswith(
-        "select t0.id, t0.name from customer t0 where not exists ("
+        "select t0.id, t0.name from px.customer t0 where not exists ("
     )
     assert "coalesce" not in compiled.statement.sql
     assert compiled.statement.sql.endswith("where jsonb_extract_path_text(t1.value, ?) = ?)")
@@ -486,7 +488,7 @@ def test_a_quantifier_where_composes_or_not_and_group() -> None:
             )
         ),
     )
-    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    compiled = compile_read(op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
     assert compiled.statement.sql.endswith(
         "where (jsonb_extract_path_text(t1.value, ?) = ? or "
         "not jsonb_extract_path_text(t1.value, ?) = ?))"
@@ -528,7 +530,7 @@ def test_an_element_where_reads_only_the_element_it_binds(node: oa.PredicateNode
     with raises_code(UsageError, "predicate-subject-outside-scope"):
         compile_read(
             oa.Quantifier("any", path="Customer.address.phones", where=node),
-            CUSTOMER,
+            bound_model(CUSTOMER),
             POSTGRES,
             target(CUSTOMER, "Customer"),
         )
@@ -537,7 +539,7 @@ def test_an_element_where_reads_only_the_element_it_binds(node: oa.PredicateNode
 def test_constants_lower_inside_an_element_where() -> None:
     compiled = compile_read(
         oa.Quantifier("all", path="Customer.address.phones", where=oa.FalseNode()),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -563,10 +565,11 @@ def test_two_quantifiers_bind_independent_elements() -> None:
             ),
         )
     )
-    compiled = compile_read(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
+    compiled = compile_read(op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
     assert compiled.statement.sql.count("jsonb_array_elements(") == 2  # TWO independent unnests
     assert compiled.statement.sql == (
-        "select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements("
+        "select t0.id, t0.name from px.customer t0 where exists (select 1 from "
+        "jsonb_array_elements("
         "case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then "
         "jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where "
         "jsonb_extract_path_text(t1.value, ?) = ?) and exists (select 1 from jsonb_array_elements("
@@ -604,13 +607,13 @@ def test_every_quantifier_uses_the_same_guard_fragment() -> None:
             "Customer.address.phones",
             oa.Comparison(op="eq", subject=oa.FieldSubject("number"), value="555-0000"),
         ),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     bare = compile_read(
         oa.Quantifier("any", path="Customer.address.phones"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -623,7 +626,7 @@ def test_presence_of_a_single_value_object_tests_for_an_object() -> None:
     # comparison's unknown folds to false so a negation stays two-valued.
     present = compile_read(
         oa.Presence("exists", "Customer.address.geo"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -633,7 +636,7 @@ def test_presence_of_a_single_value_object_tests_for_an_object() -> None:
     assert present.statement.binds == ("geo", "object")
     absent = compile_read(
         oa.Presence("notExists", "Customer.address.geo"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -689,12 +692,12 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
             "Store.profile.shipping.rates",
             oa.Comparison(op="eq", subject=oa.FieldSubject("zone"), value="west"),
         ),
-        meta,
+        bound_model(meta),
         POSTGRES,
         target(meta, "Store"),
     )
     assert scoped_element.statement.sql == (
-        "select t0.id from store t0 where exists (select 1 from jsonb_array_elements("
+        "select t0.id from px.store t0 where exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(jsonb_extract_path(t0.profile, ?, ?)) = ? then "
         "jsonb_extract_path(t0.profile, ?, ?) else cast(? as jsonb) end) t1 where "
         "jsonb_extract_path_text(t1.value, ?) = ?)"
@@ -712,7 +715,7 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
 
     bare_exists = compile_read(
         oa.Quantifier("any", path="Store.profile.shipping.rates"),
-        meta,
+        bound_model(meta),
         POSTGRES,
         target(meta, "Store"),
     )
@@ -721,7 +724,10 @@ def test_many_member_nested_two_levels_deep_binds_every_path_segment_twice() -> 
 
 def test_presence_of_a_top_level_value_object_probes_its_column() -> None:
     compiled = compile_read(
-        oa.Presence("exists", "Customer.address"), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer")
+        oa.Presence("exists", "Customer.address"),
+        bound_model(CUSTOMER),
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
     )
     assert compiled.statement.sql.endswith("where coalesce(jsonb_typeof(t0.address) = ?, false)")
     assert compiled.statement.binds == ("object",)
@@ -730,12 +736,12 @@ def test_presence_of_a_top_level_value_object_probes_its_column() -> None:
 def test_presence_of_a_value_object_past_a_to_one_hop_reads_the_related_document() -> None:
     compiled = compile_read(
         oa.Presence("exists", "Location.customer.address"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Location"),
     )
     assert compiled.statement.sql.endswith(
-        "left join customer t1 on t1.id = t0.customer_id "
+        "left join px.customer t1 on t1.id = t0.customer_id "
         "where coalesce(jsonb_typeof(t1.address) = ?, false)"
     )
 
@@ -743,12 +749,12 @@ def test_presence_of_a_value_object_past_a_to_one_hop_reads_the_related_document
 def test_readless_dml_selects_a_value_object_past_a_to_one_hop_through_its_join() -> None:
     compiled = compile_write_predicate(
         oa.Presence("exists", "Location.customer.address"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Location"),
     )
     assert compiled.sql == (
-        "select t0.id from location t0 left join customer t1 on t1.id = t0.customer_id "
+        "select t0.id from px.location t0 left join px.customer t1 on t1.id = t0.customer_id "
         "where coalesce(jsonb_typeof(t1.address) = ?, false)"
     )
 
@@ -756,12 +762,12 @@ def test_readless_dml_selects_a_value_object_past_a_to_one_hop_through_its_join(
 def test_readless_dml_in_place_tests_a_value_object_past_a_hop_in_its_scalar_hop() -> None:
     compiled = compile_write_predicate(
         oa.Quantifier("any", "Customer.locations", oa.Presence("exists", "customer.address")),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
     assert compiled.sql == (
-        "exists (select 1 from location t1 where t1.customer_id = id and "
+        "exists (select 1 from px.location t1 where t1.customer_id = id and "
         "coalesce((select coalesce(jsonb_typeof(t2.address) = ?, false) "
-        "from customer t2 where t2.id = t1.customer_id), false))"
+        "from px.customer t2 where t2.id = t1.customer_id), false))"
     )

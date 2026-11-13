@@ -29,8 +29,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into customer(id, name, address) values (?, ?, ?)
-        mariadb: insert into customer(id, name, address) values (?, ?, ?)
+        postgres: insert into px.customer(id, name, address) values (?, ?, ?)
+        mariadb: insert into px.customer(id, name, address) values (?, ?, ?)
       binds:
         - 300
         - Bjorn
@@ -40,12 +40,13 @@ then:
             country: "NO"
           phones: []
     - sql:
-        postgres: update customer set address = ? where id = ?
-        mariadb: update customer set address = ? where id = ?
+        postgres: update px.customer set address = ? where id = ?
+        mariadb: update px.customer set address = ? where id = ?
       binds: [null, 300]
   tableState:
-    customer:
-      - id: 300
-        name: Bjorn
-        address: null
+    px:
+      customer:
+        - id: 300
+          name: Bjorn
+          address: null
   databaseCalls: 3

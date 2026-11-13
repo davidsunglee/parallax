@@ -58,7 +58,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 80
+    assert len(prose) == 98
     assert "framework-owned-member-assigned" in prose
     assert "relationship-join-type-mismatch" in prose
     assert {
@@ -88,7 +88,8 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
     assert "reference-ambiguous-entity-name" in prose  # the reference-resolution rule
     assert "subtype-selection-duplicate-alternative" in prose
     assert "subtype-selection-overlapping-alternatives" in prose
-    assert "storage-layout-table-mapping-collision" in prose
+    assert "storage-layout-table-mapping-collision" not in prose
+    assert "binding-table-collision" in prose
     assert "storage-layout-column-collision" in prose
     assert "storage-layout-table-boundary-collision" not in prose
     assert "inheritance-physical-column-collision" not in prose
@@ -100,7 +101,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
 
 def test_real_schema_enum_is_the_full_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 80
+    assert len(rules) == 98
     assert "framework-owned-member-assigned" in rules
     assert "metamodel-temporal-member-reserved" in rules
     assert "relationship-join-type-mismatch" in rules
@@ -117,7 +118,8 @@ def test_real_schema_enum_is_the_full_rule_set() -> None:
     assert "null-check-non-nullable-member" in rules
     assert "scalar-collection-unquantified" in rules
     assert "string-predicate-non-string-member" in rules
-    assert "storage-layout-table-mapping-collision" in rules
+    assert "storage-layout-table-mapping-collision" not in rules
+    assert "binding-table-collision" in rules
     assert "storage-layout-column-collision" in rules
     assert "attribute-outside-active-position" in rules
     assert "reference-ambiguous-entity-name" in rules
@@ -244,7 +246,7 @@ def test_real_evolution_vocabularies_match_their_schema_enums() -> None:
     schema = _real_schema()
     markdown = _real_evolution_markdown()
     sizes = {
-        "evolutionOperationKind": 23,
+        "evolutionOperationKind": 25,
         "declarationCollection": 6,
         "evolutionFieldDeltaKind": 20,
         "coordinationReason": 2,

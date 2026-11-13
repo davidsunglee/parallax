@@ -616,7 +616,7 @@ def test_a_target_acquisition_reads_the_document_of_a_direct_only_entity_only_to
 
     scope(port, _HULLS).transact(fn, itself, concurrency="locking")
     (read,) = (call for call in port.calls if isinstance(call, ReadCall))
-    assert read.sql.startswith(f"select {projection} from hull_direct t0 where ")
+    assert read.sql.startswith(f"select {projection} from px.hull_direct t0 where ")
 
 
 @pytest.mark.parametrize("entity", [ColumnsHull, DocumentHull], ids=["columns", "document"])

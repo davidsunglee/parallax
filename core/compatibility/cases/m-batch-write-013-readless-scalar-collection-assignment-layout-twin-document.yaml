@@ -27,48 +27,49 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: update collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?
-            mariadb: update collection_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id < ?
+            postgres: update px.collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?
+            mariadb: update px.collection_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id < ?
           binds:
             postgres: ['{counts}', [5, 5], '{tags}', [], '{parts}', [{ sku: d, marks: [1] }], 3]
             mariadb: ['$.counts', [5, 5], '$.tags', [], '$.parts', [{ sku: d, marks: [1] }], 3]
 then:
   databaseCalls: 1
   tableState:
-    collection_twin:
-      - id: 1
-        payload:
-          flags: [true, false, true]
-          smalls: [3, -2, 3]
-          counts: [5, 5]
-          ratios: [1.2, 0.0]
-          scores: [0.1, 2.5, 0.1]
-          amounts: ["1.50", "1.50", "7.00"]
-          tags: []
-          blobs: ["0aff", ""]
-          days: ["2024-02-29"]
-          clocks: ["13:05:07.000250"]
-          instants: ["2024-06-01T10:00:00.000000Z"]
-          tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
-          detail:
-            labels: [x, y, x]
-          parts:
-            - sku: d
-              marks: [1]
-      - id: 2
-        payload:
-          flags: []
-          smalls: []
-          counts: [5, 5]
-          ratios: []
-          scores: []
-          amounts: []
-          tags: []
-          blobs: []
-          days: []
-          clocks: []
-          instants: []
-          tokens: []
-          parts:
-            - sku: d
-              marks: [1]
+    px:
+      collection_twin:
+        - id: 1
+          payload:
+            flags: [true, false, true]
+            smalls: [3, -2, 3]
+            counts: [5, 5]
+            ratios: [1.2, 0.0]
+            scores: [0.1, 2.5, 0.1]
+            amounts: ["1.50", "1.50", "7.00"]
+            tags: []
+            blobs: ["0aff", ""]
+            days: ["2024-02-29"]
+            clocks: ["13:05:07.000250"]
+            instants: ["2024-06-01T10:00:00.000000Z"]
+            tokens: ["12345678-1234-5678-1234-567812345678", "12345678-1234-5678-1234-567812345678"]
+            detail:
+              labels: [x, y, x]
+            parts:
+              - sku: d
+                marks: [1]
+        - id: 2
+          payload:
+            flags: []
+            smalls: []
+            counts: [5, 5]
+            ratios: []
+            scores: []
+            amounts: []
+            tags: []
+            blobs: []
+            days: []
+            clocks: []
+            instants: []
+            tokens: []
+            parts:
+              - sku: d
+                marks: [1]

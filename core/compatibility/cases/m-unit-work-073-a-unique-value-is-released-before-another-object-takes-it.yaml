@@ -20,8 +20,8 @@ when:
       note: observe both passports; the unversioned target resolves to Locking, so the find takes the shared row lock
       statements:
         - sql:
-            postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.id < ? order by t0.id asc for share of t0
-            mariadb: select t0.id, t0.person_id, t0.number from passport t0 where t0.id < ? order by t0.id asc lock in share mode
+            postgres: select t0.id, t0.person_id, t0.number from px.passport t0 where t0.id < ? order by t0.id asc for share of t0
+            mariadb: select t0.id, t0.person_id, t0.number from px.passport t0 where t0.id < ? order by t0.id asc lock in share mode
           binds: [103]
       expectRows:
         - { id: 101, person_id: 1, number: P-AAA }
@@ -34,16 +34,17 @@ when:
       note: passport 102 takes the holder passport 101 gives up, so each effect keeps its authored place and neither shares a statement; run the other way round, the second write's value is still held and the unique key refuses it
       statements:
         - sql:
-            postgres: update passport set person_id = ? where id = ?
-            mariadb: update passport set person_id = ? where id = ?
+            postgres: update px.passport set person_id = ? where id = ?
+            mariadb: update px.passport set person_id = ? where id = ?
           binds: [3, 101]
         - sql:
-            postgres: update passport set person_id = ? where id = ?
-            mariadb: update passport set person_id = ? where id = ?
+            postgres: update px.passport set person_id = ? where id = ?
+            mariadb: update px.passport set person_id = ? where id = ?
           binds: [1, 102]
 then:
   databaseCalls: 3
   tableState:
-    passport:
-      - { id: 101, person_id: 3, number: P-AAA }
-      - { id: 102, person_id: 1, number: P-BBB }
+    px:
+      passport:
+        - { id: 101, person_id: 3, number: P-AAA }
+        - { id: 102, person_id: 1, number: P-BBB }

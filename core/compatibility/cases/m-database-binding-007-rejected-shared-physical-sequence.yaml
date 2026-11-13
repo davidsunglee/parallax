@@ -1,0 +1,21 @@
+# Two logical allocators may not alias one physical sequence: badge_seq is
+# renamed onto ticket_seq's own default physical name.
+model: models/pk-sequence.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      sequences:
+        badge_seq: { sequence: ticket_seq }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      sequences:
+        badge_seq: { sequence: ticket_seq }
+then:
+  rejectedRule: binding-sequence-collision

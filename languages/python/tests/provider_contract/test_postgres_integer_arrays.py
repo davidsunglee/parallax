@@ -27,6 +27,7 @@ from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "integer.arrays"
@@ -81,10 +82,12 @@ def _delivered(
 ) -> list[LoweredStatement]:
     """Every read statement a membership read with its children, and its
     negation, deliver over ``keys``, after their rows are checked."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port, _MODEL, lifecycle_provider=observation.provider, binding=TEST_BINDING
+        )
     ).using_database_login()
 
     def seed(tx: Any) -> None:

@@ -18,15 +18,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, not t0.payload is null, t0.payload from uuid_leaf t0
-        mariadb: select t0.id, not t0.payload is null, t0.payload from uuid_leaf t0
+        postgres: select t0.id, not t0.payload is null, t0.payload from px.uuid_leaf t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload from px.uuid_leaf t0
     - sql:
-        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from uuid_link t0 where t0.parent_id = any(cast(? as uuid[])) order by t0.id asc
-        mariadb: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from uuid_link t0 where t0.parent_id in (?) order by t0.id asc
+        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from px.uuid_link t0 where t0.parent_id = any(cast(? as uuid[])) order by t0.id asc
+        mariadb: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from px.uuid_link t0 where t0.parent_id in (?) order by t0.id asc
       binds:
         postgres: [['00000000-0000-0000-0000-000000000001']]
         mariadb: ['00000000-0000-0000-0000-000000000001']
-  referenceSql: select id, payload from uuid_leaf
+  referenceSql: select id, payload from px.uuid_leaf
   graph:
     UuidLeaf:
       - id: '00000000-0000-0000-0000-000000000001'

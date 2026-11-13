@@ -20,14 +20,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into layout_audit(id, title, detail) values (?, ?, ?)
+        postgres: insert into px.layout_audit(id, title, detail) values (?, ?, ?)
       binds: [1, Quarterly audit, Ingrid]
     - sql:
-        postgres: insert into layout_survey(id, title, detail) values (?, ?, ?)
+        postgres: insert into px.layout_survey(id, title, detail) values (?, ?, ?)
       binds: [1, Annual survey, Bjorn]
   tableState:
-    layout_audit:
-      - { id: 1, title: Quarterly audit, detail: Ingrid }
-    layout_survey:
-      - { id: 1, title: Annual survey, detail: Bjorn }
+    px:
+      layout_audit:
+        - { id: 1, title: Quarterly audit, detail: Ingrid }
+      layout_survey:
+        - { id: 1, title: Annual survey, detail: Bjorn }
   databaseCalls: 2

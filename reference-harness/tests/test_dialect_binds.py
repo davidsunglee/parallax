@@ -53,8 +53,8 @@ _CASE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema
 _REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
-_PG_NESTED = "select t0.id from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
-_MDB_NESTED = "select t0.id from customer t0 where json_value(t0.address, ?) = ?"
+_PG_NESTED = "select t0.id from px.customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
+_MDB_NESTED = "select t0.id from px.customer t0 where json_value(t0.address, ?) = ?"
 
 
 def _case_validator() -> Draft202012Validator:
@@ -98,9 +98,9 @@ def _read_case_doc() -> dict[str, Any]:
                 }
             ],
             "referenceSql": {
-                "postgres": "select id from customer where address ->> 'city' = 'Oslo'",
+                "postgres": "select id from px.customer where address ->> 'city' = 'Oslo'",
                 "mariadb": (
-                    "select id from customer where "
+                    "select id from px.customer where "
                     "nullif(json_unquote(json_extract(address, '$.city')), 'null') = 'Oslo'"
                 ),
             },
@@ -118,8 +118,8 @@ def test_schema_accepts_dialect_keyed_binds_and_reference_sql() -> None:
 def test_schema_still_accepts_flat_binds() -> None:
     doc = _read_case_doc()
     doc["then"]["statements"][0]["binds"] = ["city", "Oslo"]
-    doc["then"]["statements"][0]["sql"] = {"postgres": "select t0.id from customer t0"}
-    doc["then"]["referenceSql"] = "select id from customer"
+    doc["then"]["statements"][0]["sql"] = {"postgres": "select t0.id from px.customer t0"}
+    doc["then"]["referenceSql"] = "select id from px.customer"
     assert next(_case_validator().iter_errors(doc), None) is None
 
 
@@ -195,7 +195,7 @@ def test_case_execution_converts_each_element_of_an_authored_array_bind() -> Non
         for case in discover_cases(_COMPATIBILITY_ROOT)
         if case.path.name == "m-predicate-018-in.yaml"
     )
-    statement = "select t0.id from orders t0 where not t0.price = any(cast(? as decimal[]))"
+    statement = "select t0.id from px.orders t0 where not t0.price = any(cast(? as decimal[]))"
 
     provider = _RecordingExecutor()
     CaseExecution(case, provider).execute(statement, [["10.50", "99.99"]])
@@ -233,7 +233,7 @@ def test_a_column_array_is_an_array_bind_through_casts_and_parentheses() -> None
 
 def test_each_key_column_array_of_a_collapsed_key_membership_is_an_array_bind() -> None:
     composite = (
-        "delete from ledger where (book_id, line_no) in "
+        "delete from px.ledger where (book_id, line_no) in "
         "(select * from unnest(cast(? as bigint[]), cast(? as int[]))) and kind = ?"
     )
 
@@ -244,12 +244,12 @@ def test_each_key_column_array_of_a_collapsed_key_membership_is_an_array_bind() 
         "card",
     )
     assert array_bind_indices(
-        "update wallet set balance = ? where id = any(cast(? as bigint[]))"
+        "update px.wallet set balance = ? where id = any(cast(? as bigint[]))"
     ) == {1}
 
 
 _POSITION_COLUMN_ARRAYS = (
-    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
+    "insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
     "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), "
     "cast(? as timestamptz[]))"
@@ -309,9 +309,11 @@ def test_postgres_adapts_each_column_array_element_as_it_would_bind_alone() -> N
 
 
 def test_reference_sql_for_string_is_dialect_neutral() -> None:
-    case = _make_case([{"sql": {"postgres": "select 1"}}], reference_sql="select id from customer")
-    assert case.reference_sql_for("postgres") == "select id from customer"
-    assert case.reference_sql_for("mariadb") == "select id from customer"
+    case = _make_case(
+        [{"sql": {"postgres": "select 1"}}], reference_sql="select id from px.customer"
+    )
+    assert case.reference_sql_for("postgres") == "select id from px.customer"
+    assert case.reference_sql_for("mariadb") == "select id from px.customer"
 
 
 def test_reference_sql_for_map_resolves_per_dialect() -> None:
@@ -396,7 +398,7 @@ def test_assert_reference_sql_dialect_keys_rejects_extra_dialect() -> None:
 def test_assert_reference_sql_dialect_keys_ignores_string() -> None:
     case = _make_case(
         [{"sql": {"postgres": "select 1", "mariadb": "select 1"}}],
-        reference_sql="select id from customer",
+        reference_sql="select id from px.customer",
     )
     _assert_reference_sql_dialect_keys(case)  # a plain string imposes no key constraint
 

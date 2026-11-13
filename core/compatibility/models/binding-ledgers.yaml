@@ -1,0 +1,18 @@
+# Two independent ledgers that declare one table name. Formation accepts them:
+# the declared name is only each owner's default physical name, and a binding
+# that places the owners in different locations keeps them distinct. The corpus
+# default binding alone would place both in one schema and is refused, so every
+# case over this model carries its own binding.
+entities:
+  - name: SalesLedger
+    namespace: parallax.compatibility
+    table: ledger
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: amount, type: "numeric(18,2)" }
+  - name: AuditLedger
+    namespace: parallax.compatibility
+    table: ledger
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: note, type: string, maxLength: 64 }

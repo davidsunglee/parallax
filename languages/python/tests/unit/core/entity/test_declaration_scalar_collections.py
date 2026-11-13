@@ -28,6 +28,7 @@ from parallax.core.internal.metamodel import Multiplicity, ScalarDefinition
 from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.core.internal.predicate import serialize
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.errors import raises_code
 from tests._support.query_probes import predicate_node
@@ -189,7 +190,9 @@ _OUT_OF_SPACE: list[tuple[str, tuple[object, ...], str]] = [
 
 def _write_refusal(work: Callable[[TxnContext], object]) -> UsageError:
     port = ScriptedAdapter(Transact())
-    database = own_root(connect(port, DomainModel(Order))).using_database_login()
+    database = own_root(
+        connect(port, DomainModel(Order), binding=TEST_BINDING)
+    ).using_database_login()
     with pytest.raises(UsageError) as caught:
         database.transact(work)
     return caught.value

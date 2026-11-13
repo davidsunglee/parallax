@@ -15,16 +15,16 @@ when:
       - A:
           statements:
             - sql:
-                postgres: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? offset 0) p1 where cast(jsonb_extract_path_text(p1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id for share of t0
-                mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? limit ?) p1 where cast(json_value(p1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id lock in share mode
+                postgres: select t0.id, t0.kind, not t0.payload is null, t0.payload from px.payment_document t0 join (select p1.id from (select * from px.payment_document t1 where t1.kind = ? offset 0) p1 where cast(jsonb_extract_path_text(p1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id for share of t0
+                mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from px.payment_document t0 join (select p1.id from (select * from px.payment_document t1 where t1.kind = ? limit ?) p1 where cast(json_value(p1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id lock in share mode
               binds:
                 postgres: [cash, detail, '10.00']
                 mariadb: [cash, 18446744073709551615, '$.detail', '10.00']
       - B:
           statements:
             - sql:
-                postgres: update payment_document set kind = kind where id = ?
-                mariadb: update payment_document set kind = kind where id = ?
+                postgres: update px.payment_document set kind = kind where id = ?
+                mariadb: update px.payment_document set kind = kind where id = ?
               binds: [2]
 then:
   errorClass: lockWaitTimeout

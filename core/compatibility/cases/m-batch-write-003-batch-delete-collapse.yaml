@@ -19,8 +19,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: delete from wallet where id = any(cast(? as bigint[]))
+        postgres: delete from px.wallet where id = any(cast(? as bigint[]))
       binds: [[1, 2, 3]]
   tableState:
-    wallet: []
+    px:
+      wallet: []
   databaseCalls: 2

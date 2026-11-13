@@ -20,9 +20,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.bark_volume = ? and t1.kind = ?)
+        postgres: select t0.id, t0.name from px.person t0 where exists (select 1 from px.animal t1 where t1.owner_id = t0.id and t1.bark_volume = ? and t1.kind = ?)
       binds: [7, dog]
-  referenceSql: select id, name from person where id in (select owner_id from animal where bark_volume = 7 and kind = 'dog')
+  referenceSql: select id, name from px.person where id in (select owner_id from px.animal where bark_volume = 7 and kind = 'dog')
   rows:
     - { id: 10, name: Alice }
   databaseCalls: 1

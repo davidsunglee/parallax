@@ -17,6 +17,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.internal.execution import TxnOptions
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 
 _WRITERS = 8
 
@@ -26,6 +27,7 @@ def _seeded(profile_run: Any) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
@@ -35,7 +37,7 @@ def test_the_conflict_replay_usage_guide_story_runs_against_a_real_database(
     _seeded(profile_run)
     report = (
         conflict_replay_stories.a_credit_overtaken_by_another_writer_is_replayed_from_a_fresh_read(
-            profile_run.port, MODELS["account"]
+            profile_run.port, MODELS["account"], TEST_BINDING
         )
     )
     assert report.balances_read == (Decimal("250.00"), Decimal("999.00"))
@@ -57,7 +59,7 @@ def test_writers_contending_for_one_row_all_commit_within_the_default_bound(
     attempts: list[int] = []
     lock = threading.Lock()
 
-    with connect(profile_run.port, MODELS["account"]) as database:
+    with connect(profile_run.port, MODELS["account"], binding=TEST_BINDING) as database:
         db = database.using_database_login()
         read_together = threading.Barrier(_WRITERS)
 

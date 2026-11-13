@@ -43,6 +43,7 @@ from parallax.core.internal.metamodel import (
     RelationshipIdentity,
 )
 from tests._support import snapshot_models as sm
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._indexed_graph_support import (
@@ -209,7 +210,7 @@ def test_an_equal_layout_from_another_catalog_of_one_model_is_accepted() -> None
     # by identity: an interchangeable catalog lays the same rows out.
     construction = graph_construction_for(_ORDERS)
     graph = literal_graph(construction, _ONE_ORDER)
-    twin = CatalogedModel(model_of(_ORDERS)).layouts.entity(_ORDER)
+    twin = CatalogedModel(model_of(_ORDERS), TEST_BINDING).layouts.entity(_ORDER)
     assert twin is not graph.layouts[0]
     root = construction.publish(
         LiteralGraph((twin,), graph.members, graph.relationships), _no_states
@@ -718,7 +719,7 @@ class _Uncomposed(Entity, table="uncomposed", name="Uncomposed", namespace="para
 def test_an_entity_the_class_index_holds_no_class_for_is_refused_at_construction() -> None:
     classes = class_index(DomainModel(_Composed))
     assert classes is not None
-    cataloged = CatalogedModel(model_of(DomainModel(_Composed, _Uncomposed)))
+    cataloged = CatalogedModel(model_of(DomainModel(_Composed, _Uncomposed)), TEST_BINDING)
     with raises_code(
         InternalError, "entity-graph-invalid-entity", match="parallax.test.Uncomposed"
     ):

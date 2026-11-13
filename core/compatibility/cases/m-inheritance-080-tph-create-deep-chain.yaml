@@ -14,9 +14,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into animal(id, kind, name, owner_id, license_id, bark_volume) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.animal(id, kind, name, owner_id, license_id, bark_volume) values (?, ?, ?, ?, ?, ?)
       binds: [5, dog, Bella, 10, L-500, 5]
   tableState:
-    animal:
-      - { id: 5, kind: dog, name: Bella, owner_id: 10, license_id: L-500, bark_volume: 5, indoor: null, tusk_length: null }
+    px:
+      animal:
+        - { id: 5, kind: dog, name: Bella, owner_id: 10, license_id: L-500, bark_volume: 5, indoor: null, tusk_length: null }
   databaseCalls: 1

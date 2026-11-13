@@ -20,6 +20,7 @@ from collections.abc import Sequence
 import pytest
 
 from parallax.core import UnsupportedError
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import (
     POSTGRES,
     ColumnDdl,
@@ -29,19 +30,19 @@ from parallax.core.internal.dialect import (
     Unsupported,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.internal.metamodel import Table
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.internal.model_evolution import (
     ABSENT,
     UnilateralEvolution,
-    evolve_metamodels,
+    evolve_resolved,
 )
 from parallax.evolution.internal.schema_delta import (
-    PhysicalLocation,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
     schema_delta,
 )
 from parallax.evolution.internal.schema_delta._values import SCHEMA_EVOLUTION_UNSUPPORTED
+from tests._support.bindings import binding_for, physical_table
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
@@ -100,9 +101,14 @@ def _widget(*, bound: int, indexed: bool) -> AcceptedMetamodel:
     )
 
 
-def _widened_and_indexed() -> UnilateralEvolution:
-    """One evolution widening a Column and putting an access path over it."""
-    evolution = evolve_metamodels(_widget(bound=8, indexed=False), _widget(bound=64, indexed=True))
+def _widened_and_indexed(dialect: Dialect) -> UnilateralEvolution:
+    """One evolution widening a Column and putting an access path over it, both
+    endpoints bound for ``dialect``."""
+    binding = binding_for(dialect)
+    evolution = evolve_resolved(
+        ResolvedBinding(_widget(bound=8, indexed=False), binding),
+        ResolvedBinding(_widget(bound=64, indexed=True), binding),
+    )
     assert isinstance(evolution, UnilateralEvolution)
     return evolution
 
@@ -113,7 +119,12 @@ def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
     # first one arriving alone.
     with raises_code(UnsupportedSchemaEvolutionError, SCHEMA_EVOLUTION_UNSUPPORTED) as raised:
         schema_delta(
-            evolve_metamodels(ABSENT, entity_with_two_indices_over_one_column()), _refusing()
+            evolve_resolved(
+                ABSENT,
+                ResolvedBinding(
+                    entity_with_two_indices_over_one_column(), binding_for(_refusing())
+                ),
+            )
         )
     error = raised.value
     assert isinstance(error, UnsupportedError) and not error.is_transient
@@ -123,7 +134,9 @@ def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
     )
     assert error.dialect_identity == "refusing"
     assert [operation.kind for operation in error.operations] == ["CreateIndex", "CreateIndex"]
-    assert {operation.location.table for operation in error.operations} == {Table(name="widget")}
+    assert {operation.location.table for operation in error.operations} == {
+        physical_table("widget")
+    }
     assert all(operation.reason == _INDEX_REFUSAL for operation in error.operations)
     for operation in error.operations:
         assert operation.caused_by
@@ -134,9 +147,8 @@ def test_refusals_from_two_primitives_arrive_in_statement_order() -> None:
     # A widened Column and a new access path in one evolution: the refusals are
     # ordered as the statements would have been — the Column before the Index
     # over it — rather than grouped by which primitive refused.
-    evolution = _widened_and_indexed()
     with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(evolution, _refusing())
+        schema_delta(_widened_and_indexed(_refusing()))
     error = raised.value
     assert [operation.kind for operation in error.operations] == [
         "RestateColumnDomain",
@@ -151,9 +163,8 @@ def test_refusals_from_two_primitives_arrive_in_statement_order() -> None:
 def test_each_refusal_names_the_operations_that_asked_for_it() -> None:
     # Causal attribution is per physical operation, not per delta: the widening
     # is asked for by the member alteration and the Index by its own addition.
-    evolution = _widened_and_indexed()
     with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(evolution, _refusing())
+        schema_delta(_widened_and_indexed(_refusing()))
     widened, indexed = raised.value.operations
     assert [type(cause).__name__ for cause in widened.caused_by] == ["AttributeAltered"]
     assert [type(cause).__name__ for cause in indexed.caused_by] == ["IndexAdded"]
@@ -165,14 +176,13 @@ def test_a_refusing_dialect_returns_no_statement_at_all() -> None:
     # A Schema Delta is applied statement by statement, so half of one is worse
     # than none: an operation the Dialect cannot spell means no delta is
     # returned, not a delta missing that statement.
-    evolution = _widened_and_indexed()
     with pytest.raises(UnsupportedSchemaEvolutionError):
-        schema_delta(evolution, _refusing())
-    supported = schema_delta(evolution, POSTGRES)
+        schema_delta(_widened_and_indexed(_refusing()))
+    supported = schema_delta(_widened_and_indexed(POSTGRES))
     (created,) = supported.created_indices
     assert supported.statements == (
-        "alter table widget alter column code type varchar(64)",
-        f"create index {created.physical_index_name.value} on widget (code)",
+        "alter table px.widget alter column code type varchar(64)",
+        f"create index {created.physical_index_name.value} on px.widget (code)",
     )
 
 
@@ -196,16 +206,16 @@ def test_an_unsupported_prerequisite_is_reported_at_a_database_wide_location() -
     )
     model = formed(corpus_records()["balance"])
     with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(evolve_metamodels(ABSENT, model), dialect)
+        schema_delta(evolve_resolved(ABSENT, ResolvedBinding(model, binding_for(dialect))))
     (refusal,) = raised.value.operations
     assert refusal.kind == "CreateExtension"
-    assert refusal.location == PhysicalLocation(extension="btree_gist")
+    assert refusal.location == SchemaTarget(extension="btree_gist")
     assert refusal.caused_by
 
 
 def test_a_refusal_keeps_its_dialect_and_operations_across_pickling() -> None:
     with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(_widened_and_indexed(), _refusing())
+        schema_delta(_widened_and_indexed(_refusing()))
     restored = pickle.loads(pickle.dumps(raised.value))
     assert type(restored) is UnsupportedSchemaEvolutionError
     assert restored.code == SCHEMA_EVOLUTION_UNSUPPORTED

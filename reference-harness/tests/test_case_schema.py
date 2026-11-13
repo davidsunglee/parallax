@@ -80,7 +80,7 @@ def _write_sequence_case() -> dict[str, Any]:
             "statements": [
                 {"sql": {"postgres": "insert into balance(bal_id) values (?)"}, "binds": [1]}
             ],
-            "tableState": {"balance": [{"bal_id": 1}]},
+            "tableState": {"px": {"balance": [{"bal_id": 1}]}},
         },
     }
 
@@ -386,7 +386,7 @@ def _conflict_case() -> dict[str, Any]:
                 }
             ],
             "affectedRows": 0,
-            "tableState": {"account": [{"id": 2, "version": 2}]},
+            "tableState": {"px": {"account": [{"id": 2, "version": 2}]}},
         },
     }
 
@@ -513,7 +513,7 @@ def _conflict_retry_case() -> dict[str, Any]:
                 },
             ],
         },
-        "then": {"tableState": {"account": [{"id": 2, "version": 3}]}},
+        "then": {"tableState": {"px": {"account": [{"id": 2, "version": 3}]}}},
     }
 
 
@@ -904,7 +904,7 @@ def _value_object_document_case(document: Any) -> dict[str, Any]:
                     "binds": [1, "Ada", document],
                 }
             ],
-            "tableState": {"customer": [{"id": 1, "name": "Ada", "address": document}]},
+            "tableState": {"px": {"customer": [{"id": 1, "name": "Ada", "address": document}]}},
         },
     }
 

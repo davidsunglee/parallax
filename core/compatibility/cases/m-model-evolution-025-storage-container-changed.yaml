@@ -1,6 +1,8 @@
-# Changing the Storage Container (m-model-evolution): coordinated, for the
-# database alone.
-tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+# Changing the Storage Container (m-model-evolution): the declared table name is
+# a logical change alone, and the default binding, which pins no table name,
+# resolves the surviving owner to a renamed physical table. That relocation is
+# what needs the database migrated, so it is coordinated on its own.
+tags: [m-model-evolution, m-database-binding, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -16,14 +18,16 @@ then:
           - kind: StorageContainerChanged
             earlier: evolution_vault
             later: evolution_vault_archive
+      - kind: TableRelocated
+        entity: parallax.compatibility.Vault
+        earlier: { qualifier: [px], name: evolution_vault }
+        later: { qualifier: [px], name: evolution_vault_archive }
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements:
       - operation:
-          kind: EntityAltered
+          kind: TableRelocated
           entity: parallax.compatibility.Vault
-          deltas:
-            - kind: StorageContainerChanged
-              earlier: evolution_vault
-              later: evolution_vault_archive
+          earlier: { qualifier: [px], name: evolution_vault }
+          later: { qualifier: [px], name: evolution_vault_archive }
         reasons: [DatabaseMigrationRequired]

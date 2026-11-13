@@ -25,6 +25,7 @@ from parallax.core.internal.unit_work import (
     admitted_write,
     object_key,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.write_preparation import write_preparation_of
 
@@ -49,7 +50,7 @@ def root(
     serving = (
         model
         if isinstance(model, ServingModel)
-        else ServingModel(prepare_model(model, edition="test"))
+        else ServingModel(prepare_model(model, edition="test", binding=TEST_BINDING))
     )
     return own_root(
         DatabaseRoot(

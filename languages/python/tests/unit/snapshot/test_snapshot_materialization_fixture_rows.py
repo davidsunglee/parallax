@@ -5,6 +5,7 @@ import pytest
 from parallax.core._execution._publication import read_projection
 from parallax.core.internal.base import SQL_NULL, StructuredDocument
 from parallax.core.internal.execution import prepare_model
+from tests._support.bindings import TEST_BINDING
 from tests._support.document_reads import folded_names
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
@@ -44,7 +45,9 @@ _UNAUTHORED_SCALARS = 13
 
 
 def _first_rows(layout: Layout) -> tuple[tuple[tuple[str, ...], tuple[object, ...]] | None, ...]:
-    model = read_projection(prepare_model(workload(layout), edition=f"fixture-rows-{layout}")).model
+    model = read_projection(
+        prepare_model(workload(layout), edition=f"fixture-rows-{layout}", binding=TEST_BINDING)
+    ).model
     plan = read_plan(model, query(layout, model.meta))
     reads = compiled_levels(layout, plan)
     positional = rows_per_level(layout, model, plan, reads)
@@ -94,7 +97,9 @@ def test_materialization_driver_rows_preserve_the_sparse_fixture_payload() -> No
 def test_the_stress_batch_forms_its_stated_page_through_the_production_read_loop(
     layout: Layout,
 ) -> None:
-    model = read_projection(prepare_model(workload(layout), edition=f"fixture-rows-{layout}")).model
+    model = read_projection(
+        prepare_model(workload(layout), edition=f"fixture-rows-{layout}", binding=TEST_BINDING)
+    ).model
     validated = query(layout, model.meta)
     plan = read_plan(model, validated)
     reads = compiled_levels(layout, plan)

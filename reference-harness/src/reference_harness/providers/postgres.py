@@ -8,7 +8,7 @@ stable Postgres major; bump the tag as new majors ship.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from types import TracebackType
@@ -24,7 +24,8 @@ from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
 from .._grouped_effects import sourced_path_value_indices
 from .._sql_placeholders import array_bind_indices
-from ..ddl_builder import quote_identifier
+from ..database_binding import PhysicalTable
+from ..ddl_builder import qualified_table, quote_identifier
 from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
 from . import Catalog, build_catalog, register
@@ -48,21 +49,23 @@ _CODES: dict[str, str] = {
 # index only through the constraint that owns one, and a bare `create index` owns
 # no constraint, so a named non-unique index would be invisible there.
 _CATALOG_COLUMNS = """
-select c.relname as table_name,
+select n.nspname as table_schema,
+       c.relname as table_name,
        a.attname as column_name,
        format_type(a.atttypid, a.atttypmod) as column_type,
        not a.attnotnull as is_nullable
 from pg_catalog.pg_class c
 join pg_catalog.pg_namespace n on n.oid = c.relnamespace
 join pg_catalog.pg_attribute a on a.attrelid = c.oid
-where n.nspname = current_schema() and a.attnum > 0 and not a.attisdropped
-  and c.relname in ({placeholders})
+where n.nspname = any(%s) and a.attnum > 0 and not a.attisdropped
+  and c.relname = any(%s)
 """
 
 # `indkey` is the ordered component vector, so `with ordinality` recovers the
 # component ORDER a physical access path depends on.
 _CATALOG_INDICES = """
-select c.relname as table_name,
+select n.nspname as table_schema,
+       c.relname as table_name,
        i.relname as index_name,
        x.indisunique as is_unique,
        a.attname as column_name,
@@ -73,7 +76,7 @@ join pg_catalog.pg_class i on i.oid = x.indexrelid
 join pg_catalog.pg_namespace n on n.oid = c.relnamespace
 join unnest(x.indkey) with ordinality as k(attnum, ordinality) on true
 join pg_catalog.pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
-where n.nspname = current_schema() and c.relname in ({placeholders})
+where n.nspname = any(%s) and c.relname = any(%s)
 order by i.relname, k.ordinality
 """
 
@@ -98,6 +101,11 @@ _ACCESS_MODE: dict[str, str] = {
     "read-only": "set session characteristics as transaction read only",
     "read-write": "set session characteristics as transaction read write",
 }
+
+
+def _schema(qualifier: tuple[str, ...]) -> str:
+    (schema,) = qualifier
+    return schema
 
 
 def _adapt(value: Any) -> Any:
@@ -263,43 +271,60 @@ class PostgresProvider:
         # text and returned rows — so it is disabled rather than invalidated
         # per reset.
         self._conn = psycopg.connect(connection_url, autocommit=True, prepare_threshold=None)
+        self._owned: set[str] = set()
         # Read instant columns as stable ISO-8601 / "infinity" text (see the
         # loader docstring): infinity-safe and deterministic for row comparison.
         _register_stable_loaders(self._conn)
 
     # --- DatabaseProvider seam ---------------------------------------------
 
-    def reset(self) -> None:
-        """Drop and recreate the ``public`` schema — a clean, empty database."""
+    def reset(self, qualifiers: Collection[tuple[str, ...]]) -> None:
+        """Drop every schema this provider created, and recreate each of
+        *qualifiers* (one schema each) empty."""
+        wanted = {_schema(qualifier) for qualifier in qualifiers}
         with self._conn.cursor() as cur:
-            cur.execute("drop schema if exists public cascade")
-            cur.execute("create schema public")
+            for schema in sorted(self._owned | wanted):
+                cur.execute(
+                    _trusted_query(
+                        f"drop schema if exists {quote_identifier(schema, self.dialect)} cascade"
+                    )
+                )
+            self._owned = set()
+            for schema in sorted(wanted):
+                cur.execute(
+                    _trusted_query(f"create schema {quote_identifier(schema, self.dialect)}")
+                )
+                self._owned.add(schema)
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         with self._conn.cursor() as cur:
             for statement in statements:
                 cur.execute(_trusted_query(statement))
 
-    def catalog(self, tables: Sequence[str]) -> Catalog:
-        """The physical shape Postgres itself reports for *tables*."""
-        names = tuple(tables)
-        if not names:
+    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
+        """The physical shape Postgres itself reports for the physical *tables*."""
+        if not tables:
             return Catalog(tables=())
-        placeholders = ", ".join(["%s"] * len(names))
+        binds = (
+            sorted({_schema(table.qualifier) for table in tables}),
+            sorted({table.name for table in tables}),
+        )
         with self._conn.cursor() as cur:
-            cur.execute(_trusted_query(_CATALOG_COLUMNS.format(placeholders=placeholders)), names)
+            cur.execute(_trusted_query(_CATALOG_COLUMNS), binds)
             columns = [
-                (str(row[0]), str(row[1]), str(row[2]), bool(row[3])) for row in cur.fetchall()
+                (str(row[0]), str(row[1]), str(row[2]), str(row[3]), bool(row[4]))
+                for row in cur.fetchall()
             ]
-            cur.execute(_trusted_query(_CATALOG_INDICES.format(placeholders=placeholders)), names)
+            cur.execute(_trusted_query(_CATALOG_INDICES), binds)
             components = [
-                (str(row[0]), str(row[1]), bool(row[2]), str(row[3])) for row in cur.fetchall()
+                (str(row[0]), str(row[1]), str(row[2]), bool(row[3]), str(row[4]))
+                for row in cur.fetchall()
             ]
-        return build_catalog(names, columns, components)
+        return build_catalog(tables, columns, components)
 
     def load(
         self,
-        table: str,
+        table: PhysicalTable,
         columns: Sequence[str],
         rows: Sequence[Sequence[Any]],
     ) -> None:
@@ -307,7 +332,7 @@ class PostgresProvider:
             return
         col_list = ", ".join(quote_identifier(column, self.dialect) for column in columns)
         placeholders = ", ".join(["%s"] * len(columns))
-        target = quote_identifier(table, self.dialect)
+        target = qualified_table(table, self.dialect)
         sql = f"insert into {target} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
             cur.executemany(

@@ -51,5 +51,5 @@ def test_where_the_count_proves_no_guard_an_unchanged_row_is_closed_and_chained(
     )
     db_for(BALANCE, port).transact(lambda tx: _restate(tx, representation))
     close, chained = _writes(port)
-    assert close.sql.startswith("update balance set out_z = ?")
-    assert chained.sql.startswith("insert into balance")
+    assert close.sql.startswith("update px.balance set out_z = ?")
+    assert chained.sql.startswith("insert into px.balance")

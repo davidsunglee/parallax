@@ -22,6 +22,7 @@ from time import perf_counter
 from types import ModuleType, TracebackType
 from typing import TYPE_CHECKING, Any, Final, cast
 
+from parallax.conformance.bindings import DEFAULT_BINDING
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL, OrderItem
 from parallax.conformance.vo_models import CUSTOMER_MODEL, Location
@@ -432,14 +433,14 @@ class InvalidRootsPort(_PagedPort):
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        if " from location t0" in sql:
+        if " from px.location t0" in sql:
             roots = self._next_roots(self._locations, sql, binds)
             return projected_rows(sql, map(_root_location_row, roots), document_reads)
         offsets = [
             parent - self._first_id
             for parent in cast("list[int]", cast("ArrayBind", binds[0]).values)
         ]
-        if " from customer t0" in sql:
+        if " from px.customer t0" in sql:
             customers = (_customer_row(self._customers[offset]) for offset in offsets)
             return projected_rows(sql, customers, document_reads)
         depots = (
@@ -527,6 +528,7 @@ def _verify_live(connection_info: str, workload: str) -> None:
         PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
         live_read_workloads.domain_model(workload),
         lifecycle_provider=observation.provider,
+        binding=DEFAULT_BINDING,
     ) as root:
         live_read_workloads.verify(root.using_database_login(), workload, observation)
 
@@ -550,6 +552,7 @@ def _representative_live(
     with Database.connect(
         PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
         live_read_workloads.domain_model(subject),
+        binding=DEFAULT_BINDING,
     ) as root:
         database = root.using_database_login()
         samples = _timed(
@@ -574,6 +577,7 @@ def _live_timing(
     with Database.connect(
         PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
         workload.domain_model,
+        binding=DEFAULT_BINDING,
     ) as root:
         database = root.using_database_login()
         work: Callable[[], object]
@@ -610,7 +614,9 @@ def _provider_free(
     page_size = 32 if ".page32." in path else None
 
     def work() -> int:
-        root = Database(_SoleRuntime(CatalogPort(workload, roots)), ORDERS_MODEL)
+        root = Database(
+            _SoleRuntime(CatalogPort(workload, roots)), ORDERS_MODEL, binding=DEFAULT_BINDING
+        )
         database = root.using_database_login()
         try:
             return (
@@ -649,6 +655,7 @@ def _live_memory(
     with Database.connect(
         PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
         workload.domain_model,
+        binding=DEFAULT_BINDING,
     ) as root:
         database = root.using_database_login()
         if page_size is None:
@@ -690,7 +697,11 @@ class _PreparedStress:
 
     def __init__(self, layout: Any) -> None:
         self.model = read_projection(
-            prepare_model(stress_support.workload(layout), edition="snapshot-delivery-report")
+            prepare_model(
+                stress_support.workload(layout),
+                edition="snapshot-delivery-report",
+                binding=DEFAULT_BINDING,
+            )
         ).model
         self.query = stress_support.query(layout, self.model.meta)
         self.plan = stress_support.read_plan(self.model, self.query)
@@ -837,7 +848,9 @@ class ColdPlan:
     __slots__ = ("cache", "model", "query")
 
     def __init__(self, model: DomainModel, query: ObjectQuery[Any, Any]) -> None:
-        self.model = read_projection(prepare_model(model, edition=PLAN_EDITION)).model
+        self.model = read_projection(
+            prepare_model(model, edition=PLAN_EDITION, binding=DEFAULT_BINDING)
+        ).model
         self.query = resolve_read_query(object_query_node(query, model), model=self.model.meta)
         self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
@@ -1157,7 +1170,7 @@ def _fanout_reading(
     metric = reading[-1]
     shared = _SHARED_WORKLOADS[workload.id]
     port = shared.port(rows)
-    root = Database(_SoleRuntime(port), shared.model)
+    root = Database(_SoleRuntime(port), shared.model, binding=DEFAULT_BINDING)
     read = _FanoutRead(
         root.using_database_login(), workload, shared, lane, cast("SharingScope", scope)
     )
@@ -1231,7 +1244,7 @@ def _delivery_control(
     rows, the root and its port composed outside the window."""
     workload = catalog()[control.workload_id]
     port = CatalogPort(workload, control.roots)
-    root = Database(_SoleRuntime(port), ORDERS_MODEL)
+    root = Database(_SoleRuntime(port), ORDERS_MODEL, binding=DEFAULT_BINDING)
     database = root.using_database_login()
     try:
         work = _lane_work(
@@ -1253,7 +1266,9 @@ def _guarded_read(
 ) -> tuple[float, str, tuple[float, ...]]:
     """The guarded include workload delivered eagerly through either lane."""
     root = Database(
-        control_support.GuardedPort(control.roots).open(), control_support.GUARDED_MODEL
+        control_support.GuardedPort(control.roots).open(),
+        control_support.GUARDED_MODEL,
+        binding=DEFAULT_BINDING,
     )
     database = root.using_database_login()
     try:
@@ -1276,7 +1291,7 @@ def _held(control: control_support.HeldControl) -> tuple[float, str, tuple[float
             port = CatalogPort(
                 catalog()[control_support.HELD_SMALL_WORKLOAD_ID], control_support.HELD_ROOTS
             )
-            return Database(_SoleRuntime(port), ORDERS_MODEL), port.reset
+            return Database(_SoleRuntime(port), ORDERS_MODEL, binding=DEFAULT_BINDING), port.reset
 
     else:
         level = geometry_support.level_named(control_support.HELD_LARGE_LEVEL_ID)
@@ -1285,7 +1300,9 @@ def _held(control: control_support.HeldControl) -> tuple[float, str, tuple[float
 
         def compose() -> tuple[Database[Any], Callable[[], None]]:
             port = geometry_support.GeometryPort(level, layout, control_support.HELD_ROOTS)
-            return Database(port.open(), geometry_support.MODEL), _unprepared
+            return Database(
+                port.open(), geometry_support.MODEL, binding=DEFAULT_BINDING
+            ), _unprepared
 
     if control.state == "shared":
         root, prepare = compose()
@@ -1372,7 +1389,7 @@ def _structural_read(
     if metric != "elapsedUsPerRoot":
         memory_instruments.require_own_interpreter("Snapshot structural_read")
     roots = READ_GEOMETRY_ROOTS
-    root = Database(port.open(), model)
+    root = Database(port.open(), model, binding=DEFAULT_BINDING)
     database = root.using_database_login()
     try:
         if metric == "elapsedUsPerRoot":

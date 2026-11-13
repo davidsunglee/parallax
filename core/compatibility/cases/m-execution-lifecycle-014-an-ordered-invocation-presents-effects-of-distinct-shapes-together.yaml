@@ -22,7 +22,7 @@ when:
       note: observe both accounts' versions
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id < ? order by t0.id asc
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id < ? order by t0.id asc
           binds: [3]
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -35,18 +35,19 @@ when:
       note: the two gated updates assign different members, so each is the only effect of its shape and none is a grouped effect; the conformance connection's ordered write transport presents both in one invocation, so both calls start before either finishes
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["150.00", 2, 1, 1]
         - sql:
-            postgres: update account set owner = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set owner = ?, version = ? where id = ? and version = ?
           binds: [Lin, 2, 2, 1]
 then:
   databaseCalls: 3
   tableState:
-    account:
-      - { id: 1, owner: Ada, balance: "150.00", version: 2 }
-      - { id: 2, owner: Lin, balance: "250.00", version: 2 }
-      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "150.00", version: 2 }
+        - { id: 2, owner: Lin, balance: "250.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
   executionLifecycle:
     roots:
       - execution: 1

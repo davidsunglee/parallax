@@ -23,18 +23,18 @@ then:
     postgres:
       delta:
         statements:
-          - create table evolution_bag (id bigint not null, parts jsonb not null, primary key (id))
-          - create table evolution_box (id bigint not null, parts jsonb not null, sizes jsonb not null, primary key (id))
-          - create table evolution_bundle (id bigint not null, payload jsonb not null, primary key (id))
-          - create table evolution_fleet (id bigint not null, kind varchar(32) not null, routes jsonb not null, stops jsonb, primary key (id))
-          - create table evolution_hamper (id bigint not null, label varchar(16) not null, weights jsonb not null, codes jsonb not null, seal jsonb, primary key (id))
+          - create table px.evolution_bag (id bigint not null, parts jsonb not null, primary key (id))
+          - create table px.evolution_box (id bigint not null, parts jsonb not null, sizes jsonb not null, primary key (id))
+          - create table px.evolution_bundle (id bigint not null, payload jsonb not null, primary key (id))
+          - create table px.evolution_fleet (id bigint not null, kind varchar(32) not null, routes jsonb not null, stops jsonb, primary key (id))
+          - create table px.evolution_hamper (id bigint not null, label varchar(16) not null, weights jsonb not null, codes jsonb not null, seal jsonb, primary key (id))
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - create table evolution_bag (id bigint not null, parts json not null, primary key (id))
-          - create table evolution_box (id bigint not null, parts json not null, sizes json not null, primary key (id))
-          - create table evolution_bundle (id bigint not null, payload json not null, primary key (id))
-          - create table evolution_fleet (id bigint not null, kind varchar(32) not null, routes json not null, stops json, primary key (id))
-          - create table evolution_hamper (id bigint not null, label varchar(16) not null, weights json not null, codes json not null, seal json, primary key (id))
+          - create table px.evolution_bag (id bigint not null, parts json not null, primary key (id))
+          - create table px.evolution_box (id bigint not null, parts json not null, sizes json not null, primary key (id))
+          - create table px.evolution_bundle (id bigint not null, payload json not null, primary key (id))
+          - create table px.evolution_fleet (id bigint not null, kind varchar(32) not null, routes json not null, stops json, primary key (id))
+          - create table px.evolution_hamper (id bigint not null, label varchar(16) not null, weights json not null, codes json not null, seal json, primary key (id))
         createdIndices: []

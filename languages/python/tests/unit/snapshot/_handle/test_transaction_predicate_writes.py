@@ -71,6 +71,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._handle import _typed_writes as typed_writes
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     BeginCall,
@@ -151,7 +152,9 @@ def test_a_replacement_of_an_entity_writing_nothing_but_its_key_is_dropped() -> 
         tx.replace_where(mm.Beacon.where(mm.Beacon.id == 1), mm.Beacon(id=1))
 
     own_root(
-        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED))
+        Database.connect(
+            port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login().transact(fn)
     assert port.calls == [BeginCall(), CommitCall()]
 
@@ -164,7 +167,7 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
     def fn(tx: TxnContext) -> None:
         tx.replace_where(
             mm.Person.where(mm.Person.id == 1),
-            mm.Passport(id=1, person_id=1, number="X"),  # pyright: ignore[reportArgumentType]
+            cast("Any", mm.Passport(id=1, person_id=1, number="X")),
         )
 
     with raises_code(
@@ -174,7 +177,7 @@ def test_replace_where_refuses_a_payload_of_another_entity() -> None:
         r"that Entity, and this payload is a parallax\.compatibility\.Passport",
     ):
         own_root(
-            Database.connect(port, PERSON, clock=FixedClock(FIXED))
+            Database.connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -187,7 +190,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
 
     with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
-            Database.connect(port, PERSON, clock=FixedClock(FIXED))
+            Database.connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -211,7 +214,9 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
         r"parallax\.compatibility\.Ticket",
     ):
         own_root(
-            Database.connect(port, mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED))
+            Database.connect(
+                port, mm.PK_SEQUENCE_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -228,7 +233,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
 
     with raises_code(UsageError, "write-instruction-invalid", match="is duplicated"):
         own_root(
-            Database.connect(port, PERSON, clock=FixedClock(FIXED))
+            Database.connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -259,9 +264,12 @@ def _amended(model: DomainModel | ServingModel, predicate: Predicate[Any]) -> Sc
     def fn(tx: TxnContext) -> None:
         tx.amend_where(mm.Person.where(predicate), mm.Person.name.set("Ada"))
 
-    own_root(
+    root = (
         Database.connect(port, model, clock=FixedClock(FIXED))
-    ).using_database_login().transact(fn)
+        if isinstance(model, ServingModel)
+        else Database.connect(port, model, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    )
+    own_root(root).using_database_login().transact(fn)
     return port
 
 
@@ -283,8 +291,12 @@ def test_a_typed_predicate_write_binds_against_the_adopted_write_projection(
     # A selection published after the attempt adopted its own does not serve the
     # attempt's predicate binding: the write borrows the attempt's write
     # projection, never the serving model's current one or a read projection.
-    adopted = prepare_model(PERSON, edition="adopted")
-    later = prepare_model(DomainModel(*cast("Any", class_index(PERSON)).by_class), edition="later")
+    adopted = prepare_model(PERSON, edition="adopted", binding=TEST_BINDING)
+    later = prepare_model(
+        DomainModel(*cast("Any", class_index(PERSON)).by_class),
+        edition="later",
+        binding=TEST_BINDING,
+    )
     serving = ServingModel(adopted)
     bound: list[tuple[object, object]] = []
     bind = typed_predicate_interpretation
@@ -322,7 +334,9 @@ def test_a_typed_predicate_write_over_python_names_is_refused_by_a_classless_mod
 
     with raises_code(UsageError, "query-expression-invalid", match="through Wire instead"):
         own_root(
-            Database.connect(port, _classless(PERSON), clock=FixedClock(FIXED))
+            Database.connect(
+                port, _classless(PERSON), clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -410,7 +424,9 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
 
     with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -423,7 +439,9 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
 
     with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -441,7 +459,12 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
 
     with raises_code(UsageError, "query-not-mutation-compatible") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()),
+                POLICY_MODEL,
+                clock=FixedClock(FIXED),
+                binding=TEST_BINDING,
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -463,7 +486,7 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
         "for this write",
     ):
         own_root(
-            Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(port, ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -474,7 +497,9 @@ def test_a_read_of_a_target_the_connected_model_does_not_declare_keeps_its_refus
 
     with raises_code(UsageError, "query-target-not-in-model") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -493,7 +518,9 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
 
     with pytest.raises(UsageError) as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "between-bounds-inverted"
 
@@ -506,7 +533,9 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
     with pytest.raises(UsageError) as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "attribute-outside-active-position"
 
@@ -563,7 +592,7 @@ def test_a_predicate_write_needing_an_observation_is_refused_at_the_call(
 
     with pytest.raises(_Abandon):
         own_root(
-            Database.connect(port, model, clock=FixedClock(FIXED))
+            Database.connect(port, model, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
 
 
@@ -641,7 +670,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 
     with pytest.raises(_Abandon):
         own_root(
-            Database.connect(port, PAYMENT, clock=FixedClock(FIXED))
+            Database.connect(port, PAYMENT, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
 
 

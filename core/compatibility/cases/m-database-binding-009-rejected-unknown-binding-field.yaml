@@ -1,0 +1,19 @@
+# A binding document is closed: the ticket's illustrative `defaults` spelling is
+# no section of the format, refused before the binding is resolved at all.
+model: models/wallet.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      defaults: { schema: px }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      defaults: { database: px }
+then:
+  rejectedRule: binding-field-unknown

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Final, Self
+from typing import TYPE_CHECKING, Final, Self
 
 from parallax.core.internal.database_binding import (
     BINDING_DEFINITION_REJECTED,
@@ -99,7 +100,6 @@ class PostgresBinding:
     with every problem at its document path.
     """
 
-    dialect: ClassVar[Dialect] = POSTGRES
     default: PostgresLocation | None
     namespaces: Mapping[str, PostgresLocation]
     entities: Mapping[EntityIdentity, PostgresTable]
@@ -123,6 +123,11 @@ class PostgresBinding:
             sequences=sequences,
         )
         self._adopt(binding_from_document(document, _CODEC))
+
+    @property
+    def dialect(self) -> Dialect:
+        """The backend this binding places objects in."""
+        return POSTGRES
 
     def _adopt(
         self, parts: BindingParts[PostgresLocation, PostgresTable, PostgresSequence]
@@ -153,10 +158,15 @@ class PostgresBinding:
 
     @classmethod
     def from_yaml(cls, text: str | bytes) -> Self:
-        """The binding a YAML binding document describes."""
+        """The binding a YAML binding document describes, read under the YAML 1.2
+        core schema: a plain scalar is null, a boolean, an integer, or a float
+        only in that schema's spellings, and otherwise the string written."""
         import yaml
 
-        document = _decoded(text, yaml.safe_load, yaml.YAMLError, "YAML")
+        loader = _yaml_loader()
+        document = _decoded(
+            text, lambda source: yaml.load(source, Loader=loader), yaml.YAMLError, "YAML"
+        )
         return cls._from_parts(binding_from_document(document, _CODEC))
 
     def to_document(self) -> dict[str, object]:
@@ -174,7 +184,11 @@ class PostgresBinding:
         return json.dumps(self.to_document(), indent=2, ensure_ascii=False) + "\n"
 
     def to_yaml(self) -> str:
-        """This binding as canonical, byte-deterministic YAML text."""
+        """This binding as canonical, byte-deterministic YAML text.
+
+        Every string a YAML 1.1 or 1.2 core reader would resolve to another type
+        is quoted, so either reads it back as the string it is.
+        """
         import yaml
 
         return yaml.dump(
@@ -202,12 +216,84 @@ class PostgresBinding:
         )
 
 
+# The YAML 1.2 core schema's implicit resolvers (`m-database-binding`), each with
+# the first characters a matching plain scalar can start with; the empty string
+# is PyYAML's bucket for an empty plain scalar, which resolves to null.
+_CORE_SCHEMA: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
+    ("tag:yaml.org,2002:null", r"^(?:null|Null|NULL|~|)$", ("~", "n", "N", "")),
+    ("tag:yaml.org,2002:bool", r"^(?:true|True|TRUE|false|False|FALSE)$", ("t", "T", "f", "F")),
+    (
+        "tag:yaml.org,2002:int",
+        r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$",
+        ("-", "+", *"0123456789"),
+    ),
+    (
+        "tag:yaml.org,2002:float",
+        r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
+        ("-", "+", ".", *"0123456789"),
+    ),
+)
+
+
+def _core_int(text: str) -> int:
+    if text.lstrip("-+")[:2] in ("0o", "0x"):
+        return int(text, 0)
+    return int(text)
+
+
+def _core_float(text: str) -> float:
+    lowered = text.lower()
+    if lowered.lstrip("-+") == ".inf":
+        return float("-inf") if text.startswith("-") else float("inf")
+    if lowered == ".nan":
+        return float("nan")
+    return float(text)
+
+
+@functools.cache
+def _yaml_loader() -> type[yaml.SafeLoader]:
+    import yaml
+
+    class _CoreLoader(yaml.SafeLoader):
+        pass
+
+    resolvers: dict[str, list[tuple[str, re.Pattern[str]]]] = {}
+    for tag, pattern, first_characters in _CORE_SCHEMA:
+        compiled = re.compile(pattern)
+        for first in first_characters:
+            resolvers.setdefault(first, []).append((tag, compiled))
+    _CoreLoader.yaml_implicit_resolvers = resolvers
+
+    def construct_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
+        return _core_int(str(loader.construct_scalar(node)))
+
+    def construct_float(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> float:
+        return _core_float(str(loader.construct_scalar(node)))
+
+    _CoreLoader.add_constructor("tag:yaml.org,2002:int", construct_int)
+    _CoreLoader.add_constructor("tag:yaml.org,2002:float", construct_float)
+    return _CoreLoader
+
+
 @functools.cache
 def _yaml_dumper() -> type[yaml.SafeDumper]:
     import yaml
 
     class _BindingDumper(yaml.SafeDumper):
         pass
+
+    # A plain scalar either schema resolves to a non-string must be quoted: the
+    # 1.1 resolvers the dumper inherits cover PyYAML readers, and the core
+    # schema's cover 1.2 readers.
+    resolvers = {
+        first: list(entries) for first, entries in yaml.SafeDumper.yaml_implicit_resolvers.items()
+    }
+    for tag, pattern, first_characters in _CORE_SCHEMA:
+        compiled = re.compile(pattern)
+        for first in first_characters:
+            resolvers.setdefault(first, []).append((tag, compiled))
+    _BindingDumper.yaml_implicit_resolvers = resolvers
 
     def represent_text(_dumper: yaml.SafeDumper, text: str) -> yaml.ScalarNode:
         # PyYAML folds a NEL into a space in every scalar style except double-quoted,

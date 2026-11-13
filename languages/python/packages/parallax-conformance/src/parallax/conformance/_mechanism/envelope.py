@@ -91,7 +91,7 @@ class ScenarioRun:
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
     units: dict[str, dict[str, object]] | None = None
-    table_state: dict[str, list[MappingRow]] | None = None
+    table_state: dict[str, dict[str, list[MappingRow]]] | None = None
     step_affected_rows: list[dict[str, object]] = field(default_factory=_no_counts)
 
 

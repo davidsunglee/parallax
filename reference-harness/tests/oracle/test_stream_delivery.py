@@ -558,7 +558,7 @@ def test_a_locking_continuation_omitting_a_physical_key_component_is_refused(
     case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
     statement = _statements(case)[1]["sql"]["postgres"]
     _statements(case)[1]["sql"]["postgres"] = statement.replace(
-        "join account t0 on u.id = t0.id", "join account t0 on 1 = 1"
+        "join px.account t0 on u.id = t0.id", "join px.account t0 on 1 = 1"
     )
     rows = _rows(_ACCOUNTS, 1, 2, 3)
     reads = ScriptedReads(results=[rows, _rows(_ACCOUNTS, 3), rows])
@@ -583,8 +583,8 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
         "select t0.id, t0.owner", "select encode(t0.id, ?) id_hex, t0.owner"
     )
     second["sql"]["postgres"] = second_sql.replace(
-        "join account t0 on u.id = t0.id",
-        "join account t0 on u.id_hex = encode(t0.id, ?)",
+        "join px.account t0 on u.id = t0.id",
+        "join px.account t0 on u.id_hex = encode(t0.id, ?)",
         1,
     )
     second["binds"]["postgres"] = [
@@ -1319,7 +1319,7 @@ def test_a_locking_wrapper_repeats_projection_and_ordering_binds_in_text_order()
     coordinate = "cast(jsonb_extract_path_text(t0.payload, ?) as bigint)"
     first = (
         "select encode(t0.id, ?) id_hex, "
-        f"{coordinate} parallax_seek_1 from account t0 where t0.owner = ? "
+        f"{coordinate} parallax_seek_1 from px.account t0 where t0.owner = ? "
         f"order by t0.id asc, {coordinate} asc limit ? for share of t0"
     )
     arm = first.removesuffix(" for share of t0").replace(

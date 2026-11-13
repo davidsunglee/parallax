@@ -81,6 +81,7 @@ from parallax.core.internal.predicate._resolved import CURRENT, ResolvedComparis
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -199,10 +200,13 @@ SHELVED = DomainModel(Library, Shelf, Book)
 RESHELVED = DomainModel(Library, Reshelved, Book)
 
 
-def _db(model: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
-    return own_root(
+def _db(model: DomainModel | ServingModel, adapter: DatabaseAdapter) -> ScopedDatabase:
+    root = (
         Database.connect(adapter, model, clock=FixedClock(FIXED))
-    ).using_database_login()
+        if isinstance(model, ServingModel)
+        else Database.connect(adapter, model, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    )
+    return own_root(root).using_database_login()
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +249,7 @@ def test_a_query_whose_target_the_connected_model_does_not_declare_is_refused() 
     # what answers, and it answers before any adapter activity.
     port = RefusingAdapter()
     database = own_root(
-        Database.connect(port, DomainModel(Gizmo), clock=FixedClock(FIXED))
+        Database.connect(port, DomainModel(Gizmo), clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login()
     with raises_code(UsageError, "query-target-not-in-model") as caught:
         database.find(Widget.where(Widget.id == 1))
@@ -262,7 +266,9 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     # call, before any I/O, which the raising port proves.
     descriptor_backed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
     database = own_root(
-        Database.connect(RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED))
+        Database.connect(
+            RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login()
     with raises_code(UsageError, "snapshot-class-backed-model-required"):
         database.find(Gizmo.where(Gizmo.id == 1))
@@ -271,7 +277,10 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     # capability is an executed read rather than a reachable namespace.
     served = own_root(
         Database.connect(
-            ScriptedAdapter(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
+            ScriptedAdapter(Read(rows=[{"id": 1}])),
+            descriptor_backed,
+            clock=FixedClock(FIXED),
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     published = served.wire.find({"target": "Gizmo", "predicate": {"true": {}}}).result()
@@ -290,6 +299,7 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
                 RefusingAdapter(),
                 model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
                 clock=FixedClock(FIXED),
+                binding=TEST_BINDING,
             )
         ).using_database_login()
 
@@ -299,6 +309,7 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
                 RefusingAdapter(),
                 model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
                 clock=FixedClock(FIXED),
+                binding=TEST_BINDING,
             )
         ).using_database_login()
 
@@ -310,7 +321,7 @@ def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> 
     # the target.
     port = ScriptedAdapter()
     database = own_root(
-        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login()
     with raises_code(UsageError, "snapshot-class-backed-model-required"):
         database.find(Widget.where(Widget.id == 1))
@@ -324,7 +335,7 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
     # buffered beside it is still only buffered when the refusal lands.
     port = ScriptedAdapter(Transact(Write()))
     database = own_root(
-        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login()
 
     def body(tx: TxnContext) -> None:
@@ -352,7 +363,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
     doors: list[UsageError] = []
 
     standalone = own_root(
-        Database(RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED))
+        Database(RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login()
     with raises_code(UsageError, "snapshot-class-backed-model-required") as eager:
         standalone.find(query)
@@ -373,7 +384,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
 
     port = ScriptedAdapter(Transact())
     own_root(
-        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(read_inside)
 
     assert [str(door) for door in doors] == [refusal] * 4
@@ -915,8 +926,8 @@ def test_a_republished_serving_model_rebinds_one_authored_include() -> None:
     # One Database and so one plan cache across the swap: what a read of the first
     # edition resolved and planned must not answer the second.
     query = Library.where(Library.all).include(Library.shelves.books)
-    first = prepare_model(SHELVED, edition="first")
-    second = prepare_model(RESHELVED, edition="second")
+    first = prepare_model(SHELVED, edition="first", binding=TEST_BINDING)
+    second = prepare_model(RESHELVED, edition="second", binding=TEST_BINDING)
     serving = ServingModel(first)
     port = ScriptedAdapter(*_SHELVED_READS, *_SHELVED_READS, *_SHELVED_READS)
     database = _db(cast("Any", serving), port)

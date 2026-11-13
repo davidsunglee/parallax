@@ -29,6 +29,7 @@ from parallax.core.execution_lifecycle import DatabaseCallStarted, FlushStarted
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE: Final = "revision.order"
@@ -79,7 +80,7 @@ def _history(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select from_z, case when thru_z = 'infinity' then null else thru_z end, in_z, "
         "case when out_z = 'infinity' then null else out_z end, "
-        f"({_member(entity)})::int from {_TABLES[entity]} where id = 1 order by in_z, from_z"
+        f"({_member(entity)})::int from px.{_TABLES[entity]} where id = 1 order by in_z, from_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
@@ -89,13 +90,14 @@ def _seeded(
 ) -> ScopedDatabase:
     """Object 1 stored as ``[January, April)`` at 100 and ``[April, ∞)`` at 200,
     both current since T1; the edit's attempt runs at TA."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = own_root(
         connect(
             profile_run.port,
             _MODEL,
             clock=ScriptedClock([_T0, _T1, _TA]),
             lifecycle_provider=provider,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     db.transact(lambda tx: tx.insert(entity(id=1, amount=100), valid_from=_JAN))

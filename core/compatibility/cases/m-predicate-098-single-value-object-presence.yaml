@@ -12,9 +12,9 @@ when:
       exists: {path: parallax.compatibility.Customer.address.geo}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
+  - sql: {postgres: 'select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where coalesce(jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ?, false)'}
     binds: [geo, object]
-  referenceSql: select id, name from customer where jsonb_typeof(address -> 'geo') = 'object'
+  referenceSql: select id, name from px.customer where jsonb_typeof(address -> 'geo') = 'object'
   rows:
   - {id: 1, name: Ada}
   - {id: 2, name: Linus}

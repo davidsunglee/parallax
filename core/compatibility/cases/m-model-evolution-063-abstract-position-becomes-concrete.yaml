@@ -89,10 +89,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_instrument alter column coupon drop not null
+          - alter table px.evolution_instrument alter column coupon drop not null
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_instrument modify coupon decimal(18,2)
+          - alter table px.evolution_instrument modify coupon decimal(18,2)
         createdIndices: []

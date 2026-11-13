@@ -31,6 +31,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity import model_of
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import Database, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
 
@@ -38,8 +39,8 @@ _APRIL_FIRST = dt.date(2024, 4, 1)
 
 
 def _shop_root(profile_run: Any) -> Database[PostgresRole]:
-    profile_run.reset(model_of(SHOP_MODEL), {})
-    root = own_root(connect(profile_run.port, SHOP_MODEL))
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
+    root = own_root(connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING))
     root.using_database_login().transact(
         lambda tx: (
             tx.insert(Customer(id=1, name="Ada", email="ada@example.com")),
@@ -72,7 +73,7 @@ def test_a_request_runs_with_its_users_role_in_place_of_the_logins_privileges(
     viewer = ShopUser("user:viewer", profile_run.authorization("role-b"))
     with contextlib.closing(profile_run.control()) as control:
         control.execute_write(
-            f'revoke update on customer from "{viewer.database_authorization.name}"', ()
+            f'revoke update on px.customer from "{viewer.database_authorization.name}"', ()
         )
 
     change_an_email_for(root, clerk, 1, "ada@example.org")
@@ -85,13 +86,13 @@ def test_a_request_runs_with_its_users_role_in_place_of_the_logins_privileges(
 def test_the_password_is_read_when_a_connection_is_made_not_when_configured(
     profile_run: Any, tmp_path: Path
 ) -> None:
-    profile_run.reset(model_of(SHOP_MODEL), {})
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
     secret = tmp_path / "password"
     secret.write_text("not-the-password\n", encoding="utf-8")
     adapter = configure_with_a_secret_file(profile_run.connection_info, secret)
     secret.write_text(f"{profile_run.credentials.secret}\n", encoding="utf-8")
 
-    with connect(adapter, SHOP_MODEL) as root:
+    with connect(adapter, SHOP_MODEL, binding=TEST_BINDING) as root:
         found = root.using_database_login().find(Customer.where(Customer.all)).results()
 
     assert found == []
@@ -130,7 +131,7 @@ _CLERK = ShopUser("user:clerk", PostgresRole("shop_clerk"))
 def test_the_nightly_report_runs_through_the_shipped_surface() -> None:
     with ScriptedAdapter(Read(rows=[_ORDER_ROW])) as adapter:
         orders = orders_for_the_nightly_report(
-            own_root(Database.connect(adapter, SHOP_MODEL)), _APRIL_FIRST
+            own_root(Database.connect(adapter, SHOP_MODEL, binding=TEST_BINDING)), _APRIL_FIRST
         )
 
     assert [order.id for order in orders] == [10]
@@ -139,7 +140,10 @@ def test_the_nightly_report_runs_through_the_shipped_surface() -> None:
 def test_a_users_request_runs_through_the_shipped_surface() -> None:
     with ScriptedAdapter(Transact(Read(rows=[_CUSTOMER_ROW]), Write())) as adapter:
         change_an_email_for(
-            own_root(Database.connect(adapter, SHOP_MODEL)), _CLERK, 1, "ada@example.org"
+            own_root(Database.connect(adapter, SHOP_MODEL, binding=TEST_BINDING)),
+            _CLERK,
+            1,
+            "ada@example.org",
         )
 
 
@@ -175,7 +179,7 @@ def test_joining_under_one_actor_runs_through_the_shipped_surface(
     other: ShopUser, script: Transact, joined: bool
 ) -> None:
     with ScriptedAdapter(script) as adapter:
-        database = own_root(Database.connect(adapter, SHOP_MODEL))
+        database = own_root(Database.connect(adapter, SHOP_MODEL, binding=TEST_BINDING))
 
         assert another_user_can_join(database, _CLERK, other, 1) is joined
 

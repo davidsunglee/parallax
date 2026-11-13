@@ -9,6 +9,7 @@ import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 
 from .conftest import (
@@ -69,9 +70,9 @@ _STARTING_SPANS = (
 _STARTING_TAGS = ({"id": 1, "quantity": 5, "label": "t"}, {"id": 2, "quantity": 9, "label": "u"})
 _STARTING_ACCOUNTS = ({"id": 1, "balance": 10, "version": 1, "memo": {"note": "m1"}},)
 _STARTING = {
-    "sequence_span": _STARTING_SPANS,
-    "sequence_tag": _STARTING_TAGS,
-    "sequence_account": _STARTING_ACCOUNTS,
+    PhysicalTable(("px",), "sequence_span"): _STARTING_SPANS,
+    PhysicalTable(("px",), "sequence_tag"): _STARTING_TAGS,
+    PhysicalTable(("px",), "sequence_account"): _STARTING_ACCOUNTS,
 }
 
 
@@ -87,7 +88,7 @@ def _grade(case: Case) -> ScriptedProvider:
 
 
 def _rows(case: Case, table: str) -> list[dict[str, Any]]:
-    return case.then["tableState"][table]
+    return case.then["tableState"]["px"][table]
 
 
 def _find(rows: list[dict[str, Any]], **cells: Any) -> dict[str, Any]:
@@ -106,7 +107,7 @@ def test_a_state_graded_case_reads_back_its_starting_rows_and_executes_nothing(
     db = _grade(case)
     assert not [call for call in db.chronology if isinstance(call, (Opened, Executed))]
     assert [call.sql.rsplit(" ", 2)[-2] for call in db.chronology if isinstance(call, Queried)] == [
-        table for table in case.expected_table_state
+        ".".join((*table.qualifier, table.name)) for table in case.expected_table_state
     ]
 
 
@@ -424,7 +425,7 @@ def _overtake_observed_span_1(case: Case, peer: dict[str, Any]) -> list[dict[str
     case.then["units"]["ahead"] = {"outcome": "committed"}
     rows = [row for row in _rows(case, "sequence_span") if row["id"] != 1]
     rows.insert(0, _span(1, "2024-01-01T00:00:00.000000Z", _INF, _T0, _ENDED, 100, "a"))
-    case.then["tableState"]["sequence_span"] = rows
+    case.then["tableState"]["px"]["sequence_span"] = rows
     return rows
 
 
@@ -681,7 +682,7 @@ def test_a_flush_failure_names_what_the_last_of_one_steps_flushes_writes(
             "shortfall": "optimisticConflict",
         },
     }
-    case.then["tableState"]["sequence_account"] = [dict(_STARTING_ACCOUNTS[0])]
+    case.then["tableState"]["px"]["sequence_account"] = [dict(_STARTING_ACCOUNTS[0])]
     with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
         _grade(case)
 
@@ -756,8 +757,8 @@ def test_a_state_graded_case_groups_every_write(damaged_case: CaseLoader) -> Non
 
 def test_a_state_graded_case_states_every_table_it_writes(damaged_case: CaseLoader) -> None:
     case = damaged_case(_TEMPORAL)
-    del case.then["tableState"]["sequence_tag"]
-    with pytest.raises(CaseFailure, match="states no rows for \\['sequence_tag'\\]"):
+    del case.then["tableState"]["px"]["sequence_tag"]
+    with pytest.raises(CaseFailure, match="states no rows for \\['px.sequence_tag'\\]"):
         assert_judged(case)
 
 
@@ -800,6 +801,6 @@ def test_a_golden_graded_scenarios_table_state_is_graded(
         "m-batch-write-011-readless-predicate-write-runs-after-what-its-unit-buffered.yaml"
     )
     stated = script(damaged)
-    damaged.then["tableState"]["order_item"][0]["sku"] = "B-200"
+    damaged.then["tableState"]["px"]["order_item"][0]["sku"] = "B-200"
     with pytest.raises(CaseFailure, match="state after the scenario"):
         assert_unit_work_scenario(damaged, ScriptedProvider(script=stated))

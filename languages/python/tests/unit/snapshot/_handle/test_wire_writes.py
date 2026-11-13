@@ -50,6 +50,7 @@ from parallax.snapshot._publication._wire import (
     stored_provenance_of,
 )
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -323,7 +324,7 @@ def test_a_wire_terminate_closes_the_observed_milestone() -> None:
 
     assert len(_writes(port)) == 1
     sql = _writes(port)[0].sql
-    assert sql.startswith("update balance set out_z")
+    assert sql.startswith("update px.balance set out_z")
 
 
 def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
@@ -333,7 +334,7 @@ def test_a_bounded_wire_update_splits_the_observed_rectangle() -> None:
         tx.wire.amend(_node(tx, _POSITION_QUERY), {"value": "300.00"}, until=_UNTIL)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
 
     close, opened = _writes(port)
@@ -348,7 +349,7 @@ def test_a_bounded_wire_terminate_closes_and_reopens_the_flanks() -> None:
         tx.wire.terminate(_node(tx, _POSITION_QUERY), until=_UNTIL)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
 
     close, opened = _writes(port)
@@ -368,7 +369,7 @@ def test_a_bounded_wire_insert_opens_one_bounded_rectangle() -> None:
         )
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
 
     assert [op.sql.split()[0] for op in _writes(port)] == ["insert"]
@@ -378,7 +379,7 @@ def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
     port = ScriptedAdapter(Transact(Write()))
     db_for(PERSON, port).transact(lambda tx: tx.wire.amend_where(_PERSON_TARGET, {"name": "Grace"}))
 
-    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Grace", 1))]
+    assert _writes(port) == [WriteCall("update px.person set name = ? where id = ?", ("Grace", 1))]
 
 
 def test_a_wire_predicate_write_takes_a_typed_query_as_its_selection() -> None:
@@ -395,8 +396,8 @@ def test_a_wire_predicate_write_takes_a_typed_query_as_its_selection() -> None:
     db_for(PERSON, port).transact(fn)
     assert _reads(port) == []
     assert _writes(port) == [
-        WriteCall("update person set name = ? where id = ?", ("Grace", 1)),
-        WriteCall("delete from person where id = ?", (1,)),
+        WriteCall("update px.person set name = ? where id = ?", ("Grace", 1)),
+        WriteCall("delete from px.person where id = ?", (1,)),
     ]
 
 
@@ -407,7 +408,7 @@ def test_a_wire_predicate_replacement_completes_its_data_and_never_writes_its_ke
     )
 
     assert _reads(port) == []
-    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Grace", 1))]
+    assert _writes(port) == [WriteCall("update px.person set name = ? where id = ?", ("Grace", 1))]
 
 
 def test_a_wire_predicate_replacement_states_what_a_published_node_holds() -> None:
@@ -424,7 +425,7 @@ def test_a_wire_predicate_replacement_states_what_a_published_node_holds() -> No
 
     db_for(PERSON, port).transact(fn)
     assert len(_reads(port)) == 1
-    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Ada", 2))]
+    assert _writes(port) == [WriteCall("update px.person set name = ? where id = ?", ("Ada", 2))]
 
 
 def test_a_wire_predicate_replacement_refuses_a_node_of_another_entity() -> None:
@@ -493,9 +494,11 @@ def test_a_predicate_replacement_never_writes_a_read_only_member() -> None:
         )
 
     own_root(
-        Database.connect(port, BADGE_META, clock=FixedClock(FIXED))
+        Database.connect(port, BADGE_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
-    assert _writes(port) == [WriteCall("update wire_badge set label = ? where id = ?", ("gold", 1))]
+    assert _writes(port) == [
+        WriteCall("update px.wire_badge set label = ? where id = ?", ("gold", 1))
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -611,7 +614,9 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
 
     db_for(ACCOUNT, account).transact(non_temporal)
     own_root(
-        Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(
+            position, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING
+        )
     ).using_database_login().transact(absent_until)
     assert _writes(account) == []
     assert _writes(position) == []
@@ -634,7 +639,7 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
             tx.wire.amend(node, {"value": "300.00"}, until=cast("dt.datetime", "2024-11-01"))
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     assert _writes(port) == []
 
@@ -669,7 +674,7 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
 
     for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):
         own_root(
-            Database.connect(port, SAMPLE_META, clock=FixedClock(FIXED))
+            Database.connect(port, SAMPLE_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login().transact(fn)
         assert _writes(port) == []
 
@@ -724,7 +729,7 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
             tx.wire.replace_where(_POSITION_TARGET, none_changes)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     assert _writes(port) == []
 
@@ -892,7 +897,9 @@ def test_a_bare_entity_spelling_resolves_when_one_entity_carries_it() -> None:
     port = ScriptedAdapter(Transact(Write()))
     db_for(PERSON, port).transact(lambda tx: tx.wire.insert("Person", {"id": 9, "name": "Newton"}))
 
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton"))
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -907,7 +914,7 @@ def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() ->
     db_for(PERSON, port).transact(fn)
 
     assert _reads(port)[0].sql.endswith("for share of t0")
-    assert _writes(port) == [WriteCall("update person set name = ? where id = ?", ("Grace", 1))]
+    assert _writes(port) == [WriteCall("update px.person set name = ? where id = ?", ("Grace", 1))]
 
 
 def test_a_projected_source_uses_the_existing_wire_write_ingress() -> None:
@@ -922,7 +929,7 @@ def test_a_projected_source_uses_the_existing_wire_write_ingress() -> None:
     assert len(_reads(port)) == 1
     assert _writes(port) == [
         WriteCall(
-            "update account set balance = ?, version = ? where id = ? and version = ?",
+            "update px.account set balance = ?, version = ? where id = ? and version = ?",
             (Decimal("125.00"), 5, 1, 4),
         )
     ]
@@ -1029,7 +1036,7 @@ def test_two_sources_of_one_milestone_both_continue_from_what_their_write_left()
 
     db_for(BALANCE, port).transact(fn)
     *_first, revision = _writes(port)
-    assert revision.sql.startswith("update balance set val = ? where")
+    assert revision.sql.startswith("update px.balance set val = ? where")
     assert revision.binds[0] == Decimal("8.00")
 
 
@@ -1043,7 +1050,7 @@ def test_a_wire_termination_over_another_window_of_one_state_is_refused_synchron
             tx.wire.terminate(node, until=_OTHER_UNTIL)
 
     own_root(
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED))
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
 
 
@@ -1143,7 +1150,7 @@ def test_a_wire_update_then_delete_of_one_object_emits_one_delete() -> None:
         tx.wire.delete(node)
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("delete from person where id = ?", (1,))]
+    assert _writes(port) == [WriteCall("delete from px.person where id = ?", (1,))]
 
 
 def test_an_insert_answers_the_frozen_node_it_opened() -> None:
@@ -1175,7 +1182,9 @@ def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> N
         tx.wire.amend(opened, {"name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
+    ]
 
 
 def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> None:
@@ -1201,7 +1210,9 @@ def test_a_wire_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again(
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Grace"})
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
+    ]
 
 
 def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
@@ -1215,7 +1226,9 @@ def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
         tx.wire.amend(opened, {"name": opened["name"]})
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton"))
+    ]
 
 
 def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
@@ -1274,7 +1287,9 @@ def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
 
     db_for(PERSON, port).transact(fn)
     assert "tx.amend(inserted.edit(...))" in refused[0]
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
+    ]
 
 
 def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
@@ -1295,7 +1310,9 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
 
     db_for(PERSON, port).transact(fn)
     assert "tx.wire.amend(opened, {...})" in refused[0]
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Grace"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Grace"))
+    ]
 
 
 def test_a_typed_value_of_an_object_a_wire_insert_opened_carries_no_authority() -> None:
@@ -1311,7 +1328,9 @@ def test_a_typed_value_of_an_object_a_wire_insert_opened_carries_no_authority() 
             tx.amend(mm.Person(id=9, name="Newton").edit(name="Grace"))
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton"))
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -1329,7 +1348,7 @@ def test_mutating_the_changes_mapping_after_the_verb_returns_changes_nothing() -
     db_for(ACCOUNT, port).transact(fn)
     assert _writes(port) == [
         WriteCall(
-            "update account set balance = ?, version = ? where id = ? and version = ?",
+            "update px.account set balance = ?, version = ? where id = ? and version = ?",
             (Decimal("125.00"), 5, 1, 4),
         )
     ]
@@ -1344,7 +1363,9 @@ def test_mutating_insert_data_after_the_verb_returns_changes_nothing() -> None:
         data["name"] = "Mallory"
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("insert into person(id, name) values (?, ?)", (9, "Newton"))]
+    assert _writes(port) == [
+        WriteCall("insert into px.person(id, name) values (?, ?)", (9, "Newton"))
+    ]
 
 
 def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() -> None:
@@ -1357,7 +1378,7 @@ def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() ->
         cast("dict[str, Any]", predicate["eq"])["value"] = 99
 
     db_for(PERSON, port).transact(fn)
-    assert _writes(port) == [WriteCall("delete from person where id = ?", (1,))]
+    assert _writes(port) == [WriteCall("delete from px.person where id = ?", (1,))]
 
 
 def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:

@@ -77,6 +77,7 @@ from parallax.core.internal.temporal_read import (
     valid_time_coverage,
 )
 from parallax.core.internal.write_plan import PredecessorRow
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_read
 from tests.unit._corpus_model_support import model as accepted_model
@@ -144,7 +145,7 @@ def _where(
     root = read_planning.plan(
         query, model, projection=read_planning.ReadProjectionRequest("all", True)
     ).root
-    statement = compile_read(root, model, POSTGRES).statement
+    statement = compile_read(root, bound_model(model), POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 
@@ -287,7 +288,7 @@ def test_latest_terms_bind_managed_infinity_and_publish_its_canonical_literal() 
     root = read_planning.plan(
         query, model, projection=read_planning.ReadProjectionRequest("all", True)
     ).root
-    statement = compile_read(root, model, POSTGRES).statement
+    statement = compile_read(root, bound_model(model), POSTGRES).statement
     assert statement.binds == (INFINITY, INFINITY)
     assert statement.wire_binds() == ("infinity", "infinity")
     assert statement.typed_bind_spans == ()

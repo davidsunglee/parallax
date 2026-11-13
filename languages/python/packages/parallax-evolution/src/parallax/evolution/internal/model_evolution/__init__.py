@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import overload
+from typing import Final, overload
 
-from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.database_binding import ResolvedBinding, relocations_between
 from parallax.evolution.internal.model_evolution._classify import classify
 from parallax.evolution.internal.model_evolution._diff import diff
 from parallax.evolution.internal.model_evolution._impacts import impacts
@@ -60,6 +61,7 @@ from parallax.evolution.internal.model_evolution._values import (
     InheritanceChanged,
     JoinChanged,
     LockingFallback,
+    LogicalOperation,
     MaximumLengthChanged,
     MultiplicityChanged,
     NullabilityChanged,
@@ -80,9 +82,11 @@ from parallax.evolution.internal.model_evolution._values import (
     ScalarAdmissibility,
     SelectionFacts,
     SelectionScope,
+    SequenceRelocated,
     StorageChanged,
     StorageContainerChanged,
     StorageLayoutChanged,
+    TableRelocated,
     TemporalAxisFacts,
     TransactionTimeGated,
     TypeChanged,
@@ -116,6 +120,7 @@ __all__ = [
     "BEHAVIORAL_IMPACT_ORDER",
     "COORDINATION_REASON_ORDER",
     "ENTITY_DELTA_ORDER",
+    "EVOLUTION_BACKEND_MISMATCH",
     "INDEX_DELTA_ORDER",
     "LOCKING_FALLBACK",
     "RELATIONSHIP_DELTA_ORDER",
@@ -163,6 +168,7 @@ __all__ = [
     "InheritanceChanged",
     "JoinChanged",
     "LockingFallback",
+    "LogicalOperation",
     "MaximumLengthChanged",
     "MultiplicityChanged",
     "NullabilityChanged",
@@ -183,9 +189,11 @@ __all__ = [
     "ScalarAdmissibility",
     "SelectionFacts",
     "SelectionScope",
+    "SequenceRelocated",
     "StorageChanged",
     "StorageContainerChanged",
     "StorageLayoutChanged",
+    "TableRelocated",
     "TemporalAxisFacts",
     "TransactionTimeGated",
     "TypeChanged",
@@ -211,24 +219,31 @@ __all__ = [
     "WritesDisabled",
     "WritesEnabled",
     "canonical_operation_key",
-    "evolve_metamodels",
+    "evolve_resolved",
 ]
 
 
-@overload
-def evolve_metamodels(earlier: Absent, later: Metamodel) -> UnilateralEvolution: ...
+EVOLUTION_BACKEND_MISMATCH: Final = "evolution-backend-mismatch"
+"""`evolve` was given endpoints bound for different backends."""
 
 
 @overload
-def evolve_metamodels(earlier: Metamodel, later: Metamodel) -> Evolution: ...
+def evolve_resolved(earlier: Absent, later: ResolvedBinding) -> UnilateralEvolution: ...
 
 
-def evolve_metamodels(earlier: Metamodel | Absent, later: Metamodel) -> Evolution:
-    """Describe every difference between two accepted Metamodels.
+@overload
+def evolve_resolved(earlier: ResolvedBinding, later: ResolvedBinding) -> Evolution: ...
 
-    Provisioning is unilateral by TYPE: passing :data:`ABSENT` narrows the
-    result, so a consumer that only accepts a Unilateral Evolution — the schema
-    generator above all — needs no runtime check on that path.
+
+def evolve_resolved(earlier: ResolvedBinding | Absent, later: ResolvedBinding) -> Evolution:
+    """Describe every difference between two models, each under its binding.
+
+    The logical stage compares the two accepted Metamodels; the physical stage
+    then reports every surviving table or sequence whose resolved physical
+    object moved, after every logical operation, each coordinated by
+    ``DatabaseMigrationRequired``. Endpoints bound for different backends are
+    refused with ``evolution-backend-mismatch``: equal components on two
+    engines are no evidence of one physical object.
 
     ``earlier`` is :data:`ABSENT` for fresh provisioning — an explicit sentinel,
     never inferred from an empty accepted model or from inspecting a physical
@@ -236,12 +251,18 @@ def evolve_metamodels(earlier: Metamodel | Absent, later: Metamodel) -> Evolutio
     target Entity, which suppresses that Entity's members, and no Behavioral
     Impact or Overlap-Visible Operation, because no earlier scope survives.
 
-    Equal endpoints return an empty :class:`UnilateralEvolution` retaining both
-    models, so the result is total without a third no-evolution kind.
+    Equal endpoints return an empty :class:`UnilateralEvolution` retaining both,
+    so the result is total without a third no-evolution kind.
     """
-    matching = match(earlier, later)
+    if not isinstance(earlier, Absent) and earlier.dialect.name != later.dialect.name:
+        raise UsageError(
+            EVOLUTION_BACKEND_MISMATCH,
+            f"the earlier model is bound for {earlier.dialect.name!r} and the later one for "
+            f"{later.dialect.name!r}; evolution compares placements within one backend",
+        )
+    matching = match(earlier if isinstance(earlier, Absent) else earlier.meta, later.meta)
     operations = diff(matching)
-    if matching.earlier is None:
+    if isinstance(earlier, Absent):
         return UnilateralEvolution(
             earlier=None,
             later=later,
@@ -249,43 +270,55 @@ def evolve_metamodels(earlier: Metamodel | Absent, later: Metamodel) -> Evolutio
             behavioral_impacts=(),
             overlap_visible_operations=(),
         )
-    return _assemble(matching.earlier, matching, operations)
+    return _assemble(earlier, later, matching, operations)
 
 
 def _assemble(
-    earlier: Metamodel,
+    earlier: ResolvedBinding,
+    later: ResolvedBinding,
     matching: Matching,
-    operations: tuple[EvolutionOperation, ...],
+    logical: tuple[LogicalOperation, ...],
 ) -> Evolution:
-    """Fold per-operation classification and the impacts into one result.
+    """Fold per-operation classification, the impacts, and every relocation
+    into one result.
 
     Any nonempty reason set makes the whole evolution coordinated, carrying one
-    requirement per coordinated operation in canonical operation order;
-    otherwise the overlap-visible operations are collected in the same order.
+    requirement per coordinated operation in reported order; otherwise the
+    overlap-visible operations are collected in the same order.
     """
-    classifications = classify(matching, operations)
-    behavioral_impacts = impacts(earlier, matching, operations)
-    requirements = tuple(
-        CoordinationRequirement(operation=operation, reasons=classification.reasons)
-        for operation, classification in zip(operations, classifications, strict=True)
-        if classification.reasons
+    classifications = classify(matching, logical)
+    behavioral_impacts = impacts(earlier.meta, matching, logical)
+    relocations = relocations_between(earlier, later)
+    operations: tuple[EvolutionOperation, ...] = (*logical, *relocations)
+    requirements = (
+        *(
+            CoordinationRequirement(operation=operation, reasons=classification.reasons)
+            for operation, classification in zip(logical, classifications, strict=True)
+            if classification.reasons
+        ),
+        *(
+            CoordinationRequirement(
+                operation=relocation, reasons=(CoordinationReason.DATABASE_MIGRATION_REQUIRED,)
+            )
+            for relocation in relocations
+        ),
     )
     if requirements:
         return CoordinatedEvolution(
             earlier=earlier,
-            later=matching.later,
+            later=later,
             operations=operations,
             behavioral_impacts=behavioral_impacts,
             coordination_requirements=requirements,
         )
     return UnilateralEvolution(
         earlier=earlier,
-        later=matching.later,
+        later=later,
         operations=operations,
         behavioral_impacts=behavioral_impacts,
         overlap_visible_operations=tuple(
             operation
-            for operation, classification in zip(operations, classifications, strict=True)
+            for operation, classification in zip(logical, classifications, strict=True)
             if classification.overlap_visible
         ),
     )

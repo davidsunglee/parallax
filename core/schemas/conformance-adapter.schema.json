@@ -11,6 +11,16 @@
     { "$ref": "#/$defs/nonOk" }
   ],
   "$defs": {
+    "physicalTable": {
+      "description": "One physical table as structured components: its location's qualifier components, then its local name. Each component is raw and is compared exactly; a dot inside one is never qualification.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qualifier", "name"],
+      "properties": {
+        "qualifier": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "name": {"type": "string", "minLength": 1}
+      }
+    },
     "storedDataRecord": {
       "description": "One result position a read classified rather than published as itself. `ordinal` is its zero-based place in the ordered result, `hydrated` states whether the normative collapse produced a value at that position, and `issues` is the deduplicated diagnosis set the position carries.",
       "type": "object",
@@ -822,7 +832,9 @@
         "IndexAdded",
         "IndexRemoved",
         "IndexAltered",
-        "DeclarationOrderChanged"
+        "DeclarationOrderChanged",
+        "TableRelocated",
+        "SequenceRelocated"
       ]
     },
     "evolutionFieldDeltaKind": {
@@ -946,17 +958,24 @@
             }
           ]
         },
+        "sequence": {
+          "description": "A logical allocator key, exactly as the model declares it.",
+          "type": "string",
+          "minLength": 1
+        },
         "earlier": {
-          "description": "The surviving declaration identities in the earlier endpoint's order.",
-          "type": "array",
-          "minItems": 2,
-          "items": {"type": "string", "minLength": 1}
+          "description": "For a declaration-order change, the surviving declaration identities in the earlier endpoint's order; for a relocation, the physical object the earlier binding resolved.",
+          "anyOf": [
+            {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+            {"$ref": "#/$defs/physicalTable"}
+          ]
         },
         "later": {
-          "description": "The same identities in the later endpoint's order, which differs.",
-          "type": "array",
-          "minItems": 2,
-          "items": {"type": "string", "minLength": 1}
+          "description": "For a declaration-order change, the same identities in the later endpoint's order, which differs; for a relocation, the physical object the later binding resolves.",
+          "anyOf": [
+            {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+            {"$ref": "#/$defs/physicalTable"}
+          ]
         }
       },
       "oneOf": [
@@ -973,6 +992,26 @@
           "properties": {"kind": {"enum": ["EntityAltered"]}},
           "required": ["kind", "entity", "deltas"],
           "propertyNames": {"enum": ["kind", "entity", "deltas"]}
+        },
+        {
+          "description": "A surviving mapping owner whose physical table the two bindings resolve differently.",
+          "properties": {
+            "kind": {"enum": ["TableRelocated"]},
+            "earlier": {"$ref": "#/$defs/physicalTable"},
+            "later": {"$ref": "#/$defs/physicalTable"}
+          },
+          "required": ["kind", "entity", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "entity", "earlier", "later"]}
+        },
+        {
+          "description": "A surviving logical allocator whose physical sequence the two bindings resolve differently.",
+          "properties": {
+            "kind": {"enum": ["SequenceRelocated"]},
+            "earlier": {"$ref": "#/$defs/physicalTable"},
+            "later": {"$ref": "#/$defs/physicalTable"}
+          },
+          "required": ["kind", "sequence", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "sequence", "earlier", "later"]}
         },
         {
           "properties": {"kind": {"enum": ["AttributeAdded", "AttributeRemoved"]}},
@@ -1030,7 +1069,11 @@
           "propertyNames": {"enum": ["kind", "index", "deltas"]}
         },
         {
-          "properties": {"kind": {"enum": ["DeclarationOrderChanged"]}},
+          "properties": {
+            "kind": {"enum": ["DeclarationOrderChanged"]},
+            "earlier": {"type": "array"},
+            "later": {"type": "array"}
+          },
           "required": ["kind", "collection", "owner", "earlier", "later"],
           "propertyNames": {"enum": ["kind", "collection", "owner", "earlier", "later"]}
         }
@@ -1153,7 +1196,7 @@
       "required": ["physicalIndexName", "physicalTable", "logicalIndexIdentity", "unique"],
       "properties": {
         "physicalIndexName": {"type": "string", "minLength": 1},
-        "physicalTable": {"type": "string", "minLength": 1},
+        "physicalTable": {"$ref": "#/$defs/physicalTable"},
         "logicalIndexIdentity": {
           "description": "An authored Index Identity, in the `indexRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
           "type": "string",
@@ -1178,7 +1221,7 @@
             {"required": ["extension"], "maxProperties": 1}
           ],
           "properties": {
-            "table": {"type": "string", "minLength": 1},
+            "table": {"$ref": "#/$defs/physicalTable"},
             "column": {"type": "string", "minLength": 1},
             "index": {"type": "string", "minLength": 1},
             "extension": {"type": "string", "minLength": 1}
@@ -1254,11 +1297,14 @@
           "items": { "$ref": "#/$defs/milestoneGraphObservation" }
         },
         "tableState": {
-          "description": "Observed logical table state, read back once a write-sequence, conflict, or scenario run finished. Modeled scalar cells and declared document leaves use m-wire canonical output for their resolved declarations.",
+          "description": "Observed logical table state, read back once a write-sequence, conflict, or scenario run finished, keyed by each table's resolved location qualifier and then its resolved physical name. Modeled scalar cells and declared document leaves use m-wire canonical output for their resolved declarations.",
           "type": ["object", "null"],
           "additionalProperties": {
-            "type": "array",
-            "items": { "$ref": "#/$defs/row" }
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/row" }
+            }
           }
         },
         "affectedRows": {

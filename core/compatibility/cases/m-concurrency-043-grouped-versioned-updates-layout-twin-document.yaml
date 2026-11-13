@@ -17,20 +17,21 @@ when:
 then:
   statements:
     - sql:
-        postgres: update tag_ledger t set payload = jsonb_set(t.payload, ?, v.c4), version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+        postgres: update px.tag_ledger t set payload = jsonb_set(t.payload, ?, v.c4), version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
       binds: ['{tags}', [1, 2], [1, 4], [2, 5], [[c, c], [d]]]
   tableState:
-    tag_ledger:
-      - id: 1
-        version: 2
-        payload:
-          label: open
-          tags: [c, c]
-          route:
-            stops: [x, y]
-      - id: 2
-        version: 5
-        payload:
-          label: kept
-          tags: [d]
+    px:
+      tag_ledger:
+        - id: 1
+          version: 2
+          payload:
+            label: open
+            tags: [c, c]
+            route:
+              stops: [x, y]
+        - id: 2
+          version: 5
+          payload:
+            label: kept
+            tags: [d]
   databaseCalls: 2

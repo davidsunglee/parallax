@@ -33,13 +33,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from folder t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc
+        postgres: select t0.id, t0.name from px.folder t0 where t0.id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[100, 102]]
     - sql:
-        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 where t0.folder_id = any(cast(? as bigint[]))
+        postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from px.invoice t0 where t0.folder_id = any(cast(? as bigint[]))
       binds: [[100, 102]]
     - sql:
-        postgres: select t0.id, t0.title, t0.folder_id, t0.body, not t0.annotation is null, t0.annotation from memo t0 where t0.folder_id = any(cast(? as bigint[]))
+        postgres: select t0.id, t0.title, t0.folder_id, t0.body, not t0.annotation is null, t0.annotation from px.memo t0 where t0.folder_id = any(cast(? as bigint[]))
       binds: [[100, 102]]
   graph:
     Folder:

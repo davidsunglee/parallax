@@ -48,6 +48,7 @@ from parallax.core.internal.write_plan.plan import (
     WritePlan,
 )
 from parallax.core.internal.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
@@ -129,7 +130,7 @@ class _Traced:
 def _bindings(written: WritePlan, acquire: AcquireRows) -> RangeBindings:
     """The scoped binding of every entry of ``written``: its one acquisition
     span, or its one deferred write."""
-    planner = build_write_planner(MODEL)
+    planner = build_write_planner(bound_model(MODEL))
     return RangeBindings(
         written,
         start=0,
@@ -581,7 +582,7 @@ def test_a_later_writes_failed_binding_leaves_no_frame_holding_the_earlier_bound
 
 
 def _scoped(written: WritePlan, start: int, stop: int, held: HeldRows) -> RangeBindings:
-    planner = build_write_planner(MODEL)
+    planner = build_write_planner(bound_model(MODEL))
     return RangeBindings(
         written,
         start=start,

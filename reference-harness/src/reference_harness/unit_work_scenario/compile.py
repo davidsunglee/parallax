@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
+from ..database_binding import PhysicalTable
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
 _ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"access"})
@@ -613,16 +614,18 @@ def _assert_state_graded_document(
                 f"{case.path.name}: scenario[{step.index}] is an ungrouped write in a "
                 f"state-graded case, whose fate then.units cannot state."
             )
-    written: set[str] = set()
+    written: set[PhysicalTable] = set()
     for submission in submissions:
         if submission.empty:
             continue
         if submission.entity is not None:
-            written.add(submission.entity.table)
+            written.add(case.entity_table(submission.entity.canonical_name))
         else:
             target = submission.entry.get("target") or {}
-            written.add(case.model.entity(str(target.get("entity", ""))).table)
-    unstated = sorted(written - set(case.expected_table_state))
+            written.add(
+                case.entity_table(case.model.entity(str(target.get("entity", ""))).canonical_name)
+            )
+    unstated = [str(table) for table in sorted(written - set(case.expected_table_state))]
     if unstated:
         raise CaseFailure(
             f"{case.path.name}: then.tableState states no rows for {unstated}, which a "

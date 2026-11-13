@@ -34,6 +34,7 @@ from parallax.core._execution._write_lowering import (
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY as OPEN
 from parallax.core.internal.base import InternalError
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.internal.sql_gen import LoweredStatement
@@ -76,6 +77,7 @@ from parallax.core.internal.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
@@ -178,9 +180,20 @@ def test_every_temporal_effect_promises_a_parameter_ceiling_its_statement_keeps(
     del label
     ceiling = ordered_parameter_ceiling(step, POSTGRES)
     assert ceiling is not None
-    statement = lowered_within(step, ceiling, build_write_planner(meta).payloads, meta, POSTGRES)
+    statement = lowered_within(
+        step,
+        ceiling,
+        build_write_planner(bound_model(meta)).payloads,
+        bound_model(meta),
+        POSTGRES,
+    )
     assert len(statement.binds) <= ceiling
-    assert statement == lowered(step, build_write_planner(meta).payloads, meta, POSTGRES)
+    assert statement == lowered(
+        step,
+        build_write_planner(bound_model(meta)).payloads,
+        bound_model(meta),
+        POSTGRES,
+    )
 
 
 def test_an_insert_never_qualifies_for_ordered_transport() -> None:
@@ -220,13 +233,13 @@ def test_a_statement_exceeding_the_ceiling_it_promised_is_a_lowering_failure() -
     meta = model("position")
     entity = entity_of(meta, "Position").identity
     close, *_ = _effects(entity, entity, {AttributeIdentity(entity, "value"): Decimal("1")})
-    payloads = build_write_planner(meta).payloads
+    payloads = build_write_planner(bound_model(meta)).payloads
     with raises_code(
         InternalError,
         SQL_GENERATION_FAILED,
         match="carrying 4 binds exceeds the 3 its shape promised",
     ):
-        lowered_within(close, 3, payloads, meta, POSTGRES)
+        lowered_within(close, 3, payloads, bound_model(meta), POSTGRES)
 
 
 def _wallet_effects(*keys: int) -> tuple[PlannedUpdate, PlannedDelete]:
@@ -257,7 +270,7 @@ def _planned(
 ) -> PlannedStep:
     prepared = prepare_typed_write(instruction, write_preparation_of(meta))
     assert not isinstance(prepared, PreparedTargetInstruction)
-    planner = build_write_planner(meta)
+    planner = build_write_planner(bound_model(meta))
     if isinstance(prepared, PreparedPredicateInstruction):
         return planner.predicate_step(
             prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=inert_instant()
@@ -281,12 +294,12 @@ def test_a_single_key_non_temporal_effect_promises_the_ceiling_its_statement_kee
     # Key and tag guard, plus an assigned member's two.
     assert ordered_parameter_ceiling(update, POSTGRES) == 4
     assert ordered_parameter_ceiling(delete, POSTGRES) == 2
-    payloads = build_write_planner(meta).payloads
+    payloads = build_write_planner(bound_model(meta)).payloads
     for step in (update, delete):
         ceiling = ordered_parameter_ceiling(step, POSTGRES)
         assert ceiling is not None
-        assert lowered_within(step, ceiling, payloads, meta, POSTGRES) == lowered(
-            step, payloads, meta, POSTGRES
+        assert lowered_within(step, ceiling, payloads, bound_model(meta), POSTGRES) == lowered(
+            step, payloads, bound_model(meta), POSTGRES
         )
 
 
@@ -320,8 +333,8 @@ def test_a_version_gate_and_a_registry_increment_each_fit_the_ceiling() -> None:
     )
     ceiling = ordered_parameter_ceiling(registry, POSTGRES)
     assert ceiling == 4
-    payloads = build_write_planner(registry_model).payloads
-    statement = lowered_within(registry, ceiling, payloads, registry_model, POSTGRES)
+    payloads = build_write_planner(bound_model(registry_model)).payloads
+    statement = lowered_within(registry, ceiling, payloads, bound_model(registry_model), POSTGRES)
     assert statement.binds == (3, "pass_seq")
 
 
@@ -361,9 +374,9 @@ def test_every_single_key_non_temporal_effect_the_corpus_lowers_keeps_its_ceilin
     compiling = compile_write_step
 
     def checked(
-        step: PlannedStep, payload: StepPayload, meta: Metamodel, dialect: Dialect
+        step: PlannedStep, payload: StepPayload, resolved: ResolvedBinding, dialect: Dialect
     ) -> LoweredStatement:
-        statement = compiling(step, payload, meta, dialect)
+        statement = compiling(step, payload, resolved, dialect)
         if isinstance(step, PlannedUpdate | PlannedDelete):
             ceiling = ordered_parameter_ceiling(step, dialect)
             if ceiling is not None:

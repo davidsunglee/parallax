@@ -129,10 +129,11 @@ then:
     inserted: { outcome: committed }
     reinserted: { outcome: committed }
   tableState:
-    sequence_tag:
-      - { id: 1, payload: { quantity: 7, label: low } }
-      - { id: 2, payload: { quantity: 9, label: u } }
-      - { id: 3, payload: { quantity: 8, label: low3 } }
-      - { id: 4, payload: { quantity: 6, label: again } }
-    sequence_account:
-      - { id: 1, version: 3, payload: { balance: 20, memo: { note: after } } }
+    px:
+      sequence_tag:
+        - { id: 1, payload: { quantity: 7, label: low } }
+        - { id: 2, payload: { quantity: 9, label: u } }
+        - { id: 3, payload: { quantity: 8, label: low3 } }
+        - { id: 4, payload: { quantity: 6, label: again } }
+      sequence_account:
+        - { id: 1, version: 3, payload: { balance: 20, memo: { note: after } } }

@@ -28,6 +28,7 @@ from parallax.core.execution_lifecycle import DatabaseCallStarted, ExecutionEven
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 
 _NS = "readonly.persistence"
@@ -87,8 +88,10 @@ class _Statements:
 
 @contextmanager
 def _database(profile_run: Any, statements: _Statements | None = None) -> Generator[ScopedDatabase]:
-    profile_run.reset(model_of(_MODEL), _FIXTURES)
-    with connect(profile_run.port, _MODEL, lifecycle_provider=statements) as root:
+    profile_run.reset(model_of(_MODEL), _FIXTURES, TEST_BINDING)
+    with connect(
+        profile_run.port, _MODEL, lifecycle_provider=statements, binding=TEST_BINDING
+    ) as root:
         yield root.using_database_login()
 
 
@@ -369,7 +372,7 @@ def test_a_replacement_derived_from_a_read_value_leaves_a_read_only_attribute_un
     with _issued_badge(profile_run, statements) as db:
         db.transact(lambda tx: replacement.reaching(tx)())
 
-        updates = [sql for sql in statements.sql if sql.startswith("update rop_badge")]
+        updates = [sql for sql in statements.sql if sql.startswith("update px.rop_badge")]
         assert len(updates) == 1
         assert "issued" not in updates[0]
         badge = _badge(db)

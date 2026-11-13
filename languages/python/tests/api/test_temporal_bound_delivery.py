@@ -30,6 +30,7 @@ from parallax.core import (
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.binary32 import narrowed, shortest_spelling
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
 
@@ -101,9 +102,11 @@ _POSITION_READS: dict[tuple[Pin | None, Pin], _Milestone] = {
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     clock = ScriptedClock([_INSERTED, _UPDATED])
-    return own_root(connect(profile_run.port, _MODEL, clock=clock)).using_database_login()
+    return own_root(
+        connect(profile_run.port, _MODEL, clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _valid_from(entity: type[Any], instant: dt.datetime) -> dt.datetime | None:

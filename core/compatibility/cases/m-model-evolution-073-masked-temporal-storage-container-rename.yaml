@@ -1,0 +1,47 @@
+# A MASKED declared rename (m-model-evolution, m-database-binding): the later
+# model renames its Transaction-Time table, but the later binding pins the
+# physical local name the earlier endpoint already resolves to. The declared
+# change is logical alone; nothing relocates, every derived temporal constraint
+# and index name follows the unchanged physical local name, and Schema Delta
+# emits no statement.
+tags: [m-model-evolution, m-database-binding, m-schema-delta, evolution, entity, temporal, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-temporal-container-v1.yaml
+    later: models/evolution-temporal-container-v2.yaml
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        entities:
+          parallax.compatibility.Escrow: { table: evolution_escrow }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        entities:
+          parallax.compatibility.Escrow: { table: evolution_escrow }
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Escrow
+        deltas:
+          - kind: StorageContainerChanged
+            earlier: evolution_escrow
+            later: evolution_escrow_archive
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

@@ -38,6 +38,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.flush_calls import Call, FlushCalls, PageRead, call_runs
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
@@ -119,7 +120,7 @@ def _tail(key: int, pieces: int) -> list[tuple[str, dt.datetime, object]]:
 
 
 def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int = 1) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     rows = [
         row
         for key in range(1, objects + 1)
@@ -130,7 +131,7 @@ def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int
     ]
     control = profile_run.control()
     try:
-        control.execute_write("insert into tcs_flag(id, label) values (1, 'flag')", [])
+        control.execute_write("insert into px.tcs_flag(id, label) values (1, 'flag')", [])
         for start in range(0, len(rows), 500):
             chunk = rows[start : start + 500]
             binds: list[object] = []
@@ -138,13 +139,15 @@ def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int
                 values = "(?, ?, ?, ?, ?, ?, 'infinity')"
                 for key, amount, label, begin, end in chunk:
                     binds += [key, amount, label, begin, end, _T0]
-                insert = "insert into tcs_columns(id, amount, label, from_z, thru_z, in_z, out_z)"
+                insert = (
+                    "insert into px.tcs_columns(id, amount, label, from_z, thru_z, in_z, out_z)"
+                )
             else:
                 values = "(?, ?, ?, ?, 'infinity', ?::jsonb)"
                 for key, amount, label, begin, end in chunk:
                     payload = json.dumps({"amount": amount, "label": label})
                     binds += [key, begin, end, _T0, payload]
-                insert = "insert into tcs_document(id, from_z, thru_z, in_z, out_z, payload)"
+                insert = "insert into px.tcs_document(id, from_z, thru_z, in_z, out_z, payload)"
             control.execute_write(f"{insert} values {', '.join([values] * len(chunk))}", binds)
     finally:
         control.close()
@@ -152,7 +155,13 @@ def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int
 
 def _db(profile_run: Any, calls: FlushCalls) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=FixedClock(_AT), lifecycle_provider=calls)
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=FixedClock(_AT),
+            lifecycle_provider=calls,
+            binding=TEST_BINDING,
+        )
     ).using_database_login()
 
 
@@ -163,7 +172,7 @@ def _history(profile_run: Any, layout: _Layout) -> list[_Row]:
     )
     rows = profile_run.port.execute(
         f"select id, in_z, {open_end.format('out_z')}, from_z, {open_end.format('thru_z')}, "
-        f"{members} from tcs_{layout}",
+        f"{members} from px.tcs_{layout}",
         [],
     )
     return sorted((tuple(row) for row in rows), key=_order)
@@ -422,7 +431,9 @@ def test_a_ready_groups_many_milestones_close_in_one_grouped_effect_and_open_in_
         profile_run.port, lambda connection: cast("Any", CountingConnection(connection, tally))
     )
     db = own_root(
-        connect(decorated, _MODEL, clock=FixedClock(_AT), lifecycle_provider=calls)
+        connect(
+            decorated, _MODEL, clock=FixedClock(_AT), lifecycle_provider=calls, binding=TEST_BINDING
+        )
     ).using_database_login()
 
     def fn(tx: TxnContext) -> None:

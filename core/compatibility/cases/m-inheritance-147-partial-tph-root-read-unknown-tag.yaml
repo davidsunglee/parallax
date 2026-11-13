@@ -14,9 +14,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 order by t0.id asc
-        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 order by t0.id asc
-  referenceSql: select id, kind, name, keeper_id, howl from beast
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from px.beast t0 order by t0.id asc
+        mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from px.beast t0 order by t0.id asc
+  referenceSql: select id, kind, name, keeper_id, howl from px.beast
   graph:
     Beast:
       - { id: 1, name: Akela, keeperId: 10, howl: aroo, _type: parallax.compatibility.Wolf }

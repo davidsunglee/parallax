@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
-from typing import Final, Literal
+from typing import Final, Literal, Protocol
 
 from parallax.core.internal.base import (
     SQL_NULL,
@@ -47,6 +47,7 @@ __all__ = [
     "PhysicalIndexName",
     "RenderedScalarCell",
     "ScalarResult",
+    "TableReference",
     "Unsupported",
     "decode_bytes_cell",
     "scalar_result",
@@ -186,6 +187,24 @@ def _document_value_bind(value: object) -> object:
     return json.dumps(value)
 
 
+class TableReference(Protocol):
+    """One physical table as structured components: its qualifier, then its name.
+
+    Each component is raw. A dot inside one is part of it, never qualification.
+    """
+
+    @property
+    def qualifier(self) -> tuple[str, ...]: ...
+    @property
+    def name(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _QualifiedName:
+    qualifier: tuple[str, ...]
+    name: str
+
+
 @dataclass(frozen=True, slots=True)
 class PhysicalIndexName:
     """One physical Index name as a database holds it.
@@ -284,9 +303,9 @@ class Dialect:
     quote_char: str
     # SQLSTATE / native code -> neutral m-db-error category.
     error_codes: dict[str, str]
-    # The longest identifier this database stores without truncating it. Only a
-    # DERIVED name has to fit a budget; an authored Table or Column name is the
-    # author's own and is spelled as declared.
+    # The longest identifier this database stores without truncating it. A
+    # derived name is shortened to fit; a resolved table or sequence component
+    # that does not fit is refused (`identifier_issue`).
     max_identifier_bytes: int
     # The most bind parameters one statement may carry (`m-dialect` "Bind
     # parameter limit"): a positive bound on each statement alone.
@@ -302,6 +321,9 @@ class Dialect:
     # of the `constraintViolation` category (`m-db-error`).
     exclusion_violation_codes: frozenset[str] = frozenset()
     seek_null_tail_lock_placement: Literal["outer", "branches"] = "outer"
+    # The scope an index name is unique within (`m-dialect` "Object-name
+    # scopes"): every relation of one qualifier, or the one table it indexes.
+    index_name_scope: Literal["qualifier", "table"] = "qualifier"
 
     def __post_init__(self) -> None:
         limit = self.max_bind_parameters
@@ -312,11 +334,30 @@ class Dialect:
 
     # -- identifiers ------------------------------------------------------- #
     def quote(self, identifier: str) -> str:
-        """Quote ``identifier`` iff it is reserved or non-simple for this dialect."""
+        """Quote ``identifier`` iff it is reserved or non-simple for this dialect,
+        doubling every quote character inside it."""
         if _SIMPLE.match(identifier) and identifier not in self.reserved:
             return identifier
         q = self.quote_char
-        return f"{q}{identifier}{q}"
+        return f"{q}{identifier.replace(q, q + q)}{q}"
+
+    def render_table(self, table: TableReference) -> str:
+        """``table`` as SQL: each qualifier component, then its name, quoted alone."""
+        return ".".join(self.quote(component) for component in (*table.qualifier, table.name))
+
+    def identifier_issue(self, identifier: str) -> str | None:
+        """Why this database cannot hold ``identifier`` exactly, or ``None``.
+
+        An empty identifier names nothing, a NUL cannot be spelled, and a longer
+        one is truncated or refused rather than stored as written.
+        """
+        if not identifier:
+            return "an identifier is nonempty"
+        if "\x00" in identifier:
+            return "an identifier cannot contain NUL"
+        if len(identifier.encode("utf-8")) > self.max_identifier_bytes:
+            return f"an identifier is at most {self.max_identifier_bytes} bytes"
+        return None
 
     def qualified(self, alias: str, column: str) -> str:
         """An alias-qualified column reference (`t0.col` / `t0."order"`)."""
@@ -735,14 +776,13 @@ class Dialect:
         components = ", ".join(column.column for column in columns)
         return f"{keyword} {self.quote(name.value)} on {table} ({components})"
 
-    def drop_index(self, table: str, name: PhysicalIndexName) -> str:
+    def drop_index(self, table: TableReference, name: PhysicalIndexName) -> str:
         """``drop index`` for one Index the later model no longer defines.
 
-        ``table`` is the Table the Index sits on, which Postgres does not name in
-        the statement and MariaDB does.
+        ``table`` is the Table the Index sits on. Postgres names the Index within
+        that Table's schema, never through the connection's search path.
         """
-        del table
-        return f"drop index {self.quote(name.value)}"
+        return f"drop index {self.render_table(_QualifiedName(table.qualifier, name.value))}"
 
     # -- errors ------------------------------------------------------------ #
     def classify(self, code: str) -> str | None:

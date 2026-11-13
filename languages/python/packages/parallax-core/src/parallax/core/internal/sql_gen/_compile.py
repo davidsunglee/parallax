@@ -11,6 +11,7 @@ from parallax.core.internal.base import (
     InternalError,
     ManagedValue,
 )
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import ArrayBind, Dialect
 from parallax.core.internal.document_codec import is_text_compared
 from parallax.core.internal.inheritance import InheritanceFacet, inheritance_facet_of
@@ -329,7 +330,7 @@ def _temporal_bound(
 
 def compile_template(
     query: PlannedEntityQuery,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
     *,
     result_form: _ResultForm = "row",
@@ -339,7 +340,7 @@ def compile_template(
     carriers, its gathered parent keys, and the predicate operands and finite
     temporal bounds its planned query's execution-value sources name."""
     compiled = _compile_read(
-        query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=True
+        query, resolved, dialect, result_form=result_form, shared_lock=shared_lock, deferred=True
     )
     return compiled if isinstance(compiled, EmptyRead) else _template(compiled)
 
@@ -371,7 +372,7 @@ def _template(compiled: CompiledRead) -> CompiledTemplate:
 
 def compile_read(
     query: PlannedEntityQuery,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
     *,
     result_form: _ResultForm = "row",
@@ -384,13 +385,13 @@ def compile_read(
     that the read takes the shared row lock.
     """
     return _compile_read(
-        query, model, dialect, result_form=result_form, shared_lock=shared_lock, deferred=False
+        query, resolved, dialect, result_form=result_form, shared_lock=shared_lock, deferred=False
     )
 
 
 def _compile_read(
     query: PlannedEntityQuery,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
     *,
     result_form: _ResultForm,
@@ -400,9 +401,9 @@ def _compile_read(
     """Lower ``query`` once; a ``deferred`` read binds its page's and its
     predicate's execution values as markers."""
     page_deferred = deferred and query.paging is not None
-    storage = storage_layout_facet_of(model)
-    facet = inheritance_facet_of(model)
-    terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
+    storage = storage_layout_facet_of(resolved.meta)
+    facet = inheritance_facet_of(resolved.meta)
+    terms = _lowered_terms(query.order_by, _reserved_result_keys(resolved.meta, storage))
     seek = None if query.paging is None else query.paging.seek
     two_branches = (
         seek is not None and query.limit is not None and _needs_null_tail(seek, storage, dialect)
@@ -416,7 +417,7 @@ def _compile_read(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
         entity=query.entity,
-        meta=model,
+        meta=resolved.meta,
         facet=facet,
         storage=storage,
         read_shape=read_shape,
@@ -431,7 +432,7 @@ def _compile_read(
         read_shape,
         statement_plan,
         terms,
-        model,
+        resolved,
         facet,
         storage,
         dialect,
@@ -445,7 +446,7 @@ def _compile_read(
             read_shape,
             statement_plan,
             terms,
-            model,
+            resolved,
             facet,
             storage,
             dialect,
@@ -461,7 +462,7 @@ def _compile_read(
             query,
             read_shape,
             terms,
-            model,
+            resolved,
             facet,
             storage,
             dialect,
@@ -489,7 +490,7 @@ def _union_null_tail(
     query: PlannedEntityQuery,
     read_shape: _SingleTableReadPlan | _TpcsUnionReadPlan,
     terms: tuple[_LoweredTerm, ...],
-    model: Metamodel,
+    resolved: ResolvedBinding,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
@@ -501,7 +502,7 @@ def _union_null_tail(
     NULL-tail branches. A ``shared_lock`` union selects payload and coordinates
     from the physical row it locks, which can have changed while it waited."""
     statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
-        model, facet, storage, dialect
+        resolved, facet, storage, dialect
     )
     outer_alias = "u"
     outer_list = select_list.select_through(outer_alias)
@@ -585,32 +586,35 @@ def _shared_lock_base_join[RowScope](
         ctx.bind_structural_all(base.binds)
         join_terms.append(f"{dialect.qualified(outer_alias, alias)} = {base.expression_sql}")
     return (
-        f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms),
+        f" join {ctx.table_sql(layout)} {base_alias} on " + " and ".join(join_terms),
         f" {dialect.shared_lock_suffix(base_alias)}",
     )
 
 
 def compile_write_predicate(
-    op: TemporallyResolvedPredicate, model: Metamodel, dialect: Dialect, target: CompiledEntity
+    op: TemporallyResolvedPredicate,
+    resolved: ResolvedBinding,
+    dialect: Dialect,
+    target: CompiledEntity,
 ) -> CompiledPredicate:
     """Render an already-validated write predicate in the form its plan selects:
     unaliased, every occurrence unshared, unless an occurrence reads through a
     shared source; then the selection of the target's physical key from the
     rows it matches, rendered as a read of the target's own Table selects them.
     """
-    facet = inheritance_facet_of(model)
-    storage = storage_layout_facet_of(model)
+    facet = inheritance_facet_of(resolved.meta)
+    storage = storage_layout_facet_of(resolved.meta)
     layout = _table_layout(storage, facet, target.identity)
     statement_plan = _plan_statement(
         op,
         evaluation_context=_EvaluationContext.WRITE_FILTER,
         entity=target,
-        meta=model,
+        meta=resolved.meta,
         facet=facet,
         storage=storage,
     )
     root = statement_plan.root_scopes[None]
-    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(resolved, facet, storage, dialect)
     match statement_plan.write_filter_form:
         case _WriteFilterForm.DIRECT_PREDICATE:
             scope = _EntityRowScope(ctx, target, layout, unaliased=True)
@@ -625,7 +629,7 @@ def compile_write_predicate(
             keys = ", ".join(
                 scope.own_column(slot.column.name) for slot in layout.physical_primary_key
             )
-            parts = [f"select {keys}", f"from {layout.table.name} {scope.alias}"]
+            parts = [f"select {keys}", f"from {ctx.table_sql(layout)} {scope.alias}"]
             _append_where(parts, _render_selection(statement_plan, root, scope, parts))
             statement = _normalize(ctx.finish(" ".join(parts)))
             return CompiledPredicate(statement.sql, statement.binds, statement, selection=True)
@@ -804,7 +808,7 @@ def _render_read_branch(
     plan: _SingleTableReadPlan | _TpcsUnionReadPlan,
     statement_plan: _StatementPlan,
     terms: tuple[_LoweredTerm, ...],
-    model: Metamodel,
+    resolved: ResolvedBinding,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
@@ -831,7 +835,7 @@ def _render_read_branch(
                 terms,
                 paging,
                 limit,
-                model,
+                resolved,
                 facet,
                 storage,
                 dialect,
@@ -846,7 +850,7 @@ def _render_read_branch(
                 terms,
                 paging,
                 limit,
-                model,
+                resolved,
                 facet,
                 storage,
                 dialect,
@@ -862,7 +866,7 @@ def _render_read_branch(
                 terms,
                 paging,
                 limit,
-                model,
+                resolved,
                 facet,
                 storage,
                 dialect,
@@ -899,7 +903,7 @@ def _render_single_table_read(
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
@@ -917,12 +921,12 @@ def _render_single_table_read(
     Table is one concrete's, so an abstract position narrowed to that concrete
     still resolves Attributes across its family.
     """
-    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(resolved, facet, storage, dialect)
     scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, plan.concrete_types[0]))
     select_list = _select_list(plan, dialect, scope.alias)
     ctx.bind_structural_all(select_list.binds)
     _emit_coordinates(select_list, terms, scope.subject_for, paging)
-    parts = [f"select {select_list.sql}", f"from {plan.table} {scope.alias}"]
+    parts = [f"select {select_list.sql}", f"from {ctx.table_sql(plan.root_table)} {scope.alias}"]
     where_sql = _render_selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _render_seek(
         terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail, deferred=deferred
@@ -951,7 +955,7 @@ def _render_tph_partitioned_read(
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
@@ -968,7 +972,7 @@ def _render_tph_partitioned_read(
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.concrete_types):
         branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
-            model, facet, storage, dialect
+            resolved, facet, storage, dialect
         )
         base_scope = _EntityRowScope(
             branch_ctx,
@@ -983,7 +987,8 @@ def _render_tph_partitioned_read(
         tag_sql, tag_binds = _tph_tag_guard(base_scope, facet, tag)
         tagged_alias = f"p{branch_index + 1}"
         fence_sql, fence_binds = dialect.optimizer_fence()
-        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} {fence_sql}"
+        table = branch_ctx.table_sql(plan.root_table)
+        tagged = f"select * from {table} {base_scope.alias} where {tag_sql} {fence_sql}"
         branch_scope = _EntityRowScope(branch_ctx, entity, layout, alias=tagged_alias)
         if shared_lock:
             projection = ", ".join(
@@ -1011,7 +1016,7 @@ def _render_tph_partitioned_read(
     union = " union all ".join(branch_sqls)
     if shared_lock:
         statement_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
-            model, facet, storage, dialect
+            resolved, facet, storage, dialect
         )
         outer_scope = _EntityRowScope(statement_ctx, entity, layout)
         select_list = _select_list(plan, dialect, outer_scope.alias)
@@ -1023,7 +1028,7 @@ def _render_tph_partitioned_read(
         )
         parts = [
             f"select {select_list.sql}",
-            f"from {plan.table} {outer_scope.alias}",
+            f"from {statement_ctx.table_sql(plan.root_table)} {outer_scope.alias}",
             f"join ({union}) u on {join_terms}",
         ]
         for branch in branches:
@@ -1054,12 +1059,12 @@ def _render_tph_partitioned_read(
     if branch_list is None:  # pragma: no cover - a position names at least one concrete
         raise InternalError(SQL_GENERATION_FAILED, "a partitioned read selects no variant")
     if not terms and limit is None:
-        statement_ctx = StatementBuilder(model, facet, storage, dialect)
+        statement_ctx = StatementBuilder(resolved, facet, storage, dialect)
         for branch in branches:
             statement_ctx.append_fragment(branch)
         return _normalize(statement_ctx.finish(union)), branch_list
 
-    statement_ctx = StatementBuilder(model, facet, storage, dialect)
+    statement_ctx = StatementBuilder(resolved, facet, storage, dialect)
     outer_scope = _EntityRowScope(
         statement_ctx, entity, layout, alias="u", wrapped=branch_list.scalar_cells()
     )
@@ -1093,7 +1098,7 @@ def _render_tpcs_union_read(
     terms: tuple[_LoweredTerm, ...],
     paging: Paging | None,
     limit: int | None,
-    model: Metamodel,
+    resolved: ResolvedBinding,
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
@@ -1123,7 +1128,7 @@ def _render_tpcs_union_read(
     union_list: _SelectListBuilder | None = None
     for branch in plan.branches:
         branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
-            model, facet, storage, dialect
+            resolved, facet, storage, dialect
         )
         branch_scope = _EntityRowScope(
             branch_ctx, entity, _table_layout(storage, facet, branch.identity)
@@ -1134,7 +1139,10 @@ def _render_tpcs_union_read(
         branch_list.emit_variant(branch.variant)
         union_list = _agreed(union_list, branch_list)
         branch_ctx.bind_structural_all(branch_list.binds)
-        parts = [f"select {branch_list.sql}", f"from {branch.table} {branch_scope.alias}"]
+        parts = [
+            f"select {branch_list.sql}",
+            f"from {branch_ctx.table_sql(branch.table)} {branch_scope.alias}",
+        ]
         where_sql = _render_selection(
             statement_plan, statement_plan.root_scopes[branch.identity], branch_scope, parts
         )
@@ -1150,7 +1158,7 @@ def _render_tpcs_union_read(
 
     union = " union all ".join(branch_sqls)
     if not wrapped:
-        statement_ctx = StatementBuilder(model, facet, storage, dialect)
+        statement_ctx = StatementBuilder(resolved, facet, storage, dialect)
         for branch in branch_statements:
             statement_ctx.append_fragment(branch)
         return _normalize(statement_ctx.finish(union)), union_list
@@ -1162,10 +1170,12 @@ def _render_tpcs_union_read(
     # after the branches and send branch data to a capture-cell placeholder.
     outer_layout = _table_layout(storage, facet, plan.branches[0].identity)
     capture_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
-        model, facet, storage, dialect
+        resolved, facet, storage, dialect
     )
     capture_scope = _EntityRowScope(capture_ctx, entity, outer_layout, alias="u")
-    tail_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    tail_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
+        resolved, facet, storage, dialect
+    )
     outer_scope = _EntityRowScope(tail_ctx, entity, outer_layout, alias="u")
     select_list = union_list.select_through(outer_scope.alias)
     tail_subject = _tpcs_subject(plan, outer_scope)
@@ -1186,7 +1196,7 @@ def _render_tpcs_union_read(
     _append_read_tail(
         outer_parts, outer_scope, terms, tail_subject, limit, False, deferred=deferred
     )
-    statement_ctx = StatementBuilder(model, facet, storage, dialect)
+    statement_ctx = StatementBuilder(resolved, facet, storage, dialect)
     statement_ctx.append_fragment(capture_ctx.finish(""))
     for branch in branch_statements:
         statement_ctx.append_fragment(branch)

@@ -616,7 +616,7 @@ def _plan_uncached(
     result_form = "row" if purpose == "write_support" else "instance"
     if templated:
         compiled_root = compile_template(
-            planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
+            planned.root, model.resolved, dialect, result_form=result_form, shared_lock=shared_lock
         )
         if isinstance(compiled_root, EmptyRead):
             root = compiled_root
@@ -625,7 +625,7 @@ def _plan_uncached(
             root = compiled_root.compiled
     else:
         root = compile_read(
-            planned.root, model.meta, dialect, result_form=result_form, shared_lock=shared_lock
+            planned.root, model.resolved, dialect, result_form=result_form, shared_lock=shared_lock
         )
     if reusable is None:
         fetches = _fetch_work(
@@ -755,7 +755,7 @@ def _fetch_work(
             work.append(
                 compile_template(
                     step.query,
-                    model.meta,
+                    model.resolved,
                     dialect,
                     result_form="instance",
                     shared_lock=_takes_shared_lock(versioning, step.query.target, preference),

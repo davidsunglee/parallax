@@ -25,6 +25,7 @@ from parallax.snapshot import (
     Snapshot,
     connect,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._statement_interleaving import AfterReadStatement
@@ -70,8 +71,8 @@ _CHILDREN_TWICE: Final = (
     .include(Root.parent.children, Root.hop.parent.children)
     .order_by(Root.id.asc())
 )
-_CHANGE_CHILD: Final = "update isolation_child set value = 'new' where id = 9"
-_ADD_CHILD: Final = "insert into isolation_child (id, parent_id, value) values (10, 7, 'new')"
+_CHANGE_CHILD: Final = "update px.isolation_child set value = 'new' where id = 9"
+_ADD_CHILD: Final = "insert into px.isolation_child (id, parent_id, value) values (10, 7, 'new')"
 
 
 def _root(
@@ -103,6 +104,7 @@ def _interleaved_database(
             "Hop": [{"id": 5, "childId": 9, "parentId": 7}],
             "Root": list(roots),
         },
+        TEST_BINDING,
     )
 
     def commit() -> None:
@@ -114,7 +116,7 @@ def _interleaved_database(
 
     interleaving = AfterReadStatement(lambda sql: after_table in sql, commit)
     db = own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=interleaving)
+        connect(profile_run.port, _MODEL, lifecycle_provider=interleaving, binding=TEST_BINDING)
     ).using_database_login()
     return db, interleaving
 

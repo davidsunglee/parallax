@@ -26,16 +26,16 @@ when:
 then:
   statements:
     - sql:
-        postgres: update tag_ledger set tags = ?, version = ? where id = ? and version = ?
-        mariadb: update tag_ledger set tags = ?, version = ? where id = ? and version = ?
+        postgres: update px.tag_ledger set tags = ?, version = ? where id = ? and version = ?
+        mariadb: update px.tag_ledger set tags = ?, version = ? where id = ? and version = ?
       binds:
         - [c, c]
         - 2
         - 1
         - 1
     - sql:
-        postgres: update tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
-        mariadb: update tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
+        postgres: update px.tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
+        mariadb: update px.tag_ledger set label = ?, tags = ?, route = ?, version = ? where id = ? and version = ?
       binds:
         - whole
         - []
@@ -44,7 +44,8 @@ then:
         - 2
         - 4
   tableState:
-    tag_ledger:
-      - { id: 1, version: 2, label: open, tags: [c, c], route: { stops: [x, y] } }
-      - { id: 2, version: 5, label: whole, tags: [], route: null }
+    px:
+      tag_ledger:
+        - { id: 1, version: 2, label: open, tags: [c, c], route: { stops: [x, y] } }
+        - { id: 2, version: 5, label: whole, tags: [], route: null }
   databaseCalls: 3

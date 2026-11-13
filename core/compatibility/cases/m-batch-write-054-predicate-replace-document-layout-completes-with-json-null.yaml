@@ -13,7 +13,7 @@ compileEligibility:
   note: "given.apply stores a document key no member of the model declares"
 given:
   apply:
-    - sql: insert into traveler(id, payload) values (?, ?)
+    - sql: insert into px.traveler(id, payload) values (?, ?)
       binds:
         - 4
         - displayName: Dee
@@ -41,52 +41,53 @@ when:
       expectAffectedRows: 1
       statements:
         - sql:
-            postgres: update traveler set payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
-            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+            postgres: update px.traveler set payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            mariadb: update px.traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
           binds:
             postgres: ['{displayName}', Dee, '{score}', 13, '{joinedOn}', null, '{note}', null, '{address}', null, '{tags}', [], 4]
             mariadb: ['$.displayName', Dee, '$.score', 13, '$.joinedOn', null, '$.note', null, '$.address', null, '$.tags', [], 4]
 then:
   databaseCalls: 1
   tableState:
-    traveler:
-      - id: 1
-        payload:
-          displayName: Ada
-          score: 7
-          joinedOn: "2026-01-15"
-          note: north wing
-          address:
-            city: Oslo
-            geo:
-              country: "NO"
-          tags:
-            - { label: founder }
-            - { label: staff }
-      - id: 2
-        payload:
-          displayName: Bo
-          score: 30
-          joinedOn: "2025-12-31"
-          address:
-            city: Bergen
-            geo:
-              country: "NO"
-          tags: []
-      - id: 3
-        payload:
-          displayName: Cyd
-          score: null
-          joinedOn: null
-          note: null
-          address: null
-          tags: []
-      - id: 4
-        payload:
-          displayName: Dee
-          score: 13
-          joinedOn: null
-          note: null
-          address: null
-          tags: []
-          badge: gold
+    px:
+      traveler:
+        - id: 1
+          payload:
+            displayName: Ada
+            score: 7
+            joinedOn: "2026-01-15"
+            note: north wing
+            address:
+              city: Oslo
+              geo:
+                country: "NO"
+            tags:
+              - { label: founder }
+              - { label: staff }
+        - id: 2
+          payload:
+            displayName: Bo
+            score: 30
+            joinedOn: "2025-12-31"
+            address:
+              city: Bergen
+              geo:
+                country: "NO"
+            tags: []
+        - id: 3
+          payload:
+            displayName: Cyd
+            score: null
+            joinedOn: null
+            note: null
+            address: null
+            tags: []
+        - id: 4
+          payload:
+            displayName: Dee
+            score: 13
+            joinedOn: null
+            note: null
+            address: null
+            tags: []
+            badge: gold

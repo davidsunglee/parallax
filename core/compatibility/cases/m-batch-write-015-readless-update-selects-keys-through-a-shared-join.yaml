@@ -22,15 +22,16 @@ when:
       expectAffectedRows: 3
       statements:
         - sql:
-            postgres: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
-            mariadb: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
+            postgres: update px.order_item set sku = ? where id in (select t0.id from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
+            mariadb: update px.order_item set sku = ? where id in (select t0.id from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))
           binds: [Z, Ada]
 then:
   databaseCalls: 1
   tableState:
-    order_item:
-      - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
-      - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-      - { id: 21, order_id: 2, sku: Z, quantity: 4, shipped_on: 2024-02-20 }
-      - { id: 421, order_id: 42, sku: Z, quantity: 3, shipped_on: 2024-03-10 }
-      - { id: 422, order_id: 42, sku: Z, quantity: 5, shipped_on: 2024-02-05 }
+    px:
+      order_item:
+        - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+        - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+        - { id: 21, order_id: 2, sku: Z, quantity: 4, shipped_on: 2024-02-20 }
+        - { id: 421, order_id: 42, sku: Z, quantity: 3, shipped_on: 2024-03-10 }
+        - { id: 422, order_id: 42, sku: Z, quantity: 5, shipped_on: 2024-02-05 }

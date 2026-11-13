@@ -102,6 +102,7 @@ from parallax.core.internal.write_plan.plan import (
 )
 from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.internal.write_plan.steps import Finite, PlannedStep
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -156,14 +157,17 @@ def _uow(
         execute_write_steps=steps,
         execute_counted_step=counted,
         acquire_rows=rows,
-        planner=build_write_planner(meta),
+        planner=build_write_planner(bound_model(meta)),
         actor_identity=TEST_ACTOR_IDENTITY,
     )
 
 
 def _simulated(meta: Metamodel, *allocated: tuple[object, ...]) -> SimulatedWriteSteps:
     return SimulatedWriteSteps(
-        build_write_planner(meta).payloads, meta, POSTGRES, allocated_results=allocated
+        build_write_planner(bound_model(meta)).payloads,
+        bound_model(meta),
+        POSTGRES,
+        allocated_results=allocated,
     )
 
 
@@ -350,7 +354,7 @@ def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answe
 def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing(
     answered: tuple[object, ...],
 ) -> None:
-    plan = build_write_planner(_SPANS).finalize(
+    plan = build_write_planner(bound_model(_SPANS)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),

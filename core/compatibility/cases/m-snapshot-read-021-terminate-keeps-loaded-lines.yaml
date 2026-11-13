@@ -25,10 +25,10 @@ when:
       note: materialize a snapshot of invoice 100 at Transaction Time LATEST WITH its lines (1 + L levels, the root pin propagating per hop)
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.out_z = ?
+            postgres: select t0.id, t0.name, t0.in_z, t0.out_z from px.invoice t0 where t0.id = ? and t0.out_z = ?
           binds: [100, infinity]
         - sql:
-            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = any(cast(? as bigint[])) and t0.out_z = ?
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from px.invoice_line t0 where t0.invoice_id = any(cast(? as bigint[])) and t0.out_z = ?
           binds: [[100], infinity]
       expectRows:
         - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
@@ -42,7 +42,7 @@ when:
       note: close the current milestone of the very line the loaded `lines` view holds - one close statement plus the resolving read the keyed terminate owes
       statements:
         - sql:
-            postgres: update invoice_line set out_z = ? where id = ? and out_z = ? and in_z = ?
+            postgres: update px.invoice_line set out_z = ? where id = ? and out_z = ? and in_z = ?
           binds: ["2024-08-01T00:00:00.000000Z", 1001, infinity, "2024-01-01T00:00:00.000000Z"]
     - action: access
       "on": 0
@@ -67,7 +67,7 @@ when:
       note: observing the write means issuing another read - the same relationship's rows at Latest hold line 1000 alone
       statements:
         - sql:
-            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.out_z = ?
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from px.invoice_line t0 where t0.invoice_id = ? and t0.out_z = ?
           binds: [100, infinity]
       expectRows:
         - { id: 1000, invoice_id: 100, amount: "75.00", in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }

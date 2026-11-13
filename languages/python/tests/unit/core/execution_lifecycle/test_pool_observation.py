@@ -35,6 +35,7 @@ from parallax.core.execution_lifecycle._pool_observation import (
 )
 from parallax.core.internal.db_port import RESOURCE_LOGGER_NAME, RouteCapabilities
 from parallax.snapshot import Database, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._contention_support import observing
 from tests.unit._pool_source_support import DetachableSource
@@ -118,7 +119,10 @@ def _connected(
     provider: Any, *, metrics: Sequence[DetachableSource] = (), script: Any = ()
 ) -> Database[Any]:
     return connect(
-        _adapter(metrics=metrics, script=script), ACCOUNT_MODEL, lifecycle_provider=provider
+        _adapter(metrics=metrics, script=script),
+        ACCOUNT_MODEL,
+        lifecycle_provider=provider,
+        binding=TEST_BINDING,
     )
 
 
@@ -170,7 +174,7 @@ def test_a_registration_raising_partway_closes_every_one_already_taken() -> None
     adapter = _adapter(metrics=(DetachableSource(), DetachableSource(route="reader")))
 
     with pytest.raises(RuntimeError) as raised:
-        connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider)
+        connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
 
     assert raised.value is refusal
     assert provider.registration.closes == 1
@@ -254,7 +258,7 @@ def test_a_registration_that_raises_publishes_no_handle_and_closes_the_runtime()
     adapter = _adapter(metrics=(DetachableSource(),))
 
     with pytest.raises(RuntimeError) as raised:
-        connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider)
+        connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
 
     assert raised.value is refusal
     assert adapter.closes == 1
@@ -321,7 +325,7 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
             raise RuntimeError("this runtime would not close")
 
     provider = _Observes()
-    db = connect(_Refusing(), ACCOUNT_MODEL, lifecycle_provider=provider)
+    db = connect(_Refusing(), ACCOUNT_MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
 
     with pytest.raises(RuntimeError):
         db.close()
@@ -403,7 +407,7 @@ def test_two_callers_closing_at_once_give_the_registration_up_once_and_last() ->
     runtime = _ParkedRuntime(log)
     registration = _ClosesAfterTheRuntime(runtime)
     provider = _Observes(registration=registration)
-    db = connect(runtime, ACCOUNT_MODEL, lifecycle_provider=provider)
+    db = connect(runtime, ACCOUNT_MODEL, lifecycle_provider=provider, binding=TEST_BINDING)
 
     def close_and_record() -> None:
         db.close()

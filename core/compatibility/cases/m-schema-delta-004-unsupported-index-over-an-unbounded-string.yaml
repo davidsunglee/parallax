@@ -18,10 +18,10 @@ then:
     postgres:
       delta:
         statements:
-          - create index pxi_evolution_transcript_paral_36be0cd7240a86e5f5612e9151d54d2b on evolution_transcript (body)
+          - create index pxi_evolution_transcript_paral_36be0cd7240a86e5f5612e9151d54d2b on px.evolution_transcript (body)
         createdIndices:
           - physicalIndexName: pxi_evolution_transcript_paral_36be0cd7240a86e5f5612e9151d54d2b
-            physicalTable: evolution_transcript
+            physicalTable: { qualifier: [px], name: evolution_transcript }
             logicalIndexIdentity: parallax.compatibility.Transcript.transcript_body
             unique: false
     mariadb:
@@ -29,7 +29,7 @@ then:
         operations:
           - kind: CreateIndex
             physicalLocation:
-              table: evolution_transcript
+              table: { qualifier: [px], name: evolution_transcript }
               index: pxi_evolution_transcript_parall_36be0cd7240a86e5f5612e9151d54d2b
             causedBy:
               - { kind: IndexAdded, index: parallax.compatibility.Transcript.transcript_body }

@@ -6,9 +6,10 @@ from typing import Any, cast
 
 from parallax.conformance import case_format
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError, driver_binds
-from parallax.conformance._mechanism.model_facts import case_entity
+from parallax.conformance._mechanism.model_facts import case_binding, case_entity
 from parallax.core.internal import inheritance, storage_layout
 from parallax.core.internal.base import DocumentValue
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.db_port import DatabaseConnection, StructuredDocument
 from parallax.core.internal.metamodel import CompiledEntity, PrimaryKey
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
@@ -25,7 +26,8 @@ def apply_given_corrupt(
 
     Applied where every read lane already stands — after provisioning, before the
     action — so a case states the stored value once and every read form observes
-    the same storage. ``model`` is the one that provisioned the rows
+    the same storage, in the table the case binding places its rows in.
+    ``model`` is the one that provisioned the rows
     (:func:`~parallax.conformance._mechanism.model_facts.load_case_setup_metamodel`),
     which is what every address resolves through. Each entry addresses a
     Structured Column and a path inside it, and the value is stored exactly as
@@ -47,8 +49,9 @@ def apply_given_corrupt(
         return
     corruptions = cast("list[Mapping[str, object]]", entries)
     _refuse_temporal_corruptions(case, model, corruptions)
+    resolved = ResolvedBinding(model, case_binding(case))
     for entry in corruptions:
-        _corrupt_stored_state(case, model, port, entry)
+        _corrupt_stored_state(case, resolved, port, entry)
 
 
 def _refuse_temporal_corruptions(
@@ -70,7 +73,7 @@ def _refuse_temporal_corruptions(
 
 def _corrupt_stored_state(
     case: case_format.Case,
-    model: AcceptedMetamodel,
+    resolved: ResolvedBinding,
     port: DatabaseConnection,
     entry: Mapping[str, object],
 ) -> None:
@@ -81,6 +84,7 @@ def _corrupt_stored_state(
     mutation expression — the corrupt value is the subject of the case's own
     assertion, so it must mean the same thing on every provider.
     """
+    model = resolved.meta
     entity = case_entity(model, cast("str", entry["entity"]))
     view = storage_layout.storage_layout_facet_of(model).entity(entity.identity)
     if view is None:  # pragma: no cover - a corrupted Entity owns rows
@@ -91,7 +95,7 @@ def _corrupt_stored_state(
     column, path = _corruption_target(case, model, entity, member)
     key_column, key = _corruption_key(case, model, entity, entry["key"])
     dialect = port.dialect
-    table = dialect.quote(view.layout.table.name)
+    table = resolved.table(view.layout.mapping_owner).sql
     where = f"where {dialect.quote(key_column)} = ?"
     rows = port.execute(f"select {dialect.quote(column)} from {table} {where}", [key])
     if len(rows) != 1:

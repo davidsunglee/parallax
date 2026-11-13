@@ -24,14 +24,15 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        postgres: insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
       binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
-        mariadb: update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
+        postgres: update px.balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
+        mariadb: update px.balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
       binds: [1, infinity, "2024-01-01T00:00:00.000000Z"]
   tableState:
-    balance:
-      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    px:
+      balance:
+        - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
   databaseCalls: 3

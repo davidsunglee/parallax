@@ -26,7 +26,7 @@ import pytest
 
 from parallax.conformance import adapter, case_format, concurrency_runner, engine, models
 from parallax.conformance.profile import Profile
-from parallax.core.internal import storage_layout
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.db_error import Category, DatabaseError
 from parallax.core.internal.metamodel import Metamodel
 from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
@@ -265,6 +265,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        engine.case_binding(case),
     )
 
     envelope = adapter.run_case(case.path, profile_run)
@@ -333,6 +334,7 @@ def test_a_graph_read_states_the_same_at_page_scope(
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        engine.case_binding(case),
     )
 
     run_case = (
@@ -356,6 +358,7 @@ def _orders_rendered(profile_run: Any, run_case: Any, case_id: str) -> int:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        engine.case_binding(case),
     )
     _, graph, _, _ = run_case(case, profile_run.port)
     return len({id(cast("dict[str, Any]", root)["order"]) for root in graph["OrderItem"]})
@@ -565,7 +568,9 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     (:func:`_grade_write_run`).
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
@@ -630,14 +635,20 @@ def _grade_table_state(
 ) -> None:
     """The tables the run read back hold exactly the rows `then.tableState`
     states, table for table."""
-    expected_state = cast(
-        "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
-    )
     observed_state = observations["tableState"]
     _assert_layout_shaped_table_state(case, model, observed_state)
+    _compare_table_state(case, observed_state, case_document(case)["then"]["tableState"])
+
+
+def _compare_table_state(case: case_format.Case, observed: Any, expected: Any) -> None:
+    """Every table the case states, under its qualifier, holds exactly its rows."""
+    expected_state = cast("dict[str, dict[str, list[dict[str, Any]]]]", expected)
+    observed_state = cast("dict[str, dict[str, list[dict[str, Any]]]]", observed)
     assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
-    for table, expected_rows in expected_state.items():
-        compare_rows(observed_state[table], expected_rows)
+    for qualifier, tables in expected_state.items():
+        assert set(observed_state[qualifier]) >= set(tables), (case.case_id, qualifier)
+        for table, expected_rows in tables.items():
+            compare_rows(observed_state[qualifier][table], expected_rows)
 
 
 def _expected_units(case: case_format.Case) -> dict[str, Any]:
@@ -742,14 +753,18 @@ def test_write_run_grading_rejects_a_float_zero_turned_negative(
     """
     case = _write_case(case_id)
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
     fault(monkeypatch)
     envelope, port = _run_recording_writes(case, profile, profile_run)
     monkeypatch.undo()
     with pytest.raises(AssertionError, match=refusal):
         _grade_write_run(case, model, envelope, port)
 
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
     _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
@@ -974,21 +989,29 @@ def _grade_step_graphs(
 
 
 def _assert_layout_shaped_table_state(
-    case: case_format.Case, model: Metamodel, observed_state: dict[str, list[dict[str, Any]]]
+    case: case_format.Case, model: Metamodel, observed_state: dict[str, Any]
 ) -> None:
-    """Every compiled Table Layout is observed once, whole, and in canonical order.
+    """Every compiled Table Layout is observed once, whole, in canonical order,
+    under the qualifier and name the case binding resolves for it.
 
     A shared table-per-hierarchy table therefore reports a sibling-only column as
     ``null`` instead of omitting it, and no observation carries a column the layout
     does not place or an order the layout does not fix.
     """
     layouts = {
-        layout.table.name: [slot.column.name for slot in layout.columns]
-        for layout in storage_layout.storage_layout_facet_of(model).tables
+        (*table.physical.qualifier, table.physical.name): [
+            slot.column.name for slot in table.layout.columns
+        ]
+        for table in ResolvedBinding(model, engine.case_binding(case)).tables
     }
-    assert set(observed_state) == set(layouts), (case.case_id, sorted(observed_state))
-    for table, rows in observed_state.items():
-        for row in rows:
+    observed = {
+        (qualifier, name): rows
+        for qualifier, tables in cast("dict[str, dict[str, Any]]", observed_state).items()
+        for name, rows in tables.items()
+    }
+    assert set(observed) == set(layouts), (case.case_id, sorted(observed))
+    for table, rows in observed.items():
+        for row in cast("list[dict[str, Any]]", rows):
             assert list(row) == layouts[table], (case.case_id, table, list(row))
 
 
@@ -1035,7 +1058,9 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     can hold the roots fixed.
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
 
     run = engine.run_interleaved_scenario_case(
         case, profile_run.port, profile_run.interleaved_execution
@@ -1077,7 +1102,9 @@ def test_edit_occurrence_run_grades_each_derived_copy(
 
     (case,) = [c for c in reachable_cases() if c.case_id == case_id]
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
 
     envelope = adapter.run_case(case.path, profile_run)
 
@@ -1118,7 +1145,7 @@ def test_error_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     fixtures = (
         provision.load_fixtures(engine.case_setup_model_ref(case)) if given.get("fixtures") else {}
     )
-    profile_run.reset(engine.load_case_setup_metamodel(case), fixtures)
+    profile_run.reset(engine.load_case_setup_metamodel(case), fixtures, engine.case_binding(case))
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1210,7 +1237,9 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     whose write is refused authors none, since the unit of work rolls back.
     """
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1254,12 +1283,9 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
     _grade_execution_lifecycle(then, observations)
 
     if "tableState" in then:
-        expected_state = cast("dict[str, list[dict[str, Any]]]", then["tableState"])
         observed_state = observations.get("tableState")
         assert observed_state is not None, case.case_id
-        assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
-        for table, expected_rows in expected_state.items():
-            compare_rows(observed_state[table], expected_rows)
+        _compare_table_state(case, observed_state, then["tableState"])
 
 
 # --------------------------------------------------------------------------- #
@@ -1304,7 +1330,9 @@ def test_run_only_write_sequence_run_sweep(
     (`test_write_run_sweep`'s `WRITE_EXERCISED` set couples compile-time grading in
     too, which a run-only member would fail)."""
     model = engine.load_case_metamodel(case)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(
+        engine.load_case_setup_metamodel(case), case_fixtures(case), engine.case_binding(case)
+    )
 
     envelope = adapter.run_case(case.path, profile_run)
     validate_adapter_envelope(envelope)
@@ -1315,13 +1343,9 @@ def test_run_only_write_sequence_run_sweep(
     )
     assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
 
-    expected_state = cast(
-        "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
+    _compare_table_state(
+        case, envelope["observations"]["tableState"], case_document(case)["then"]["tableState"]
     )
-    observed_state = envelope["observations"]["tableState"]
-    assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
-    for table, expected_rows in expected_state.items():
-        compare_rows(observed_state[table], expected_rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -1368,6 +1392,7 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        engine.case_binding(case),
     )
 
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
@@ -1393,13 +1418,13 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
         assert case.shape == "concurrencySuccess"
         _grade_success_rounds(case, rounds, run)
     then = cast("dict[str, Any]", case_document(case).get("then") or {})
-    expected_state = cast("dict[str, list[dict[str, Any]]] | None", then.get("tableState"))
+    expected_state = cast("dict[str, object] | None", then.get("tableState"))
     if expected_state is not None:
         observed_state = engine.read_table_state(
-            profile_run.port, models.load_models()[Path(case.model).stem]
+            profile_run.port,
+            ResolvedBinding(models.load_models()[Path(case.model).stem], engine.case_binding(case)),
         )
-        for table, expected_rows in expected_state.items():
-            compare_rows(cast("list[dict[str, Any]]", observed_state[table]), expected_rows)
+        _compare_table_state(case, observed_state, expected_state)
 
 
 def _grade_error_rounds(
@@ -1546,7 +1571,7 @@ def _stated_balance_table() -> tuple[case_format.Case, Metamodel, dict[str, Any]
 
 
 def _reorder_a_row(state: dict[str, Any]) -> None:
-    rows = state["balance"]
+    rows = state["px"]["balance"]
     rows[0] = dict(reversed(rows[0].items()))
 
 
@@ -1556,9 +1581,9 @@ def test_grade_table_state_accepts_the_tables_the_case_states() -> None:
 
 
 _TABLE_DAMAGE: Final[dict[str, _Damage]] = {
-    "a-lost-row": lambda state: state["balance"].pop(),
-    "a-changed-value": lambda state: state["balance"][0].update(val="1.00"),
-    "an-invented-row": lambda state: state["balance"].append(dict(state["balance"][0])),
+    "a-lost-row": lambda state: state["px"]["balance"].pop(),
+    "a-changed-value": lambda state: state["px"]["balance"][0].update(val="1.00"),
+    "an-invented-row": lambda state: state["px"]["balance"].append(dict(state["px"]["balance"][0])),
     "a-row-off-the-layout-order": _reorder_a_row,
 }
 
@@ -1572,10 +1597,11 @@ def test_grade_table_state_refuses_any_other_table(damage: _Damage) -> None:
 
 
 _LAYOUT_DAMAGE: Final[dict[str, _Damage]] = {
-    "a-lost-table": lambda state: state.pop("balance"),
-    "an-invented-table": lambda state: state.update(invented=[]),
-    "a-lost-column": lambda state: state["balance"][0].pop("val"),
-    "an-invented-column": lambda state: state["balance"][0].update(invented=None),
+    "a-lost-table": lambda state: state["px"].pop("balance"),
+    "an-invented-table": lambda state: state["px"].update(invented=[]),
+    "a-table-under-another-qualifier": lambda state: state.update(px_other=state.pop("px")),
+    "a-lost-column": lambda state: state["px"]["balance"][0].pop("val"),
+    "an-invented-column": lambda state: state["px"]["balance"][0].update(invented=None),
     "columns-reordered": _reorder_a_row,
 }
 
@@ -1650,7 +1676,16 @@ def _state_run_envelope(
     case: case_format.Case, model: Metamodel, steps: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """A conforming run of the state-graded case: every table in layout order."""
-    stated = cast("dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"])
+    stated = cast(
+        "dict[str, dict[str, list[dict[str, Any]]]]", case_document(case)["then"]["tableState"]
+    )
+    table_state: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for table in ResolvedBinding(model, engine.case_binding(case)).tables:
+        (qualifier,) = table.physical.qualifier
+        table_state.setdefault(qualifier, {})[table.physical.name] = [
+            {slot.column.name: row[slot.column.name] for slot in table.layout.columns}
+            for row in stated.get(qualifier, {}).get(table.physical.name, [])
+        ]
     return {
         "emissions": [],
         "observations": {
@@ -1659,13 +1694,7 @@ def _state_run_envelope(
                 {"at": "/scenario/2/write/1", "errorClass": "write-evidence-already-claimed"}
             ],
             "units": _stated_units(case),
-            "tableState": {
-                layout.table.name: [
-                    {slot.column.name: row[slot.column.name] for slot in layout.columns}
-                    for row in stated.get(layout.table.name, [])
-                ]
-                for layout in storage_layout.storage_layout_facet_of(model).tables
-            },
+            "tableState": table_state,
         },
     }
 
@@ -1685,7 +1714,7 @@ _STATE_RUN_DAMAGE: Final[dict[str, _Damage]] = {
     "a-changed-fate": lambda run: run["observations"]["units"]["control"].update(
         outcome="rolledBack"
     ),
-    "a-lost-table-row": lambda run: run["observations"]["tableState"]["sequence_span"].pop(),
+    "a-lost-table-row": lambda run: run["observations"]["tableState"]["px"]["sequence_span"].pop(),
 }
 
 

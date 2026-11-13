@@ -31,6 +31,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedInsert,
     TemporalUpperBound,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, settled_writes
@@ -72,7 +73,7 @@ def _plan(
         write_preparation_of(_META),
     )
     assert not isinstance(prepared, PreparedTargetInstruction)
-    return build_write_planner(_META).finalize(
+    return build_write_planner(bound_model(_META)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
@@ -99,7 +100,7 @@ def test_a_temporal_insert_answers_the_key_the_database_allocates(
     assert write.opened.allocated == (AllocatedOpening(entity.identity, ends),)
     assert tuple(write.opened.continued) == ()
     ((step, statement),) = lowered_steps(
-        plan_steps(plan), LayoutPayloadPreparer(_META), _META, POSTGRES
+        plan_steps(plan), LayoutPayloadPreparer(bound_model(_META)), _META, POSTGRES
     )
     assert isinstance(step, PlannedInsert)
     assert RETURNED_MAX_PLUS_ONE in step.entries[0].row.attributes.values()
@@ -111,6 +112,6 @@ def test_a_non_temporal_insert_records_no_allocated_row_and_answers_nothing() ->
     (write,) = settled_writes(plan)
     assert write.opened.allocated == ()
     ((_step, statement),) = lowered_steps(
-        plan_steps(plan), LayoutPayloadPreparer(_META), _META, POSTGRES
+        plan_steps(plan), LayoutPayloadPreparer(bound_model(_META)), _META, POSTGRES
     )
     assert "returning" not in statement.sql

@@ -220,18 +220,12 @@ def _document_layout(index: _CompilationIndex, root: EntityIdentity) -> Document
 
 def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
     owned = (_owned_group(index, entity) for entity in index.entities)
-    groups = sorted(
-        (group for group in owned if group is not None),
-        key=lambda group: group.mapping_owner.sort_key,
+    return tuple(
+        sorted(
+            (group for group in owned if group is not None),
+            key=lambda group: group.mapping_owner.sort_key,
+        )
     )
-    seen: set[Table] = set()
-    for group in groups:
-        if group.table in seen:
-            raise RuntimeError(
-                f"Table {group.table.name!r} has multiple mapping owners after validation"
-            )
-        seen.add(group.table)
-    return tuple(groups)
 
 
 def _owned_group(index: _CompilationIndex, entity: CompiledEntity) -> _LayoutGroup | None:

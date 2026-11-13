@@ -5,7 +5,7 @@ Each is a ``ConnectsAsItself`` over the shared ``m-db-port`` doubles. None
 scripts a boundary: every transaction they run ends exactly as its body did,
 through :func:`body_outcome`. What one of them varies is stated on its
 constructor rather than by subclassing it, so a port that reports a zero-row
-shortfall, or fails its parameterized write, or answers successive reads from a
+shortfall, or fails its parameterized write, or answers successive reads from px.a
 script, is still the one recording fake.
 
 Exported names carry no leading underscore: importing an underscored name across

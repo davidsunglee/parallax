@@ -42,6 +42,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedAssignments,
     PlannedTemporalRevision,
 )
+from tests._support.bindings import TEST_BINDING, bound_model
 
 _NAMESPACE = "provider.document_patch"
 _TABLE = "patch_voyage"
@@ -149,7 +150,7 @@ def _assignments(patch: _Patch) -> PlannedAssignments:
 
 
 def _prepared(assignments: PlannedAssignments) -> tuple[AssignmentPayload, PatchedDocument]:
-    payload = build_write_planner(_META).payloads.assignments(_ENTITY, assignments)
+    payload = build_write_planner(bound_model(_META)).payloads.assignments(_ENTITY, assignments)
     (patched,) = (value for value in payload.values if isinstance(value, PatchedDocument))
     return payload, patched
 
@@ -157,12 +158,12 @@ def _prepared(assignments: PlannedAssignments) -> tuple[AssignmentPayload, Patch
 def _seed(profile_run: Any, document: str | None) -> None:
     """One current row of the entity holding ``document``'s JSON text, or SQL
     NULL where ``document`` is ``None``."""
-    profile_run.reset(_META, {})
+    profile_run.reset(_META, {}, TEST_BINDING)
     port = profile_run.port
     if document is None:
-        port.execute_write(f"alter table {_TABLE} alter column payload drop not null", [])
+        port.execute_write(f"alter table px.{_TABLE} alter column payload drop not null", [])
     port.execute_write(
-        f"insert into {_TABLE}(id, in_z, out_z, payload) values (?, ?, 'infinity', ?::jsonb)",
+        f"insert into px.{_TABLE}(id, in_z, out_z, payload) values (?, ?, 'infinity', ?::jsonb)",
         [1, _STORED_AT, document],
     )
 
@@ -170,7 +171,7 @@ def _seed(profile_run: Any, document: str | None) -> None:
 def _execute(profile_run: Any, step: PlannedTemporalRevision, payload: AssignmentPayload) -> int:
     port = profile_run.port
     dialect = port.dialect
-    statement = compile_write_step(step, payload, _META, dialect)
+    statement = compile_write_step(step, payload, bound_model(_META), dialect)
     return port.execute_write(statement.sql, list(statement.binds))
 
 
@@ -181,7 +182,7 @@ def _persisted(profile_run: Any) -> object:
     dialect = port.dialect
     presence, document = dialect.render_document_pair("t0.payload")
     ((present, raw),) = port.execute(
-        f"select {presence}, {document} from {_TABLE} t0 where t0.id = ?", [1]
+        f"select {presence}, {document} from px.{_TABLE} t0 where t0.id = ?", [1]
     )
     return dialect.parse_owned_document_read(present, raw)
 

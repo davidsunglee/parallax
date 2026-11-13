@@ -4,6 +4,7 @@ import hashlib
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
@@ -82,7 +83,7 @@ def _fingerprint(definition: IndexDefinition) -> str:
     entity = definition.index.entity
     fields = (
         _FINGERPRINT_VERSION,
-        definition.table.name,
+        definition.table.physical.name,
         entity.namespace or "",
         entity.name,
         definition.index.name,
@@ -104,6 +105,8 @@ def _fingerprint(definition: IndexDefinition) -> str:
 def physical_index_name(definition: IndexDefinition, dialect: Dialect) -> PhysicalIndexName:
     """``definition``'s name, shortened to fit ``dialect``'s identifier limit.
 
+    The table input is the raw resolved local table name, never its qualifier.
+
     Only the readable prefix is truncated; the fingerprint is never. The
     transliterated prefix is ASCII, so a character budget and a byte budget are
     the same budget, and the trim-and-fallback rules are re-applied afterwards so
@@ -113,7 +116,7 @@ def physical_index_name(definition: IndexDefinition, dialect: Dialect) -> Physic
     entity = definition.index.entity
     prefix = readable_prefix(
         (
-            definition.table.name,
+            definition.table.physical.name,
             entity.canonical,
             definition.index.name,
             _UNIQUE_MARKER[definition.unique],
@@ -125,13 +128,23 @@ def physical_index_name(definition: IndexDefinition, dialect: Dialect) -> Physic
     return PhysicalIndexName(f"{_NAMESPACE}_{kept}_{fingerprint}")
 
 
+type NameScope = tuple[str, ...] | PhysicalTable
+"""Where an index name must be unique: one qualifier's relations, or one table."""
+
+
 @dataclass(frozen=True, slots=True)
 class NamedIndex:
-    """One physical Index definition, its derived name, and where it occurs."""
+    """One physical Index definition, its derived name, the scope that name is
+    unique within, and where it occurs."""
 
     name: PhysicalIndexName
+    scope: NameScope
     definition: IndexDefinition | TemporalBackingIndex
     presence: IndexPresence
+
+
+def _scope(table: PhysicalTable, dialect: Dialect) -> NameScope:
+    return table.qualifier if dialect.index_name_scope == "qualifier" else table
 
 
 def census(
@@ -157,8 +170,8 @@ def census(
     object the database holds throughout.
 
     The Indices backing temporal primary keys and exclusions share the same
-    namespace and enter under the names their Table Layouts compiled, never a
-    name derived here.
+    namespace and enter under the names their resolved tables derived, never a
+    name derived here. Each name is scoped as ``dialect`` scopes index names.
     """
     entries: dict[tuple[PhysicalIndexName, _Identity], NamedIndex] = {}
 
@@ -171,6 +184,7 @@ def census(
         held = entries.get(key)
         entries[key] = NamedIndex(
             name=name,
+            scope=_scope(definition.table.physical, dialect),
             definition=definition,
             presence=IndexPresence.BOTH if held is not None else presence,
         )
@@ -187,20 +201,28 @@ def census(
 
 
 type _Identity = (
-    tuple[EntityIdentity, IndexIdentity, tuple[AttributeIdentity, ...], bool]
-    | tuple[EntityIdentity, str, tuple[Column, ...]]
+    tuple[PhysicalTable, EntityIdentity, IndexIdentity, tuple[AttributeIdentity, ...], bool]
+    | tuple[PhysicalTable, EntityIdentity, str, tuple[Column, ...]]
 )
 
 
 def _identity(definition: IndexDefinition | TemporalBackingIndex) -> _Identity:
-    """The holding Table's mapping owner and the definition's own named facts.
+    """The holding physical table, its mapping owner, and the definition's own
+    named facts.
 
-    The owner, never the declared Table name, tells holding Tables apart, so
-    independent mappings stay distinct physical objects.
+    The physical table and its owner, never a declared Table name, tell holding
+    Tables apart, so independent mappings stay distinct physical objects and a
+    table the two endpoints place differently is two objects.
     """
     if isinstance(definition, TemporalBackingIndex):
-        return (definition.mapping_owner, definition.kind, definition.columns)
+        return (
+            definition.table.physical,
+            definition.mapping_owner,
+            definition.kind,
+            definition.columns,
+        )
     return (
+        definition.table.physical,
         definition.mapping_owner,
         definition.index,
         definition.column_attributes,
@@ -228,29 +250,38 @@ def collision_groups(
     each naming the endpoints it occurs in, so a report reads as a complete
     account of the clash rather than as the first pair found.
     """
-    grouped: dict[PhysicalIndexName, list[NamedIndex]] = {}
+    grouped: dict[tuple[PhysicalIndexName, NameScope], list[NamedIndex]] = {}
     for entry in census:
-        grouped.setdefault(entry.name, []).append(entry)
+        grouped.setdefault((entry.name, entry.scope), []).append(entry)
     return tuple(
         CollisionGroup(name, *_reported(entries))
-        for name, entries in sorted(grouped.items(), key=lambda entry: entry[0].value)
+        for (name, _), entries in sorted(grouped.items(), key=lambda entry: _group_key(*entry[0]))
         if _coexist(entries, surviving)
     )
+
+
+def _group_key(name: PhysicalIndexName, scope: NameScope) -> tuple[str, tuple[str, ...]]:
+    spelled = scope if isinstance(scope, tuple) else (*scope.qualifier, scope.name)
+    return (name.value, spelled)
 
 
 def _reported(
     entries: Sequence[NamedIndex],
 ) -> tuple[tuple[CollidingIndex, ...], tuple[CollidingTemporalConstraint, ...]]:
-    authored: list[tuple[tuple[ModelLocationKey, str], CollidingIndex]] = []
-    temporal: list[tuple[tuple[str, str], CollidingTemporalConstraint]] = []
+    authored: list[tuple[tuple[ModelLocationKey, str, tuple[str, ...]], CollidingIndex]] = []
+    temporal: list[tuple[tuple[str, tuple[str, ...], str], CollidingTemporalConstraint]] = []
     for entry in entries:
         definition = entry.definition
         if isinstance(definition, TemporalBackingIndex):
             temporal.append(
                 (
-                    (definition.table.name, definition.kind),
+                    (
+                        definition.table.physical.name,
+                        definition.table.physical.qualifier,
+                        definition.kind,
+                    ),
                     CollidingTemporalConstraint(
-                        table=definition.table,
+                        table=definition.table.physical,
                         kind=definition.kind,
                         columns=definition.columns,
                         presence=entry.presence,
@@ -262,10 +293,11 @@ def _reported(
                 (
                     (
                         canonical_location_key(IndexLocation(definition.index)),
-                        definition.table.name,
+                        definition.table.physical.name,
+                        definition.table.physical.qualifier,
                     ),
                     CollidingIndex(
-                        table=definition.table,
+                        table=definition.table.physical,
                         index=definition.index,
                         components=definition.components,
                         unique=definition.unique,

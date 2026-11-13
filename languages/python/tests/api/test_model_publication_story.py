@@ -26,13 +26,16 @@ from parallax.core.internal.execution import (
 )
 from parallax.evolution import evolve, schema_delta
 from parallax.snapshot import connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _TARGET_ID = 2
 
 
 def _seeded(profile_run: Any) -> Any:
-    profile_run.reset(model_of(ACCOUNT_MODEL), provision.load_fixtures("models/account.yaml"))
+    profile_run.reset(
+        model_of(ACCOUNT_MODEL), provision.load_fixtures("models/account.yaml"), TEST_BINDING
+    )
     return profile_run.port
 
 
@@ -42,7 +45,7 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     # and the harness's own session standing in for the connection a deployment
     # runs its migrations on.
     update = stories.a_running_service_publishes_an_evolved_model_without_restarting(
-        seeded, seeded, NICKNAMED_ACCOUNT_MODEL
+        seeded, seeded, NICKNAMED_ACCOUNT_MODEL, TEST_BINDING
     )
     # The rollout ledger the host keeps, empty because this evolution adds a
     # Column and no Index; what a database accepted, and what it then answers
@@ -56,7 +59,9 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     assert update.after_edition == "2026-09-b"
     assert update.nickname == "rainy-day"
 
-    later = own_root(connect(profile_run.port, NICKNAMED_ACCOUNT_MODEL)).using_database_login()
+    later = own_root(
+        connect(profile_run.port, NICKNAMED_ACCOUNT_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     named = later.find(NicknamedAccount.where(NicknamedAccount.id == _TARGET_ID)).result()
     # The write committed into the column the delta added, which is what makes
     # the publication an update rather than a relabelling.
@@ -65,7 +70,9 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     # Edition Overlap: a connection still serving the earlier model reads the
     # same rows against the evolved schema, because an added Attribute is a
     # column that model never selects.
-    earlier = own_root(connect(profile_run.port, ACCOUNT_MODEL)).using_database_login()
+    earlier = own_root(
+        connect(profile_run.port, ACCOUNT_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     account = earlier.find(Account.where(Account.id == _TARGET_ID)).result()
     assert account.balance == Decimal("250.00")
     assert not hasattr(account, "nickname")
@@ -73,19 +80,21 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
 
 def test_a_stale_publisher_is_refused_and_rebases_onto_what_is_held(profile_run: Any) -> None:
     port = _seeded(profile_run)
-    a = prepare_model(ACCOUNT_MODEL, edition="2026-09-a")
+    a = prepare_model(ACCOUNT_MODEL, edition="2026-09-a", binding=TEST_BINDING)
     serving = ServingModel(a)
     db = own_root(connect(port, serving)).using_database_login()
 
-    first = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
-    evolution = stories.unilateral(evolve(a.model, first.model))
-    stories.apply_schema_delta(port, schema_delta(evolution, port.dialect))
+    first = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b", binding=TEST_BINDING)
+    evolution = stories.unilateral(
+        evolve(a.model, first.model, earlier_binding=TEST_BINDING, later_binding=TEST_BINDING)
+    )
+    stories.apply_schema_delta(port, schema_delta(evolution))
     serving.publish(first, expected=a)
 
     # A second rollout controller still believing the earlier selection is
     # serving is refused rather than overwriting the winner, and `held` is what
     # it rebases onto — a second `current()` could already name a third.
-    second = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-c")
+    second = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-c", binding=TEST_BINDING)
     with pytest.raises(PublicationConflictError) as refused:
         serving.publish(second, expected=a)
     assert refused.value.expected is a

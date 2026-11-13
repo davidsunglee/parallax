@@ -206,8 +206,8 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
         "/scenario/3/write",
         "/scenario/4/objectQuery",
     ]
-    assert emissions[3].sql.startswith("insert into account")
-    assert emissions[4].sql.startswith("update account set")
+    assert emissions[3].sql.startswith("insert into px.account")
+    assert emissions[4].sql.startswith("update px.account set")
     assert len(ours_port.writes) == 2  # the doomed group's insert + gated update
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
     # Every find step's own `stepRows`, in scenario step order (0, 1, then the
@@ -559,10 +559,10 @@ def test_a_race_stating_its_final_tables_reads_them_once_after_both_groups_joine
         _load_case("m-temporal-read-010"), caller, _ScriptedExecutions(ours_port, peer_port)
     )
 
-    assert [sql.split(" from ")[1] for sql, _binds in caller.reads] == ["balance"]
+    assert [sql.split(" from ")[1] for sql, _binds in caller.reads] == ["px.balance"]
     assert caller.delivered_at_read == [[1, 2]]
     assert run.table_state is not None
-    assert [row["val"] for row in run.table_state["balance"]] == ["999.00"]
+    assert [row["val"] for row in run.table_state["px"]["balance"]] == ["999.00"]
 
 
 def _race_case(

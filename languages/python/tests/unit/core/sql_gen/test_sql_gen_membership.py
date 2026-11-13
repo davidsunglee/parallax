@@ -33,6 +33,7 @@ from parallax.core.internal.sql_gen._context import (
     MembershipForm,
     _TypedBindSpan,
 )
+from tests._support.bindings import bound_model
 from tests._support.sql import compile_nonempty_read as compile_read
 from tests._support.sql import compile_nonempty_template as compile_template
 from tests.unit._corpus_model_support import model
@@ -65,7 +66,7 @@ def _template(
     cold: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, shared_lock: bool = False
 ) -> CompiledTemplate:
     planned = read_planning.plan(cold, meta, projection=_PROJECTION, defer_execution_values=True)
-    return compile_template(planned.root, meta, dialect, shared_lock=shared_lock)
+    return compile_template(planned.root, bound_model(meta), dialect, shared_lock=shared_lock)
 
 
 def _direct(
@@ -73,7 +74,7 @@ def _direct(
 ) -> CompiledRead:
     return compile_read(
         read_planning.plan(query, meta, projection=_PROJECTION).root,
-        meta,
+        bound_model(meta),
         dialect,
         shared_lock=shared_lock,
     )

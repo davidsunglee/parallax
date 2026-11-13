@@ -47,7 +47,6 @@ from parallax.core.internal.storage_layout._rules import (
     COLUMN_COLLISION,
     DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     INDEX_OVER_DOCUMENT_MEMBER,
-    TABLE_MAPPING_COLLISION,
 )
 from tests.unit._metamodel_support import (
     Declaration,
@@ -254,148 +253,9 @@ def test_distinct_tpcs_tables_may_reuse_a_column_spelling() -> None:
     )
 
 
-def test_later_independent_same_table_owners_relate_to_the_canonical_first_owner() -> None:
-    first = identity("First")
-    second = identity("Second")
-    third = identity("Third")
-    declarations = (
-        Declaration(
-            identity=third,
-            container=Table("shared"),
-            attributes=(key(third, "thirdId"),),
-        ),
-        Declaration(
-            identity=second,
-            container=Table("shared"),
-            attributes=(key(second, "secondId"),),
-        ),
-        Declaration(
-            identity=first,
-            container=Table("shared"),
-            attributes=(key(first, "firstId"),),
-        ),
-    )
-    issues = _rule_issues(*declarations)
-    assert [(issue.location, issue.related) for issue in issues] == [
-        (EntityLocation(second), (EntityLocation(first),)),
-        (EntityLocation(third), (EntityLocation(first),)),
-    ]
-    assert {issue.code for issue in issues} == {TABLE_MAPPING_COLLISION}
-
-
-def test_multiply_owned_table_skips_secondary_column_validation() -> None:
-    first = identity("First")
-    second = identity("Second")
-    duplicate = attribute(second, "otherId", column="second_id")
-    issues = _rule_issues(
-        Declaration(
-            identity=first,
-            container=Table("shared"),
-            attributes=(key(first, "firstId"),),
-        ),
-        Declaration(
-            identity=second,
-            container=Table("shared"),
-            attributes=(key(second, "secondId"), duplicate),
-        ),
-    )
-    assert [issue.code for issue in issues] == [TABLE_MAPPING_COLLISION]
-
-
-def test_mapping_collisions_precede_earlier_unique_table_column_collisions() -> None:
-    column_owner = identity("AColumnOwner")
-    first_table_owner = identity("BFirstTableOwner")
-    second_table_owner = identity("CSecondTableOwner")
-    third_table_owner = identity("DThirdTableOwner")
-    document = ValueObjectOccurrenceDeclaration(
-        name="payload",
-        storage=Column("value"),
-        shape=_shape(),
-    )
-    candidate = accepted(
-        source(
-            Declaration(
-                identity=column_owner,
-                container=Table("column_collision"),
-                attributes=(
-                    key(column_owner),
-                    attribute(column_owner, "value", type=STRING),
-                ),
-                value_objects=(document,),
-            ),
-            Declaration(
-                identity=first_table_owner,
-                container=Table("mapping_collision"),
-                attributes=(key(first_table_owner),),
-            ),
-            Declaration(
-                identity=second_table_owner,
-                container=Table("mapping_collision"),
-                attributes=(key(second_table_owner),),
-            ),
-            Declaration(
-                identity=third_table_owner,
-                container=Table("mapping_collision"),
-                attributes=(key(third_table_owner),),
-            ),
-        )
-    )
-    issues = storage_layout.RULE_SET.validate(candidate)
-    assert [issue.code for issue in issues] == [
-        TABLE_MAPPING_COLLISION,
-        TABLE_MAPPING_COLLISION,
-        COLUMN_COLLISION,
-    ]
-    assert [(issue.location, issue.related) for issue in issues] == [
-        (
-            EntityLocation(second_table_owner),
-            (EntityLocation(first_table_owner),),
-        ),
-        (
-            EntityLocation(third_table_owner),
-            (EntityLocation(first_table_owner),),
-        ),
-        (
-            ValueObjectLocation(ValueObjectIdentity(column_owner, ("payload",))),
-            (AttributeLocation(attribute(column_owner, "value").identity),),
-        ),
-    ]
-
-
-def test_interleaved_two_table_owner_collisions_follow_canonical_owner_order() -> None:
-    first_a = identity("AFirst")
-    first_b = identity("BFirst")
-    later_b = identity("CLaterB")
-    later_a = identity("DLaterA")
-    issues = _rule_issues(
-        Declaration(
-            identity=later_a,
-            container=Table("table_a"),
-            attributes=(key(later_a),),
-        ),
-        Declaration(
-            identity=first_b,
-            container=Table("table_b"),
-            attributes=(key(first_b),),
-        ),
-        Declaration(
-            identity=later_b,
-            container=Table("table_b"),
-            attributes=(key(later_b),),
-        ),
-        Declaration(
-            identity=first_a,
-            container=Table("table_a"),
-            attributes=(key(first_a),),
-        ),
-    )
-    assert [(issue.location, issue.related) for issue in issues] == [
-        (EntityLocation(later_b), (EntityLocation(first_b),)),
-        (EntityLocation(later_a), (EntityLocation(first_a),)),
-    ]
-
-
-def test_standalone_tph_and_tpcs_owners_compete_in_one_table_claim_stream() -> None:
+def test_independent_owners_may_declare_one_table_name() -> None:
+    # A declared table name is each owner's default physical name; whether two
+    # owners share a physical table is decided when a binding resolves them.
     standalone = identity("AStandalone")
     tph_root = identity("BHierarchy")
     tph_concrete = identity("BHierarchyRow")
@@ -428,11 +288,28 @@ def test_standalone_tph_and_tpcs_owners_compete_in_one_table_claim_stream() -> N
             inheritance=AbstractRoot(TablePerConcreteSubtype()),
         ),
     )
-    assert [(issue.location, issue.related) for issue in issues] == [
-        (EntityLocation(tph_root), (EntityLocation(standalone),)),
-        (EntityLocation(tpcs_concrete), (EntityLocation(standalone),)),
+    assert issues == ()
+
+
+def test_each_owner_of_an_equal_table_name_validates_its_own_columns() -> None:
+    first = identity("First")
+    second = identity("Second")
+    duplicate = attribute(second, "otherId", column="second_id")
+    issues = _rule_issues(
+        Declaration(
+            identity=first,
+            container=Table("shared"),
+            attributes=(key(first, "firstId"),),
+        ),
+        Declaration(
+            identity=second,
+            container=Table("shared"),
+            attributes=(key(second, "secondId"), duplicate),
+        ),
+    )
+    assert [(issue.code, issue.location) for issue in issues] == [
+        (COLUMN_COLLISION, AttributeLocation(duplicate.identity))
     ]
-    assert {issue.code for issue in issues} == {TABLE_MAPPING_COLLISION}
 
 
 def test_malformed_topology_is_omitted_without_storage_layout_guessing() -> None:

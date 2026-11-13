@@ -19,7 +19,9 @@ import pytest
 
 from parallax.conformance import provision
 from parallax.core.internal.base import UsageError
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.db_port import StructuredDocument
+from tests._support.bindings import binding_for, bound_model
 from tests.unit._corpus_model_support import corpus
 from tests.unit._document_layout_support import document_model
 from tests.unit._inheritance_family_support import tph_family_with_a_value_object
@@ -31,13 +33,13 @@ _MODELS = corpus()
 def test_schema_statements_spell_through_the_dialect_they_are_given() -> None:
     # The provisioner passes its adapter's dialect straight through, so a second
     # dialect's quoting reaches the DDL without this path knowing a dialect name.
-    (ddl,) = provision.schema_statements(_MODELS["grade"], BACKTICKED)
+    (ddl,) = provision.schema_statements(ResolvedBinding(_MODELS["grade"], binding_for(BACKTICKED)))
     assert "`id`" in ddl
 
 
 def test_fixture_statements_tpcs_has_no_tag_assignment() -> None:
     fixtures = provision.load_fixtures("models/document.yaml")
-    statements = provision.fixture_statements(_MODELS["document"], fixtures)
+    statements = provision.fixture_statements(bound_model(_MODELS["document"]), fixtures)
     (invoice_sql, _binds) = statements[0]
     assert "kind" not in invoice_sql
 
@@ -48,10 +50,10 @@ def test_fixture_statements_follow_the_entity_layout_order_not_mapping_order() -
     canonical = {"Grade": [{"id": 1, "ordinal": 1, "label": "low"}]}
     permuted = {"Grade": [{"label": "low", "id": 1, "ordinal": 1}]}
     assert provision.fixture_statements(
-        _MODELS["grade"], canonical
-    ) == provision.fixture_statements(_MODELS["grade"], permuted)
-    (sql, binds) = provision.fixture_statements(_MODELS["grade"], permuted)[0]
-    assert sql == 'insert into grade (id, "order", label) values (?, ?, ?)'
+        bound_model(_MODELS["grade"]), canonical
+    ) == provision.fixture_statements(bound_model(_MODELS["grade"]), permuted)
+    (sql, binds) = provision.fixture_statements(bound_model(_MODELS["grade"]), permuted)[0]
+    assert sql == 'insert into px.grade (id, "order", label) values (?, ?, ?)'
     assert binds == [1, 1, "low"]
 
 
@@ -59,18 +61,18 @@ def test_fixture_statements_skip_a_column_the_row_omits() -> None:
     # A fixture row omitting a (nullable) member emits only the present columns,
     # still in Entity Layout slot order — the omitted `label` is skipped.
     fixtures = {"Grade": [{"ordinal": 2, "id": 5}]}
-    (sql, binds) = provision.fixture_statements(_MODELS["grade"], fixtures)[0]
-    assert sql == 'insert into grade (id, "order") values (?, ?)'
+    (sql, binds) = provision.fixture_statements(bound_model(_MODELS["grade"]), fixtures)[0]
+    assert sql == 'insert into px.grade (id, "order") values (?, ?)'
     assert binds == [5, 2]
 
 
 def test_fixture_statements_preserve_unknown_value_object_members() -> None:
     fixtures = provision.load_fixtures("models/customer.yaml")
-    statements = provision.fixture_statements(_MODELS["customer"], fixtures)
+    statements = provision.fixture_statements(bound_model(_MODELS["customer"]), fixtures)
     location = next(
         binds
         for sql, binds in statements
-        if sql.startswith("insert into location ") and binds[0] == 100
+        if sql.startswith("insert into px.location ") and binds[0] == 100
     )
 
     address = location[-1]
@@ -125,20 +127,20 @@ def test_fixture_statements_refuse_a_malformed_fixture(
     model: str, fixtures: dict[str, object], refusal: str
 ) -> None:
     with pytest.raises(ValueError, match=refusal):
-        provision.fixture_statements(_MODELS[model], fixtures)
+        provision.fixture_statements(bound_model(_MODELS[model]), fixtures)
 
 
 def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:
     fixtures = {"Event": [{"id": 1, "occurredAt": "infinity"}]}
 
     with pytest.raises(UsageError):
-        provision.fixture_statements(_MODELS["event"], fixtures)
+        provision.fixture_statements(bound_model(_MODELS["event"]), fixtures)
 
 
 def test_fixture_statements_tph_resolves_an_inherited_value_object_by_name() -> None:
     meta = tph_family_with_a_value_object()
     fixtures = {"Leaf": [{"id": 1, "x": 2, "meta": {"a": 1}}]}
-    (sql, binds) = provision.fixture_statements(meta, fixtures)[0]
+    (sql, binds) = provision.fixture_statements(bound_model(meta), fixtures)[0]
     assert "meta" in sql
     assert any(isinstance(bind, StructuredDocument) for bind in binds)
 
@@ -154,7 +156,7 @@ _DOCUMENT = document_model()
 
 def test_fixture_statements_compose_one_document_from_the_rows_own_members() -> None:
     (statement,) = provision.fixture_statements(
-        _DOCUMENT,
+        bound_model(_DOCUMENT),
         {
             "parallax.test.Person": [
                 {
@@ -169,7 +171,7 @@ def test_fixture_statements_compose_one_document_from_the_rows_own_members() -> 
         },
     )
     sql, binds = statement
-    assert sql == "insert into person (id, payload) values (?, ?)"
+    assert sql == "insert into px.person (id, payload) values (?, ?)"
     # Each leaf is authored as the ordinary neutral wire value a direct Column
     # would take and the codec spells it, so one fixture file describes one
     # logical row under either layout.
@@ -189,7 +191,7 @@ def test_fixture_statements_compose_one_document_from_the_rows_own_members() -> 
 
 def test_fixture_statements_keep_the_three_presence_states_apart() -> None:
     (statement,) = provision.fixture_statements(
-        _DOCUMENT,
+        bound_model(_DOCUMENT),
         {"parallax.test.Person": [{"id": 2, "displayName": None}]},
     )
     _, binds = statement
@@ -205,13 +207,15 @@ def test_fixture_statements_refuse_a_non_mapping_many_occurrence_element() -> No
         ]
     }
     with pytest.raises(ValueError, match="every many occurrence element must be a mapping"):
-        provision.fixture_statements(_DOCUMENT, fixtures)
+        provision.fixture_statements(bound_model(_DOCUMENT), fixtures)
 
 
 def test_fixture_statements_bind_the_empty_document_for_a_row_with_no_document_member() -> None:
-    (statement,) = provision.fixture_statements(_DOCUMENT, {"parallax.test.Marker": [{"id": 3}]})
+    (statement,) = provision.fixture_statements(
+        bound_model(_DOCUMENT), {"parallax.test.Marker": [{"id": 3}]}
+    )
     sql, binds = statement
-    assert sql == "insert into marker (id, payload) values (?, ?)"
+    assert sql == "insert into px.marker (id, payload) values (?, ?)"
     assert binds == [3, StructuredDocument({})]
 
 
@@ -223,10 +227,10 @@ def test_fixture_statements_spell_every_collection_element_and_keep_a_malformed_
     }
 
     ((_sql, columns_binds),) = provision.fixture_statements(
-        _MODELS["scalar-collection-layout-twin-columns"], fixtures
+        bound_model(_MODELS["scalar-collection-layout-twin-columns"]), fixtures
     )
     ((_sql, document_binds),) = provision.fixture_statements(
-        _MODELS["scalar-collection-layout-twin-document"], fixtures
+        bound_model(_MODELS["scalar-collection-layout-twin-document"]), fixtures
     )
 
     amounts, tags = (cast("StructuredDocument", bind).document for bind in columns_binds[1:3])

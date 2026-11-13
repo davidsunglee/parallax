@@ -19,9 +19,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: update fridge set name = ?, version = ? where id = ? and version = ?
+        postgres: update px.fridge set name = ?, version = ? where id = ? and version = ?
       binds: [Chill, 6, 1, 5]
   tableState:
-    fridge:
-      - { id: 1, name: Chill, version: 6, capacity_liters: 300 }
+    px:
+      fridge:
+        - { id: 1, name: Chill, version: 6, capacity_liters: 300 }
   databaseCalls: 2

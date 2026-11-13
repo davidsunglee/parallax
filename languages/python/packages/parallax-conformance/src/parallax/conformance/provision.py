@@ -16,6 +16,7 @@ from parallax.core.internal.base import (
     NeutralType,
     retain_document_value,
 )
+from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
 from parallax.core.internal.db_port import DatabaseRuntime, Password, StructuredDocument
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.document_codec import (
@@ -42,7 +43,7 @@ from parallax.core.internal.storage_layout import (
     RelationalDocument,
 )
 from parallax.core.internal.wire import WireValue, decode_wire, encode_wire
-from parallax.evolution.internal.model_evolution import ABSENT, evolve_metamodels
+from parallax.evolution.internal.model_evolution import ABSENT, evolve_resolved
 from parallax.evolution.internal.schema_delta import schema_delta
 
 if TYPE_CHECKING:
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
         Row,
         TransactionOutcome,
     )
-    from parallax.core.internal.entity import DomainModel
     from parallax.core.internal.execution import ServingModel, TxnOptions
     from parallax.core.internal.unit_work import Clock
     from parallax.postgres import (
@@ -91,6 +91,7 @@ __all__ = [
     "Provisioner",
     "RuntimeLedger",
     "TrackedAdapter",
+    "bound_qualifiers",
     "conformance_credentials",
     "database_authorization",
     "fixture_collection",
@@ -105,13 +106,30 @@ __all__ = [
 ]
 
 
-def reset_statements() -> list[str]:
-    """The per-case schema reset (drop then recreate the public schema)."""
-    return ["drop schema if exists public cascade", "create schema public"]
+def bound_qualifiers(resolved: ResolvedBinding) -> frozenset[str]:
+    """Every schema ``resolved`` places a table or sequence in."""
+    return frozenset(
+        component
+        for physical in (
+            *(table.physical for table in resolved.tables),
+            *resolved.sequences.values(),
+        )
+        for component in physical.qualifier
+    )
 
 
-def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
-    """The shipped generator's provisioning DDL for ``model``.
+def reset_statements(qualifiers: frozenset[str] = frozenset()) -> list[str]:
+    """The per-case schema reset: drop then recreate the public schema and every
+    schema in ``qualifiers``, each a schema this provider owns."""
+    statements: list[str] = []
+    for schema in ("public", *sorted(qualifiers - {"public"})):
+        quoted = POSTGRES.quote(schema)
+        statements.extend((f"drop schema if exists {quoted} cascade", f"create schema {quoted}"))
+    return statements
+
+
+def schema_statements(resolved: ResolvedBinding) -> list[str]:
+    """The shipped generator's provisioning DDL for a model under its binding.
 
     Provisioning is the Unilateral Evolution from ``ABSENT``, so this path holds
     no DDL of its own: every physical fact, every statement, and every Physical
@@ -119,7 +137,7 @@ def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str
     database-backed suite a proof of the generator rather than of a second
     composition that happens to agree with it.
     """
-    return list(schema_delta(evolve_metamodels(ABSENT, model), dialect).statements)
+    return list(schema_delta(evolve_resolved(ABSENT, resolved)).statements)
 
 
 def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> AttributeMetadata:
@@ -248,6 +266,7 @@ def _is_temporal_end(model: Metamodel, member: AttributeMetadata) -> bool:
 
 def _fixture_insert(
     model: Metamodel,
+    table: str,
     view: EntityLayoutView,
     shape: MemberShape | None,
     row: Mapping[str, object],
@@ -314,17 +333,15 @@ def _fixture_insert(
                 )
             )
     placeholders = ", ".join("?" for _ in columns)
-    sql = (
-        f"insert into {dialect.quote(view.layout.table.name)} "
-        f"({', '.join(columns)}) values ({placeholders})"
-    )
+    sql = f"insert into {table} ({', '.join(columns)}) values ({placeholders})"
     return sql, binds
 
 
 def fixture_statements(
-    model: Metamodel, fixtures: Mapping[str, object], dialect: Dialect = POSTGRES
+    resolved: ResolvedBinding, fixtures: Mapping[str, object]
 ) -> list[tuple[str, list[object]]]:
-    """``insert`` statements for the model's fixtures, in Entity Layout order.
+    """``insert`` statements for the model's fixtures, in Entity Layout order,
+    each into the table ``resolved`` places its Entity's rows in.
 
     An Entity Layout view already selects the slots applicable to one row-owning
     Entity, in complete table order, so an inheritance participant's fixture row
@@ -342,13 +359,15 @@ def fixture_statements(
     declare are refused rather than dropped (`m-case-format`), so a mistyped
     fixture cannot seed less, or other tables, than it states.
     """
+    model = resolved.meta
+    dialect = resolved.dialect
     blocks = _fixture_blocks(model, fixtures)
     statements: list[tuple[str, list[object]]] = []
     for entity in model.entities:
-        resolved = blocks.get(entity.identity)
-        if resolved is None:
+        found = blocks.get(entity.identity)
+        if found is None:
             continue
-        (block, view) = resolved
+        (block, view) = found
         canonical = entity.identity.canonical
         rows = fixtures[block]
         if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
@@ -368,6 +387,7 @@ def fixture_statements(
             statements.append(
                 _fixture_insert(
                     model,
+                    resolved.table(view.layout.mapping_owner).sql,
                     view,
                     None if residents is None else residents.shape,
                     authored,
@@ -482,28 +502,40 @@ def install_authority_fixtures(session: DatabaseConnection) -> None:
 
 
 def reset_database(
-    session: DatabaseConnection, model: Metamodel, fixtures: Mapping[str, object]
-) -> None:
-    """Reset the schema, apply the model-derived DDL, load the fixtures, and grant
-    the conformance roles what a case's sessions do with them.
+    session: DatabaseConnection,
+    resolved: ResolvedBinding,
+    fixtures: Mapping[str, object],
+    *,
+    owned: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    """Reset every schema ``resolved`` places a table in and every earlier-owned
+    one, apply the model-derived DDL, load the fixtures, and grant the
+    conformance roles what a case's sessions do with them in each bound schema.
 
-    Fixture binds carry a :class:`StructuredDocument` for each value object; the
-    adapter recognizes it at its boundary and binds the driver's
-    native structured-document type, so no psycopg bind mechanics leak here.
+    ``owned`` names the schemas earlier resets created, which are dropped
+    again so no case leaks a table into the next; the answer is the schemas this
+    reset owns now. Fixture binds carry a :class:`StructuredDocument` for each
+    value object; the adapter recognizes it at its boundary and binds the
+    driver's native structured-document type, so no psycopg bind mechanics leak
+    here.
     """
-    dialect = session.dialect
-    for statement in reset_statements():
+    bound = bound_qualifiers(resolved)
+    for statement in reset_statements(bound | owned):
         session.execute_write(statement, [])
-    for statement in schema_statements(model, dialect):
+    for statement in schema_statements(resolved):
         session.execute_write(statement, [])
-    for sql, binds in fixture_statements(model, fixtures, dialect):
+    for sql, binds in fixture_statements(resolved, fixtures):
         session.execute_write(sql, binds)
-    for role in (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values()):
-        session.execute_write(f'grant usage on schema public to "{role}"', [])
-        session.execute_write(
-            f'grant select, insert, update, delete on all tables in schema public to "{role}"',
-            [],
-        )
+    for schema in ("public", *sorted(bound - {"public"})):
+        quoted = POSTGRES.quote(schema)
+        for role in (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values()):
+            session.execute_write(f'grant usage on schema {quoted} to "{role}"', [])
+            session.execute_write(
+                "grant select, insert, update, delete on all tables in schema "
+                f'{quoted} to "{role}"',
+                [],
+            )
+    return bound | owned
 
 
 class RuntimeLedger:
@@ -741,6 +773,8 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         # port's and a tuned proof's alike.
         self._ledger = RuntimeLedger()
         self._database = ContainerDatabase(self._configuration(), self._session)
+        # The schemas earlier resets created, dropped again by the next one.
+        self._owned: frozenset[str] = frozenset()
         # Every scoped session that may still be alive. One removes itself as
         # soon as its session is gone — which is its close, or, for a close that
         # waited on a borrower, the release that completed it. What
@@ -877,7 +911,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
     def interleaved_execution(
         self,
-        model: DomainModel | ServingModel,
+        model: ServingModel,
         *,
         observation: LifecycleObservation,
         options: TxnOptions | None = None,
@@ -1004,9 +1038,14 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         and answer how many there were."""
         return self._ledger.release()
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the schema, apply the model-derived DDL, and load the fixtures."""
-        reset_database(self._session, model, fixtures)
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        """Reset the bound schemas, apply ``model``'s DDL under ``binding``, and
+        load the fixtures where ``binding`` places their tables."""
+        self._owned = reset_database(
+            self._session, ResolvedBinding(model, binding), fixtures, owned=self._owned
+        )
 
     def close(self) -> None:
         """Close this provisioning, and anything a caller left open behind it."""

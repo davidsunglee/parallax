@@ -27,6 +27,7 @@ from parallax.conformance.vo_models import Customer
 from parallax.core.internal.execution import prepare_model
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
@@ -39,17 +40,18 @@ _CASE_IDS = [case.case_id for case in _CASES]
 def test_write_value_case_runs_through_the_shipped_verbs(
     case: case_format.Case, profile_run: Any
 ) -> None:
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     model = MODELS[Path(case.model).stem]
     observed = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, model, lifecycle_provider=observed.provider)
+        connect(profile_run.port, model, lifecycle_provider=observed.provider, binding=TEST_BINDING)
     ).using_database_login()
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.
     foreign = ForeignLifecycleSource(
-        prepare_model(model, edition=engine.case_edition(case)), profile_run.port
+        prepare_model(model, edition=engine.case_edition(case), binding=TEST_BINDING),
+        profile_run.port,
     )
     steps = write_value_runner.write_value_steps(case)
     # A `sourceRead` step's value is read outside the writing transaction, so

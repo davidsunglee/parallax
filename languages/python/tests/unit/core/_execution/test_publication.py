@@ -20,6 +20,7 @@ class — is the Snapshot database suite's.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from decimal import Decimal
@@ -27,13 +28,14 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.core import ConflictError
+from parallax.core import ConflictError, UsageError
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._publication import (
     read_projection,
     write_projection,
 )
 from parallax.core._execution._unit_work import preparation as preparation_module
+from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.entity import _graph_construction as graph_construction_module
 from parallax.core.internal.entity import _layout as layout_module
@@ -47,6 +49,7 @@ from parallax.core.internal.execution import (
 from parallax.core.internal.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING, binding_for
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -162,7 +165,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_class_backed_selection_reads_and_writes_with_every_derivation_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selection = prepare_model(_ACCOUNT, edition="one")
+    selection = prepare_model(_ACCOUNT, edition="one", binding=TEST_BINDING)
     _refuse_every_derivation(monkeypatch)
     port = ScriptedAdapter(Read(rows=[_ROW]), Read(rows=[_ROW]), Transact(Write()))
     database = own_root(connect(port, ServingModel(selection))).using_database_login()
@@ -184,7 +187,7 @@ def test_a_class_backed_selection_reads_and_writes_with_every_derivation_refused
 def test_a_descriptor_backed_selection_reads_and_writes_with_every_derivation_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    selection = prepare_model(_descriptor_backed(), edition="wire-only")
+    selection = prepare_model(_descriptor_backed(), edition="wire-only", binding=TEST_BINDING)
     assert write_projection(selection).preparation.entity(mm.Account.identity).typed_class is None
     _refuse_every_derivation(monkeypatch)
     port = ScriptedAdapter(Read(rows=[_ROW]), Transact(Write()))
@@ -204,7 +207,7 @@ def test_an_edition_that_is_no_nonempty_string_is_refused_before_derivation(
 ) -> None:
     _refuse_every_derivation(monkeypatch)
     with pytest.raises(ValueError, match="nonempty string"):
-        prepare_model(_ACCOUNT, edition=edition)
+        prepare_model(_ACCOUNT, edition=edition, binding=TEST_BINDING)
 
 
 def test_a_value_that_is_no_domain_model_is_refused_before_derivation(
@@ -212,12 +215,12 @@ def test_a_value_that_is_no_domain_model_is_refused_before_derivation(
 ) -> None:
     _refuse_every_derivation(monkeypatch)
     with pytest.raises(TypeError, match="takes a Domain Model"):
-        prepare_model(model_of(_ACCOUNT), edition="bare")  # pyright: ignore[reportArgumentType] - the refusal under test
+        prepare_model(model_of(_ACCOUNT), edition="bare", binding=TEST_BINDING)  # pyright: ignore[reportArgumentType] - the refusal under test
 
 
 def test_two_preparations_of_one_model_are_distinct_selections() -> None:
-    first = prepare_model(_ACCOUNT, edition="same")
-    second = prepare_model(_ACCOUNT, edition="same")
+    first = prepare_model(_ACCOUNT, edition="same", binding=TEST_BINDING)
+    second = prepare_model(_ACCOUNT, edition="same", binding=TEST_BINDING)
     assert first is not second
     assert first != second
     assert first.edition == second.edition
@@ -230,7 +233,7 @@ def test_two_preparations_of_one_model_are_distinct_selections() -> None:
 
 
 def test_a_selection_exposes_its_model_and_edition_and_nothing_else() -> None:
-    selection = prepare_model(_ACCOUNT, edition="one")
+    selection = prepare_model(_ACCOUNT, edition="one", binding=TEST_BINDING)
     assert selection.model is _ACCOUNT
     assert selection.edition == "one"
     assert read_projection(selection).edition == write_projection(selection).edition == "one"
@@ -243,7 +246,7 @@ def test_a_selection_exposes_its_model_and_edition_and_nothing_else() -> None:
 
 @pytest.mark.parametrize("name", ["model", "edition"])
 def test_a_selections_properties_are_read_only(name: str) -> None:
-    selection = prepare_model(_ACCOUNT, edition="one")
+    selection = prepare_model(_ACCOUNT, edition="one", binding=TEST_BINDING)
     with pytest.raises(AttributeError):
         setattr(selection, name, object())
 
@@ -255,8 +258,8 @@ def test_no_holder_can_alter_what_a_selection_was_prepared_with(slot: str) -> No
     # model's catalog under another model's write planner, and every entry
     # reached through it would resolve against one and encode against the
     # other; deleting one would fail deep inside a request instead.
-    selection = prepare_model(_ACCOUNT, edition="one")
-    other = prepare_model(_ACCOUNT, edition="two")
+    selection = prepare_model(_ACCOUNT, edition="one", binding=TEST_BINDING)
+    other = prepare_model(_ACCOUNT, edition="two", binding=TEST_BINDING)
     forged: dict[str, Any] = {
         "_edition": "",
         "_model": other.model,
@@ -286,7 +289,7 @@ def test_no_caller_can_construct_a_selection() -> None:
     # a constructor could pair a model with no projections at all, or with
     # another selection's, and a Serving Model would hold the result as
     # prepared — so the class refuses to be called, whatever it is handed.
-    prepared = prepare_model(_ACCOUNT, edition="one")
+    prepared = prepare_model(_ACCOUNT, edition="one", binding=TEST_BINDING)
     with pytest.raises(TypeError, match="prepared rather than constructed"):
         ModelSelection()
     with pytest.raises(TypeError, match="prepared rather than constructed"):
@@ -303,7 +306,7 @@ def test_no_caller_can_construct_a_selection() -> None:
 
 
 def test_a_serving_model_answers_the_exact_selection_it_holds() -> None:
-    a = prepare_model(_ACCOUNT, edition="a")
+    a = prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING)
     serving = ServingModel(a)
     assert serving.current() is a
     assert serving.current() is serving.current()
@@ -311,14 +314,17 @@ def test_a_serving_model_answers_the_exact_selection_it_holds() -> None:
 
 
 def test_publishing_against_the_held_selection_replaces_it() -> None:
-    a, b = prepare_model(_ACCOUNT, edition="a"), prepare_model(_ACCOUNT, edition="b")
+    a, b = (
+        prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING),
+        prepare_model(_ACCOUNT, edition="b", binding=TEST_BINDING),
+    )
     serving = ServingModel(a)
     serving.publish(b, expected=a)
     assert serving.current() is b
 
 
 def test_a_stale_publication_is_refused_with_what_was_expected_and_held() -> None:
-    a, b, c = (prepare_model(_ACCOUNT, edition=edition) for edition in "abc")
+    a, b, c = (prepare_model(_ACCOUNT, edition=edition, binding=TEST_BINDING) for edition in "abc")
     serving = ServingModel(a)
     serving.publish(b, expected=a)
 
@@ -333,7 +339,7 @@ def test_a_stale_publication_is_refused_with_what_was_expected_and_held() -> Non
 
 
 def test_a_refusal_reports_the_comparison_it_was_raised_with() -> None:
-    a, b, c = (prepare_model(_ACCOUNT, edition=edition) for edition in "abc")
+    a, b, c = (prepare_model(_ACCOUNT, edition=edition, binding=TEST_BINDING) for edition in "abc")
     serving = ServingModel(a)
     serving.publish(b, expected=a)
 
@@ -359,7 +365,7 @@ def test_a_refusal_reports_the_comparison_it_was_raised_with() -> None:
 def test_a_refusal_leaves_interpreter_owned_state_writable() -> None:
     # Read-only is about the two selections this refusal reports, not about the
     # machinery every exception carries: chaining and notes still work.
-    a, b = (prepare_model(_ACCOUNT, edition=edition) for edition in "ab")
+    a, b = (prepare_model(_ACCOUNT, edition=edition, binding=TEST_BINDING) for edition in "ab")
     refusal = PublicationConflictError(expected=a, held=b)
     replacement = ValueError("chaining stays interpreter-owned")
     refusal.__cause__ = replacement
@@ -378,8 +384,8 @@ def test_a_refusal_carries_what_its_comparison_read_and_not_a_later_selection(
     # before anything the publisher does past the window — and the refusal must
     # still name what the comparison read. A holder that left the window and
     # reread would hand the loser a selection it never compared against.
-    a, b, c = (prepare_model(_ACCOUNT, edition=edition) for edition in "abc")
-    third = prepare_model(_ACCOUNT, edition="third")
+    a, b, c = (prepare_model(_ACCOUNT, edition=edition, binding=TEST_BINDING) for edition in "abc")
+    third = prepare_model(_ACCOUNT, edition="third", binding=TEST_BINDING)
     serving = ServingModel(a)
     serving.publish(b, expected=a)
     window = serving._lock  # pyright: ignore[reportPrivateUsage] - the compare/replace window under test
@@ -395,18 +401,18 @@ def test_a_refusal_carries_what_its_comparison_read_and_not_a_later_selection(
 
 def test_a_selection_with_an_equal_edition_is_not_the_expected_one() -> None:
     # Publication compares selection identity, never edition equality.
-    a = prepare_model(_ACCOUNT, edition="same")
-    twin = prepare_model(_ACCOUNT, edition="same")
+    a = prepare_model(_ACCOUNT, edition="same", binding=TEST_BINDING)
+    twin = prepare_model(_ACCOUNT, edition="same", binding=TEST_BINDING)
     serving = ServingModel(a)
     with pytest.raises(PublicationConflictError):
-        serving.publish(prepare_model(_ACCOUNT, edition="b"), expected=twin)
+        serving.publish(prepare_model(_ACCOUNT, edition="b", binding=TEST_BINDING), expected=twin)
     assert serving.current() is a
 
 
 def test_a_serving_model_holds_and_publishes_only_prepared_selections() -> None:
     with pytest.raises(TypeError, match="prepared ModelSelection"):
         ServingModel(_ACCOUNT)  # pyright: ignore[reportArgumentType] - the refusal under test
-    serving = ServingModel(prepare_model(_ACCOUNT, edition="a"))
+    serving = ServingModel(prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING))
     with pytest.raises(TypeError, match="prepared ModelSelection"):
         serving.publish(_ACCOUNT, expected=serving.current())  # pyright: ignore[reportArgumentType] - the refusal under test
 
@@ -426,7 +432,10 @@ def test_concurrent_readers_observe_only_a_complete_a_or_b() -> None:
     # Each records the selections it saw CHANGE between, so the whole history of
     # a reader that observed only complete states is exactly A then B: a stale,
     # reverted, or half-replaced answer is one more entry.
-    a, b = prepare_model(_ACCOUNT, edition="a"), prepare_model(_ACCOUNT, edition="b")
+    a, b = (
+        prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING),
+        prepare_model(_ACCOUNT, edition="b", binding=TEST_BINDING),
+    )
     serving = ServingModel(a)
     observations: list[list[ModelSelection]] = [[] for _ in range(4)]
     reading = threading.Barrier(len(observations) + 1)
@@ -470,8 +479,10 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
     # replacement can run until the last compare is done. Either way all eight
     # replace and all eight succeed. A holder that took no window at all would
     # finish without ever being recorded.
-    a = prepare_model(_ACCOUNT, edition="a")
-    candidates = [prepare_model(_ACCOUNT, edition=f"candidate-{n}") for n in range(8)]
+    a = prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING)
+    candidates = [
+        prepare_model(_ACCOUNT, edition=f"candidate-{n}", binding=TEST_BINDING) for n in range(8)
+    ]
     serving = ServingModel(a)
     window = serving._lock  # pyright: ignore[reportPrivateUsage] - the compare/replace window under test
     arriving = threading.Barrier(len(candidates) + 1)
@@ -516,3 +527,17 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
     assert published == [winner]
     assert len(refusals) == len(candidates) - 1
     assert all(refused.expected is a and refused.held is winner for refused in refusals)
+
+
+def test_a_candidate_prepared_for_another_backend_is_refused_and_nothing_is_replaced() -> None:
+    a = prepare_model(_ACCOUNT, edition="a", binding=TEST_BINDING)
+    elsewhere = prepare_model(
+        _ACCOUNT,
+        edition="b",
+        binding=binding_for(dataclasses.replace(POSTGRES, name="mariadb")),
+    )
+    serving = ServingModel(a)
+    with pytest.raises(UsageError) as refused:
+        serving.publish(elsewhere, expected=a)
+    assert refused.value.code == "publication-backend-mismatch"
+    assert serving.current() is a

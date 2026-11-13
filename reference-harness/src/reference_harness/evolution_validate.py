@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .case import Case, Model
+from .database_binding import PhysicalTable, Placement
 from .references import split_reference
 from .temporality import TEMPORAL_DIMENSION_RANK, temporal_axes
 
@@ -61,7 +62,12 @@ _IDENTITY_MEMBER: Mapping[str, str] = {
     "IndexRemoved": "index",
     "IndexAltered": "index",
     "DeclarationOrderChanged": "owner",
+    "TableRelocated": "entity",
+    "SequenceRelocated": "sequence",
 }
+
+_RELOCATIONS = frozenset({"TableRelocated", "SequenceRelocated"})
+_RELOCATION_DIALECTS = ("postgres", "mariadb")
 
 EVOLUTION_OPERATION_KINDS: frozenset[str] = frozenset(_IDENTITY_MEMBER)
 
@@ -176,6 +182,7 @@ class _Endpoint:
     value_objects: frozenset[str] = frozenset()
     value_object_attributes: frozenset[str] = frozenset()
     axes: frozenset[tuple[str, str]] = frozenset()
+    allocators: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -187,6 +194,7 @@ class _Index:
     value_objects: set[str] = field(default_factory=set)
     value_object_attributes: set[str] = field(default_factory=set)
     axes: set[tuple[str, str]] = field(default_factory=set)
+    allocators: set[str] = field(default_factory=set)
 
 
 def _entity_spelling(definition: Mapping[str, Any]) -> str:
@@ -211,6 +219,16 @@ def _index_occurrences(
         _index_occurrences(index, owner, occurrence.get("valueObjects") or [], here)
 
 
+def _index_attributes(index: _Index, owner: str, attributes: Iterable[Any]) -> None:
+    for attribute in attributes:
+        if not isinstance(attribute, Mapping):
+            continue
+        index.attributes.add(f"{owner}.{attribute.get('name')}")
+        generation = attribute.get("pkGeneration")
+        if isinstance(generation, Mapping) and generation.get("strategy") == "sequence":
+            index.allocators.add(str(generation.get("name")))
+
+
 def _endpoint(model: Model | None) -> _Endpoint:
     """Every identity ``model`` declares, or an empty endpoint for absence."""
     if model is None:
@@ -219,9 +237,7 @@ def _endpoint(model: Model | None) -> _Endpoint:
     for definition in model.entity_defs:
         owner = _entity_spelling(definition)
         index.entities.add(owner)
-        for attribute in definition.get("attributes") or []:
-            if isinstance(attribute, Mapping):
-                index.attributes.add(f"{owner}.{attribute.get('name')}")
+        _index_attributes(index, owner, definition.get("attributes") or [])
         for relationship in definition.get("relationships") or []:
             if isinstance(relationship, Mapping):
                 index.relationships.add(f"{owner}.{relationship.get('name')}")
@@ -239,6 +255,7 @@ def _endpoint(model: Model | None) -> _Endpoint:
         value_objects=frozenset(index.value_objects),
         value_object_attributes=frozenset(index.value_object_attributes),
         axes=frozenset(index.axes),
+        allocators=frozenset(index.allocators),
     )
 
 
@@ -253,6 +270,7 @@ def _declared(endpoint: _Endpoint, member: str, spelling: str) -> bool:
             "valueObject": endpoint.value_objects,
             "valueObjectAttribute": endpoint.value_object_attributes,
             "owner": endpoint.entities | endpoint.value_objects,
+            "sequence": endpoint.allocators,
         }[member]
     )
 
@@ -264,13 +282,19 @@ def canonical_operation_key(operation: Mapping[str, Any]) -> tuple[Any, ...]:
     Entity, containment paths compare lexicographically, and Valid Time precedes
     Transaction Time. Add, remove, and alter cannot tie at one logical identity,
     so the key carries no operation-kind rank and a rename's removal and addition
-    stay in identity order rather than being forced removal-first.
+    stay in identity order rather than being forced removal-first. Every
+    relocation follows every logical operation: table relocations in owner
+    order, then sequence relocations in allocator-key codepoint order.
     """
     kind = str(operation.get("kind"))
     member = _IDENTITY_MEMBER.get(kind, "entity")
     spelling = str(operation.get(member, ""))
+    if kind == "SequenceRelocated":
+        return (3, "", spelling, 0, (), "", 0, 0)
     entity, path = split_reference(spelling)
     namespace, _, name = (entity or "").rpartition(".")
+    if kind == "TableRelocated":
+        return (2, namespace, name, 0, (), "", 0, 0)
     if kind == "DeclarationOrderChanged":
         collection = str(operation.get("collection"))
         rank = _VALUE_OBJECT if path else _ENTITY
@@ -336,6 +360,80 @@ def validate_evolution(case: Case) -> list[str]:
     findings += _requirement_findings(
         case, _sequence(evolution.get("coordinationRequirements")), operations
     )
+    findings += _relocation_findings(case, evolution, operations)
+    return findings
+
+
+def _physical(table: PhysicalTable) -> dict[str, Any]:
+    return {"qualifier": list(table.qualifier), "name": table.name}
+
+
+def _relocations(earlier: Placement, later: Placement) -> list[dict[str, Any]]:
+    """Every surviving owner's, then allocator's, relocation from *earlier* to
+    *later*, in relocation order, spelled as an authored operation."""
+    tables = [
+        {
+            "kind": "TableRelocated",
+            "entity": owner,
+            "earlier": _physical(earlier.tables[owner]),
+            "later": _physical(table),
+        }
+        for owner, table in later.tables.items()
+        if owner in earlier.tables and earlier.tables[owner] != table
+    ]
+    sequences = [
+        {
+            "kind": "SequenceRelocated",
+            "sequence": allocator,
+            "earlier": _physical(earlier.sequences[allocator]),
+            "later": _physical(sequence),
+        }
+        for allocator, sequence in later.sequences.items()
+        if allocator in earlier.sequences and earlier.sequences[allocator] != sequence
+    ]
+    return sorted(tables, key=canonical_operation_key) + sorted(
+        sequences, key=canonical_operation_key
+    )
+
+
+def _relocation_findings(
+    case: Case, evolution: Mapping[str, Any], operations: Sequence[Mapping[str, Any]]
+) -> list[str]:
+    """The authored relocations must be exactly those the two endpoints resolve
+    to under each dialect's binding, and each needs a database migration."""
+    authored = [
+        dict(operation) for operation in operations if operation.get("kind") in _RELOCATIONS
+    ]
+    findings: list[str] = []
+    if case.earlier_model is not None:
+        for dialect in _RELOCATION_DIALECTS:
+            expected = _relocations(
+                case.placement(dialect, case.earlier_model, "earlierBinding"),
+                case.placement(dialect, case.model, "laterBinding"),
+            )
+            if authored != expected:
+                findings.append(
+                    f"{case.path.name}: then.evolution's relocations {authored} are not the "
+                    f"{dialect} endpoints' resolved relocations {expected}"
+                )
+    elif authored:
+        findings.append(f"{case.path.name}: an absent earlier endpoint relocates nothing")
+    migrating = [
+        requirement.get("operation")
+        for requirement in _sequence(evolution.get("coordinationRequirements"))
+        if "DatabaseMigrationRequired" in (requirement.get("reasons") or [])
+    ]
+    for operation in authored:
+        if operation not in migrating:
+            subject = operation.get("entity") or operation.get("sequence")
+            findings.append(
+                f"{case.path.name}: {operation['kind']} of {subject} carries no "
+                f"DatabaseMigrationRequired coordination requirement"
+            )
+    if authored and evolution.get("kind") != "coordinated":
+        findings.append(
+            f"{case.path.name}: an evolution relocating a table or sequence is coordinated"
+        )
     return findings
 
 

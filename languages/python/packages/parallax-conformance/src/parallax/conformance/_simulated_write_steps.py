@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 
 from parallax.core._execution._write_lowering import stream_physical
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.write_plan.payload import PatchedDocument, WritePayloadPreparer
 from parallax.core.internal.write_plan.plan import EffectSpan
@@ -40,22 +40,22 @@ class SimulatedWriteSteps:
         "_allocated",
         "_counts",
         "_dialect",
-        "_meta",
         "_payloads",
+        "_resolved",
         "_statements",
     )
 
     def __init__(
         self,
         payloads: WritePayloadPreparer,
-        meta: Metamodel,
+        resolved: ResolvedBinding,
         dialect: Dialect,
         *,
         allocated_results: Iterable[tuple[object, ...]] = (),
         counts: Iterable[int] = (),
     ) -> None:
         self._payloads = payloads
-        self._meta = meta
+        self._resolved = resolved
         self._dialect = dialect
         self._allocated = iter(allocated_results)
         self._counts = iter(counts)
@@ -81,7 +81,7 @@ class SimulatedWriteSteps:
             stream_physical(
                 steps,
                 self._payloads,
-                self._meta,
+                self._resolved,
                 self._dialect,
                 effect_spans=effect_spans,
                 capture_insert=capture_insert,

@@ -12,8 +12,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0 where t0.name = ?
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from px.animal t0 where t0.name = ?
       binds: [Ghost]
-  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal where name = 'Ghost'
+  referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from px.animal where name = 'Ghost'
   rows: []
   databaseCalls: 1

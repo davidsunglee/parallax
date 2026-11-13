@@ -26,6 +26,7 @@ from ._statement_bind_inference import (
 )
 from .case import Case, Entity
 from .case_assertions import CaseFailure
+from .database_binding import PhysicalTable
 from .inheritance import TYPE_KEY, Family
 from .predicate_paths import (
     ElementScope,
@@ -509,15 +510,23 @@ def _expected_table_state(case: Case) -> None:
     state = case.then.get("tableState")
     if not isinstance(state, Mapping):
         return
-    for table_name, rows in state.items():
-        if not isinstance(table_name, str):
+    for qualifier, tables in state.items():
+        if not isinstance(qualifier, str) or not isinstance(tables, Mapping):
             continue
-        layout = observed_table(case.model.storage_layout, table_name)
-        if layout is None or not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-            continue
-        for index, row in enumerate(rows):
-            if isinstance(row, Mapping):
-                _expected_table_row(case, layout, row, f"then.tableState.{table_name}[{index}]")
+        for table_name, rows in tables.items():
+            if not isinstance(table_name, str):
+                continue
+            layout = observed_table(
+                case.model.storage_layout,
+                case.state_placement,
+                PhysicalTable((qualifier,), table_name),
+            )
+            if layout is None or not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+                continue
+            where = f"then.tableState.{qualifier}.{table_name}"
+            for index, row in enumerate(rows):
+                if isinstance(row, Mapping):
+                    _expected_table_row(case, layout, row, f"{where}[{index}]")
 
 
 def _expected_table_row(
@@ -582,7 +591,8 @@ def _table_row_entity(case: Case, layout: TableLayout, row: Mapping[str, object]
         if assignment is not None and row.get(assignment.slot.column) == assignment.value:
             return entity
     raise CaseFailure(
-        f"{case.path.name}: then.tableState.{layout.table}: row does not identify one of "
+        f"{case.path.name}: then.tableState row for {layout.mapping_owner}'s table does not "
+        "identify one of "
         f"{[entity.canonical_name for entity in candidates]}"
     )
 

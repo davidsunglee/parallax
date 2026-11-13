@@ -52,6 +52,7 @@ from parallax.snapshot import (
     is_view_loaded,
     pin_of,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.errors import raises_code
@@ -132,9 +133,12 @@ def _db(profile_run: Any, *, lifecycle_provider: Any = None) -> ScopedDatabase:
                 for order_id in _ORDER_IDS
             ],
         },
+        TEST_BINDING,
     )
     return own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=lifecycle_provider)
+        connect(
+            profile_run.port, _MODEL, lifecycle_provider=lifecycle_provider, binding=TEST_BINDING
+        )
     ).using_database_login()
 
 
@@ -170,15 +174,18 @@ def _db_with_a_corrupt_depot(
                 for purchase in purchases
             ],
         },
+        TEST_BINDING,
     )
     control = profile_run.control()
     try:
         control.execute_write(
-            f"update sharing_depot set ship_to = ship_to - 'street' where id = {corrupt}", ()
+            f"update px.sharing_depot set ship_to = ship_to - 'street' where id = {corrupt}", ()
         )
     finally:
         control.close()
-    return own_root(connect(profile_run.port, _INVALID_MODEL)).using_database_login()
+    return own_root(
+        connect(profile_run.port, _INVALID_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _db_with_an_invalid_root(profile_run: Any) -> ScopedDatabase:
@@ -346,9 +353,11 @@ def test_a_back_reference_renders_finitely_on_a_shared_document(profile_run: Any
 
 def test_a_milestone_reads_roots_stand_at_their_own_pins(profile_run: Any) -> None:
     case = corpus_case("m-inheritance-100")
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     apply_given_apply(case, profile_run.port)
-    db = own_root(connect(profile_run.port, MODELS[Path(case.model).stem])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, MODELS[Path(case.model).stem], binding=TEST_BINDING)
+    ).using_database_login()
     query = DepositRate.where(DepositRate.all).history(TX_TIME).as_of(valid_time=LATEST)
 
     at_root = db.find(query).results()

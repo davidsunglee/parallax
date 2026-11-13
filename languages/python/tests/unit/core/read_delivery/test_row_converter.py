@@ -18,6 +18,7 @@ from parallax.core.internal.read_delivery._page import (
 )
 from parallax.core.internal.read_delivery._row_converter import bind
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 
@@ -26,7 +27,9 @@ _ENCODED: Final = model_of(ENCODED_ORDERS)
 
 def test_a_fixed_read_records_a_level_carrying_no_cell_for_some_member() -> None:
     compiled = uncarried(compiled_read(_ENCODED, "EncodedOrder"), "name")
-    converter = bind(CatalogedModel(_ENCODED), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(_ENCODED, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
     builder = PageBuilder(ViewSchema.of())
     rows = [
         result_row(compiled, {"id": order, "name": "Ada", "badge_hex": "0f", "address": None})
@@ -42,7 +45,9 @@ def test_a_fixed_read_records_a_level_carrying_no_cell_for_some_member() -> None
 
 def test_a_fixed_read_refuses_a_row_of_another_arity() -> None:
     compiled = compiled_read(_ENCODED, "EncodedOrder")
-    converter = bind(CatalogedModel(_ENCODED), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(_ENCODED, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
 
     with pytest.raises(ValueError, match="does not match row arity 1"):
         converter.record_rows([(1,)], PageBuilder(ViewSchema.of()), ROOT_LEVEL, None)

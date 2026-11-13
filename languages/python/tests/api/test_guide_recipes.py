@@ -183,6 +183,7 @@ from parallax.snapshot import (
     edge_of,
     pin_of,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.errors import raises_code, retry_notes
 from tests._support.retry import TINY_BACKOFF
@@ -201,8 +202,10 @@ _OCT = dt.datetime(2024, 10, 1, tzinfo=dt.UTC)
 
 
 def _shop(profile_run: Any, **connect_options: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(SHOP_MODEL), {})
-    return own_root(connect(profile_run.port, SHOP_MODEL, **connect_options)).using_database_login()
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
+    return own_root(
+        connect(profile_run.port, SHOP_MODEL, **connect_options, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _seed_customers(db: ScopedDatabase) -> None:
@@ -230,19 +233,19 @@ def test_the_generated_statements_create_tables_the_first_program_runs_against(
     # replacing the tables with the recipe's own statements, as a migration
     # would, leaves that grant to restate.
     model = DomainModel(Customer, Order)
-    profile_run.reset(model_of(model), {})
+    profile_run.reset(model_of(model), {}, TEST_BINDING)
     with contextlib.closing(profile_run.control()) as control:
-        control.execute_write("drop table customer, orders", ())
-        for statement in table_statements(model):
+        control.execute_write("drop table px.customer, px.orders", ())
+        for statement in table_statements(model, TEST_BINDING):
             control.execute_write(statement, ())
         control.execute_write(
-            "grant select, insert, update, delete on all tables in schema public "
+            "grant select, insert, update, delete on all tables in schema px "
             f'to "{profile_run.default_role.name}"',
             (),
         )
 
     adapter = configure_the_database(profile_run.connection_info, profile_run.credentials.secret)
-    customer = add_and_find_a_customer(adapter)
+    customer = add_and_find_a_customer(adapter, TEST_BINDING)
 
     assert type(customer) is Customer
     assert (customer.id, customer.name, customer.email) == (1, "Ada Lovelace", "ada@example.com")
@@ -386,13 +389,17 @@ _DELIVERIES = DomainModel(Delivery, CarrierDelivery, CourierDelivery, PostalDeli
 def test_each_concrete_subtype_is_stored_and_read_through_a_table_of_its_own(
     profile_run: Any,
 ) -> None:
-    assert [statement.split(" (")[0] for statement in table_statements(_DELIVERIES)] == [
-        "create table courier_delivery",
-        "create table postal_delivery",
-        "create table store_pickup",
+    assert [
+        statement.split(" (")[0] for statement in table_statements(_DELIVERIES, TEST_BINDING)
+    ] == [
+        "create table px.courier_delivery",
+        "create table px.postal_delivery",
+        "create table px.store_pickup",
     ]
-    profile_run.reset(model_of(_DELIVERIES), {})
-    db = own_root(connect(profile_run.port, _DELIVERIES)).using_database_login()
+    profile_run.reset(model_of(_DELIVERIES), {}, TEST_BINDING)
+    db = own_root(
+        connect(profile_run.port, _DELIVERIES, binding=TEST_BINDING)
+    ).using_database_login()
     db.transact(
         lambda tx: (
             tx.insert(CourierDelivery(id=1, order_id=10, tracking_number="C-1", courier="Bud")),
@@ -404,7 +411,7 @@ def test_each_concrete_subtype_is_stored_and_read_through_a_table_of_its_own(
     arrange_a_pickup(db, 3, 10, "Bergen")
 
     with contextlib.closing(profile_run.control()) as control:
-        pickups = control.execute("select id, order_id, store from store_pickup", ())
+        pickups = control.execute("select id, order_id, store from px.store_pickup", ())
     assert [tuple(row) for row in pickups] == [(3, 10, "Bergen")]
     by_id = {delivery.id: delivery for delivery in deliveries_for(db, 10)}
     assert {key: type(value) for key, value in by_id.items()} == {
@@ -472,7 +479,9 @@ class _PeerCommitsAfterTheFirstRead:
 def _seed_customers_and_a_peer_order(profile_run: Any) -> _PeerCommitsAfterTheFirstRead:
     db = _shop(profile_run)
     _seed_customers(db)
-    peer = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    peer = own_root(
+        connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     return _PeerCommitsAfterTheFirstRead(
         lambda: peer.transact(
             lambda tx: (
@@ -492,7 +501,7 @@ def test_standalone_reads_each_see_the_database_as_it_is_when_they_run(
 ) -> None:
     peer = _seed_customers_and_a_peer_order(profile_run)
     db = own_root(
-        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=peer)
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=peer, binding=TEST_BINDING)
     ).using_database_login()
 
     customers, orders = customers_and_orders_one_read_at_a_time(db)
@@ -506,7 +515,7 @@ def test_standalone_reads_each_see_the_database_as_it_is_when_they_run(
 def test_reads_in_one_read_only_transaction_agree(profile_run: Any) -> None:
     peer = _seed_customers_and_a_peer_order(profile_run)
     db = own_root(
-        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=peer)
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=peer, binding=TEST_BINDING)
     ).using_database_login()
 
     customers, orders = customers_and_orders_from_one_snapshot(db)
@@ -609,7 +618,8 @@ def test_a_checked_read_hands_back_rows_that_break_the_model(profile_run: Any) -
     db.transact(lambda tx: tx.insert(Product(sku="TEA-1", name="Green tea", description=None)))
     with contextlib.closing(profile_run.control()) as control:
         control.execute_write(
-            "insert into product (sku, payload) values ('TEA-2', '{\"description\": \"Oolong\"}')",
+            "insert into px.product (sku, payload) values ('TEA-2', '{\"description\": "
+            '"Oolong"}\')',
             (),
         )
 
@@ -1076,8 +1086,12 @@ def test_predicate_writes_run_at_the_call_and_answer_their_row_count(profile_run
 def test_a_read_only_entity_is_read_but_never_written(profile_run: Any) -> None:
     # The supplier's row is seeded as stored data, the way the system that owns it
     # would write it, rather than through Parallax.
-    profile_run.reset(model_of(SHOP_MODEL), {"Supplier": [{"id": 1, "name": "Leaf & Co"}]})
-    db = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    profile_run.reset(
+        model_of(SHOP_MODEL), {"Supplier": [{"id": 1, "name": "Leaf & Co"}]}, TEST_BINDING
+    )
+    db = own_root(
+        connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
     with raises_code(UsageError, "read-only-write-target"):
         rename_a_supplier(db, 1, "Leaf Ltd")
@@ -1112,7 +1126,9 @@ def test_a_read_only_call_inside_a_read_only_callback_joins_its_snapshot(
 ) -> None:
     db = _shop(profile_run)
     _seed_customers(db)
-    peer = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    peer = own_root(
+        connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     observer = _PeerCommitsAfterTheFirstRead(
         lambda: peer.transact(
             lambda tx: tx.insert(
@@ -1121,7 +1137,7 @@ def test_a_read_only_call_inside_a_read_only_callback_joins_its_snapshot(
         )
     )
     db = own_root(
-        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer)
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer, binding=TEST_BINDING)
     ).using_database_login()
 
     customer, orders = customer_with_their_orders(db, 1)
@@ -1335,10 +1351,12 @@ def _observed(
 ) -> tuple[ScopedDatabase, _PeerCommitsDuringAttempts]:
     """A scope whose transaction attempts let ``work`` commit, through a peer root,
     right after their first read."""
-    peer = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    peer = own_root(
+        connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     observer = _PeerCommitsDuringAttempts(lambda: work(peer), every_attempt=every_attempt)
     db = own_root(
-        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer)
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer, binding=TEST_BINDING)
     ).using_database_login()
     return db, observer
 
@@ -1451,7 +1469,7 @@ def test_a_locking_transaction_holds_its_read_lock_until_it_ends(profile_run: An
         with contextlib.closing(profile_run.control()) as control:
             control.execute_write("set lock_timeout = '200ms'", ())
             try:
-                control.execute_write("update orders set total = total where id = 10", ())
+                control.execute_write("update px.orders set total = total where id = 10", ())
             except DatabaseError as timed_out:
                 refused.append(timed_out)
 
@@ -1499,9 +1517,11 @@ def test_a_single_attempt_surfaces_the_conflict_unretried(profile_run: Any) -> N
 
 
 def test_root_and_scope_defaults_resolve_each_transactions_options(profile_run: Any) -> None:
-    profile_run.reset(model_of(SHOP_MODEL), {})
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
     database = own_root(
-        connect_with_transaction_defaults(cast("PostgresAdapter", profile_run.port), SHOP_MODEL)
+        connect_with_transaction_defaults(
+            cast("PostgresAdapter", profile_run.port), SHOP_MODEL, TEST_BINDING
+        )
     )
     db = database.using_database_login()
     reports = a_scope_for_reports(db)
@@ -1620,17 +1640,19 @@ _NO_ROWS: Sequence[Mapping[str, object]] = ()
 
 def test_the_first_program_runs_through_the_shipped_surface() -> None:
     model = DomainModel(Customer, Order)
-    statements = table_statements(model)
+    statements = table_statements(model, TEST_BINDING)
     assert [statement.split(" (")[0] for statement in statements] == [
-        "create table customer",
-        "create table orders",
-        "create index pxi_orders_order_orders_custom_b818642dd60617fc200f3b8e1a175ccb on orders",
+        "create table px.customer",
+        "create table px.orders",
+        "create index pxi_orders_order_orders_custom_b818642dd60617fc200f3b8e1a175ccb on px.orders",
     ]
 
     adapter = configure_the_database("postgresql://shop@localhost/shop", "s3cret")
     assert type(adapter) is PostgresAdapter
 
-    customer = add_and_find_a_customer(cast("PostgresAdapter", _ScriptedPort([_CUSTOMER_ROW])))
+    customer = add_and_find_a_customer(
+        cast("PostgresAdapter", _ScriptedPort([_CUSTOMER_ROW])), TEST_BINDING
+    )
     assert customer.name == "Ada"
 
 
@@ -2070,7 +2092,11 @@ def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, b
 def test_every_recipe_runs_through_the_shipped_surface(
     recipe: Callable[[ScopedDatabase], object], reads: tuple[Sequence[Mapping[str, object]], ...]
 ) -> None:
-    recipe(own_root(Database.connect(_ScriptedPort(*reads), SHOP_MODEL)).using_database_login())
+    recipe(
+        own_root(
+            Database.connect(_ScriptedPort(*reads), SHOP_MODEL, binding=TEST_BINDING)
+        ).using_database_login()
+    )
 
 
 @pytest.mark.parametrize(
@@ -2084,7 +2110,9 @@ def test_every_recipe_runs_through_the_shipped_surface(
 def test_naming_who_placed_an_order_runs_through_the_shipped_surface(
     include: bool, reads: tuple[Sequence[Mapping[str, object]], ...], named: str
 ) -> None:
-    db = own_root(Database.connect(_ScriptedPort(*reads), SHOP_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(_ScriptedPort(*reads), SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     query = Order.where(Order.id == 10)
 
     order = db.find(query.include(Order.customer) if include else query).result()
@@ -2109,7 +2137,7 @@ class _WriteFailsPort(_ScriptedPort):
 def test_cancelling_reviewed_orders_runs_through_the_shipped_surface(
     port: _ScriptedPort, changed: list[int]
 ) -> None:
-    db = own_root(Database.connect(port, SHOP_MODEL)).using_database_login()
+    db = own_root(Database.connect(port, SHOP_MODEL, binding=TEST_BINDING)).using_database_login()
     reviewed = db.find(Order.where(Order.id == 10)).results()
 
     assert cancel_reviewed_orders(db, reviewed) == changed
@@ -2117,7 +2145,7 @@ def test_cancelling_reviewed_orders_runs_through_the_shipped_surface(
 
 def test_cancelling_reviewed_orders_lets_any_other_failure_through() -> None:
     db = own_root(
-        Database.connect(_WriteFailsPort([_ORDER_ROW]), SHOP_MODEL)
+        Database.connect(_WriteFailsPort([_ORDER_ROW]), SHOP_MODEL, binding=TEST_BINDING)
     ).using_database_login()
     reviewed = db.find(Order.where(Order.id == 10)).results()
 
@@ -2126,7 +2154,9 @@ def test_cancelling_reviewed_orders_lets_any_other_failure_through() -> None:
 
 
 def test_a_caught_joined_failure_runs_through_the_shipped_surface() -> None:
-    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(_ScriptedPort(), SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
     with pytest.raises(UsageError) as refused:
         open_an_account_even_if_the_order_fails(
@@ -2137,14 +2167,18 @@ def test_a_caught_joined_failure_runs_through_the_shipped_surface() -> None:
 
 
 def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:
-    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(_ScriptedPort(), SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
     with pytest.raises(UsageError):
         place_two_orders_together(db, _order(13, 1, "50.00"), _order(14, 1, "60.00"))
 
 
 def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:
-    db = own_root(Database.connect(_ScriptedPort(), _DELIVERIES)).using_database_login()
+    db = own_root(
+        Database.connect(_ScriptedPort(), _DELIVERIES, binding=TEST_BINDING)
+    ).using_database_login()
 
     arrange_a_pickup(db, 3, 10, "Bergen")
 
@@ -2153,7 +2187,9 @@ def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:
 
 
 def test_a_tuned_scope_runs_through_the_shipped_surface() -> None:
-    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(_ScriptedPort(), SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
     tuned = a_scope_for_slow_conflicts(db)
 
@@ -2164,7 +2200,9 @@ def test_a_tuned_scope_runs_through_the_shipped_surface() -> None:
 
 def test_transaction_defaults_run_through_the_shipped_surface() -> None:
     database = own_root(
-        connect_with_transaction_defaults(cast("PostgresAdapter", _ScriptedPort()), SHOP_MODEL)
+        connect_with_transaction_defaults(
+            cast("PostgresAdapter", _ScriptedPort()), SHOP_MODEL, TEST_BINDING
+        )
     )
 
     reports = a_scope_for_reports(database.using_database_login())

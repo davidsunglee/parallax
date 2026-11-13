@@ -76,6 +76,7 @@ from parallax.core.internal.predicate._resolved import (
 from parallax.core.internal.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.internal.sql_gen._compile import compile_write_predicate
 from parallax.core.internal.temporal_read import Bitemporal, TransactionTimeOnly, temporal_facet_of
+from tests._support.bindings import bound_model
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
@@ -105,7 +106,7 @@ def _where(
     """The `where` clause and binds `m-sql` lowers ``op`` to over ``model``."""
     statement = compile_read(
         op,
-        model,
+        bound_model(model),
         POSTGRES,
         target(model, name),
         temporal=temporal,
@@ -569,10 +570,10 @@ if TYPE_CHECKING:
         assert_type(
             PlannedEntityQuery(identity, entity, position, closed, projection), PlannedEntityQuery
         )
-        compile_write_predicate(closed, POLICY, POSTGRES, entity)
+        compile_write_predicate(closed, bound_model(POLICY), POSTGRES, entity)
 
         PlannedEntityQuery(identity, entity, position, raw, projection)  # pyright: ignore[reportArgumentType]
-        compile_write_predicate(raw, POLICY, POSTGRES, entity)  # pyright: ignore[reportArgumentType]
+        compile_write_predicate(raw, bound_model(POLICY), POSTGRES, entity)  # pyright: ignore[reportArgumentType]
         resolve_temporal_visibility(
             closed,  # pyright: ignore[reportArgumentType]
             target=entity,
@@ -589,7 +590,7 @@ if TYPE_CHECKING:
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
     op = oa.Quantifier("any", "Tenant.leases")
     where, binds = _where(op, LEASE, "Tenant")
-    assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
+    assert where == "exists (select 1 from px.lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == (INFINITY,)
 
 
@@ -609,7 +610,7 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
     )
     assert where == (
-        "exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? "
+        "exists (select 1 from px.coverage t1 where t1.policy_id = t0.id and t1.amount >= ? "
         "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
     assert binds == (decimal.Decimal("600.00"), INFINITY, INFINITY, INFINITY, INFINITY)
@@ -627,7 +628,7 @@ def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
         temporal={"valid-time": AsOf(_B), "transaction-time": AsOf(_P)},
     )
     assert where == (
-        "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
+        "exists (select 1 from px.coverage t1 where t1.policy_id = t0.id and "
         "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?) "
         "and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
     )
@@ -652,7 +653,7 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
         temporal={"valid-time": AsOf(_B), "transaction-time": AsOf("latest")},
     )
     assert where == (
-        "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
+        "exists (select 1 from px.coverage t1 where t1.policy_id = t0.id and "
         "t1.from_z <= ? and t1.thru_z > ? and t1.out_z = ?) "
         "and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     )
@@ -678,8 +679,8 @@ def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
         temporal={"valid-time": AsOf(_B), "transaction-time": AsOf(_P)},
     )
     assert where == (
-        "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
-        "exists (select 1 from claim t2 where t2.coverage_id = t1.id and "
+        "exists (select 1 from px.coverage t1 where t1.policy_id = t0.id and "
+        "exists (select 1 from px.claim t2 where t2.coverage_id = t1.id and "
         "t2.from_z <= ? and t2.thru_z > ? and t2.in_z <= ? and t2.out_z > ?) and "
         "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?) "
         "and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
@@ -770,7 +771,8 @@ def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_r
     op = oa.Quantifier("any", "Zoo.creatures")
     where, binds = _where(op, _ZOO, "Zoo")
     assert where == (
-        "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"
+        "exists (select 1 from px.lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and "
+        "t1.out_z = ?)"
     )
     assert binds == (INFINITY, INFINITY)
 
@@ -787,10 +789,11 @@ def test_a_field_past_a_to_one_hop_reads_only_its_visible_candidate() -> None:
         op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
     )
     statement = compile_read(
-        op, POLICY, POSTGRES, target(POLICY, "Claim"), temporal=_PINNED
+        op, bound_model(POLICY), POSTGRES, target(POLICY, "Claim"), temporal=_PINNED
     ).statement
     assert statement.sql.endswith(
-        f"from claim t0 left join coverage t1 on t1.id = t0.coverage_id and {_COVERAGE_VISIBLE} "
+        "from px.claim t0 left join px.coverage t1 on t1.id = t0.coverage_id and "
+        f"{_COVERAGE_VISIBLE} "
         f"where t1.amount > ? and {_CLAIM_VISIBLE}"
     )
     assert statement.binds[:4] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
@@ -800,7 +803,7 @@ def test_a_field_past_a_to_one_hop_reads_only_its_visible_candidate() -> None:
 def test_presence_of_a_to_one_target_tests_only_its_visible_candidate() -> None:
     where, _ = _where(oa.Presence("notExists", "Claim.coverage"), POLICY, "Claim", temporal=_PINNED)
     assert where == (
-        f"not exists (select 1 from coverage t1 where t1.id = t0.coverage_id and "
+        f"not exists (select 1 from px.coverage t1 where t1.id = t0.coverage_id and "
         f"{_COVERAGE_VISIBLE}) and {_CLAIM_VISIBLE}"
     )
 
@@ -818,8 +821,8 @@ def test_a_match_and_every_hop_its_operand_reaches_carry_their_terms() -> None:
     where, binds = _where(op, POLICY, "Claim", temporal=_PINNED)
     policy_visible = "t2.from_z <= ? and t2.thru_z > ? and t2.in_z <= ? and t2.out_z > ?"
     assert where == (
-        "exists (select 1 from coverage t1 where t1.id = t0.coverage_id and exists "
-        f"(select 1 from policy t2 where t2.id = t1.policy_id and t2.name = ? and "
+        "exists (select 1 from px.coverage t1 where t1.id = t0.coverage_id and exists "
+        f"(select 1 from px.policy t2 where t2.id = t1.policy_id and t2.name = ? and "
         f"{policy_visible}) and {_COVERAGE_VISIBLE}) and {_CLAIM_VISIBLE}"
     )
     assert binds[0] == "Auto"

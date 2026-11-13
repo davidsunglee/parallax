@@ -59,6 +59,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.core.internal.write_plan import ObjectKey, PredecessorRow, TemporalObservation
 from parallax.core.internal.write_plan.plan import BoundRange
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
@@ -137,7 +138,7 @@ class _Session:
             execute_write_steps=self.positions if execute is None else execute(self.positions),
             execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=self._acquire,
-            planner=build_write_planner(_META),
+            planner=build_write_planner(bound_model(_META)),
             actor_identity=TEST_ACTOR_IDENTITY,
         )
 

@@ -34,6 +34,11 @@ from parallax.core.internal import predicate as oa
 from parallax.core.internal.base import DATE as DATE_TYPE
 from parallax.core.internal.base import INFINITY, INT64, STRING, InternalError, ManagedValue
 from parallax.core.internal.concurrency import _compile as concurrency_compile
+from parallax.core.internal.database_binding import (
+    BINDING_IDENTIFIER_INVALID,
+    BindingError,
+    ResolvedBinding,
+)
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.entity._layout import CatalogedModel
@@ -86,6 +91,7 @@ from parallax.descriptor._records import Attribute, Entity, Inheritance
 from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metadata
 from tests._support.binary32 import narrowed
+from tests._support.bindings import TEST_BINDING, binding_for, bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import (
     compile_nonempty_read,
@@ -148,15 +154,16 @@ def test_an_element_scope_admits_constants_and_refuses_attribute_subjects() -> N
 
 
 def test_all_projects_scalar_columns() -> None:
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql == (
-        "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0"
+        "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from "
+        "px.orders t0"
     )
     assert compiled.statement.binds == ()
 
 
 def test_none_lowers_to_unsatisfiable() -> None:
-    compiled = compile_read(oa.FalseNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(oa.FalseNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith("where 1 = 0")
 
 
@@ -164,19 +171,25 @@ def test_instance_form_projects_value_object_document_last() -> None:
     # Instance-form (the object lane, m-sql *Read projection* slot 4): the value
     # object's document column rides the owner's SELECT, last among all columns.
     instance = compile_read(
-        oa.TrueNode(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"), result_form="instance"
+        oa.TrueNode(),
+        bound_model(CUSTOMER),
+        POSTGRES,
+        target(CUSTOMER, "Customer"),
+        result_form="instance",
     )
     assert instance.statement.sql == (
-        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
+        "select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0"
     )
     assert instance.document_reads == ((2, 3),)
     # Row-form omits slot 4 — the scalars alone.
-    row = compile_read(oa.TrueNode(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
-    assert row.statement.sql == "select t0.id, t0.name from customer t0"
+    row = compile_read(oa.TrueNode(), bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer"))
+    assert row.statement.sql == "select t0.id, t0.name from px.customer t0"
 
 
 def test_entity_query_carries_one_limit_without_a_wrapper_tree() -> None:
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"), limit=5)
+    compiled = compile_read(
+        oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"), limit=5
+    )
     assert compiled.statement.sql.endswith("limit ?")
     assert compiled.statement.binds == (5,)
 
@@ -186,7 +199,7 @@ def test_order_and_limit_directives_still_compose() -> None:
     # lowers to the ordered clauses, unaffected by the duplicate-directive guard.
     compiled = compile_read(
         oa.TrueNode(),
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
         target(ORDERS, "Order"),
         order_by=(oq.OrderKey(attr="Order.id", direction="asc"),),
@@ -218,7 +231,13 @@ def test_nullable_order_key_lowers_through_the_placement_seam(
             nulls=cast('Literal["first", "last"] | None', placement),
         ),
     )
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"), order_by=keys)
+    compiled = compile_read(
+        oa.TrueNode(),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
+        order_by=keys,
+    )
     assert compiled.statement.sql.endswith(f"order by {term}")
 
 
@@ -235,7 +254,13 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
             nulls=cast('Literal["first", "last"] | None', placement),
         ),
     )
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"), order_by=keys)
+    compiled = compile_read(
+        oa.TrueNode(),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
+        order_by=keys,
+    )
     assert compiled.statement.sql.endswith("order by t0.qty desc")
 
 
@@ -261,7 +286,7 @@ def test_the_package_exports_only_the_statement_value() -> None:
 
 
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(oa.TrueNode(), bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
 
     assert compiled.result_contract.coordinate_ordinals == ()
     assert row_coordinates(compiled.result_contract, ((), ())) == (None, None)
@@ -287,19 +312,21 @@ def test_projection_binds_precede_predicate_binds() -> None:
     # follow. Placeholder order in the SQL and bind order must agree.
     compiled = compile_read(
         oa.Comparison(op="greaterThan", subject=oa.FieldSubject("ScalarThing.f64"), value=1.5),
-        SCALARS,
+        bound_model(SCALARS),
         POSTGRES,
         target(SCALARS, "ScalarThing"),
     )
     assert compiled.statement.sql == (
         "select t0.id, t0.f32, t0.f64, encode(t0.payload, ?) payload_hex, t0.local_time, "
-        "t0.external_id from scalar_thing t0 where t0.f64 > ?"
+        "t0.external_id from px.scalar_thing t0 where t0.f64 > ?"
     )
     assert compiled.statement.binds == ("hex", 1.5)
 
 
 def test_an_encoded_cell_delivers_its_logical_scalar_under_its_encoded_key() -> None:
-    compiled = compile_read(oa.TrueNode(), SCALARS, POSTGRES, target(SCALARS, "ScalarThing"))
+    compiled = compile_read(
+        oa.TrueNode(), bound_model(SCALARS), POSTGRES, target(SCALARS, "ScalarThing")
+    )
     clock = dt.time(9, 30)
     token = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
     (row,) = deliver(
@@ -402,7 +429,13 @@ def test_an_encoded_result_key_an_authored_column_also_spells_refuses_the_read(
     # or among one union branch's members — so the read is refused when compiled
     # rather than delivering either member from the other's cell.
     with pytest.raises(ValueError, match="duplicate result key 'blob_hex'"):
-        compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"), result_form=result_form)
+        compile_read(
+            oa.TrueNode(),
+            bound_model(meta),
+            POSTGRES,
+            target(meta, "Item"),
+            result_form=result_form,
+        )
 
 
 _MARIADB = dataclasses.replace(
@@ -573,29 +606,21 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
     child = _child_template(dialect, meta).render([1, 42]).statement
 
     assert root_template.render() == compile_nonempty_read(root, meta, dialect)
-    assert f"from {table} t0" in child.sql
+    assert f"from px.{table} t0" in child.sql
     membership = "= any(cast(? as bigint[]))" if dialect.name == "postgres" else "in (?, ?)"
     assert child.sql.endswith(f"where t0.order_id {membership}")
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
-def test_a_template_refuses_a_table_name_carrying_the_expanding_placeholder(
+def test_a_table_name_carrying_the_expanding_placeholder_never_reaches_a_template(
     dialect: Dialect,
 ) -> None:
+    # The placeholder carries NUL, which no resolved identifier may: the binding
+    # is refused before any template could mistake the name for a position.
     meta = _orders_with_item_table(f"item{EXPANDING_PLACEHOLDER}")
-    entity = target(meta, "OrderItem")
-    root = read_planning.PlannedEntityQuery(
-        target=entity.identity,
-        entity=entity,
-        position=read_position(meta, entity),
-        predicate=resolved_as_stated(ResolvedConstant(True), meta, entity),
-        projection=read_planning.ResolvedReadProjection((), False),
-    )
-
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
-        compile_nonempty_template(root, meta, dialect)
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="disagree with its positions"):
-        _child_template(dialect, meta)
+    with pytest.raises(BindingError) as raised:
+        ResolvedBinding(meta, binding_for(dialect))
+    assert [issue.code for issue in raised.value.issues] == [BINDING_IDENTIFIER_INVALID]
 
 
 def _two_key_sets(members: tuple[str, str]) -> read_planning.PlannedEntityQuery:
@@ -745,8 +770,14 @@ def test_member_sources_align_with_each_resolvable_entitys_own_member_selection(
     # concrete in the position has a source; an Entity the read planned no
     # branch for — a family root only an unrecognized tag names — reads only
     # the cells carrying its own members.
-    cataloged = CatalogedModel(meta)
-    compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), temporal=temporal)
+    cataloged = CatalogedModel(meta, TEST_BINDING)
+    compiled = compile_read(
+        oa.TrueNode(),
+        bound_model(meta),
+        POSTGRES,
+        target(meta, name),
+        temporal=temporal,
+    )
     contract = compiled.result_contract
     assert contract.resolvable
     for identity in contract.resolvable:
@@ -766,12 +797,12 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
     # projection bind and every user-predicate bind.
     compiled = compile_read(
         oa.Comparison(op="greaterThan", subject=oa.FieldSubject("ScalarThing.f64"), value=1.5),
-        SCALARS,
+        bound_model(SCALARS),
         POSTGRES,
         target(SCALARS, "ScalarThing"),
         limit=3,
     )
-    assert compiled.statement.sql.endswith("from scalar_thing t0 where t0.f64 > ? limit ?")
+    assert compiled.statement.sql.endswith("from px.scalar_thing t0 where t0.f64 > ? limit ?")
     assert compiled.statement.binds == ("hex", 1.5, 3)
 
 
@@ -781,7 +812,11 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
 def test_optimistic_and_default_reads_take_no_lock() -> None:
     for preference in (None, "optimistic"):
         compiled = compile_read(
-            oa.TrueNode(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account"), preference=preference
+            oa.TrueNode(),
+            bound_model(ACCOUNT),
+            POSTGRES,
+            target(ACCOUNT, "Account"),
+            preference=preference,
         )
         assert "for share" not in compiled.statement.sql
 
@@ -816,14 +851,16 @@ def test_a_record_free_model_compiles_the_same_reads() -> None:
     account = model.entity(fake_metadata.ACCOUNT)
     assert account is not None
 
-    scalars = compile_read(oa.TrueNode(), model, POSTGRES, account)
+    scalars = compile_read(oa.TrueNode(), bound_model(model), POSTGRES, account)
     assert scalars.statement.sql == (
-        "select t0.id, t0.ledger_label, t0.balance, t0.opened_on from account t0"
+        "select t0.id, t0.ledger_label, t0.balance, t0.opened_on from px.account t0"
     )
     # Instance form adds the `Document` tier slot after every scalar tier.
-    instance = compile_read(oa.TrueNode(), model, POSTGRES, account, result_form="instance")
+    instance = compile_read(
+        oa.TrueNode(), bound_model(model), POSTGRES, account, result_form="instance"
+    )
     assert instance.statement.sql.endswith(
-        "t0.opened_on, not t0.contact_doc is null, t0.contact_doc from account t0"
+        "t0.opened_on, not t0.contact_doc is null, t0.contact_doc from px.account t0"
     )
 
 
@@ -835,20 +872,24 @@ def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:
     assert entry is not None
 
     # A defining declaration's own join, and the reverse declaration's swap of it.
-    forward = compile_read(oa.Quantifier("any", "Account.entries"), model, POSTGRES, account)
-    assert forward.statement.sql.endswith(
-        "where exists (select 1 from entry t1 where t1.account_id = t0.id)"
+    forward = compile_read(
+        oa.Quantifier("any", "Account.entries"), bound_model(model), POSTGRES, account
     )
-    reverse = compile_read(oa.Presence("exists", "Entry.account"), model, POSTGRES, entry)
+    assert forward.statement.sql.endswith(
+        "where exists (select 1 from px.entry t1 where t1.account_id = t0.id)"
+    )
+    reverse = compile_read(
+        oa.Presence("exists", "Entry.account"), bound_model(model), POSTGRES, entry
+    )
     assert reverse.statement.sql.endswith(
-        "where exists (select 1 from account t1 where t1.id = t0.account_id)"
+        "where exists (select 1 from px.account t1 where t1.id = t0.account_id)"
     )
 
     nested = compile_read(
         oa.Comparison(
             op="eq", subject=oa.FieldSubject("Account.contact.address.city"), value="Oslo"
         ),
-        model,
+        bound_model(model),
         POSTGRES,
         account,
     )
@@ -901,7 +942,7 @@ def test_injected_root_terms_restrict_a_grouped_disjunction_before_the_tag_guard
 ) -> None:
     statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, resolution).statement
     assert statement.sql.endswith(
-        "from instrument t0 where (t0.price < ? or t0.price > ?) "
+        "from px.instrument t0 where (t0.price < ? or t0.price > ?) "
         "and t0.thru_z = ? and t0.out_z = ? and t0.kind = ?"
     )
     assert statement.binds == (Decimal("1.00"), Decimal("9.00"), INFINITY, INFINITY, "bond")
@@ -910,7 +951,7 @@ def test_injected_root_terms_restrict_a_grouped_disjunction_before_the_tag_guard
 def test_a_disjunction_without_a_root_restriction_is_grouped_beside_the_tag_guard() -> None:
     statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, "none").statement
     assert statement.sql.endswith(
-        "from instrument t0 where (t0.price < ? or t0.price > ?) and t0.kind = ?"
+        "from px.instrument t0 where (t0.price < ? or t0.price > ?) and t0.kind = ?"
     )
     assert statement.binds == (Decimal("1.00"), Decimal("9.00"), "bond")
 

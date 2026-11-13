@@ -29,6 +29,7 @@ from parallax.core.internal.unit_work import (
     WritePreconditionError,
 )
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
@@ -106,8 +107,10 @@ _WALLET_SEED: dict[str, object] = {"label": "seed", "note": "kept"}
 
 
 def _db(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL, clock=FixedClock(_AT))).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(
+        connect(profile_run.port, _MODEL, clock=FixedClock(_AT), binding=TEST_BINDING)
+    ).using_database_login()
 
 
 def _name(entity: type[Any]) -> str:
@@ -130,14 +133,14 @@ def _seed(entity: type[Any]) -> dict[str, object]:
 
 def _accounts(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     members = ", ".join(_member(entity, name) for name in ("label", "note", "spec", "marks"))
-    sql = f"select id, {members}, version from {_TABLES[entity]} order by id"
+    sql = f"select id, {members}, version from px.{_TABLES[entity]} order by id"
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
 def _wallets(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         f"select id, {_member(entity, 'label')}, {_member(entity, 'note')} "
-        f"from {_TABLES[entity]} order by id"
+        f"from px.{_TABLES[entity]} order by id"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 

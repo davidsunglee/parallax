@@ -64,6 +64,7 @@ from parallax.core.internal.unit_work import (
     ReadEvidence,
     RetainedObservation,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit.core._execution._execution_support import (
     ACCOUNT,
@@ -72,7 +73,7 @@ from tests.unit.core._execution._execution_support import (
     scope,
 )
 
-_SERVING: Final = ServingModel(prepare_model(ACCOUNT, edition="test"))
+_SERVING: Final = ServingModel(prepare_model(ACCOUNT, edition="test", binding=TEST_BINDING))
 ACCOUNT_META: Final = model_of(ACCOUNT)
 
 
@@ -226,8 +227,8 @@ def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
     # differ once a publication lands between them, and the earlier one keeps
     # what it adopted however long it lives — a publication reaches the next
     # operation and never an existing read.
-    a = prepare_model(ACCOUNT, edition="a")
-    b = prepare_model(ACCOUNT, edition="b")
+    a = prepare_model(ACCOUNT, edition="a", binding=TEST_BINDING)
+    b = prepare_model(ACCOUNT, edition="b", binding=TEST_BINDING)
     serving = ServingModel(a)
     scope = _scope(ScriptedAdapter(), serving=serving)
 

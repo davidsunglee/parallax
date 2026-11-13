@@ -19,7 +19,7 @@ when:
               eq: {value: false}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.prices) = ? then t0.prices else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as decimal(8, 2)) end >= ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.flags) = ? then t0.flags else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as boolean) end = ?)'}
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from px.basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.prices) = ? then t0.prices else cast(? as jsonb) end) t1 where case when jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as decimal(8, 2)) end >= ?) and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.flags) = ? then t0.flags else cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then cast(t2.value #>> ? as boolean) end = ?)'}
     binds: [array, '[]', string, '{}', '2.00', array, '[]', boolean, '{}', false]
   graph:
     Basket:

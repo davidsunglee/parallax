@@ -44,6 +44,7 @@ from parallax.core.internal.sql_gen._compile import CompiledPredicate
 from parallax.core.internal.sql_gen._compile import (
     compile_write_predicate as compile_validated_write_predicate,
 )
+from tests._support.bindings import bound_model
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import model, target
 
@@ -77,7 +78,7 @@ def _compiled_as(
     closed = resolve_temporal_visibility(
         query.predicate, target=entity, model=meta, resolution=mode
     )
-    return compile_validated_write_predicate(closed, meta, POSTGRES, entity)
+    return compile_validated_write_predicate(closed, bound_model(meta), POSTGRES, entity)
 
 
 # --------------------------------------------------------------------------- #
@@ -86,7 +87,7 @@ def _compiled_as(
 def test_comparison_renders_the_column_unaliased() -> None:
     predicate = compile_write_predicate(
         oa.Comparison(op="lessThan", subject=oa.FieldSubject("Account.balance"), value="100.00"),
-        ACCOUNT,
+        bound_model(ACCOUNT),
         POSTGRES,
         target(ACCOUNT, "Account"),
     )
@@ -100,10 +101,10 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     # part of the seam, so equality against a freshly constructed literal pins
     # BOTH members at once and would catch a silently reordered pair.
     assert compile_write_predicate(
-        oa.TrueNode(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+        oa.TrueNode(), bound_model(ACCOUNT), POSTGRES, target(ACCOUNT, "Account")
     ) == CompiledPredicate("", ())
     assert compile_write_predicate(
-        oa.FalseNode(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account")
+        oa.FalseNode(), bound_model(ACCOUNT), POSTGRES, target(ACCOUNT, "Account")
     ) == CompiledPredicate("1 = 0", ())
 
 
@@ -193,7 +194,9 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
 def test_write_predicate_vocabulary_matches_the_read_dispatch(
     op: oa.PredicateNode, expected_sql: str, expected_binds: tuple[object, ...]
 ) -> None:
-    predicate = compile_write_predicate(op, ACCOUNT, POSTGRES, target(ACCOUNT, "Account"))
+    predicate = compile_write_predicate(
+        op, bound_model(ACCOUNT), POSTGRES, target(ACCOUNT, "Account")
+    )
     sql, binds = predicate.sql, predicate.binds
     assert sql == expected_sql
     assert binds == expected_binds
@@ -201,7 +204,7 @@ def test_write_predicate_vocabulary_matches_the_read_dispatch(
     # clause, differing ONLY in the alias qualification of each column: strip the
     # root alias from the read's clause and the two fragments coincide exactly,
     # binds included.
-    read = compile_read(op, ACCOUNT, POSTGRES, target(ACCOUNT, "Account"))
+    read = compile_read(op, bound_model(ACCOUNT), POSTGRES, target(ACCOUNT, "Account"))
     read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where.replace("t0.", "") == expected_sql
     assert read.statement.binds == expected_binds
@@ -220,7 +223,7 @@ def test_write_predicate_binds_follow_operand_order() -> None:
                 oa.Comparison(op="eq", subject=oa.FieldSubject("Account.version"), value=3),
             )
         ),
-        ACCOUNT,
+        bound_model(ACCOUNT),
         POSTGRES,
         target(ACCOUNT, "Account"),
     )
@@ -234,10 +237,13 @@ def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner()
     # correlation's OWNER side stays unaliased — the readless `delete from orders
     # where exists (...)` shape.
     predicate = compile_write_predicate(
-        oa.Quantifier("any", "Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+        oa.Quantifier("any", "Order.items"),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
     )
     sql, binds = predicate.sql, predicate.binds
-    assert sql == "exists (select 1 from order_item t1 where t1.order_id = id)"
+    assert sql == "exists (select 1 from px.order_item t1 where t1.order_id = id)"
     assert binds == ()
 
 
@@ -246,13 +252,13 @@ def test_a_shared_to_one_hop_selects_the_target_s_keys_instead() -> None:
     # columns are aliased; the write tests its key's membership in it.
     predicate = compile_write_predicate(
         oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada"),
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
         target(ORDERS, "OrderItem"),
     )
     assert predicate.selection
     assert predicate.sql == (
-        "select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "select t0.id from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id "
         "where t1.name = ?"
     )
     assert predicate.binds == ("Ada",)
@@ -276,7 +282,7 @@ def test_a_key_selection_projects_every_physical_key_column(
 
     assert predicate.selection
     assert predicate.sql == (
-        "select t0.id, t0.thru_z, t0.out_z from coverage t0 left join policy t1 "
+        "select t0.id, t0.thru_z, t0.out_z from px.coverage t0 left join px.policy t1 "
         "on t1.id = t0.policy_id and t1.thru_z = ? and t1.out_z = ? "
         "where t1.name = ? and t0.thru_z = ? and t0.out_z = ?"
     )
@@ -332,14 +338,14 @@ def test_propagated_root_terms_restrict_every_alternative_in_place() -> None:
 def test_a_temporal_target_joins_at_latest_in_the_key_selection() -> None:
     predicate = compile_write_predicate(
         oa.Comparison(op="eq", subject=oa.FieldSubject("LeaseNote.lease.term"), value="24mo"),
-        LEASE,
+        bound_model(LEASE),
         POSTGRES,
         target(LEASE, "LeaseNote"),
     )
 
     assert predicate.selection
     assert predicate.sql == (
-        "select t0.id from lease_note t0 left join lease t1 on t1.id = t0.lease_id "
+        "select t0.id from px.lease_note t0 left join px.lease t1 on t1.id = t0.lease_id "
         "and t1.out_z = ? where t1.term = ?"
     )
     assert predicate.binds == (INFINITY, "24mo")
@@ -352,14 +358,14 @@ def test_a_match_through_a_temporal_target_tests_its_latest_milestone_in_place()
             "LeaseNote.lease",
             oa.Comparison(op="eq", subject=oa.FieldSubject("term"), value="12mo"),
         ),
-        LEASE,
+        bound_model(LEASE),
         POSTGRES,
         target(LEASE, "LeaseNote"),
     )
 
     assert not predicate.selection
     assert predicate.sql == (
-        "not exists (select 1 from lease t1 where t1.id = lease_id and t1.term = ? "
+        "not exists (select 1 from px.lease t1 where t1.id = lease_id and t1.term = ? "
         "and t1.out_z = ?)"
     )
     assert predicate.binds == ("12mo", INFINITY)
@@ -375,7 +381,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
     # bare columns).
     predicate = compile_write_predicate(
         oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.city"), value="Boston"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -386,7 +392,7 @@ def test_value_object_document_column_renders_unaliased() -> None:
     # this pins the DIFFERENCE rather than merely the write's own text.
     read = compile_read(
         oa.Comparison(op="eq", subject=oa.FieldSubject("Customer.address.city"), value="Boston"),
-        CUSTOMER,
+        bound_model(CUSTOMER),
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
@@ -409,7 +415,9 @@ def test_to_many_value_object_traversal_keeps_only_its_own_element_alias() -> No
         ),
         oa.Quantifier("none", "Customer.address.phones"),
     ):
-        sql = compile_write_predicate(op, CUSTOMER, POSTGRES, target(CUSTOMER, "Customer")).sql
+        sql = compile_write_predicate(
+            op, bound_model(CUSTOMER), POSTGRES, target(CUSTOMER, "Customer")
+        ).sql
         assert "t0." not in sql
         assert "jsonb_extract_path(address, ?)" in sql
         assert "jsonb_array_elements(" in sql and " t1" in sql
@@ -437,7 +445,9 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
             op="eq", subject=oa.FieldSubject("CardPayment.cardNetwork"), value="Visa"
         ),
     )
-    predicate = compile_write_predicate(op, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
+    predicate = compile_write_predicate(
+        op, bound_model(PAYMENT), POSTGRES, target(PAYMENT, "CardPayment")
+    )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "(card_network = ? and kind = ?)"
     assert binds == ("Visa", "card")
@@ -451,10 +461,10 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # coincide exactly modulo alias qualification, tag bind last in both.
     grouped = oa.Group(operand=op)
     grouped_write = compile_write_predicate(
-        grouped, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment")
+        grouped, bound_model(PAYMENT), POSTGRES, target(PAYMENT, "CardPayment")
     )
     write_sql, write_binds = grouped_write.sql, grouped_write.binds
-    read = compile_read(grouped, PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
+    read = compile_read(grouped, bound_model(PAYMENT), POSTGRES, target(PAYMENT, "CardPayment"))
     read_where = read.statement.sql.split(" where ", 1)[1]
     assert read_where == "((t0.card_network = ? and t0.kind = ?)) and t0.kind = ?"
     read_branch, _, _target_guard = read_where.rpartition(" and ")

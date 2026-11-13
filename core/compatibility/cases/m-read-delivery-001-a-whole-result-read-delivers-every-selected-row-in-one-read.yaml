@@ -9,8 +9,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0
-  referenceSql: select id, owner, balance, version from account
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0
+  referenceSql: select id, owner, balance, version from px.account
   rows:
     - { id: 1, owner: Ada, balance: "100.00", version: 1 }
     - { id: 2, owner: Linus, balance: "250.00", version: 1 }

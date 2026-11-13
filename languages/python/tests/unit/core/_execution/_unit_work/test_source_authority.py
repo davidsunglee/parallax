@@ -58,6 +58,7 @@ from parallax.core.internal.write_plan.plan import (
 )
 from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.internal.write_plan.steps import Finite
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
@@ -352,8 +353,8 @@ def test_clearing_forgets_every_fact_but_keeps_participation_and_freshness() -> 
 
 
 def test_a_unit_of_works_authority_holds_nothing_of_its_shell_or_execution() -> None:
-    planner = build_write_planner(_ACCOUNT)
-    simulated = SimulatedWriteSteps(planner.payloads, _ACCOUNT, POSTGRES)
+    planner = build_write_planner(bound_model(_ACCOUNT))
+    simulated = SimulatedWriteSteps(planner.payloads, bound_model(_ACCOUNT), POSTGRES)
     uow = UnitOfWork(
         settings=TransactionSettings(),
         lifetime=TxnAttemptLifetime(),

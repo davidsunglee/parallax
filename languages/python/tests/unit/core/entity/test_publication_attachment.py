@@ -54,6 +54,7 @@ from parallax.core.internal.entity._model import DomainModel, class_index, model
 from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._indexed_graph_support import Node, published_nodes
@@ -408,7 +409,9 @@ def _disagreeing(composed: type[Entity], variant: type[Entity]) -> InternalError
     classes = class_index(DomainModel(composed, CorrPeer))
     assert classes is not None
     with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
-        EntityGraphConstruction(CatalogedModel(model_of(DomainModel(variant, CorrPeer))), classes)
+        EntityGraphConstruction(
+            CatalogedModel(model_of(DomainModel(variant, CorrPeer)), TEST_BINDING), classes
+        )
     return refusal.value
 
 
@@ -592,7 +595,7 @@ def _refusal_across(cataloged: DomainModel, composed: DomainModel) -> InternalEr
     classes = class_index(composed)
     assert classes is not None
     with raises_code(InternalError, "entity-graph-layout-mismatch") as refusal:
-        EntityGraphConstruction(CatalogedModel(model_of(cataloged)), classes)
+        EntityGraphConstruction(CatalogedModel(model_of(cataloged), TEST_BINDING), classes)
     return refusal.value
 
 

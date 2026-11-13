@@ -9,8 +9,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, encode(t0.payload, ?) payload_hex from bytes_cell t0
-        mariadb: select t0.id, hex(t0.payload) payload_hex from bytes_cell t0
+        postgres: select t0.id, encode(t0.payload, ?) payload_hex from px.bytes_cell t0
+        mariadb: select t0.id, hex(t0.payload) payload_hex from px.bytes_cell t0
       binds:
         postgres: [hex]
         mariadb: []

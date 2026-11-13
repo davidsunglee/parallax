@@ -61,6 +61,7 @@ from parallax.core.internal.write_plan.plan import (
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.internal.write_plan.steps import PlannedStep
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -142,7 +143,7 @@ def _write(
 
 
 def _plan(*writes: StateObservedWrite) -> WritePlan:
-    return build_write_planner(_BALANCE).finalize(
+    return build_write_planner(bound_model(_BALANCE)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
@@ -272,7 +273,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     with raises_code(
         InternalError, WRITE_PLANNING_FAILED, match="requires the Temporal Observation"
     ):
-        build_write_planner(model).finalize(
+        build_write_planner(bound_model(model)).finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
@@ -326,7 +327,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             update(aug, "300.00", rectangle(jun, INFINITY, "200.00")),
         ],
     )
-    plan = build_write_planner(model).finalize(
+    plan = build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
@@ -395,7 +396,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         ),
         confirm_target=confirm,
     )
-    plan = build_write_planner(POSITION).finalize(
+    plan = build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
@@ -492,7 +493,7 @@ def _admission() -> tuple[WriteAdmission, SourceAuthority]:
 
 
 def _admitted_plan(admission: WriteAdmission, authority: SourceAuthority) -> WritePlan:
-    return build_write_planner(_BALANCE).finalize(
+    return build_write_planner(bound_model(_BALANCE)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),

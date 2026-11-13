@@ -13,13 +13,12 @@ from collections.abc import Sequence
 import pytest
 
 from parallax.core.internal.base import INT32, STRING
-from parallax.core.internal.dialect import POSTGRES, PhysicalIndexName
+from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     Column,
     EntityIdentity,
     IndexIdentity,
-    Table,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
@@ -34,7 +33,7 @@ from parallax.evolution.internal.model_evolution import (
     ABSENT,
     EntityAdded,
     UnilateralEvolution,
-    evolve_metamodels,
+    evolve_resolved,
 )
 from parallax.evolution.internal.schema_delta._order import order, order_key
 from parallax.evolution.internal.schema_delta._physical import (
@@ -51,6 +50,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     table_of,
 )
 from parallax.evolution.internal.schema_delta._plan import plan
+from tests._support.bindings import bound_model, resolved_table
 from tests.unit._corpus_model_support import corpus, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
@@ -63,7 +63,7 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
     The invariant ``order_key`` rests on, stated over the rules themselves —
     the three Table-local ones and a constrained Table's prerequisite — so the
     key can never silently stop being a linear extension of them. A rule is
-    silent about a prerequisite the plan does not contain: an operation on a
+    silent about a prerequisite the plan does not contain: an operation on px.a
     Table this delta does not create acts on one the earlier edition already
     had.
 
@@ -79,17 +79,17 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
         if isinstance(operation, CreateExtension)
     }
     tables = {
-        table_of(operation).name: position
+        table_of(operation).physical.name: position
         for position, operation in enumerate(ordered)
         if isinstance(operation, CreateTable)
     }
     columns = {
-        (table_of(operation).name, operation.column.column.name): position
+        (table_of(operation).physical.name, operation.column.column.name): position
         for position, operation in enumerate(ordered)
         if isinstance(operation, AddColumn)
     }
     indices = {
-        (table_of(operation).name, operation.definition.index): position
+        (table_of(operation).physical.name, operation.definition.index): position
         for position, operation in enumerate(ordered)
         if isinstance(operation, CreateIndex)
     }
@@ -103,9 +103,9 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
             and extensions.get("btree_gist", len(ordered)) > position
         ):
             violations.append(
-                f"{position}: {operation.table.name} is created before its prerequisite"
+                f"{position}: {operation.table.physical.name} is created before its prerequisite"
             )
-        table = table_of(operation).name
+        table = table_of(operation).physical.name
         if tables.get(table, position) > position:
             violations.append(f"{position}: {table} is acted on before it is created")
         if isinstance(operation, CreateIndex):
@@ -126,7 +126,7 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
 
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
-_TABLE = Table(name="widget")
+_TABLE = resolved_table(_ENTITY, "widget")
 _CAUSE = (EntityAdded(entity=_ENTITY),)
 _CODE = PhysicalColumn(Column(name="code"), STRING, 8, nullable=True)
 _COUNT = PhysicalColumn(Column(name="count"), INT32, None, nullable=True)
@@ -134,7 +134,6 @@ _COUNT = PhysicalColumn(Column(name="count"), INT32, None, nullable=True)
 
 def _index(name: str, column: PhysicalColumn = _CODE) -> IndexDefinition:
     return IndexDefinition(
-        mapping_owner=_ENTITY,
         table=_TABLE,
         index=IndexIdentity(_ENTITY, name),
         components=(AttributeIdentity(_ENTITY, column.column.name),),
@@ -177,7 +176,7 @@ def test_the_key_leads_with_the_physical_table() -> None:
     # One Table's statements stay together and the whole output stays stable
     # under an edit to an unrelated Table.
     other = CreateTable(
-        table=Table(name="aardvark"),
+        table=resolved_table(EntityIdentity("parallax.test", "Aardvark"), "aardvark"),
         columns=(),
         primary_key=(),
         interval_checks=(),
@@ -297,14 +296,14 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule(
     # `zeta`'s create and report an order that is in fact correct. Under an
     # unchanged temporal profile the target still ends with the root's axis end
     # and is still created before the earlier Index is dropped.
-    evolution = evolve_metamodels(
-        _tpcs_family_altering_a_root_declared_index(unique=False, temporal=temporal),
-        _tpcs_family_altering_a_root_declared_index(unique=True, temporal=temporal),
+    evolution = evolve_resolved(
+        bound_model(_tpcs_family_altering_a_root_declared_index(unique=False, temporal=temporal)),
+        bound_model(_tpcs_family_altering_a_root_declared_index(unique=True, temporal=temporal)),
     )
     assert isinstance(evolution, UnilateralEvolution)
-    ordered = order(plan(evolution, POSTGRES).operations)
+    ordered = order(plan(evolution).operations)
     assert [
-        (type(operation).__name__, table_of(operation).name)
+        (type(operation).__name__, table_of(operation).physical.name)
         for operation in ordered
         if not isinstance(operation, CreateExtension)
     ] == [
@@ -330,7 +329,7 @@ def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         _MODELS["rate"],
         entity_with_two_indices_over_one_column(),
     ):
-        ordered = order(plan(evolve_metamodels(ABSENT, model), POSTGRES).operations)
+        ordered = order(plan(evolve_resolved(ABSENT, bound_model(model))).operations)
         assert _dependency_violations(ordered) == ()
 
 
@@ -347,16 +346,16 @@ def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
     ]
     assert pairs
     for earlier, later in pairs:
-        evolution = evolve_metamodels(earlier, later)
+        evolution = evolve_resolved(bound_model(earlier), bound_model(later))
         if not isinstance(evolution, UnilateralEvolution):
             continue
-        assert _dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()
+        assert _dependency_violations(order(plan(evolution).operations)) == ()
 
 
 def test_a_prerequisite_precedes_every_table_operation_whatever_their_names() -> None:
     extension = CreateExtension(name="zzz", caused_by=_CAUSE)
     other = CreateTable(
-        table=Table(name="aardvark"),
+        table=resolved_table(EntityIdentity("parallax.test", "Aardvark"), "aardvark"),
         columns=(_CODE,),
         primary_key=(),
         interval_checks=(),

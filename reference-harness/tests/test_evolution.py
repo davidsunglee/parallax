@@ -87,6 +87,36 @@ def test_the_runner_reports_a_structural_finding_as_a_case_failure() -> None:
         run_case(broken, None)
 
 
+def _case(stem: str) -> Case:
+    return next(case for case in _CASES if case.path.stem.startswith(stem))
+
+
+def test_a_relocation_the_endpoints_do_not_resolve_to_fails() -> None:
+    case = _case("m-model-evolution-071")
+    (relocated,) = _operations(case)
+    elsewhere = {**relocated, "later": {"qualifier": ["px_elsewhere"], "name": "evolution_widget"}}
+    findings = validate_evolution(_with_operations(case, [elsewhere]))
+    assert any("resolved relocations" in finding for finding in findings)
+
+
+def test_an_omitted_relocation_fails() -> None:
+    findings = validate_evolution(_with_operations(_case("m-model-evolution-072"), []))
+    assert any("resolved relocations" in finding for finding in findings)
+
+
+def test_a_relocation_the_masking_binding_prevents_fails() -> None:
+    case = _case("m-model-evolution-073")
+    invented = {
+        "kind": "TableRelocated",
+        "entity": "parallax.compatibility.Escrow",
+        "earlier": {"qualifier": ["px"], "name": "evolution_escrow"},
+        "later": {"qualifier": ["px"], "name": "evolution_escrow_archive"},
+    }
+    findings = validate_evolution(_with_operations(case, [*_operations(case), invented]))
+    assert any("resolved relocations" in finding for finding in findings)
+    assert any("DatabaseMigrationRequired" in finding for finding in findings)
+
+
 def _operations(case: Case) -> list[dict[str, object]]:
     evolution = case.expected_evolution or {}
     return list(evolution.get("operations") or [])

@@ -26,6 +26,10 @@ from parallax.core.internal.storage_layout._rules import (
     RULE_SET,
     STORAGE_LAYOUT_MODULE,
 )
+from parallax.core.internal.storage_layout._temporal import (
+    TemporalConstraintNames,
+    temporal_constraint_names,
+)
 
 __all__ = [
     "FACET_KEY",
@@ -48,6 +52,8 @@ __all__ = [
     "RelationalDocument",
     "StorageLayoutFacet",
     "TableLayout",
+    "TemporalConstraintNames",
     "TemporalHistoryConstraints",
     "storage_layout_facet_of",
+    "temporal_constraint_names",
 ]

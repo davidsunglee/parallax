@@ -31,7 +31,7 @@ import datetime as _dt
 import json
 import time
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
@@ -43,7 +43,8 @@ from testcontainers.community.mysql import MySqlContainer
 
 from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
-from ..ddl_builder import quote_identifier
+from ..database_binding import PhysicalTable
+from ..ddl_builder import qualified_table, quote_identifier
 from ..document_codec import is_document
 from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
@@ -124,7 +125,7 @@ _ACCESS_MODE: dict[str, str] = {
 }
 
 # The lock-wait view reads `information_schema.innodb_trx`, which needs the
-# PROCESS privilege the provider grants its user at boot.
+# PROCESS privilege the provider's boot grant includes.
 _LOCK_WAITS = (
     "select count(*) from information_schema.innodb_trx "
     "where trx_state = 'LOCK WAIT' and trx_mysql_thread_id in "
@@ -163,17 +164,17 @@ _SESSION_OUTCOMES: dict[_SessionState, str] = {
 # `COLUMN_TYPE` rather than `DATA_TYPE`: only the former carries the declared
 # length and precision a comparison of two schemas turns on.
 _CATALOG_COLUMNS = """
-select table_name, column_name, column_type, is_nullable
+select table_schema, table_name, column_name, column_type, is_nullable
 from information_schema.columns
-where table_schema = %s and table_name in ({placeholders})
+where table_schema in ({schemas}) and table_name in ({names})
 """
 
 # `NON_UNIQUE` is inverted uniqueness and `SEQ_IN_INDEX` is the component order a
 # physical access path depends on.
 _CATALOG_INDICES = """
-select table_name, index_name, non_unique, column_name
+select table_schema, table_name, index_name, non_unique, column_name
 from information_schema.statistics
-where table_schema = %s and table_name in ({placeholders})
+where table_schema in ({schemas}) and table_name in ({names})
 order by index_name, seq_in_index
 """
 
@@ -182,6 +183,11 @@ order by index_name, seq_in_index
 # substitutes for the suite's `infinity` literal.
 _INFINITY_SENTINEL = _dt.datetime(9999, 12, 31, 23, 59, 59, 999999)
 _INFINITY_LITERAL = "infinity"
+
+
+def _database(qualifier: tuple[str, ...]) -> str:
+    (database,) = qualifier
+    return database
 
 
 def _to_db_bind(value: Any) -> Any:
@@ -295,6 +301,7 @@ class MariaDbProvider:
     ) -> None:
         self._conn = connection
         self._dbname = dbname
+        self._owned: set[str] = set()
         # Connection parameters for opening a second, independent connection to the
         # SAME database. A peer is created
         # by reconnecting with these and selecting the working database.
@@ -302,12 +309,21 @@ class MariaDbProvider:
 
     # --- DatabaseProvider seam ---------------------------------------------
 
-    def reset(self) -> None:
-        """Drop and recreate the working schema — a clean, empty database."""
+    def reset(self, qualifiers: Collection[tuple[str, ...]]) -> None:
+        """Drop every database this provider created, and recreate each of
+        *qualifiers* (one database each) empty.
+
+        The connection's own working database holds no table, so it is never
+        reset: every statement names its table's database.
+        """
+        wanted = {_database(qualifier) for qualifier in qualifiers}
         with self._conn.cursor() as cur:
-            cur.execute(f"drop database if exists {self._dbname}")
-            cur.execute(f"create database {self._dbname}")
-            cur.execute(f"use {self._dbname}")
+            for database in sorted(self._owned | wanted):
+                cur.execute(f"drop database if exists {quote_identifier(database, self.dialect)}")
+            self._owned = set()
+            for database in sorted(wanted):
+                cur.execute(f"create database {quote_identifier(database, self.dialect)}")
+                self._owned.add(database)
         self._conn.commit()
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
@@ -316,32 +332,38 @@ class MariaDbProvider:
                 cur.execute(statement)
         self._conn.commit()
 
-    def catalog(self, tables: Sequence[str]) -> Catalog:
+    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
         """The physical shape MariaDB itself reports for *tables*.
 
         ``information_schema.STATISTICS`` is the whole index catalog here — it
         reports every key including the `PRIMARY` one, non-unique keys included —
         so no second source is needed for a bare ``create index``.
         """
-        names = tuple(tables)
-        if not names:
+        if not tables:
             return Catalog(tables=())
-        placeholders = ", ".join(["%s"] * len(names))
-        binds = (self._dbname, *names)
+        databases = sorted({_database(table.qualifier) for table in tables})
+        names = sorted({table.name for table in tables})
+        placeholders = {
+            "schemas": ", ".join(["%s"] * len(databases)),
+            "names": ", ".join(["%s"] * len(names)),
+        }
+        binds = (*databases, *names)
         with self._conn.cursor() as cur:
-            cur.execute(_CATALOG_COLUMNS.format(placeholders=placeholders), binds)
+            cur.execute(_CATALOG_COLUMNS.format(**placeholders), binds)
             columns = [
-                (str(row[0]), str(row[1]), str(row[2]), row[3] == "YES") for row in cur.fetchall()
+                (str(row[0]), str(row[1]), str(row[2]), str(row[3]), row[4] == "YES")
+                for row in cur.fetchall()
             ]
-            cur.execute(_CATALOG_INDICES.format(placeholders=placeholders), binds)
+            cur.execute(_CATALOG_INDICES.format(**placeholders), binds)
             components = [
-                (str(row[0]), str(row[1]), int(row[2]) == 0, str(row[3])) for row in cur.fetchall()
+                (str(row[0]), str(row[1]), str(row[2]), int(row[3]) == 0, str(row[4]))
+                for row in cur.fetchall()
             ]
-        return build_catalog(names, columns, components)
+        return build_catalog(tables, columns, components)
 
     def load(
         self,
-        table: str,
+        table: PhysicalTable,
         columns: Sequence[str],
         rows: Sequence[Sequence[Any]],
     ) -> None:
@@ -349,7 +371,7 @@ class MariaDbProvider:
             return
         col_list = ", ".join(quote_identifier(column, self.dialect) for column in columns)
         placeholders = ", ".join(["%s"] * len(columns))
-        target = quote_identifier(table, self.dialect)
+        target = qualified_table(table, self.dialect)
         sql = f"insert into {target} ({col_list}) values ({placeholders})"
         with self._conn.cursor() as cur:
             cur.executemany(sql, [tuple(_to_db_bind(value) for value in row) for row in rows])
@@ -623,7 +645,7 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
     connection: pymysql.connections.Connection | None = None
     try:
         connect_params = _connect_params(container)
-        _grant_lock_wait_view(container, connect_params)
+        _grant_provider_privileges(container, connect_params)
         connection = _connect_with_retry(
             _counting(connect_params, autocommit=False), container.dbname
         )
@@ -658,8 +680,9 @@ def _connect_params(container: MySqlContainer) -> dict[str, Any]:
     }
 
 
-def _grant_lock_wait_view(container: MySqlContainer, connect_params: dict[str, Any]) -> None:
-    """Let the provider's user read InnoDB's lock-wait view.
+def _grant_provider_privileges(container: MySqlContainer, connect_params: dict[str, Any]) -> None:
+    """Let the provider's user create, use, and drop every database a binding
+    places tables in, and read InnoDB's lock-wait view.
 
     MariaDB applies a global privilege to connections opened after the grant,
     so it precedes every connection the provider opens as that user.
@@ -673,7 +696,7 @@ def _grant_lock_wait_view(container: MySqlContainer, connect_params: dict[str, A
     )
     try:
         with root.cursor() as cur:
-            cur.execute("grant process on *.* to %s@'%%'", (container.username,))
+            cur.execute("grant all privileges on *.* to %s@'%%'", (container.username,))
     finally:
         root.close()
 

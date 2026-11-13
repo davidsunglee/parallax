@@ -23,7 +23,13 @@ from parallax.core import (
     WritePreconditionError,
 )
 from parallax.evolution import SchemaDelta
-from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint, PostgresRole
+from parallax.postgres import (
+    PoolOptions,
+    PostgresAdapter,
+    PostgresBinding,
+    PostgresEndpoint,
+    PostgresRole,
+)
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity, connect
 
 __all__ = [
@@ -165,7 +171,7 @@ def run_or_retry_later(
 
 
 def open_the_shop_database(
-    conninfo: str, credentials: CredentialSource, model: DomainModel
+    conninfo: str, credentials: CredentialSource, model: DomainModel, binding: PostgresBinding
 ) -> Database[PostgresRole]:
     """The process's one root: a bounded pool, room for more read plans, and logging."""
     adapter = PostgresAdapter(
@@ -174,6 +180,7 @@ def open_the_shop_database(
     return connect(
         adapter,
         model,
+        binding=binding,
         read_plan_cache_capacity=512,
         lifecycle_provider=LoggingLifecycleProvider(logging.getLogger("shop.database")),
     )

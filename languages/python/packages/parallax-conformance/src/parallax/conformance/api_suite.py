@@ -129,7 +129,6 @@ RECIPES: Final[list[Recipe]] = [
             "\n"
             "from parallax.core import (\n"
             "    ONE_TO_MANY,\n"
-            "    POSTGRES,\n"
             "    Attr,\n"
             "    DomainModel,\n"
             "    Entity,\n"
@@ -144,7 +143,7 @@ RECIPES: Final[list[Recipe]] = [
             "    rel,\n"
             ")\n"
             "from parallax.evolution import ABSENT, evolve, schema_delta\n"
-            "from parallax.postgres import PostgresAdapter, PostgresEndpoint\n"
+            "from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresEndpoint\n"
             "from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect\n"
         ),
     ),
@@ -510,7 +509,7 @@ RECIPES: Final[list[Recipe]] = [
             "    UsageError,\n"
             "    WritePreconditionError,\n"
             ")\n"
-            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole\n"
             "from parallax.snapshot import (\n"
             "    Database,\n"
             "    ReadOnlyTxnContext,\n"
@@ -704,7 +703,7 @@ RECIPES: Final[list[Recipe]] = [
             "    evolve,\n"
             "    schema_delta,\n"
             ")\n"
-            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole\n"
             "from parallax.snapshot import Database, ScopedDatabase, connect\n"
         ),
     ),
@@ -836,6 +835,7 @@ RECIPES: Final[list[Recipe]] = [
             "    OnDemandOptions,\n"
             "    PoolOptions,\n"
             "    PostgresAdapter,\n"
+            "    PostgresBinding,\n"
             "    PostgresEndpoint,\n"
             "    PostgresRole,\n"
             ")\n"
@@ -1371,6 +1371,14 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "case-scoped entry below. Every one of those distinctions is an emitted-SQL "
         "or concurrency-staging contract, graded end-to-end by the compile/run "
         "conformance lanes (or the run lane alone for the query-result-dependent ones)"
+    ),
+    "m-database-binding": (
+        "a binding's physical placement is graded end-to-end by the compile/run "
+        "conformance lanes, which prepare every case's model under its own binding or "
+        "the corpus default and compare exactly qualified SQL and table state, and its "
+        "definition and resolution refusals by the rejected lane; the public Typed and "
+        "Wire placement stories are the binding API tests "
+        "(`tests/api/test_database_binding.py`), not a case-driven suite story"
     ),
     "m-model-evolution": (
         "describing the difference between two accepted models has no developer surface "

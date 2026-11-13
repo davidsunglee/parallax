@@ -52,8 +52,8 @@ class Tally(Entity, table="tally", namespace="allocated.scripted"):
 
 _MODEL = DomainModel(Ledger, Tally)
 _INSERT = (
-    "insert into ledger(id, amount, in_z, out_z) "
-    "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from ledger t0 returning id"
+    "insert into px.ledger(id, amount, in_z, out_z) "
+    "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from px.ledger t0 returning id"
 )
 
 
@@ -90,7 +90,9 @@ def test_an_allocated_temporal_key_is_answered_and_the_row_revised_in_place() ->
     )
     assert insert == ReadCall(_INSERT, (0, 1, 100, FIXED, INFINITY_INSTANT))
     assert isinstance(revision, WriteCall)
-    assert revision.sql == ("update ledger set amount = ? where id = ? and out_z = ? and in_z = ?")
+    assert revision.sql == (
+        "update px.ledger set amount = ? where id = ? and out_z = ? and in_z = ?"
+    )
     events = recorder.roots[-1].events
     (started,) = (
         event
@@ -109,7 +111,7 @@ def test_a_non_temporal_allocated_key_is_not_answered() -> None:
     (insert,) = port.calls[1:-1]
     assert isinstance(insert, WriteCall)
     assert insert.sql == (
-        "insert into tally(id, amount) select coalesce(max(t0.id), ?) + ?, ? from tally t0"
+        "insert into px.tally(id, amount) select coalesce(max(t0.id), ?) + ?, ? from px.tally t0"
     )
 
 

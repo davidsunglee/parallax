@@ -31,7 +31,7 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
             return dialect.create_extension(dialect.quote(operation.name))
         case CreateTable():
             return dialect.create_table(
-                dialect.quote(operation.table.name),
+                operation.table.sql,
                 [_column(column, dialect) for column in operation.columns],
                 [dialect.quote(column.name) for column in operation.primary_key],
                 [
@@ -54,26 +54,22 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
                 ),
             )
         case AddColumn():
-            return dialect.add_column(
-                dialect.quote(operation.table.name), _column(operation.column, dialect)
-            )
+            return dialect.add_column(operation.table.sql, _column(operation.column, dialect))
         case RestateColumnDomain():
             return dialect.restate_column(
-                dialect.quote(operation.table.name),
+                operation.table.sql,
                 _column(operation.earlier, dialect),
                 _column(operation.later, dialect),
             )
         case CreateIndex():
             return dialect.create_index(
-                dialect.quote(operation.definition.table.name),
+                operation.definition.table.sql,
                 operation.name,
                 _components(operation.definition, dialect),
                 unique=operation.definition.unique,
             )
         case DropIndex():
-            return dialect.drop_index(
-                dialect.quote(operation.definition.table.name), operation.name
-            )
+            return dialect.drop_index(operation.definition.table.physical, operation.name)
 
 
 def _column(column: PhysicalColumn, dialect: Dialect) -> ColumnDdl:

@@ -1,6 +1,6 @@
 """The model-bound collaborators, built directly over a Domain Model.
 
-Production derives each of these inside ``prepare_model`` and retains them on a
+Production derives each of these inside ``prepare_model`` and retains them on px.a
 Model Selection. A suite grading one collaborator on its own — the layouts, the
 write preparation, the graph construction, or the Wire facts — wants that one over a model it names,
 without a selection, an edition, or the composition root in reach; these build
@@ -19,6 +19,7 @@ from parallax.core.internal.entity._model import class_index, model_of
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.read_planning import NarrowedViewKeys
 from parallax.core.internal.wire._facts import WireModelFacts
+from tests._support.bindings import TEST_BINDING
 
 __all__ = [
     "cataloged_for",
@@ -31,7 +32,7 @@ __all__ = [
 
 def cataloged_for(model: DomainModel) -> CatalogedModel:
     """``model``'s accepted Metamodel paired with the layouts derived from it."""
-    return CatalogedModel(model_of(model))
+    return CatalogedModel(model_of(model), TEST_BINDING)
 
 
 def graph_construction_for(model: DomainModel) -> EntityGraphConstruction:
@@ -55,4 +56,6 @@ def wire_facts_for(model: DomainModel | CatalogedModel) -> WireModelFacts:
 
 def prepared_view_keys_for(model: DomainModel) -> NarrowedViewKeys:
     """The narrowed view keys a prepared selection of ``model`` carries."""
-    return read_projection(prepare_model(model, edition="fixture")).narrowed_view_keys
+    return read_projection(
+        prepare_model(model, edition="fixture", binding=TEST_BINDING)
+    ).narrowed_view_keys

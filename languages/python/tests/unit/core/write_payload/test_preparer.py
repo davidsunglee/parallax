@@ -40,6 +40,7 @@ from parallax.core.internal.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
@@ -114,7 +115,7 @@ def _document(payload: RowPayload) -> Mapping[str, object]:
 
 
 def test_a_row_stores_each_member_at_its_slot_in_table_layout_order() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     write_row = _successor(NEW_LINEAGE)
 
     payload = preparer.row(_EXPEDITION, write_row)
@@ -130,7 +131,7 @@ def test_a_row_stores_each_member_at_its_slot_in_table_layout_order() -> None:
 
 
 def test_a_changed_row_patches_only_what_it_executes_and_keeps_every_other_key() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     changed = _successor(
         ChangedFrom(_predecessor()), {_TITLE: "Coastal Return"}, title="Coastal Return"
     )
@@ -145,7 +146,7 @@ def test_an_executed_equal_occurrence_replaces_its_stored_subtree() -> None:
     # The route assignment equals the declared members already stored, yet it is
     # executed, so it is written whole and the undeclared key inside the stored
     # subtree is gone, while the root key outside it rides forward.
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     changed = _successor(
         ChangedFrom(_predecessor()),
         {_TITLE: "Coastal Return", _ROUTE: _ROUTE_VALUE},
@@ -162,7 +163,7 @@ def test_an_executed_equal_occurrence_replaces_its_stored_subtree() -> None:
 
 
 def test_a_carried_row_stores_its_predecessors_document_itself() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     assert _document(preparer.row(_EXPEDITION, _successor(CarriedFrom(_predecessor())))) is _STORED
 
 
@@ -172,7 +173,7 @@ def test_a_changed_row_executing_nothing_is_refused() -> None:
 
 
 def test_an_assignment_set_patches_only_its_paths_with_prepared_values() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     assignments = PlannedAssignments(
         attributes={_TITLE: None}, value_objects={_ROUTE: _ROUTE_VALUE}
     )
@@ -211,7 +212,7 @@ def test_a_columns_row_encodes_each_occurrence_into_its_own_column() -> None:
         origin=NEW_LINEAGE,
     )
 
-    payload = LayoutPayloadPreparer(columns).row(PERSON, write_row)
+    payload = LayoutPayloadPreparer(bound_model(columns)).row(PERSON, write_row)
 
     cells = dict(zip(payload.contributors, payload.values, strict=True))
     assert cells[address] == {"city": "Oslo", "geo": None}
@@ -230,7 +231,7 @@ def test_the_document_twin_stores_one_shared_document_instead() -> None:
         origin=NEW_LINEAGE,
     )
 
-    payload = LayoutPayloadPreparer(document).row(PERSON, write_row)
+    payload = LayoutPayloadPreparer(bound_model(document)).row(PERSON, write_row)
 
     assert [type(contributor).__name__ for contributor in payload.contributors] == [
         "AttributeIdentity",
@@ -243,7 +244,7 @@ def test_the_document_twin_stores_one_shared_document_instead() -> None:
 # Persisted-state comparison                                                   #
 # --------------------------------------------------------------------------- #
 def test_rows_persisting_the_same_state_outside_their_interval_are_equal() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     left = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE, in_z=_JAN))
     right = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE, in_z=_JUN))
 
@@ -254,7 +255,7 @@ def test_unknown_document_content_alone_makes_rows_unequal() -> None:
     # Equal declared members, but the carried row's document still holds the
     # stored keys no member declares: coalescing it with a fresh row would lose
     # them.
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     retained = preparer.row(_EXPEDITION, _successor(CarriedFrom(_predecessor())))
     fresh = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE))
 
@@ -265,7 +266,7 @@ def test_unknown_document_content_alone_makes_rows_unequal() -> None:
 def test_a_row_of_unknown_complete_state_equals_nothing() -> None:
     positions = corpus_model("position")
     entity = EntityIdentity("parallax.compatibility", "Position")
-    preparer = LayoutPayloadPreparer(positions)
+    preparer = LayoutPayloadPreparer(bound_model(positions))
     allocated = _position_row(entity, key=MAX_PLUS_ONE)
     incomplete = WriteRow(
         row=managed_row_of(positions, {AttributeIdentity(entity, "id"): 1}), origin=NEW_LINEAGE
@@ -315,7 +316,7 @@ def test_cheap_inequality_is_proven_only_by_a_differing_stored_scalar(
 ) -> None:
     positions = corpus_model("position")
     entity = EntityIdentity("parallax.compatibility", "Position")
-    preparer = LayoutPayloadPreparer(positions)
+    preparer = LayoutPayloadPreparer(bound_model(positions))
     left = _position_row(entity)
     right = _position_row(entity, **changes)  # pyright: ignore[reportArgumentType]
 
@@ -326,7 +327,7 @@ def test_cheap_inequality_is_proven_only_by_a_differing_stored_scalar(
 
 
 def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     retained = _successor(CarriedFrom(_predecessor()))
     rebuilt = _successor(NEW_LINEAGE, {_ROUTE: {"name": "Elsewhere", "stops": ()}})
 
@@ -337,10 +338,10 @@ def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() 
     positions = corpus_model("position")
     entity = EntityIdentity("parallax.compatibility", "Position")
     allocated = _position_row(entity, key=MAX_PLUS_ONE, account="B")
-    assert LayoutPayloadPreparer(positions).proven_unequal_non_interval(
+    assert LayoutPayloadPreparer(bound_model(positions)).proven_unequal_non_interval(
         entity, allocated, _position_row(entity)
     )
-    assert not LayoutPayloadPreparer(positions).proven_unequal_non_interval(
+    assert not LayoutPayloadPreparer(bound_model(positions)).proven_unequal_non_interval(
         entity, _position_row(entity, key=MAX_PLUS_ONE), _position_row(entity)
     )
 
@@ -348,7 +349,7 @@ def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() 
 def test_cheap_inequality_reads_every_stated_scalar_beyond_what_either_row_executes() -> None:
     # An equal executed member and an executed occurrence prove nothing; a
     # differing scalar neither row executes still proves the rows unequal.
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     carried = _successor(CarriedFrom(_predecessor()))
     executed = {_ID: 7, _ROUTE: {"name": "Elsewhere", "stops": ()}}
     rerouted = _successor(ChangedFrom(_predecessor()), executed)
@@ -362,7 +363,7 @@ def test_cheap_inequality_reads_every_stated_scalar_beyond_what_either_row_execu
 def test_a_row_executing_only_directly_stored_members_keeps_its_retained_document() -> None:
     # Executed members stored in Columns of their own leave the shared document
     # nothing to patch, so the retained document is stored as it was.
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     keyed = _successor(ChangedFrom(_predecessor()), {_ID: 7})
 
     assert _document(preparer.row(_EXPEDITION, keyed)) is _STORED
@@ -385,7 +386,7 @@ def test_a_subtypes_rows_store_and_compare_its_discriminator() -> None:
         ),
         origin=NEW_LINEAGE,
     )
-    preparer = LayoutPayloadPreparer(vehicles)
+    preparer = LayoutPayloadPreparer(bound_model(vehicles))
 
     payload = preparer.row(car, write_row)
 
@@ -415,7 +416,7 @@ def _moved(write_row: WriteRow, in_z: dt.datetime, **changed: object) -> WriteRo
 
 
 def test_prepared_cells_rebind_to_a_row_stating_the_same_state_over_another_interval() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     source = _successor(CarriedFrom(_predecessor()))
     payload = preparer.row(_EXPEDITION, source)
     moved = WriteRow(
@@ -434,7 +435,7 @@ def test_prepared_cells_rebind_to_a_row_stating_the_same_state_over_another_inte
 
 
 def test_prepared_cells_never_rebind_to_a_row_stating_other_state() -> None:
-    preparer = LayoutPayloadPreparer(_EXPEDITIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     source = _successor(CarriedFrom(_predecessor()))
     payload = preparer.row(_EXPEDITION, source)
     with raises_code(InternalError, WRITE_PLANNING_FAILED, match="rebind only"):
@@ -461,7 +462,7 @@ def _collection_row(**attributes: object) -> WriteRow:
 
 
 def test_a_collections_own_column_stores_its_encoded_array_and_empty_when_unnamed() -> None:
-    payload = LayoutPayloadPreparer(_COLLECTIONS).row(
+    payload = LayoutPayloadPreparer(bound_model(_COLLECTIONS)).row(
         _ITEM, _collection_row(amounts=(Decimal("1.5"), Decimal(7)))
     )
 
@@ -471,7 +472,7 @@ def test_a_collections_own_column_stores_its_encoded_array_and_empty_when_unname
 
 
 def test_a_complete_row_stores_a_null_collection_as_the_empty_array() -> None:
-    payload = LayoutPayloadPreparer(_COLLECTIONS).row(
+    payload = LayoutPayloadPreparer(bound_model(_COLLECTIONS)).row(
         _ITEM, _collection_row(tags=None, amounts=(Decimal(7), Decimal("1.5"), Decimal(7)))
     )
 
@@ -481,7 +482,7 @@ def test_a_complete_row_stores_a_null_collection_as_the_empty_array() -> None:
 
 
 def test_an_assignment_encodes_a_whole_collection_and_reads_null_as_empty() -> None:
-    payload = LayoutPayloadPreparer(_COLLECTIONS).assignments(
+    payload = LayoutPayloadPreparer(bound_model(_COLLECTIONS)).assignments(
         _ITEM,
         PlannedAssignments(attributes={_TAGS: ("b", "b"), _AMOUNTS: None}, value_objects={}),
     )
@@ -493,7 +494,7 @@ def test_an_assignment_encodes_a_whole_collection_and_reads_null_as_empty() -> N
 
 
 def test_collection_cells_compare_as_persisted_arrays_in_order() -> None:
-    preparer = LayoutPayloadPreparer(_COLLECTIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_COLLECTIONS))
     left = preparer.row(_ITEM, _collection_row(tags=("a", "b")))
 
     assert preparer.equal_non_interval(left, preparer.row(_ITEM, _collection_row(tags=("a", "b"))))
@@ -527,7 +528,7 @@ def _document_collection_row(origin: RowOrigin, **attributes: object) -> WriteRo
 
 
 def test_a_document_successor_patches_an_executed_collection_and_keeps_every_other_key() -> None:
-    preparer = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_DOCUMENT_COLLECTIONS))
     predecessor = PredecessorRow(
         {"id": 1, "tags": ("z",), "amounts": (Decimal("1.50"),), "parts": ()},
         document=_STORED_COLLECTIONS,
@@ -541,7 +542,7 @@ def test_a_document_successor_patches_an_executed_collection_and_keeps_every_oth
 
 
 def test_document_rows_compare_their_collections_in_order_and_their_unknown_content() -> None:
-    preparer = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS)
+    preparer = LayoutPayloadPreparer(bound_model(_DOCUMENT_COLLECTIONS))
     ordered = preparer.row(_ITEM, _document_collection_row(NEW_LINEAGE, tags=("a", "b")))
     retained = PredecessorRow({"id": 1, "tags": ("a", "b")}, document={"tags": ["a", "b"], "x": 1})
 
@@ -557,7 +558,7 @@ def test_document_rows_compare_their_collections_in_order_and_their_unknown_cont
 
 
 def test_a_document_assignment_patches_a_whole_collection_as_composite_content() -> None:
-    payload = LayoutPayloadPreparer(_DOCUMENT_COLLECTIONS).assignments(
+    payload = LayoutPayloadPreparer(bound_model(_DOCUMENT_COLLECTIONS)).assignments(
         _ITEM, PlannedAssignments(attributes={_TAGS: ("b", "b")}, value_objects={})
     )
 

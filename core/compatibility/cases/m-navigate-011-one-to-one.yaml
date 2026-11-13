@@ -17,9 +17,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from person t0 left join passport t1 on t1.person_id = t0.id where not t1.id is null and t1.number = ?
+        postgres: select t0.id, t0.name from px.person t0 left join px.passport t1 on t1.person_id = t0.id where not t1.id is null and t1.number = ?
       binds: [P-AAA]
-  referenceSql: select id, name from person where id in (select person_id from passport where number = 'P-AAA')
+  referenceSql: select id, name from px.person where id in (select person_id from px.passport where number = 'P-AAA')
   rows:
     - { id: 1, name: Alan }
   databaseCalls: 1

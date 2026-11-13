@@ -67,6 +67,7 @@ from parallax.snapshot._publication._classify import (
     classify_root,
 )
 from parallax.snapshot._publication._graph_view import GraphView
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -270,7 +271,9 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
 def _customer(row: dict[str, object]) -> InvalidData[object]:
     document = StructuredDocument(cast("Any", row["address"]))
     port = ScriptedAdapter(Read(rows=[{**row, "address": document}]))
-    database = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
+    database = own_root(
+        connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     return invalid_record(database.find(vo.Customer.where(vo.Customer.id == 1)).checked().result())
 
 
@@ -511,7 +514,9 @@ def _published(
 ) -> InvalidData[Any]:
     """One twin member's published record for a scripted two-level read."""
     database = own_root(
-        connect(ScriptedAdapter(*(Read(rows=result) for result in rows)), model)
+        connect(
+            ScriptedAdapter(*(Read(rows=result) for result in rows)), model, binding=TEST_BINDING
+        )
     ).using_database_login()
     record = database.find(cast("Any", query)).checked().result()
     assert isinstance(record, InvalidData), model

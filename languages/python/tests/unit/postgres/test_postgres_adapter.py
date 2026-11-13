@@ -58,6 +58,7 @@ from parallax.core.internal.base import (
     Numeric,
     StructuredDocument,
 )
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
     ISOLATION_LEVELS,
@@ -156,7 +157,23 @@ class _NamedCheckViolation(errors.CheckViolation):
 
     @property
     def diag(self) -> Any:
-        return SimpleNamespace(constraint_name="pxc_tx_balance_c54215aec2277be436e89b2c6506715d")
+        return SimpleNamespace(
+            constraint_name="pxc_tx_balance_c54215aec2277be436e89b2c6506715d",
+            schema_name="tenant.acme",
+            table_name="balance",
+        )
+
+
+class _TablelessCheckViolation(errors.CheckViolation):
+    """A `23514` whose diagnostics name the constraint but not its table."""
+
+    @property
+    def diag(self) -> Any:
+        return SimpleNamespace(
+            constraint_name="pxc_tx_balance_c54215aec2277be436e89b2c6506715d",
+            schema_name=None,
+            table_name="balance",
+        )
 
 
 def test_translate_driver_error_keeps_a_checks_name_without_reading_it_as_an_index() -> None:
@@ -165,6 +182,16 @@ def test_translate_driver_error_keeps_a_checks_name_without_reading_it_as_an_ind
     assert error.constraint_name == "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
     assert error.violated_index is None
     assert not error.is_transient
+
+
+def test_translate_driver_error_carries_the_constraints_table_as_components() -> None:
+    error = translate_driver_error(_DIALECT, _NamedCheckViolation("check failed"))
+    assert error.constraint_table == PhysicalTable(("tenant.acme",), "balance")
+
+
+def test_translate_driver_error_reports_no_table_without_both_components() -> None:
+    error = translate_driver_error(_DIALECT, _TablelessCheckViolation("check failed"))
+    assert error.constraint_table is None
 
 
 def test_translate_driver_error_reports_no_index_when_the_diagnostics_name_none() -> None:

@@ -18,6 +18,7 @@ import pytest
 from reference_harness import write_plan
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.write_plan import (
     SettledObject,
     flush_coverage_reads,
@@ -261,10 +262,10 @@ def test_a_column_array_insert_not_binding_one_equal_length_array_per_column_is_
 @pytest.mark.parametrize("dialect", _DIALECTS)
 def test_an_address_is_the_table_the_key_column_and_the_bound_key(dialect: str) -> None:
     address = statement_object(
-        "update account set balance = ? where id = ? and version = ?", [50, 7, 3], dialect
+        "update px.account set balance = ? where id = ? and version = ?", [50, 7, 3], dialect
     )
     assert address is not None
-    assert address.names_table("account")
+    assert address.names_table(PhysicalTable(("px",), "account"))
     assert address.names_key_column("id")
     # The key's bind is the predicate's FIRST placeholder: every placeholder before
     # it belongs to the `set` clause, and the tag guard, the temporal bounds, and
@@ -285,7 +286,7 @@ def test_an_address_is_read_under_each_dialects_own_quoting(dialect: str, statem
     # statement that names exactly the model's own table.
     address = statement_object(statement, ["hi", 4, 1], dialect)
     assert address is not None
-    assert address.names_table("order")
+    assert address.names_table(PhysicalTable((), "order"))
     assert address.names_key_column("select")
     assert address.key == 4
 
@@ -298,8 +299,8 @@ def test_a_quoted_identifier_names_only_what_it_spells() -> None:
     # whenever the two differ only in case.
     quoted = statement_object('update "Order" set note = ? where id = ?', ["hi", 4], "postgres")
     assert quoted is not None
-    assert quoted.names_table("Order")
-    assert not quoted.names_table("order")
+    assert quoted.names_table(PhysicalTable((), "Order"))
+    assert not quoted.names_table(PhysicalTable((), "order"))
     bare = statement_object("update t set note = ? where ID = ?", ["hi", 4], "postgres")
     assert bare is not None
     assert bare.names_key_column("id")
@@ -309,9 +310,9 @@ def test_a_quoted_identifier_names_only_what_it_spells() -> None:
 def test_a_delete_addresses_the_key_that_opens_its_predicate(dialect: str) -> None:
     # A DELETE assigns nothing, so no placeholder precedes its predicate and the key
     # is the statement's first bind rather than one counted in from the `set` clause.
-    address = statement_object("delete from account where id = ?", [7], dialect)
+    address = statement_object("delete from px.account where id = ?", [7], dialect)
     assert address is not None
-    assert address.names_table("account")
+    assert address.names_table(PhysicalTable(("px",), "account"))
     assert address.names_key_column("id")
     assert address.key == 7
 

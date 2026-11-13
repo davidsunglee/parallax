@@ -14,9 +14,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into memo(id, title, body) values (?, ?, ?)
+        postgres: insert into px.memo(id, title, body) values (?, ?, ?)
       binds: [5, Memo-C, Note]
   tableState:
-    memo:
-      - { id: 5, title: Memo-C, folder_id: null, body: Note, annotation: null }
+    px:
+      memo:
+        - { id: 5, title: Memo-C, folder_id: null, body: Note, annotation: null }
   databaseCalls: 1

@@ -27,6 +27,7 @@ import pytest
 
 from parallax.conformance import class_models, models
 from parallax.core.internal.base import SQL_NULL
+from parallax.core.internal.database_binding import DatabaseBinding
 from parallax.core.internal.entity._layout import (
     CatalogedModel,
     EntityLayout,
@@ -61,6 +62,7 @@ from parallax.core.internal.read_delivery._page import (
 from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.relationship import relationship_facet_of
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING, corpus_binding
 from tests._support.document_reads import folded_names
 from tests._support.fake_metadata import with_facet
 from tests.unit._corpus_model_support import corpus, formed, target
@@ -400,10 +402,16 @@ def _merged_view_order(
     return root.view_layouts[0].slots
 
 
-def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, seed: int) -> int:
+def _claimed(
+    builder: PageBuilder,
+    model: Metamodel,
+    identity: EntityIdentity,
+    seed: int,
+    binding: DatabaseBinding = TEST_BINDING,
+) -> int:
     """One driver row of ``identity``'s own read, every cell distinct and derived
     from ``seed``, converted into ``builder`` as a root provider row is."""
-    compiled = compiled_read(model, identity)
+    compiled = compiled_read(model, identity, binding)
     shared = compiled.result_contract.shared_document
     row = tuple(
         SQL_NULL
@@ -415,7 +423,7 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
             folded_names(compiled.statement.sql, compiled.document_reads)
         )
     )
-    ref, _resolved, _document = bound_read(model, identity).record_row(
+    ref, _resolved, _document = bound_read(model, identity, binding=binding).record_row(
         row, builder, source=ROOT_LEVEL
     )
     return ref
@@ -431,9 +439,10 @@ def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule(
             continue
         where = (stem, identity.canonical)
         builder = PageBuilder(ViewSchema.of())
-        first = _claimed(builder, model, identity, 100)
-        again = _claimed(builder, model, identity, 100)
-        apart = _claimed(builder, model, identity, 101)
+        binding = corpus_binding(stem)
+        first = _claimed(builder, model, identity, 100, binding)
+        again = _claimed(builder, model, identity, 100, binding)
+        apart = _claimed(builder, model, identity, 101, binding)
         rows = page_rows(builder.finish((first, again, apart), Pin()))
         assert list(rows.logical_rows) == [0, 0, 1], where
         first_key, apart_key = rows.keys[first], rows.keys[apart]
@@ -467,7 +476,7 @@ def _domain_models() -> dict[str, Any]:
 
 def test_separate_catalogs_share_the_inheritance_owned_member_selection() -> None:
     meta = model_of(_domain_models()["orders"])
-    one, other = CatalogedModel(meta), CatalogedModel(meta)
+    one, other = CatalogedModel(meta, TEST_BINDING), CatalogedModel(meta, TEST_BINDING)
     identity = _identity("Order")
     assert (
         one.layouts.entity(identity).member_selection
@@ -481,10 +490,10 @@ def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derive
     # records over one model unequal — the identity no consumer is allowed to
     # depend on.
     meta = model_of(_domain_models()["orders"])
-    one, other = CatalogedModel(meta), CatalogedModel(meta)
+    one, other = CatalogedModel(meta, TEST_BINDING), CatalogedModel(meta, TEST_BINDING)
     assert one.layouts is not other.layouts
     assert one == other
-    assert one != CatalogedModel(model_of(_domain_models()["animal"]))
+    assert one != CatalogedModel(model_of(_domain_models()["animal"]), TEST_BINDING)
 
 
 # --------------------------------------------------------------------------- #
@@ -516,7 +525,7 @@ def test_a_family_key_the_row_does_not_express_refuses_the_whole_layout() -> Non
     )
     doctored = _with_applicable_attributes(model, identity, attributes)
     with pytest.raises(ValueError, match="no position for the primary key"):
-        CatalogedModel(doctored)
+        CatalogedModel(doctored, TEST_BINDING)
 
 
 def test_a_refused_entity_leaves_the_catalog_usable_for_every_other_one() -> None:

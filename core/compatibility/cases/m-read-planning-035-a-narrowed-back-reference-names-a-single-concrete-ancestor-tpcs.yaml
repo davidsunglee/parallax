@@ -20,12 +20,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.keeper_id, t0.label from keeper_charge t0
+        postgres: select t0.id, t0.keeper_id, t0.label from px.keeper_charge t0
     - sql:
-        postgres: select t0.id, t0.name from keeper_ranger t0 where t0.id = any(cast(? as bigint[]))
+        postgres: select t0.id, t0.name from px.keeper_ranger t0 where t0.id = any(cast(? as bigint[]))
       binds: [[1, 2, 3]]
     - sql:
-        postgres: select t0.id, t0.keeper_id, t0.label from keeper_charge t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
+        postgres: select t0.id, t0.keeper_id, t0.label from px.keeper_charge t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[1]]
   graph:
     Charge:

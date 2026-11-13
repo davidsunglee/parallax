@@ -129,9 +129,9 @@ def _case(lifecycle: dict[str, Any], **overrides: Any) -> dict[str, Any]:
         },
         "then": {
             "statements": [
-                {"sql": {"postgres": "insert into account(id) values (?)"}, "binds": [9]}
+                {"sql": {"postgres": "insert into px.account(id) values (?)"}, "binds": [9]}
             ],
-            "tableState": {"account": [{"id": 9}]},
+            "tableState": {"px": {"account": [{"id": 9}]}},
             "databaseCalls": 1,
             "executionLifecycle": lifecycle,
         },
@@ -154,7 +154,7 @@ def _run_envelope(lifecycle: dict[str, Any]) -> dict[str, Any]:
         "emissions": [
             {
                 "casePointer": "/then/statements/0",
-                "sql": "insert into account(id) values (?)",
+                "sql": "insert into px.account(id) values (?)",
                 "binds": [9],
             }
         ],
@@ -1230,7 +1230,7 @@ def test_a_write_owning_a_query_index_is_flagged() -> None:
     """The mirror of the read case: a golden SELECT is a statement a Read call
     issued, so a write call naming it describes a call the case never authored."""
     case = _case(_lifecycle(_write_root()))
-    case["then"]["statements"] = [{"sql": {"postgres": "select id from account"}, "binds": []}]
+    case["then"]["statements"] = [{"sql": {"postgres": "select id from px.account"}, "binds": []}]
     problems = validate_execution(case)
     assert any(
         "is a write call naming statement 0, which the case authors as a query" in problem
@@ -1298,11 +1298,11 @@ def test_a_stepwise_case_indexes_the_goldens_its_own_steps_author() -> None:
         "scenario": [
             {
                 "write": {"mutation": "insert", "entity": "Account", "rows": [{"id": 9}]},
-                "statements": [{"sql": {"postgres": "insert into account(id) values (?)"}}],
+                "statements": [{"sql": {"postgres": "insert into px.account(id) values (?)"}}],
             },
             {
                 "write": {"mutation": "insert", "entity": "Account", "rows": [{"id": 10}]},
-                "statements": [{"sql": {"postgres": "insert into account(id) values (?)"}}],
+                "statements": [{"sql": {"postgres": "insert into px.account(id) values (?)"}}],
             },
         ]
     }
@@ -1323,7 +1323,7 @@ def test_a_record_naming_one_golden_twice_is_flagged() -> None:
     step's own statement named by nothing."""
     case = _case(_lifecycle(_two_write_root(0)))
     case["then"]["statements"].append(
-        {"sql": {"postgres": "insert into account(id) values (?)"}, "binds": [10]}
+        {"sql": {"postgres": "insert into px.account(id) values (?)"}, "binds": [10]}
     )
     case["then"]["databaseCalls"] = 2
     problems = validate_execution(case)

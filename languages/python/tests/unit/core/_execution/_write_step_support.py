@@ -65,6 +65,7 @@ from parallax.core.internal.write_plan.steps import (
     TemporalGate,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
@@ -184,7 +185,7 @@ class RecordingPreparer(LayoutPayloadPreparer):
         failing: int | None = None,
         failure: BaseException | None = None,
     ) -> None:
-        super().__init__(meta)
+        super().__init__(bound_model(meta))
         self.port = port
         self.failing = failing
         self.failure = failure
@@ -238,8 +239,8 @@ def step_executor(
     held: list[DatabaseError] = [] if recognized is None else recognized
     return WriteStepExecutor(
         port,
-        payloads=build_write_planner(meta).payloads if payloads is None else payloads,
-        meta=meta,
+        payloads=build_write_planner(bound_model(meta)).payloads if payloads is None else payloads,
+        resolved=bound_model(meta),
         recoverable=held.append,
     )
 
@@ -288,7 +289,7 @@ def run_plan(
     ) -> tuple[object, ...]:
         return executor.execute(steps, allocates=allocates, flush=flush, **capture)
 
-    planner = build_write_planner(meta)
+    planner = build_write_planner(bound_model(meta))
     uow = UnitOfWork(
         settings=TransactionSettings(),
         lifetime=TxnAttemptLifetime(),
@@ -324,7 +325,12 @@ def run_plan(
 
 
 def statement(step: PlannedStep) -> LoweredStatement:
-    return lowered(step, build_write_planner(POSITION_META).payloads, POSITION_META, POSTGRES)
+    return lowered(
+        step,
+        build_write_planner(bound_model(POSITION_META)).payloads,
+        bound_model(POSITION_META),
+        POSTGRES,
+    )
 
 
 def alone(step: PlannedStep) -> WriteCall:
@@ -344,6 +350,9 @@ def physical(*steps: PlannedStep) -> list[WriteCall]:
     return [
         WriteCall(lowered_step.sql, lowered_step.binds)
         for lowered_step in stream_physical(
-            steps, build_write_planner(POSITION_META).payloads, POSITION_META, POSTGRES
+            steps,
+            build_write_planner(bound_model(POSITION_META)).payloads,
+            bound_model(POSITION_META),
+            POSTGRES,
         )
     ]

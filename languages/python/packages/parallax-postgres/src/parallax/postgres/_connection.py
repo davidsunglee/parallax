@@ -39,6 +39,7 @@ from parallax.core.internal.base import (
     Timestamp,
     Uuid,
 )
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.db_error import DatabaseError, classify_error
 from parallax.core.internal.db_port import (
     JSON_NULL,
@@ -157,7 +158,8 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
 
     Extracts psycopg's driver-specific SQLSTATE (``exc.sqlstate`` — ``None`` for a
     non-database failure such as a dropped connection), its message, and the
-    structured constraint name libpq reports beside them, then delegates category
+    structured constraint name, schema, and table libpq reports beside them,
+    then delegates category
     interpretation to ``m-db-error`` (which consults ``dialect``'s own code
     table). libpq treats an index as a constraint whether or not it was created
     with constraint syntax, so a bare ``create unique index`` reports its own
@@ -174,7 +176,18 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
         exc.sqlstate,
         str(exc),
         constraint_name=None if diagnostic is None else diagnostic.constraint_name,
+        constraint_table=None if diagnostic is None else _constraint_table(diagnostic),
     )
+
+
+def _constraint_table(diagnostic: psycopg.errors.Diagnostic) -> PhysicalTable | None:
+    """The table libpq reports a failure against, when it reports both its schema
+    and its name."""
+    schema = diagnostic.schema_name
+    table = diagnostic.table_name
+    if schema is None or table is None:
+        return None
+    return PhysicalTable((schema,), table)
 
 
 def reported_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:

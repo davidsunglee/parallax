@@ -196,33 +196,29 @@ class PhysicalTemporalAxis:
     """One As-Of Axis as one Table carries it.
 
     ``start`` and ``end`` are the Table's existing slots for the axis's
-    declared endpoints. ``interval_check_name`` names the constraint requiring
-    ``start < end`` on every row of the Table.
+    declared endpoints; every row of the Table requires ``start < end``.
     """
 
     declaration: AsOfAxisMetadata
     start: ColumnSlot
     end: ColumnSlot
-    interval_check_name: str
 
 
 @dataclass(frozen=True, slots=True)
 class TemporalHistoryConstraints:
-    """The temporal-history constraints one temporal Table carries.
+    """The temporal-history constraints one temporal Table carries, unnamed.
 
-    ``primary_key`` is the Table's own derived primary-key Index, named
-    ``primary_key_name``. ``logical_key`` selects the slots of the family root's
-    declared key Attributes in declaration order, never the inheritance tag.
-    ``exclusion_name`` names the constraint that no two rows equal on
-    ``logical_key`` overlap on every axis at once.
+    ``primary_key`` is the Table's own derived primary-key Index.
+    ``logical_key`` selects the slots of the family root's declared key
+    Attributes in declaration order, never the inheritance tag; no two rows
+    equal on it may overlap on every axis at once. Each constraint's name is a
+    fact of the physical table a binding resolves, not of this definition.
     """
 
     primary_key: PhysicalIndex
-    primary_key_name: str
     logical_key: tuple[ColumnSlot, ...]
     transaction_axis: PhysicalTemporalAxis
     valid_axis: PhysicalTemporalAxis | None
-    exclusion_name: str
 
     @property
     def axis_ends(self) -> tuple[ColumnSlot, ...]:

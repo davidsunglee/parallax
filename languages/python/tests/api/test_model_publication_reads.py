@@ -27,6 +27,7 @@ from parallax.core.internal.execution import (
 )
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.errors import raises_code
@@ -44,13 +45,13 @@ def _case(case_id: str) -> case_format.Case:
 
 def _seeded(profile_run: Any, case_id: str = _CASE_ID) -> Any:
     case = _case(case_id)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     return profile_run.port
 
 
 def _editions() -> tuple[Any, Any, ServingModel]:
-    a = prepare_model(MODELS["account"], edition="2026-09-a")
-    b = prepare_model(MODELS["account"], edition="2026-09-b")
+    a = prepare_model(MODELS["account"], edition="2026-09-a", binding=TEST_BINDING)
+    b = prepare_model(MODELS["account"], edition="2026-09-b", binding=TEST_BINDING)
     return a, b, ServingModel(a)
 
 
@@ -62,7 +63,9 @@ def _target_node() -> dict[str, object]:
 
 
 def _balance_of(profile_run: Any) -> Decimal:
-    verify = own_root(connect(profile_run.port, MODELS["account"])).using_database_login()
+    verify = own_root(
+        connect(profile_run.port, MODELS["account"], binding=TEST_BINDING)
+    ).using_database_login()
     return verify.find(Account.where(Account.id == TARGET_ID)).result().balance
 
 
@@ -111,8 +114,8 @@ def test_a_delayed_refusal_from_a_keeps_a_and_is_noted_with_the_transactions_b(
     # execution and adopts nothing: the transaction's note names B, and the
     # refusal is still the one A's result settled, naming A.
     port = _seeded(profile_run, _INVALID_CASE_ID)
-    a = prepare_model(MODELS["customer"], edition="2026-09-a")
-    b = prepare_model(MODELS["customer"], edition="2026-09-b")
+    a = prepare_model(MODELS["customer"], edition="2026-09-a", binding=TEST_BINDING)
+    b = prepare_model(MODELS["customer"], edition="2026-09-b", binding=TEST_BINDING)
     serving = ServingModel(a)
     db = own_root(connect(port, serving)).using_database_login()
 

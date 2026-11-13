@@ -25,6 +25,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
 __all__ = ["StoredPositions"]
@@ -47,8 +48,8 @@ class StoredPositions:
 
     def __post_init__(self) -> None:
         self.rows = [dict(row) for row in self.rows]
-        payloads = build_write_planner(self.model).payloads
-        self.simulated = SimulatedWriteSteps(payloads, self.model, POSTGRES)
+        payloads = build_write_planner(bound_model(self.model)).payloads
+        self.simulated = SimulatedWriteSteps(payloads, bound_model(self.model), POSTGRES)
 
     def __call__(
         self,

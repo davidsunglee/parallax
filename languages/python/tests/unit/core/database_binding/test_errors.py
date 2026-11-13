@@ -7,7 +7,7 @@ import pickle
 import pytest
 
 from parallax.core.internal.base import UsageError
-from parallax.core.internal.database_binding import BindingError, BindingIssue
+from parallax.core.internal.database_binding import REQUIRED, BindingError, BindingIssue
 
 
 def test_issues_are_canonically_ordered_and_free_of_repeats() -> None:
@@ -37,3 +37,7 @@ def test_a_refusal_survives_pickling_with_its_issues() -> None:
     restored = pickle.loads(pickle.dumps(error))
     assert restored.issues == error.issues
     assert restored.code == error.code
+
+
+def test_the_omission_marker_reads_as_a_required_binding_in_a_signature() -> None:
+    assert repr(REQUIRED) == "<binding required>"

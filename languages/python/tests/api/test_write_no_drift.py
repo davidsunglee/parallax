@@ -52,6 +52,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.bind_positions import assert_document_nulls
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import (
@@ -303,7 +304,7 @@ class _KeyedSeedPort(ConnectsAsItself):
     each ``execute`` filters it by whether that FIRST value appears among the
     query's bind values (a pk-bind-aware selection, model-agnostic — every
     registered story's own primary-key python name is ``id``, but its
-    PHYSICAL column varies, e.g. ``bal_id``/``pos_id``, so matching on a
+    PHYSICAL column varies, e.g. ``bal_id``/``pos_id``, so matching on px.a
     literal ``"id"`` key would only ever work by Account's own coincidence;
     matching on EVERY value would falsely multi-match rows sharing an
     unrelated column value, e.g. two Accounts both carrying ``version: 1``) so
@@ -480,7 +481,9 @@ def _db(port: _KeyedSeedPort, story: WriteStory) -> ScopedDatabase:
     # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    return own_root(Database.connect(port, MODELS[story.model], clock=clock)).using_database_login()
+    return own_root(
+        Database.connect(port, MODELS[story.model], clock=clock, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`);
@@ -706,7 +709,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(
-        Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
+        Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]], binding=TEST_BINDING)
     ).using_database_login()
     with pytest.raises(UsageError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
@@ -747,7 +750,9 @@ def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None
     model, write = REJECTED_PREDICATE_WRITES[case_id]
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     port = _KeyedSeedPort()
-    db = own_root(Database.connect(port, MODELS[model])).using_database_login()
+    db = own_root(
+        Database.connect(port, MODELS[model], binding=TEST_BINDING)
+    ).using_database_login()
     with pytest.raises(UsageError) as exc_info:
         db.transact(write)
     assert exc_info.value.code == expected_rule
@@ -807,7 +812,9 @@ def test_idiomatic_read_only_write_rejects_the_corpus_rule(case_id: str) -> None
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     model, write = REJECTED_READ_ONLY_WRITES[case_id]
     port = _KeyedSeedPort(rows=[_SCALAR_THING_ROW])
-    db = own_root(Database.connect(port, MODELS[model])).using_database_login()
+    db = own_root(
+        Database.connect(port, MODELS[model], binding=TEST_BINDING)
+    ).using_database_login()
     with pytest.raises(UsageError) as exc_info:
         db.transact(write)
     assert exc_info.value.code == expected_rule

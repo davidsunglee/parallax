@@ -29,6 +29,7 @@ from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.sql_gen._compile import CompiledRead
+from tests._support.bindings import bound_model
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _read_projection_support as support
 from tests.unit.core.sql_gen._delivery_support import deliver
@@ -227,7 +228,7 @@ def _single_table(shape: _Shape, demand: _Demand) -> tuple[_SelectList, str, tup
         tags = tuple(name.lower() for name in shape.position)
         guard = " where t0.kind = ?" if len(tags) == 1 else " where t0.kind in (?, ?)"
         binds = (*binds, *tags)
-    return select, f"select {select.sql()} from {table} t0{guard}", binds
+    return select, f"select {select.sql()} from px.{table} t0{guard}", binds
 
 
 def _union(shape: _Shape, demand: _Demand) -> tuple[_SelectList, str, tuple[object, ...]]:
@@ -260,7 +261,9 @@ def _union(shape: _Shape, demand: _Demand) -> tuple[_SelectList, str, tuple[obje
         elif _projects_document(shape, demand):
             select.column_document("payload")
         select.scalar(f"'{concrete}' family_variant")
-        branches.append(f"select {select.sql()} from mx_tpcs_{shape.layout}_{concrete.lower()} t0")
+        branches.append(
+            f"select {select.sql()} from px.mx_tpcs_{shape.layout}_{concrete.lower()} t0"
+        )
         first = first or select
     assert first is not None
     binds = ("hex",) * len(shape.position) if shape.layout == "columns" else ()
@@ -358,16 +361,20 @@ def test_an_abstract_target_narrowed_to_one_concrete_still_projects_its_discrimi
 ) -> None:
     root, left = (support.matrix_entity("tph", layout, name) for name in ("Root", "Left"))
     narrowed = compile_read(
-        oa.TrueNode(), support.MATRIX_META, POSTGRES, root, narrow_to=(left.identity,)
+        oa.TrueNode(),
+        bound_model(support.MATRIX_META),
+        POSTGRES,
+        root,
+        narrow_to=(left.identity,),
     )
-    concrete = compile_read(oa.TrueNode(), support.MATRIX_META, POSTGRES, left)
+    concrete = compile_read(oa.TrueNode(), bound_model(support.MATRIX_META), POSTGRES, left)
 
     digest = ", encode(t0.digest, ?) digest_hex" if layout == "columns" else ""
     assert narrowed.statement.sql == (
-        f"select t0.id, t0.kind, t0.holder_id{digest} from mx_tph_{layout} t0 where t0.kind = ?"
+        f"select t0.id, t0.kind, t0.holder_id{digest} from px.mx_tph_{layout} t0 where t0.kind = ?"
     )
     assert concrete.statement.sql == (
-        f"select t0.id, t0.holder_id{digest} from mx_tph_{layout} t0 where t0.kind = ?"
+        f"select t0.id, t0.holder_id{digest} from px.mx_tph_{layout} t0 where t0.kind = ?"
     )
     binds = ("hex", "left") if layout == "columns" else ("left",)
     assert narrowed.statement.binds == concrete.statement.binds == binds

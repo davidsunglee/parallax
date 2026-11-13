@@ -28,6 +28,7 @@ from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
+from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells, uncarried
 from tests.unit._root_publication_support import deferring_schedule, each_root, observed_roots
@@ -81,7 +82,7 @@ def _page(
     source_count = max((source for source, _row in occurrences), default=0) + 1
     builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))), observer)
     compiled = compiled_read(_ENCODED, "EncodedOrder")
-    cataloged = CatalogedModel(_ENCODED)
+    cataloged = CatalogedModel(_ENCODED, TEST_BINDING)
     roots = tuple(
         convert_cells(cataloged, compiled, row, builder, source=source)
         for source, row in occurrences
@@ -220,7 +221,7 @@ def _shared_keyless_animal(
     records each row key at most once."""
     animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
     builder = PageBuilder(ViewSchema.of(animals, repeating_levels=frozenset() if proved else None))
-    cataloged = CatalogedModel(_ANIMAL)
+    cataloged = CatalogedModel(_ANIMAL, TEST_BINDING)
     animal = convert_cells(
         cataloged,
         uncarried(compiled_read(_ANIMAL, "Animal"), *uncarrying),
@@ -309,7 +310,7 @@ def _proved_orders(*badges: str) -> tuple[object, tuple[int, ...]]:
     """A one-level proved Page of EncodedOrder roots, one per badge spelling."""
     builder = PageBuilder(ViewSchema(((),), repeating_levels=frozenset()))
     compiled = compiled_read(_ENCODED, "EncodedOrder")
-    cataloged = CatalogedModel(_ENCODED)
+    cataloged = CatalogedModel(_ENCODED, TEST_BINDING)
     roots = tuple(
         convert_cells(
             cataloged,
@@ -352,7 +353,9 @@ def test_a_proved_row_judged_without_findings_is_held_as_its_member_row_alone() 
 
 def test_a_keyless_proved_row_recorded_without_findings_answers_its_member_row() -> None:
     builder = PageBuilder(ViewSchema(((),), repeating_levels=frozenset()))
-    layout = CatalogedModel(_ENCODED).layouts.entity(identity_of(_ENCODED, "EncodedOrder"))
+    layout = CatalogedModel(_ENCODED, TEST_BINDING).layouts.entity(
+        identity_of(_ENCODED, "EncodedOrder")
+    )
     values = tuple(ABSENT for _ in layout.members)
     fetched_row = builder.add_fetched_row(ROOT_LEVEL, layout, None, values, values, (), values)
     rows = page_rows(builder.finish((fetched_row,), Pin()))
@@ -363,7 +366,7 @@ def test_a_keyless_proved_row_recorded_without_findings_answers_its_member_row()
 def test_proved_and_merged_levels_number_their_logical_rows_densely() -> None:
     builder = PageBuilder(ViewSchema(((), (), ()), repeating_levels=frozenset({0, 2})))
     compiled = compiled_read(_ENCODED, "EncodedOrder")
-    cataloged = CatalogedModel(_ENCODED)
+    cataloged = CatalogedModel(_ENCODED, TEST_BINDING)
 
     def record(source: int, key: str) -> int:
         return convert_cells(
@@ -389,7 +392,7 @@ def test_a_row_judged_as_it_is_recorded_is_refused_on_a_level_that_may_repeat_ro
 
     with pytest.raises(ValueError, match="compared before it is judged"):
         convert_cells(
-            CatalogedModel(_ENCODED),
+            CatalogedModel(_ENCODED, TEST_BINDING),
             compiled_read(_ENCODED, "EncodedOrder"),
             _encoded_order("01"),
             builder,

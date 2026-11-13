@@ -98,6 +98,7 @@ from parallax.core.internal.write_plan.steps import (
     ResolvedMutationSelection,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -143,7 +144,7 @@ def _plan(
     concurrency: ConcurrencyPreference = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return build_write_planner(model).finalize(
+    return build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
@@ -415,7 +416,7 @@ def test_an_insert_that_follows_a_removal_is_a_barrier_no_batch_spans() -> None:
 
 
 def _finalized(composed: Sequence[ComposedWrite], model: Metamodel) -> WritePlan:
-    return build_write_planner(model).finalize(
+    return build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
@@ -534,7 +535,7 @@ def test_ordering_reads_the_ranks_its_model_compiled_and_derives_none(
 ) -> None:
     # Ranks are the Relationship Facet's, compiled with the model, so no flush
     # derives them again. Updates keep authored order.
-    planner = build_write_planner(_ORDERS)
+    planner = build_write_planner(bound_model(_ORDERS))
 
     def refuse(*_: object) -> list[int]:
         raise AssertionError("a flush derived referential ranks")
@@ -606,7 +607,7 @@ def _predicate_step(
 ) -> PlannedUpdate | PlannedDelete:
     prepared = prepare_typed_write(instruction, write_preparation_of(model))
     assert isinstance(prepared, PreparedPredicateInstruction)
-    return build_write_planner(model).predicate_step(
+    return build_write_planner(bound_model(model)).predicate_step(
         prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=_INSTANT
     )
 
@@ -1281,7 +1282,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     # Key derivation's binding is the one a flush could reach the model's
     # spelling rule through.
     monkeypatch.setattr(keys_module, "entity_by_name", refuse)
-    planner = build_write_planner(model)
+    planner = build_write_planner(bound_model(model))
     plan = planner.finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -1325,7 +1326,7 @@ def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration
     audit = RecordingAudit()
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     model = _wallet_and_account()
-    plan = build_write_planner(model).finalize(
+    plan = build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
@@ -1538,7 +1539,7 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
             source_evidence=(sources[2],),
         ),
     ]
-    finalized = build_write_planner(_ACCOUNT).finalize(
+    finalized = build_write_planner(bound_model(_ACCOUNT)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,

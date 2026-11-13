@@ -42,6 +42,7 @@ from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNE
 from parallax.core.internal.read_delivery._stream import StreamDelivery
 from parallax.core.internal.temporal_read import Pin, TemporalShape
 from parallax.core.internal.write_plan import ObjectKey
+from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -127,7 +128,7 @@ class _Scope:
     def planned(self, read: _Read, query: ResolvedObjectQuery, batch_size: int, /) -> ReadPlan:
         return UNCACHED_READ_PLANNER.plan(
             edition=read.edition,
-            model=CatalogedModel(read.meta),
+            model=CatalogedModel(read.meta, TEST_BINDING),
             dialect=POSTGRES,
             query=query,
             preference=None,

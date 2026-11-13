@@ -17,18 +17,18 @@ import pytest
 
 from parallax.conformance import models, provision
 from parallax.conformance.models import default_models_dir
-from parallax.core.internal import storage_layout
 from parallax.core.internal.base import INFINITY
+from parallax.core.internal.database_binding import ResolvedTemporalConstraints
 from parallax.core.internal.db_error import DatabaseError
-from parallax.core.internal.metamodel import Metamodel, Table
-from parallax.core.internal.storage_layout import TemporalHistoryConstraints
+from parallax.core.internal.metamodel import Metamodel
+from tests._support.bindings import TEST_SCHEMA, bound_model
 
 _JAN = datetime(2024, 1, 1, tzinfo=UTC)
 _FEB = datetime(2024, 2, 1, tzinfo=UTC)
 _MAR = datetime(2024, 3, 1, tzinfo=UTC)
 
 _INSERT_POSITION = (
-    "insert into position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
+    "insert into px.position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
     "values (?, ?, ?, ?, ?, ?, ?)"
 )
 _CHECKS = (
@@ -40,29 +40,27 @@ _CHECKS = (
 
 def _provision(profile_run: Any, model_file: str) -> Metamodel:
     model = models.load_model(default_models_dir() / model_file)
-    for statement in provision.reset_statements():
+    for statement in provision.reset_statements(frozenset({TEST_SCHEMA})):
         profile_run.port.execute_write(statement, [])
-    for statement in provision.schema_statements(model):
+    for statement in provision.schema_statements(bound_model(model)):
         profile_run.port.execute_write(statement, [])
     return model
 
 
-def _constraints(model: Metamodel, table: str) -> TemporalHistoryConstraints:
-    (layout,) = (
-        layout
-        for layout in storage_layout.storage_layout_facet_of(model).tables
-        if layout.table == Table(table)
+def _constraints(model: Metamodel, table: str) -> ResolvedTemporalConstraints:
+    (resolved,) = (
+        resolved for resolved in bound_model(model).tables if resolved.physical.name == table
     )
-    assert layout.temporal_constraints is not None
-    return layout.temporal_constraints
+    assert resolved.temporal_constraints is not None
+    return resolved.temporal_constraints
 
 
 def _names(model: Metamodel, table: str) -> tuple[str, str]:
     constraints = _constraints(model, table)
-    assert constraints.valid_axis is not None
+    assert constraints.valid_check_name is not None
     return (
-        constraints.transaction_axis.interval_check_name,
-        constraints.valid_axis.interval_check_name,
+        constraints.transaction_check_name,
+        constraints.valid_check_name,
     )
 
 
@@ -88,13 +86,9 @@ def test_the_catalog_holds_each_axis_check_under_its_compiled_name(
     model = _provision(profile_run, model_file)
     for table in tables:
         constraints = _constraints(model, table)
-        expected = [
-            (constraints.transaction_axis.interval_check_name, "CHECK ((in_z < out_z))", True)
-        ]
-        if constraints.valid_axis is not None:
-            expected.append(
-                (constraints.valid_axis.interval_check_name, "CHECK ((from_z < thru_z))", True)
-            )
+        expected = [(constraints.transaction_check_name, "CHECK ((in_z < out_z))", True)]
+        if constraints.valid_check_name is not None:
+            expected.append((constraints.valid_check_name, "CHECK ((from_z < thru_z))", True))
         rows = profile_run.port.execute(_CHECKS, [table])
         assert sorted(tuple(row) for row in rows) == sorted(expected)
 
@@ -131,23 +125,21 @@ def test_an_external_write_of_an_empty_or_inverted_interval_is_refused_by_name(
     assert error.violated_index is None
     assert not error.is_transient
     assert isinstance(error.__cause__, psycopg.errors.CheckViolation)
-    assert profile_run.port.execute("select t0.pos_id from position t0", []) == []
+    assert profile_run.port.execute("select t0.pos_id from px.position t0", []) == []
 
 
 def test_an_update_that_closes_a_row_at_its_own_start_is_refused(profile_run: Any) -> None:
     model = _provision(profile_run, "balance.yaml")
     profile_run.port.execute_write(
-        "insert into balance (bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
+        "insert into px.balance (bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
         [1, "A", 1, _FEB, INFINITY],
     )
     error = _refused(
         profile_run,
-        "update balance set out_z = ? where bal_id = ? and out_z = ?",
+        "update px.balance set out_z = ? where bal_id = ? and out_z = ?",
         [_FEB, 1, INFINITY],
     )
-    assert (
-        error.constraint_name == _constraints(model, "balance").transaction_axis.interval_check_name
-    )
+    assert error.constraint_name == _constraints(model, "balance").transaction_check_name
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +155,7 @@ def _without_checks(profile_run: Any) -> tuple[str, str]:
     tx, valid = _names(model, "position")
     exclusion = _constraints(model, "position").exclusion_name
     for name in (exclusion, tx, valid):
-        profile_run.port.execute_write(f"alter table position drop constraint {name}", [])
+        profile_run.port.execute_write(f"alter table px.position drop constraint {name}", [])
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 1, _JAN, INFINITY, _MAR, _FEB])
     profile_run.port.execute_write(_INSERT_POSITION, [2, "B", 1, _FEB, _FEB, _JAN, INFINITY])
     profile_run.port.execute_write(_INSERT_POSITION, [3, "C", 1, _JAN, _FEB, _JAN, INFINITY])
@@ -173,10 +165,10 @@ def _without_checks(profile_run: Any) -> tuple[str, str]:
 def test_the_validation_queries_find_every_row_a_check_would_refuse(profile_run: Any) -> None:
     _without_checks(profile_run)
     transaction = profile_run.port.execute(
-        "select pos_id, in_z, out_z from position where not (in_z < out_z)", []
+        "select pos_id, in_z, out_z from px.position where not (in_z < out_z)", []
     )
     valid = profile_run.port.execute(
-        "select pos_id, from_z, thru_z from position where not (from_z < thru_z)", []
+        "select pos_id, from_z, thru_z from px.position where not (from_z < thru_z)", []
     )
     assert [row[0] for row in transaction] == [1]
     assert [row[0] for row in valid] == [2]
@@ -185,7 +177,7 @@ def test_the_validation_queries_find_every_row_a_check_would_refuse(profile_run:
 def test_adding_a_check_over_a_refused_row_fails_and_adds_nothing(profile_run: Any) -> None:
     tx, _valid = _without_checks(profile_run)
     error = _refused(
-        profile_run, f"alter table position add constraint {tx} check (in_z < out_z)", []
+        profile_run, f"alter table px.position add constraint {tx} check (in_z < out_z)", []
     )
     assert (error.category, error.constraint_name) == ("constraintViolation", tx)
     assert profile_run.port.execute(_CHECKS, ["position"]) == []
@@ -196,10 +188,10 @@ def test_a_staged_check_governs_new_writes_and_validates_once_the_rows_are_corre
 ) -> None:
     tx, valid = _without_checks(profile_run)
     profile_run.port.execute_write(
-        f"alter table position add constraint {tx} check (in_z < out_z) not valid", []
+        f"alter table px.position add constraint {tx} check (in_z < out_z) not valid", []
     )
     profile_run.port.execute_write(
-        f"alter table position add constraint {valid} check (from_z < thru_z) not valid", []
+        f"alter table px.position add constraint {valid} check (from_z < thru_z) not valid", []
     )
     assert sorted(tuple(row) for row in profile_run.port.execute(_CHECKS, ["position"])) == [
         (tx, "CHECK ((in_z < out_z)) NOT VALID", False),
@@ -208,13 +200,13 @@ def test_a_staged_check_governs_new_writes_and_validates_once_the_rows_are_corre
 
     fresh = _refused(profile_run, _INSERT_POSITION, [4, "D", 1, _JAN, INFINITY, _FEB, _FEB])
     assert fresh.constraint_name == tx
-    stored = _refused(profile_run, f"alter table position validate constraint {tx}", [])
+    stored = _refused(profile_run, f"alter table px.position validate constraint {tx}", [])
     assert (stored.category, stored.constraint_name) == ("constraintViolation", tx)
 
-    profile_run.port.execute_write("update position set in_z = ? where pos_id = ?", [_JAN, 1])
-    profile_run.port.execute_write("delete from position where pos_id = ?", [2])
-    profile_run.port.execute_write(f"alter table position validate constraint {tx}", [])
-    profile_run.port.execute_write(f"alter table position validate constraint {valid}", [])
+    profile_run.port.execute_write("update px.position set in_z = ? where pos_id = ?", [_JAN, 1])
+    profile_run.port.execute_write("delete from px.position where pos_id = ?", [2])
+    profile_run.port.execute_write(f"alter table px.position validate constraint {tx}", [])
+    profile_run.port.execute_write(f"alter table px.position validate constraint {valid}", [])
     assert sorted(tuple(row) for row in profile_run.port.execute(_CHECKS, ["position"])) == [
         (tx, "CHECK ((in_z < out_z))", True),
         (valid, "CHECK ((from_z < thru_z))", True),

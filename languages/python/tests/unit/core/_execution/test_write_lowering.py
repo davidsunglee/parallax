@@ -147,6 +147,7 @@ from parallax.core.internal.write_plan.steps import (
 )
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from parallax.descriptor import _records
+from tests._support.bindings import bound_model
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
@@ -236,7 +237,7 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
         ),
         CUSTOMER,
     )[0]
-    assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
+    assert statement.sql == "insert into px.customer(id, name, address) values (?, ?, ?)"
     assert statement.binds[:2] == (1, "Ada")
     assert statement.binds[2] == StructuredDocument(
         {"street": "1 Main", "city": "Oslo", "phones": []}
@@ -336,7 +337,7 @@ def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> N
     )[0]
     assert _layout_columns(PAYMENT, "CardPayment") == ("id", "kind", "amount", "card_network")
     assert statement.sql == (
-        "update payment set amount = ?, card_network = ? where id = ? and kind = ?"
+        "update px.payment set amount = ?, card_network = ? where id = ? and kind = ?"
     )
     assert statement.binds == (130.00, "Visa", 1, "card")
 
@@ -358,7 +359,7 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
     )[0]
     assert _insert_columns(statement) == _layout_columns(PAYMENT, "CardPayment")
     assert statement.sql == (
-        "insert into payment(id, kind, amount, card_network) select * from "
+        "insert into px.payment(id, kind, amount, card_network) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as text[]))"
     )
     assert _array_values(statement) == (
@@ -408,7 +409,7 @@ def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> Non
         observation=VersionObservation(observed_version=1),
         concurrency="optimistic",
     )[0]
-    assert statement.sql == "delete from account where id = ? and version = ?"
+    assert statement.sql == "delete from px.account where id = ? and version = ?"
     assert statement.binds == (3, 1)
 
 
@@ -420,7 +421,7 @@ def test_versioned_delete_is_ungated_in_locking_mode() -> None:
     statement = _lower(
         delete, ACCOUNT, observation=VersionObservation(observed_version=1), concurrency="locking"
     )[0]
-    assert statement.sql == "delete from account where id = ?"
+    assert statement.sql == "delete from px.account where id = ?"
     assert statement.binds == (3,)
 
 
@@ -449,7 +450,9 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
         ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 99},),
     )
     statement = _lower(insert, ACCOUNT)[0]
-    assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
+    assert (
+        statement.sql == "insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)"
+    )
     assert statement.binds == (9, "Noether", 5.00, concurrency.INITIAL_VERSION)
     assert concurrency.INITIAL_VERSION == 1
 
@@ -465,7 +468,8 @@ def test_pk_gen_max_folds_into_an_insert_select() -> None:
     )
     statement = _lower(insert, PK_MAX)[0]
     assert statement.sql == (
-        "insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0"
+        "insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from "
+        "px.attendee t0"
     )
     assert statement.binds == (0, 1, "Ada")
 
@@ -475,7 +479,7 @@ def test_pk_gen_increment_marker_self_references_the_column() -> None:
         "amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
     )
     statement = _lower(update, PK_SEQUENCE)[0]
-    assert statement.sql == "update pk_sequence set next_val = next_val + ? where name = ?"
+    assert statement.sql == "update px.pk_sequence set next_val = next_val + ? where name = ?"
     assert statement.binds == (1, "badge_seq")
 
 
@@ -617,7 +621,7 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
     )
     statement = _lower(insert, ACCOUNT)[0]
     assert statement.sql == (
-        "insert into account(id, owner, balance, version) select * from unnest("
+        "insert into px.account(id, owner, balance, version) select * from unnest("
         "cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as int[]))"
     )
     assert _array_values(statement) == (
@@ -635,7 +639,7 @@ def test_a_dialect_binding_no_arrays_lists_a_collapsed_updates_keys() -> None:
         ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
     )
     statement = _lower(update, WALLET, dialect=_EXPANDING)[0]
-    assert statement.sql == "update wallet set balance = ? where id in (?, ?)"
+    assert statement.sql == "update px.wallet set balance = ? where id in (?, ?)"
     assert statement.binds == (500.00, 10, 11)
 
 
@@ -653,16 +657,16 @@ def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> Non
         ({"id": 10, "balance": Decimal("111.00")}, {"id": 11, "balance": Decimal("222.00")}),
     )
     first, second = _lower(update, WALLET)
-    assert first.sql == "update wallet set balance = ? where id = ?"
+    assert first.sql == "update px.wallet set balance = ? where id = ?"
     assert first.binds == (111.00, 10)
-    assert second.sql == "update wallet set balance = ? where id = ?"
+    assert second.sql == "update px.wallet set balance = ? where id = ?"
     assert second.binds == (222.00, 11)
 
 
 def test_a_dialect_binding_no_arrays_lists_a_collapsed_deletes_keys() -> None:
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
     statement = _lower(delete, WALLET, dialect=_EXPANDING)[0]
-    assert statement.sql == "delete from wallet where id in (?, ?, ?)"
+    assert statement.sql == "delete from px.wallet where id in (?, ?, ?)"
     assert statement.binds == (1, 2, 3)
 
 
@@ -675,10 +679,12 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     # concrete subtype.
     delete = KeyedWriteInstruction("delete", "CardPayment", ({"id": 1}, {"id": 2}))
     statement = _lower(delete, PAYMENT)[0]
-    assert statement.sql == "delete from payment where id = any(cast(? as bigint[])) and kind = ?"
+    assert (
+        statement.sql == "delete from px.payment where id = any(cast(? as bigint[])) and kind = ?"
+    )
     assert statement.binds == (ArrayBind(INT64, [1, 2]), "card")
     expanded = _lower(delete, PAYMENT, dialect=_EXPANDING)[0]
-    assert expanded.sql == "delete from payment where id in (?, ?) and kind = ?"
+    assert expanded.sql == "delete from px.payment where id in (?, ?) and kind = ?"
     assert expanded.binds == (1, 2, "card")
 
     update = KeyedWriteInstruction(
@@ -688,11 +694,11 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     )
     updated = _lower(update, PAYMENT)[0]
     assert updated.sql == (
-        "update payment set amount = ? where id = any(cast(? as bigint[])) and kind = ?"
+        "update px.payment set amount = ? where id = any(cast(? as bigint[])) and kind = ?"
     )
     assert updated.binds == (5.00, ArrayBind(INT64, [1, 2]), "card")
     expanded = _lower(update, PAYMENT, dialect=_EXPANDING)[0]
-    assert expanded.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
+    assert expanded.sql == "update px.payment set amount = ? where id in (?, ?) and kind = ?"
     assert expanded.binds == (5.00, 1, 2, "card")
 
 
@@ -717,9 +723,14 @@ def test_a_multi_column_key_target_binds_one_array_per_key_column() -> None:
     # follow planner order. No accepted Metamodel can reach it through
     # finalization (the rule above), so the step is built by hand with a
     # two-Attribute key.
-    statement = lowered(_two_column_key_delete(), LayoutPayloadPreparer(WALLET), WALLET, POSTGRES)
+    statement = lowered(
+        _two_column_key_delete(),
+        LayoutPayloadPreparer(bound_model(WALLET)),
+        bound_model(WALLET),
+        POSTGRES,
+    )
     assert statement.sql == (
-        "delete from wallet where (id, owner) in "
+        "delete from px.wallet where (id, owner) in "
         "(select * from unnest(cast(? as bigint[]), cast(? as text[])))"
     )
     assert statement.binds == (ArrayBind(INT64, [1, 2]), ArrayBind(STRING, ["Ada", "Bo"]))
@@ -727,8 +738,13 @@ def test_a_multi_column_key_target_binds_one_array_per_key_column() -> None:
 
 
 def test_a_dialect_binding_no_arrays_renders_a_multi_column_key_as_a_row_constructor() -> None:
-    statement = lowered(_two_column_key_delete(), LayoutPayloadPreparer(WALLET), WALLET, _EXPANDING)
-    assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
+    statement = lowered(
+        _two_column_key_delete(),
+        LayoutPayloadPreparer(bound_model(WALLET)),
+        bound_model(WALLET),
+        _EXPANDING,
+    )
+    assert statement.sql == "delete from px.wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
 
 
@@ -774,8 +790,8 @@ def test_a_readless_predicate_update_through_a_shared_join_is_one_key_selecting_
     )
     (statement,) = _lower(predicate, ORDERS)
     assert statement.sql == (
-        "update order_item set sku = ? where id in (select t0.id from order_item t0 "
-        "left join orders t1 on t1.id = t0.order_id where t1.name = ? and t0.quantity < ?)"
+        "update px.order_item set sku = ? where id in (select t0.id from px.order_item t0 "
+        "left join px.orders t1 on t1.id = t0.order_id where t1.name = ? and t0.quantity < ?)"
     )
     assert statement.binds == ("Z", "Ada", 3)
 
@@ -794,8 +810,8 @@ def test_a_readless_predicate_replacement_lowers_its_completed_state_as_an_updat
     )
     (statement,) = _lower(predicate, ORDERS)
     assert statement.sql == (
-        "update order_item set order_id = ?, sku = ?, quantity = ?, shipped_on = ? where id in "
-        "(select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "update px.order_item set order_id = ?, sku = ?, quantity = ?, shipped_on = ? where id in "
+        "(select t0.id from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id "
         "where t1.name = ?)"
     )
     assert statement.binds == (1, "Z", 9, None, "Ada")
@@ -874,7 +890,12 @@ def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document
         entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
     )
 
-    statement = lowered(step, LayoutPayloadPreparer(CUSTOMER), CUSTOMER, POSTGRES)
+    statement = lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(CUSTOMER)),
+        bound_model(CUSTOMER),
+        POSTGRES,
+    )
 
     assert statement.binds[-1] == StructuredDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
@@ -1109,8 +1130,10 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
             ),
         ),
     )
-    statement = lowered(step, LayoutPayloadPreparer(ORDERS), ORDERS, POSTGRES)
-    assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
+    statement = lowered(
+        step, LayoutPayloadPreparer(bound_model(ORDERS)), bound_model(ORDERS), POSTGRES
+    )
+    assert statement.sql == "insert into px.order_item(id, order_id, quantity) values (?, ?, ?)"
     assert statement.binds == (200, 100, 3)
 
 
@@ -1130,9 +1153,15 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
         entity=_identity(PAYMENT, "CardPayment"),
         entries=(WriteRow(row=row, origin=NEW_LINEAGE),),
     )
-    statement = lowered(step, LayoutPayloadPreparer(PAYMENT), PAYMENT, POSTGRES)
+    statement = lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(PAYMENT)),
+        bound_model(PAYMENT),
+        POSTGRES,
+    )
     assert (
-        statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
+        statement.sql
+        == "insert into px.payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
     assert statement.binds == (1, "card", 10.00, "Visa")
 
@@ -1174,8 +1203,13 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
         entity=_CRATE,
         entries=(WriteRow(row=managed_row_of(_CRATE_MODEL, {_CRATE_ID: 7}), origin=NEW_LINEAGE),),
     )
-    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
-    assert statement.sql == "insert into crate(id, labels) values (?, ?)"
+    statement = lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(_CRATE_MODEL)),
+        bound_model(_CRATE_MODEL),
+        POSTGRES,
+    )
+    assert statement.sql == "insert into px.crate(id, labels) values (?, ?)"
     assert statement.binds == (7, StructuredDocument(()))
 
 
@@ -1190,8 +1224,13 @@ def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
-    assert statement.sql == "update crate set note = ? where id = ?"
+    statement = lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(_CRATE_MODEL)),
+        bound_model(_CRATE_MODEL),
+        POSTGRES,
+    )
+    assert statement.sql == "update px.crate set note = ? where id = ?"
     assert statement.binds == ("fragile", 7)
 
 
@@ -1210,7 +1249,12 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
         ),
     )
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="one row at a time"):
-        lowered(step, LayoutPayloadPreparer(PK_MAX), PK_MAX, POSTGRES)
+        lowered(
+            step,
+            LayoutPayloadPreparer(bound_model(PK_MAX)),
+            bound_model(PK_MAX),
+            POSTGRES,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1218,12 +1262,12 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
     [
         (
             VersionGate(observed_version=5),
-            "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?",
+            "update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?",
             ("Coupe", 6, 1, "car", 5),
         ),
         (
             UNGATED,
-            "update vehicle set name = ?, version = ? where id = ? and kind = ?",
+            "update px.vehicle set name = ?, version = ? where id = ? and kind = ?",
             ("Coupe", 6, 1, "car"),
         ),
     ],
@@ -1257,7 +1301,12 @@ def test_step_lowering_places_the_settled_version_from_the_versioned_decision(
         raise AssertionError(f"lowering asked {attribute.identity} whether it is the version")
 
     monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undiscoverable))
-    statement = lowered(step, LayoutPayloadPreparer(VEHICLE), VEHICLE, POSTGRES)
+    statement = lowered(
+        step,
+        LayoutPayloadPreparer(bound_model(VEHICLE)),
+        bound_model(VEHICLE),
+        POSTGRES,
+    )
     assert (statement.sql, statement.binds) == (sql, binds)
 
 
@@ -1293,7 +1342,7 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
     # number of entries or the Row Slots of other members, or one prepared
     # from another assignment set is a broken caller contract rather than a
     # request to prepare.
-    payloads = LayoutPayloadPreparer(_CRATE_MODEL)
+    payloads = LayoutPayloadPreparer(bound_model(_CRATE_MODEL))
     insert = _crate_insert(1, 2)
     slots = payloads.row_slots(_CRATE, insert.entries[0].row.presence)
     first, second = (slots.cells(entry) for entry in insert.entries)
@@ -1319,13 +1368,19 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
     ]
     for step, payload in refused:
         with raises_code(InternalError, SQL_GENERATION_FAILED):
-            compile_write_step(step, payload, _CRATE_MODEL, POSTGRES)
+            compile_write_step(step, payload, bound_model(_CRATE_MODEL), POSTGRES)
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         compile_write_step(
-            insert, InsertPayload(slots, (first, second[:-1])), _CRATE_MODEL, POSTGRES
+            insert,
+            InsertPayload(slots, (first, second[:-1])),
+            bound_model(_CRATE_MODEL),
+            POSTGRES,
         )
     assert compile_write_step(
-        insert, InsertPayload(slots, (first, second)), _CRATE_MODEL, POSTGRES
+        insert,
+        InsertPayload(slots, (first, second)),
+        bound_model(_CRATE_MODEL),
+        POSTGRES,
     ).binds == (
         ArrayBind(INT64, [1, 2]),
         ArrayBind(STRING, ["n", "n"]),
@@ -1339,16 +1394,22 @@ def test_lowering_reuses_backing_an_entry_already_carries() -> None:
             return observed_slots(super().row_slots(entity, presence), _prepared_again)
 
     (entry,) = _crate_insert(7).entries
-    carried = entry.with_prepared(LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry))
+    carried = entry.with_prepared(
+        LayoutPayloadPreparer(bound_model(_CRATE_MODEL)).row(_CRATE, entry)
+    )
     step = PlannedInsert(entity=_CRATE, entries=(carried,))
 
-    statement = lowered(step, _Unprepared(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+    statement = lowered(
+        step, _Unprepared(bound_model(_CRATE_MODEL)), bound_model(_CRATE_MODEL), POSTGRES
+    )
 
     assert statement.binds == (7, "n", StructuredDocument(()))
     assert carried == entry
     with pytest.raises(ValueError, match="the payload prepared from it"):
         entry.with_prepared(
-            LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, _crate_insert(8).entries[0])
+            LayoutPayloadPreparer(bound_model(_CRATE_MODEL)).row(
+                _CRATE, _crate_insert(8).entries[0]
+            )
         )
 
 
@@ -1360,7 +1421,7 @@ def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
     # Copying a carrier keeps its backing, so the same row reached with another
     # executed selection or origin still holds cells prepared from the old one.
     (entry,) = _crate_insert(7).entries
-    backing = LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry)
+    backing = LayoutPayloadPreparer(bound_model(_CRATE_MODEL)).row(_CRATE, entry)
     carried = entry.with_prepared(backing)
     for restated in (
         dataclasses.replace(carried, executed=(_CRATE_NOTE,)),
@@ -1369,7 +1430,12 @@ def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
         assert restated.prepared is backing
         step = PlannedInsert(entity=_CRATE, entries=(restated,))
         with raises_code(InternalError, SQL_GENERATION_FAILED, match="belongs to another entry"):
-            lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
+            lowered(
+                step,
+                LayoutPayloadPreparer(bound_model(_CRATE_MODEL)),
+                bound_model(_CRATE_MODEL),
+                POSTGRES,
+            )
         with pytest.raises(ValueError, match="the payload prepared from it"):
             restated.with_prepared(backing)
 
@@ -1379,8 +1445,13 @@ def test_a_narrow_update_prepares_its_assignments_alone() -> None:
         def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
             raise AssertionError("a narrow update demanded a complete row")
 
-    statement = lowered(_crate_update(), _AssignmentsOnly(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
-    assert statement.sql == "update crate set note = ? where id = ?"
+    statement = lowered(
+        _crate_update(),
+        _AssignmentsOnly(bound_model(_CRATE_MODEL)),
+        bound_model(_CRATE_MODEL),
+        POSTGRES,
+    )
+    assert statement.sql == "update px.crate set note = ? where id = ?"
 
 
 def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
@@ -1399,12 +1470,12 @@ def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    payload = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    payload = LayoutPayloadPreparer(bound_model(document)).assignments(PERSON, step.assignments)
     (patched,) = payload.values
     assert isinstance(patched, PatchedDocument)
     name, occurrence = patched.patches
 
-    statement = compile_write_step(step, payload, document, POSTGRES)
+    statement = compile_write_step(step, payload, bound_model(document), POSTGRES)
 
     assert StructuredDocument(cast("DocumentValue", occurrence.value)) in statement.binds
     (bound,) = (bind for bind in statement.binds if isinstance(bind, StructuredDocument))
@@ -1450,7 +1521,7 @@ class _CountingPreparer(LayoutPayloadPreparer):
     __slots__ = ("prepared",)
 
     def __init__(self, meta: Metamodel) -> None:
-        super().__init__(meta)
+        super().__init__(bound_model(meta))
         self.prepared: list[PlannedAssignments] = []
 
     def assignments(
@@ -1463,7 +1534,7 @@ class _CountingPreparer(LayoutPayloadPreparer):
 def _lowered_alone(
     step: PlannedStep, payloads: WritePayloadPreparer, meta: Metamodel
 ) -> LoweredStatement:
-    return lowered(step, payloads, meta, POSTGRES)
+    return lowered(step, payloads, bound_model(meta), POSTGRES)
 
 
 def _lowered_for_ordered_transport(
@@ -1471,7 +1542,7 @@ def _lowered_for_ordered_transport(
 ) -> LoweredStatement:
     ceiling = ordered_parameter_ceiling(step, POSTGRES)
     assert ceiling is not None
-    return lowered_within(step, ceiling, payloads, meta, POSTGRES)
+    return lowered_within(step, ceiling, payloads, bound_model(meta), POSTGRES)
 
 
 _ROUTES = pytest.mark.parametrize(
@@ -1515,8 +1586,8 @@ def test_a_revision_patching_no_document_lowers_whatever_its_predecessor_held(
     meta: Metamodel, assigned: Mapping[str, object]
 ) -> None:
     step = _span_revision(assigned, predecessor_document_is_object=False)
-    statement = lowered(step, LayoutPayloadPreparer(meta), meta, POSTGRES)
-    assert statement.sql.startswith("update sequence_span set ")
+    statement = lowered(step, LayoutPayloadPreparer(bound_model(meta)), bound_model(meta), POSTGRES)
+    assert statement.sql.startswith("update px.sequence_span set ")
     assert "jsonb_set(" not in statement.sql
 
 
@@ -1563,7 +1634,7 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
 def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
     # A cell is placed by its contributor's slot, and a document key removal no
     # assignment can express is refused rather than silently dropped.
-    payloads = LayoutPayloadPreparer(_CRATE_MODEL)
+    payloads = LayoutPayloadPreparer(bound_model(_CRATE_MODEL))
     update = _crate_update()
     assigned = payloads.assignments(_CRATE, update.assignments)
     with pytest.raises(ValueError, match="aligns one value with each contributor"):
@@ -1580,7 +1651,7 @@ def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    prepared = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
+    prepared = LayoutPayloadPreparer(bound_model(document)).assignments(PERSON, step.assignments)
     (patched,) = prepared.values
     assert isinstance(patched, PatchedDocument)
     (score,) = patched.patches
@@ -1588,7 +1659,7 @@ def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
         prepared, values=(PatchedDocument((dataclasses.replace(score, removes=True),)),)
     )
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="removes no document key"):
-        compile_write_step(step, removal, document, POSTGRES)
+        compile_write_step(step, removal, bound_model(document), POSTGRES)
 
 
 def _noted_crate(column: str) -> Metamodel:
@@ -1614,35 +1685,43 @@ def test_each_model_places_one_entity_identitys_cells_in_its_own_columns() -> No
     noted, remarked = _noted_crate("note"), _noted_crate("remark")
     insert = _crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"})
     for model, column in ((noted, "note"), (remarked, "remark"), (noted, "note")):
-        payloads = LayoutPayloadPreparer(model)
-        assert lowered(insert, payloads, model, POSTGRES).sql == (
-            f"insert into crate(id, {column}) values (?, ?)"
+        payloads = LayoutPayloadPreparer(bound_model(model))
+        assert lowered(insert, payloads, bound_model(model), POSTGRES).sql == (
+            f"insert into px.crate(id, {column}) values (?, ?)"
         )
-        assert lowered(_crate_update(), payloads, model, POSTGRES).sql == (
-            f"update crate set {column} = ? where id = ?"
+        assert lowered(_crate_update(), payloads, bound_model(model), POSTGRES).sql == (
+            f"update px.crate set {column} = ? where id = ?"
         )
 
 
 def test_each_statement_is_placed_by_its_own_cells_as_shapes_alternate() -> None:
     model = _noted_crate("note")
-    payloads = LayoutPayloadPreparer(model)
+    payloads = LayoutPayloadPreparer(bound_model(model))
     narrow, full = _crate_row({_CRATE_ID: 1}), _crate_row({_CRATE_ID: 2, _CRATE_NOTE: "n"})
     update = _crate_update()
     for _ in range(2):
-        assert lowered(narrow, payloads, model, POSTGRES).sql == "insert into crate(id) values (?)"
-        assert lowered(full, payloads, model, POSTGRES).sql == (
-            "insert into crate(id, note) values (?, ?)"
+        assert (
+            lowered(narrow, payloads, bound_model(model), POSTGRES).sql
+            == "insert into px.crate(id) values (?)"
         )
-        assert lowered(update, payloads, model, POSTGRES).sql == (
-            "update crate set note = ? where id = ?"
+        assert lowered(full, payloads, bound_model(model), POSTGRES).sql == (
+            "insert into px.crate(id, note) values (?, ?)"
+        )
+        assert lowered(update, payloads, bound_model(model), POSTGRES).sql == (
+            "update px.crate set note = ? where id = ?"
         )
 
 
 def test_lowering_keeps_no_model_alive() -> None:
     model = _noted_crate("note")
-    payloads = LayoutPayloadPreparer(model)
-    lowered(_crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"}), payloads, model, POSTGRES)
-    lowered(_crate_update(), payloads, model, POSTGRES)
+    payloads = LayoutPayloadPreparer(bound_model(model))
+    lowered(
+        _crate_row({_CRATE_ID: 1, _CRATE_NOTE: "n"}),
+        payloads,
+        bound_model(model),
+        POSTGRES,
+    )
+    lowered(_crate_update(), payloads, bound_model(model), POSTGRES)
     layout = weakref.ref(storage_layout.storage_layout_facet_of(model))
     del model, payloads
     gc.collect()
@@ -1691,13 +1770,17 @@ def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
 
 
 def _ledger_cells(entry: WriteRow) -> tuple[object, ...]:
-    return LayoutPayloadPreparer(_BUILDER_MODEL).row(_BUILDER_LEDGER, entry).values
+    return LayoutPayloadPreparer(bound_model(_BUILDER_MODEL)).row(_BUILDER_LEDGER, entry).values
 
 
 def _ledger_builder(*entries: WriteRow) -> InsertStatementBuilder:
     first, *rest = entries
-    slots = LayoutPayloadPreparer(_BUILDER_MODEL).row_slots(_BUILDER_LEDGER, first.row.presence)
-    builder = InsertStatementBuilder(slots, _ledger_cells(first), _BUILDER_MODEL, POSTGRES)
+    slots = LayoutPayloadPreparer(bound_model(_BUILDER_MODEL)).row_slots(
+        _BUILDER_LEDGER, first.row.presence
+    )
+    builder = InsertStatementBuilder(
+        slots, _ledger_cells(first), bound_model(_BUILDER_MODEL), POSTGRES
+    )
     for entry in rest:
         builder.append(_ledger_cells(entry))
     return builder
@@ -1708,13 +1791,14 @@ def test_one_entry_binds_its_cells_and_compacts_its_typed_runs() -> None:
 
     statement = lowered(
         PlannedInsert(entity=_BUILDER_LEDGER, entries=entries),
-        LayoutPayloadPreparer(_BUILDER_MODEL),
-        _BUILDER_MODEL,
+        LayoutPayloadPreparer(bound_model(_BUILDER_MODEL)),
+        bound_model(_BUILDER_MODEL),
         POSTGRES,
     )
 
     assert statement.sql == (
-        "insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) values (?, ?, ?, ?, ?, ?)"
+        "insert into px.builder_ledger(id, amount, memo, in_z, out_z, shelf) values (?, ?, ?, "
+        "?, ?, ?)"
     )
     assert statement == _ledger_builder(entry).finish()
     assert statement.binds == (
@@ -1743,13 +1827,13 @@ def test_several_entries_bind_one_typed_array_per_column_in_entry_order() -> Non
 
     statement = lowered(
         PlannedInsert(entity=_BUILDER_LEDGER, entries=entries),
-        LayoutPayloadPreparer(_BUILDER_MODEL),
-        _BUILDER_MODEL,
+        LayoutPayloadPreparer(bound_model(_BUILDER_MODEL)),
+        bound_model(_BUILDER_MODEL),
         POSTGRES,
     )
 
     assert statement.sql == (
-        "insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) select * from "
+        "insert into px.builder_ledger(id, amount, memo, in_z, out_z, shelf) select * from "
         "unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), "
         "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))"
     )
@@ -1786,11 +1870,11 @@ def test_a_multi_row_inserts_text_and_bind_count_follow_its_columns_alone() -> N
 
 def test_a_dialect_binding_no_arrays_inserts_one_entry_and_refuses_several() -> None:
     expanding = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
-    payloads = LayoutPayloadPreparer(_BUILDER_MODEL)
+    payloads = LayoutPayloadPreparer(bound_model(_BUILDER_MODEL))
     alone = lowered(
         PlannedInsert(entity=_BUILDER_LEDGER, entries=(_ledger_entry(1),)),
         payloads,
-        _BUILDER_MODEL,
+        bound_model(_BUILDER_MODEL),
         expanding,
     )
     assert alone.sql.endswith("values (?, ?, ?, ?, ?, ?)")
@@ -1798,7 +1882,7 @@ def test_a_dialect_binding_no_arrays_inserts_one_entry_and_refuses_several() -> 
         lowered(
             PlannedInsert(entity=_BUILDER_LEDGER, entries=(_ledger_entry(1), _ledger_entry(2))),
             payloads,
-            _BUILDER_MODEL,
+            bound_model(_BUILDER_MODEL),
             expanding,
         )
 
@@ -1863,7 +1947,7 @@ def _scripted_rows(script: _Script, demanded: list[int] | None = None) -> Layout
                 _ScriptedSlots(super().row_slots(entity, presence), script, demanded),
             )
 
-    return _Scripted(_BUILDER_MODEL)
+    return _Scripted(bound_model(_BUILDER_MODEL))
 
 
 def _narrower(cells: tuple[object, ...]) -> tuple[object, ...]:
@@ -1884,7 +1968,10 @@ def test_a_logical_insert_gathers_every_entrys_cells_before_binding_any() -> Non
 
     with pytest.raises(_PreparationFailure):
         lowered(
-            step, _scripted_rows({1: _narrower, 3: _unprepared}, demanded), _BUILDER_MODEL, POSTGRES
+            step,
+            _scripted_rows({1: _narrower, 3: _unprepared}, demanded),
+            bound_model(_BUILDER_MODEL),
+            POSTGRES,
         )
 
     assert demanded == [1, 2, 3]
@@ -1904,13 +1991,13 @@ def test_a_multi_entry_generated_value_insert_is_refused() -> None:
     attendee = _identity(PK_MAX, "Attendee")
     row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
     entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
-    slots = LayoutPayloadPreparer(PK_MAX).row_slots(attendee, row.presence)
+    slots = LayoutPayloadPreparer(bound_model(PK_MAX)).row_slots(attendee, row.presence)
     cells = tuple(slots.cells(entry) for entry in entries)
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders one row at a time"):
         compile_write_step(
             PlannedInsert(entity=attendee, entries=entries),
             InsertPayload(slots, cells),
-            PK_MAX,
+            bound_model(PK_MAX),
             POSTGRES,
         )

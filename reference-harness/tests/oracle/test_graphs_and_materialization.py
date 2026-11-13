@@ -300,7 +300,7 @@ def test_an_empty_root_elides_every_child_level(corpus_case: CaseLoader) -> None
 def test_a_child_statement_no_level_reached_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_EMPTY_ROOT)
     case.then["statements"].append(
-        {"sql": {"postgres": "select t0.id from order_item t0 where t0.order_id in (?)"}}
+        {"sql": {"postgres": "select t0.id from px.order_item t0 where t0.order_id in (?)"}}
     )
     reads = ScriptedReads(results=[[], []])
 
@@ -412,12 +412,12 @@ _ANIMAL_BY_ID = {row["id"]: row for row in _ROOT_ANIMALS}
 
 _PETS_LEVEL_SQL = (
     "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
-    "t0.bark_volume from animal t0 where t0.owner_id = any(cast(? as bigint[])) and "
+    "t0.bark_volume from px.animal t0 where t0.owner_id = any(cast(? as bigint[])) and "
     "t0.kind in (?, ?)"
 )
 
 
-_PEOPLE_LEVEL_SQL = "select t0.id, t0.name from person t0 where t0.id = any(cast(? as bigint[]))"
+_PEOPLE_LEVEL_SQL = "select t0.id, t0.name from px.person t0 where t0.id = any(cast(? as bigint[]))"
 
 
 def _pet_level_rows(*ids: int) -> list[dict[str, Any]]:
@@ -905,8 +905,8 @@ def test_a_flat_tpcs_read_dropping_its_collections_is_refused(
     for dialect in ("postgres", "mariadb"):
         case.then["statements"][0]["sql"][dialect] = (
             "select u.id, u.family_variant from (select t0.id, 'TagDrill' family_variant "
-            "from tag_drill t0 union all select t0.id, 'TagSaw' family_variant from tag_saw t0) "
-            "u order by u.id asc"
+            "from px.tag_drill t0 union all select t0.id, 'TagSaw' family_variant "
+            "from px.tag_saw t0) u order by u.id asc"
         )
     case.then["rows"] = [{"id": 1, "_type": "parallax.compatibility.TagDrill"}]
     reads = ScriptedReads(results=[[{"id": 1, "family_variant": "TagDrill"}]])
@@ -1171,7 +1171,7 @@ def _concrete_note_read(case: Case) -> Case:
         {
             "sql": {
                 "postgres": 'select t0.id, not t0."variantProfile" is null, t0."variantProfile" '
-                "from variant_record t0 where t0.kind = ?"
+                "from px.variant_record t0 where t0.kind = ?"
             },
             "binds": ["note"],
         }
@@ -1214,7 +1214,7 @@ def _with_note_hop(
     level = {
         "sql": {
             "postgres": f'select t0.id, {tag}not t0."variantProfile" is null, t0."variantProfile" '
-            f"from variant_record t0 where t0.id = any(cast(? as bigint[])){tag_filter}"
+            f"from px.variant_record t0 where t0.id = any(cast(? as bigint[])){tag_filter}"
         },
         "binds": {"postgres": [[2], *tag_binds]},
     }
@@ -1354,13 +1354,13 @@ def _scenario_read_of_a_note_with_its_target(case: Case, model: Model) -> Case:
                 {
                     "sql": {
                         "postgres": "select t0.id, t0.target_id, not t0.details is null, "
-                        "t0.details from variant_record t0 where t0.kind = ?"
+                        "t0.details from px.variant_record t0 where t0.kind = ?"
                     },
                     "binds": ["note"],
                 },
                 {
                     "sql": {
-                        "postgres": "select t0.id from profile_target t0 "
+                        "postgres": "select t0.id from px.profile_target t0 "
                         "where t0.id = any(cast(? as bigint[]))"
                     },
                     "binds": [[10]],
@@ -1543,7 +1543,7 @@ def _owner_read(case: Case, model: Model, *later_steps: dict[str, Any]) -> Case:
                 {
                     "sql": {
                         "postgres": "select t0.id, t0.target_id, not t0.details is null, "
-                        "t0.details from profile_owner t0"
+                        "t0.details from px.profile_owner t0"
                     }
                 }
             ],
@@ -1573,7 +1573,7 @@ def test_an_access_states_the_rows_of_its_source(damaged_case: CaseLoader) -> No
     root["statements"].append(
         {
             "sql": {
-                "postgres": "select t0.id from profile_target t0 "
+                "postgres": "select t0.id from px.profile_target t0 "
                 "where t0.id = any(cast(? as bigint[]))"
             },
             "binds": [[10]],
@@ -1708,7 +1708,8 @@ def test_a_copy_keeps_the_identity_of_its_source(damaged_case: CaseLoader) -> No
         {"action": "access", "on": 1, "path": "details", "sameObjectAs": 0},
     )
     case.raw["when"]["scenario"][0]["statements"][0]["sql"]["postgres"] = (
-        "select t0.owner_id, t0.target_id, not t0.details is null, t0.details from profile_owner t0"
+        "select t0.owner_id, t0.target_id, not t0.details is null, t0.details "
+        "from px.profile_owner t0"
     )
     stored = {"owner_id": 1, "target_id": 10, "details": json.dumps(_OWNER_PROFILE)}
 
@@ -1752,7 +1753,7 @@ def _streamed_owner_read(case: Case, model: Model, *later_steps: dict[str, Any])
         {
             "sql": {
                 "postgres": "select t0.id, t0.target_id, not t0.details is null, t0.details, "
-                "t0.id parallax_seek_0 from profile_owner t0 order by t0.id asc limit ?"
+                "t0.id parallax_seek_0 from px.profile_owner t0 order by t0.id asc limit ?"
             },
             "binds": [3],
         }
@@ -1792,7 +1793,7 @@ def test_a_copy_of_a_streamed_root_carries_no_view_the_page_attached(
     root["statements"].append(
         {
             "sql": {
-                "postgres": "select t0.id from profile_target t0 "
+                "postgres": "select t0.id from px.profile_target t0 "
                 "where t0.id = any(cast(? as bigint[]))"
             },
             "binds": [[10]],
@@ -2173,8 +2174,8 @@ def test_a_branch_with_no_key_membership_is_refused(damaged_case: CaseLoader) ->
     case = _with_vehicle_sql(
         damaged_case(_THREE_HOP),
         "postgres",
-        " from traversal_car t0 where t0.id = any(cast(? as bigint[]))",
-        " from traversal_car t0",
+        " from px.traversal_car t0 where t0.id = any(cast(? as bigint[]))",
+        " from px.traversal_car t0",
     )
 
     with pytest.raises(CaseFailure, match=r"branch 1 \('Car'\).*not keyed by 'id'"):
@@ -2198,11 +2199,11 @@ def test_one_postgres_branch_casting_its_keys_narrower_is_refused(
 _BIKE_BRANCH = {
     "postgres": (
         "select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as int) seats, "
-        "'Bike' family_variant from traversal_bike t0 where t0.id = any(cast(? as bigint[]))"
+        "'Bike' family_variant from px.traversal_bike t0 where t0.id = any(cast(? as bigint[]))"
     ),
     "mariadb": (
         "select t0.id, t0.maker, t0.dealer_id, t0.gears, cast(null as signed) seats, "
-        "'Bike' family_variant from traversal_bike t0 where t0.id in (?, ?, ?)"
+        "'Bike' family_variant from px.traversal_bike t0 where t0.id in (?, ?, ?)"
     ),
 }
 _PLACEHOLDER = {"postgres": "cast(null as int)", "mariadb": "cast(null as signed)"}

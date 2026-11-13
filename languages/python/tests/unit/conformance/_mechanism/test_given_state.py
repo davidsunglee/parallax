@@ -122,7 +122,7 @@ def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> Non
             "value": 7,
         },
     )
-    assert "from publication_book where id = ?" in port.reads[0][0]
+    assert "from px.publication_book where id = ?" in port.reads[0][0]
     assert cast("StructuredDocument", port.writes[0][1][0]).document == {
         "title": 7,
         "detail": "hardback",
@@ -260,6 +260,6 @@ def test_given_corrupt_addresses_a_row_only_the_provisioning_model_declares() ->
     assert [cast("StructuredDocument", binds[0]).document for _sql, binds in port.writes] == [
         {"name": 7}
     ]
-    assert port.writes[0][0] == "update den_document set payload = ? where id = ?"
+    assert port.writes[0][0] == "update px.den_document set payload = ? where id = ?"
     with pytest.raises(KeyError, match="Den"):
         apply_given_corrupt(case, load_case_metamodel(case), _CorruptionPort({}))

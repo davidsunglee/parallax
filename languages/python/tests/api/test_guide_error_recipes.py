@@ -61,19 +61,21 @@ from parallax.core import (
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.internal.db_port import Password
-from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.evolution import ABSENT, SchemaDelta, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, RefusingAdapter, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
 
 
 def _shop(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(SHOP_MODEL), {})
-    db = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
+    db = own_root(
+        connect(profile_run.port, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     db.transact(lambda tx: tx.insert(Customer(id=1, name="Ada", email="ada@example.com")))
     return db
 
@@ -84,7 +86,7 @@ def _customer(db: ScopedDatabase, customer_id: int) -> Customer | None:
 
 def _rollout() -> SchemaDelta:
     """The delta that provisions the shop model, as the database under test was."""
-    return schema_delta(evolve(ABSENT, SHOP_MODEL), POSTGRES)
+    return schema_delta(evolve(ABSENT, SHOP_MODEL, later_binding=TEST_BINDING))
 
 
 def _tracking_index() -> PhysicalIndexName:
@@ -184,7 +186,7 @@ def _prices(profile_run: Any) -> list[tuple[object, ...]]:
     return [
         tuple(row)
         for row in profile_run.port.execute(
-            "select amount, from_z, thru_z, in_z, out_z from price order by in_z, from_z", []
+            "select amount, from_z, thru_z, in_z, out_z from px.price order by in_z, from_z", []
         )
     ]
 
@@ -234,9 +236,9 @@ def test_a_window_priced_only_in_terminated_history_is_priced_past_a_lagging_clo
     # current. A clock at April overlaps that history, so storage refuses the
     # first attempt; the retry prices the window in June.
     jan, apr, may = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 4, 5))
-    profile_run.reset(model_of(SHOP_MODEL), {})
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
     seeded = own_root(
-        connect(profile_run.port, SHOP_MODEL, clock=ScriptedClock([jan, may]))
+        connect(profile_run.port, SHOP_MODEL, clock=ScriptedClock([jan, may]), binding=TEST_BINDING)
     ).using_database_login()
     seeded.transact(
         lambda tx: tx.insert(
@@ -249,7 +251,9 @@ def test_a_window_priced_only_in_terminated_history_is_priced_past_a_lagging_clo
 
     seeded.transact(terminate)
     lagging = own_root(
-        connect(profile_run.port, SHOP_MODEL, clock=ScriptedClock([apr, _JUN]))
+        connect(
+            profile_run.port, SHOP_MODEL, clock=ScriptedClock([apr, _JUN]), binding=TEST_BINDING
+        )
     ).using_database_login()
 
     priced = price_a_window_unless_it_is_priced(
@@ -266,7 +270,7 @@ def test_a_window_priced_only_in_terminated_history_is_priced_past_a_lagging_clo
 def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> None:
     db = _shop(profile_run)
     with contextlib.closing(profile_run.control()) as control:
-        control.execute_write("drop table customer", ())
+        control.execute_write("drop table px.customer", ())
 
     with pytest.raises(DatabaseError) as failed:
         add_a_customer_unless_the_id_is_taken(db, Customer(id=3, name="Grace", email=None))
@@ -325,7 +329,7 @@ def test_an_unrelated_failure_passes_through_the_tracking_number_handler(
 ) -> None:
     db = _shipped(profile_run)
     with contextlib.closing(profile_run.control()) as control:
-        control.execute_write("drop table shipment", ())
+        control.execute_write("drop table px.shipment", ())
 
     with pytest.raises(DatabaseError) as failed:
         add_a_shipment_unless_its_tracking_number_is_taken(
@@ -357,7 +361,7 @@ def _amend_once_after_another_writer(profile_run: Any, db: ScopedDatabase) -> ob
     def add(tx: TxnContext) -> None:
         order = tx.find(Order.where(Order.id == 10)).result()
         with contextlib.closing(profile_run.control()) as control:
-            control.execute_write("update orders set version = version + 1 where id = 10", ())
+            control.execute_write("update px.orders set version = version + 1 where id = 10", ())
         tx.amend(order, Order.total.set(order.total + 1))
 
     return db.transact(add, retry=RetryPolicy(max_retries=0))
@@ -489,7 +493,9 @@ def test_a_client_query_naming_an_entity_the_model_lacks_answers_400(profile_run
 
 
 def test_a_client_query_this_version_cannot_serve_escapes_to_answer_501() -> None:
-    db = own_root(Database.connect(RefusingAdapter(), POLICY_MODEL)).using_database_login()
+    db = own_root(
+        Database.connect(RefusingAdapter(), POLICY_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     history_with_includes: Mapping[str, object] = {
         "target": "Policy",
         "predicate": {"true": {}},
@@ -549,11 +555,11 @@ def test_a_jobs_own_exception_escapes_instead_of_being_retried(profile_run: Any)
 def test_the_shop_root_serves_reads_and_logs_each_operation(
     profile_run: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    profile_run.reset(model_of(SHOP_MODEL), {})
+    profile_run.reset(model_of(SHOP_MODEL), {}, TEST_BINDING)
     caplog.set_level(logging.INFO, logger="shop.database")
 
     with open_the_shop_database(
-        profile_run.connection_info, profile_run.credentials, SHOP_MODEL
+        profile_run.connection_info, profile_run.credentials, SHOP_MODEL, TEST_BINDING
     ) as root:
         found = root.using_database_login().find(Customer.where(Customer.all)).results()
 
@@ -568,7 +574,9 @@ _GRACE = Customer(id=3, name="Grace", email=None)
 
 
 def _scripted(adapter: ScriptedAdapter) -> ScopedDatabase:
-    return own_root(Database.connect(adapter, SHOP_MODEL)).using_database_login()
+    return own_root(
+        Database.connect(adapter, SHOP_MODEL, binding=TEST_BINDING)
+    ).using_database_login()
 
 
 @pytest.mark.parametrize(
@@ -856,7 +864,7 @@ def test_the_shop_root_composes_through_the_shipped_surface(
     monkeypatch.setattr(PostgresAdapter, "open", open_scripted)
 
     with open_the_shop_database(
-        "postgresql://shop@localhost/shop", Password("s3cret"), SHOP_MODEL
+        "postgresql://shop@localhost/shop", Password("s3cret"), SHOP_MODEL, TEST_BINDING
     ) as root:
         assert type(root) is Database
 

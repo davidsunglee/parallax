@@ -37,6 +37,7 @@ from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.unit_work import TEMPORAL_CONFLICT, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code, retry_notes
 from tests._support.retry import fast_retry
 from tests._support.root_ownership import own_root
@@ -101,7 +102,7 @@ def _member(entity: type[Any], name: str) -> str:
 
 def _db(profile_run: Any, instants: Sequence[dt.datetime]) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -111,7 +112,7 @@ def _seeded_db(
     """A database whose first attempt stores object 1 of ``entity`` — a log
     labelled ``seeded``, or a span over ``[January, ∞)`` at 100 — at the
     clock's first instant; the later instants answer later attempts."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, instants)
     if entity in _LOGS:
         db.transact(lambda tx: tx.insert(entity(id=1, label="seeded")))
@@ -123,7 +124,7 @@ def _seeded_db(
 def _log_rows(profile_run: Any, entity: type[Any], key: int = 1) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_member(entity, 'label')} from {_TABLES[entity]} where id = ? order by in_z, out_z"
+        f"{_member(entity, 'label')} from px.{_TABLES[entity]} where id = ? order by in_z, out_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [key])]
 
@@ -132,7 +133,7 @@ def _span_rows(profile_run: Any, entity: type[Any]) -> list[tuple[object, ...]]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, "
-        f"({_member(entity, 'amount')})::int from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"({_member(entity, 'amount')})::int from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
@@ -358,10 +359,10 @@ def test_an_instant_captured_before_a_peer_commits_a_later_version_is_retried(
 ) -> None:
     # A's first flush captures March. B then commits April's version, which
     # A's Read Committed read returns; closing it at March would invert it.
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     _db(profile_run, [_JAN]).transact(lambda tx: tx.insert(entity(id=1, label="seeded")))
     peer = own_root(
-        connect(profile_run.port, _MODEL, clock=FixedClock(_APR))
+        connect(profile_run.port, _MODEL, clock=FixedClock(_APR), binding=TEST_BINDING)
     ).using_database_login()
     attempts: list[None] = []
 

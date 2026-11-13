@@ -28,10 +28,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_almanac alter column note drop not null
+          - alter table px.evolution_almanac alter column note drop not null
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_almanac modify note varchar(64)
+          - alter table px.evolution_almanac modify note varchar(64)
         createdIndices: []

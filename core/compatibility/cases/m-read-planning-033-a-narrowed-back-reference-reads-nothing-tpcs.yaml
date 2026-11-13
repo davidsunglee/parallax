@@ -18,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, 'Ranger' family_variant from keeper_ranger t0 union all select t0.id, t0.name, 'Vet' family_variant from keeper_vet t0 union all select t0.id, t0.name, 'Warden' family_variant from keeper_warden t0
+        postgres: select t0.id, t0.name, 'Ranger' family_variant from px.keeper_ranger t0 union all select t0.id, t0.name, 'Vet' family_variant from px.keeper_vet t0 union all select t0.id, t0.name, 'Warden' family_variant from px.keeper_warden t0
     - sql:
-        postgres: select t0.id, t0.keeper_id, t0.label from keeper_charge t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
+        postgres: select t0.id, t0.keeper_id, t0.label from px.keeper_charge t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[1, 2, 3]]
   graph:
     Keeper:

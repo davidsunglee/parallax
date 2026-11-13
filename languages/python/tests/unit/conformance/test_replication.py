@@ -38,6 +38,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter, PostgresRole
+from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import corpus
 
 _PRIMARY = Server(
@@ -328,7 +329,7 @@ def test_a_reset_runs_on_the_primary_and_waits_for_the_standby_to_apply_it() -> 
     primary, standby = launch.sessions["primary"], launch.sessions["standby"]
     primary.executed.clear()
 
-    pair.reset(corpus()["grade"], {})
+    pair.reset(corpus()["grade"], {}, TEST_BINDING)
 
     statements = primary.statements()
     assert statements[:2] == ["drop schema if exists public cascade", "create schema public"]

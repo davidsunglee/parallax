@@ -40,6 +40,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
@@ -109,7 +110,7 @@ _FULL = {
 
 def test_slots_follow_table_order_whatever_order_the_members_are_declared_in() -> None:
     row = _row(_BIN, **_FULL)
-    slots = StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence)
+    slots = StorageCatalog(bound_model(_META)).entity(_BIN).row_slots(row.row.presence)
 
     assert slots.columns == ("id", "name", "note", "price", "sizes", "spot")
     assert slots.types == (INT64, STRING, STRING, slots.types[3], None, None)
@@ -127,7 +128,7 @@ def test_slots_follow_table_order_whatever_order_the_members_are_declared_in() -
 
 def test_a_document_twin_gathers_its_resident_members_into_one_document() -> None:
     row = _row(_CRATE, **_FULL)
-    slots = StorageCatalog(_META).entity(_CRATE).row_slots(row.row.presence)
+    slots = StorageCatalog(bound_model(_META)).entity(_CRATE).row_slots(row.row.presence)
 
     assert slots.columns[0] == "id"
     assert isinstance(slots.contributors[slots.shared_document or 0], RelationalDocument)
@@ -145,12 +146,17 @@ def test_a_document_twin_gathers_its_resident_members_into_one_document() -> Non
 
 def test_a_sparse_row_omits_an_unstated_nullable_column_and_stores_its_empty_collection() -> None:
     row = _row(_BIN, name="N", id=7, price=PyDecimal("1.00"))
-    slots = StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence)
+    slots = StorageCatalog(bound_model(_META)).entity(_BIN).row_slots(row.row.presence)
 
     assert slots.columns == ("id", "name", "price", "sizes")
     assert slots.cells(row) == (7, "N", PyDecimal("1.00"), ())
     narrow = _row(_CRATE, name="N", id=7, price=PyDecimal("1.00"))
-    document = StorageCatalog(_META).entity(_CRATE).row_slots(narrow.row.presence).cells(narrow)
+    document = (
+        StorageCatalog(bound_model(_META))
+        .entity(_CRATE)
+        .row_slots(narrow.row.presence)
+        .cells(narrow)
+    )
     assert document[1] == FrozenMap({"name": "N", "sizes": (), "price": "1.00"})
 
 
@@ -165,7 +171,10 @@ def test_a_gather_answers_a_tuple_whatever_the_number_of_cells(
     members: dict[str, object], expected: tuple[object, ...]
 ) -> None:
     row = _row(_BIN, **members)
-    assert StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence).cells(row) == expected
+    assert (
+        StorageCatalog(bound_model(_META)).entity(_BIN).row_slots(row.row.presence).cells(row)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -180,22 +189,22 @@ def test_a_row_storing_only_direct_cells_gathers_them_as_one_tuple(
 ) -> None:
     attributes = {AttributeIdentity(_PEG, name): value for name, value in members.items()}
     row = WriteRow(row=managed_row_of(_META, attributes, entity=_PEG), origin=NEW_LINEAGE)
-    storage = StorageCatalog(_META).entity(_PEG)
+    storage = StorageCatalog(bound_model(_META)).entity(_PEG)
     assert storage.row_slots(row.row.presence).cells(row) == expected
     assert storage.row_slots(0).cells(row) == ()
 
 
 def test_each_slot_names_the_one_element_type_every_cell_it_stores_shares() -> None:
     row = _row(_BIN, **_FULL)
-    bin_slots = StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence)
-    crate_slots = StorageCatalog(_META).entity(_CRATE).row_slots(row.row.presence)
+    bin_slots = StorageCatalog(bound_model(_META)).entity(_BIN).row_slots(row.row.presence)
+    crate_slots = StorageCatalog(bound_model(_META)).entity(_CRATE).row_slots(row.row.presence)
 
     assert bin_slots.element_types == (INT64, STRING, STRING, bin_slots.types[3], JSON, JSON)
     assert crate_slots.element_types == (INT64, JSON)
 
 
 def test_column_cells_answer_one_new_list_per_slot_in_row_order() -> None:
-    storage = StorageCatalog(_META).entity(_BIN)
+    storage = StorageCatalog(bound_model(_META)).entity(_BIN)
     rows = [
         _row(_BIN, name="N", id=7, price=PyDecimal("1.00"), sizes=()),
         _row(_BIN, name="M", id=8, price=PyDecimal("2.00"), sizes=(4,)),
@@ -217,7 +226,7 @@ def test_column_cells_answer_one_new_list_per_slot_in_row_order() -> None:
 
 
 def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() -> None:
-    storage = StorageCatalog(_META).entity(_PEG)
+    storage = StorageCatalog(bound_model(_META)).entity(_PEG)
     presences = [1 | optional << 1 for optional in range(1 << 5)]
     assert len(presences) > ROW_SLOTS_PER_ENTITY
     retained = [storage.row_slots(presence) for presence in presences[:ROW_SLOTS_PER_ENTITY]]
@@ -238,7 +247,7 @@ def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() 
 
 
 def test_a_member_without_a_column_is_refused_and_a_tableless_entity_has_no_storage() -> None:
-    catalog = StorageCatalog(_META)
+    catalog = StorageCatalog(bound_model(_META))
     with raises_code(InternalError, WRITE_PLANNING_FAILED, match="occupies no Column"):
         catalog.entity(_PEG).row_slots(1 << 30)
     with raises_code(InternalError, WRITE_PLANNING_FAILED, match="no effective table"):
@@ -247,7 +256,7 @@ def test_a_member_without_a_column_is_refused_and_a_tableless_entity_has_no_stor
 
 def test_a_catalog_keeps_no_model_alive() -> None:
     model = model_of(DomainModel(Bin))
-    catalog = StorageCatalog(model)
+    catalog = StorageCatalog(bound_model(model))
     catalog.entity(_BIN).row_slots(1)
     layout = weakref.ref(storage_layout.storage_layout_facet_of(model))
     del model, catalog
@@ -256,7 +265,7 @@ def test_a_catalog_keeps_no_model_alive() -> None:
 
 
 def test_one_effect_shape_shares_one_effect_slots_and_the_cache_retains_a_bounded_number() -> None:
-    storage = StorageCatalog(_META).entity(_PEG)
+    storage = StorageCatalog(bound_model(_META)).entity(_PEG)
     key = (AttributeIdentity(_PEG, "id"),)
     shapes = [
         EffectShape(PlannedUpdate, _PEG, key, optional << 1, None) for optional in range(1, 1 << 5)
@@ -278,7 +287,9 @@ def test_one_effect_shape_shares_one_effect_slots_and_the_cache_retains_a_bounde
 
 def test_only_a_non_primary_unique_key_member_makes_an_update_ungroupable() -> None:
     passport = corpus_model("person")
-    storage = StorageCatalog(passport).entity(EntityIdentity("parallax.compatibility", "Passport"))
+    storage = StorageCatalog(bound_model(passport)).entity(
+        EntityIdentity("parallax.compatibility", "Passport")
+    )
 
     def update(member: str) -> PlannedUpdate:
         identity = AttributeIdentity(storage.entity, member)
@@ -306,7 +317,7 @@ def test_only_a_non_primary_unique_key_member_makes_an_update_ungroupable() -> N
 def test_a_temporal_unique_keys_axis_ends_never_make_a_milestone_effect_ungroupable(
     name: str, ends: tuple[str, ...]
 ) -> None:
-    storage = StorageCatalog(corpus_model("temporal-authored-index")).entity(
+    storage = StorageCatalog(bound_model(corpus_model("temporal-authored-index"))).entity(
         EntityIdentity("parallax.compatibility", name)
     )
     entity = storage.entity
@@ -349,7 +360,7 @@ def test_effect_slots_of_a_document_twin_skip_a_shared_document_no_path_of_which
 ):
     meta = corpus_model("scalar-collection-lifecycle-layout-twin-document")
     entity = EntityIdentity("parallax.compatibility", "TagLedger")
-    storage = StorageCatalog(meta).entity(entity)
+    storage = StorageCatalog(bound_model(meta)).entity(entity)
     version = AttributeIdentity(entity, "version")
     position = storage.view.member_selection.index[version]
     slots = storage.effect_slots(

@@ -12,14 +12,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) is null
-        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where json_value(t0.address, ?) is null
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where jsonb_extract_path_text(t0.address, ?) is null
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where json_value(t0.address, ?) is null
       binds:
         postgres: [city]
         mariadb: ['$.city']
   referenceSql:
-    postgres: select id, name from customer where address ->> 'city' is null
-    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') is null
+    postgres: select id, name from px.customer where address ->> 'city' is null
+    mariadb: select id, name from px.customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') is null
   rows:
     - { id: 4, name: Mary }
     - { id: 5, name: Kavi }

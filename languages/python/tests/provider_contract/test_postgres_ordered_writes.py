@@ -47,6 +47,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.postgres import PoolOptions
 from parallax.postgres._connection import PostgresConnection
+from tests._support.bindings import TEST_BINDING
 
 _OPENED = datetime(2024, 1, 1, tzinfo=UTC)
 _CORRECTED = datetime(2024, 4, 1, tzinfo=UTC)
@@ -64,35 +65,36 @@ class _Statement:
 
 def _close(table: str, key: int, opened: datetime = _OPENED) -> _Statement:
     return _Statement(
-        f"update {table} set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?",
+        f"update px.{table} set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?",
         (_NOW, key, INFINITY, INFINITY, opened),
     )
 
 
 def _guard(table: str, key: int, opened: datetime = _OPENED) -> _Statement:
     return _Statement(
-        f"update {table} set in_z = in_z where id = ? and thru_z = ? and out_z = ? and in_z = ?",
+        f"update px.{table} set in_z = in_z where id = ? and thru_z = ? and out_z = ? and in_z = ?",
         (key, INFINITY, INFINITY, opened),
     )
 
 
 def _revision(key: int, amount: Decimal) -> _Statement:
     return _Statement(
-        "update coverage set amount = ? where id = ? and thru_z = ? and out_z = ?",
+        "update px.coverage set amount = ? where id = ? and thru_z = ? and out_z = ?",
         (amount, key, INFINITY, INFINITY),
     )
 
 
 def _removal(table: str, key: int) -> _Statement:
     return _Statement(
-        f"delete from {table} where id = ? and thru_z = ? and out_z = ?", (key, INFINITY, INFINITY)
+        f"delete from px.{table} where id = ? and thru_z = ? and out_z = ?",
+        (key, INFINITY, INFINITY),
     )
 
 
 # Coverage 10's head ends where its tail begins; extending it to the open bound
 # collides with the tail's own key.
 _COLLIDING = _Statement(
-    "update coverage set thru_z = ? where id = ? and thru_z = ? and out_z = ?",
+    "update px.coverage set thru_z = ? where id = ? and thru_z = ? and out_z = ?",
     (INFINITY, 10, _HEAD_END, INFINITY),
 )
 
@@ -100,7 +102,9 @@ _COLLIDING = _Statement(
 def _seeded(profile_run: Any) -> None:
     case = load_case(default_cases_dir() / "m-db-error-010-unique-violation-temporal-pk.yaml")
     profile_run.reset(
-        engine.load_case_metamodel(case), provision.load_fixtures(str(case.document["model"]))
+        engine.load_case_metamodel(case),
+        provision.load_fixtures(str(case.document["model"])),
+        TEST_BINDING,
     )
 
 
@@ -127,13 +131,13 @@ def _pid(connection: Any) -> int:
 def _state(profile_run: Any) -> list[tuple[object, ...]]:
     return [
         *profile_run.port.execute(
-            "select 'policy', id, out_z from policy order by id, thru_z, out_z", []
+            "select 'policy', id, out_z from px.policy order by id, thru_z, out_z", []
         ),
         *profile_run.port.execute(
-            "select 'coverage', id, amount from coverage order by id, thru_z, out_z", []
+            "select 'coverage', id, amount from px.coverage order by id, thru_z, out_z", []
         ),
         *profile_run.port.execute(
-            "select 'claim', id, in_z from claim order by id, thru_z, out_z", []
+            "select 'claim', id, in_z from px.claim order by id, thru_z, out_z", []
         ),
     ]
 
@@ -152,7 +156,7 @@ def _locked_claim(profile_run: Any) -> Generator[None]:
     """Hold claim 1000 under another session's row lock for the block's duration."""
     holder = profile_run.control(autocommit=False)
     try:
-        holder.execute("select id from claim where id = ? for update", [1000])
+        holder.execute("select id from px.claim where id = ? for update", [1000])
         yield
     finally:
         holder.close()
@@ -199,7 +203,9 @@ def test_each_statement_answers_its_own_count_across_kinds_and_tables(profile_ru
                 result = _ordered(facade)(statements)
                 native = cast("PostgresConnection", facade)._current_native()  # pyright: ignore[reportPrivateUsage] - the session's own pipeline state
                 assert native.pgconn.pipeline_status == psycopg.pq.PipelineStatus.OFF
-                assert port.execute("select count(*) from policy where out_z = ?", [_NOW]) == [(1,)]
+                assert port.execute("select count(*) from px.policy where out_z = ?", [_NOW]) == [
+                    (1,)
+                ]
                 return result
 
             outcome = facade.transaction(body)
@@ -343,8 +349,8 @@ def test_an_unsent_suffix_is_only_what_never_reached_the_driver(profile_run: Any
                 assert isinstance(result.error.__cause__, psycopg.ProgrammingError)
                 # What was sent before the failure ran even though its outcome
                 # was not established; what was never sent did not.
-                seen.append(port.execute("select id, out_z from policy where id = 1", []))
-                seen.append(port.execute("select id from claim where id = 2000", []))
+                seen.append(port.execute("select id, out_z from px.policy where id = 1", []))
+                seen.append(port.execute("select id from px.claim where id = 2000", []))
                 raise result.error
 
             outcome = facade.transaction(body)

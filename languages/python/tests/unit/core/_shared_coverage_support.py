@@ -52,6 +52,7 @@ from parallax.core.internal.write_plan import (
 )
 from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
 from parallax.core.internal.write_plan.plan import SettledWrite
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of
@@ -228,7 +229,7 @@ def plan(
     instant: TransactionInstant | None = None,
 ) -> WritePlan:
     """``writes`` admitted in order and planned as one flush."""
-    return build_write_planner(MODEL).finalize(
+    return build_write_planner(bound_model(MODEL)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(AT.isoformat()),

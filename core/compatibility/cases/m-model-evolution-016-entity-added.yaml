@@ -18,20 +18,20 @@ then:
     postgres:
       delta:
         statements:
-          - create table evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
-          - create index pxi_evolution_crate_parallax_c_31c02d713d89fc70ec8cd052e622f234 on evolution_crate (label)
+          - create table px.evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
+          - create index pxi_evolution_crate_parallax_c_31c02d713d89fc70ec8cd052e622f234 on px.evolution_crate (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_crate_parallax_c_31c02d713d89fc70ec8cd052e622f234
-            physicalTable: evolution_crate
+            physicalTable: { qualifier: [px], name: evolution_crate }
             logicalIndexIdentity: parallax.compatibility.Crate.evolution_crate_label
             unique: false
     mariadb:
       delta:
         statements:
-          - create table evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
-          - create index pxi_evolution_crate_parallax_co_31c02d713d89fc70ec8cd052e622f234 on evolution_crate (label)
+          - create table px.evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
+          - create index pxi_evolution_crate_parallax_co_31c02d713d89fc70ec8cd052e622f234 on px.evolution_crate (label)
         createdIndices:
           - physicalIndexName: pxi_evolution_crate_parallax_co_31c02d713d89fc70ec8cd052e622f234
-            physicalTable: evolution_crate
+            physicalTable: { qualifier: [px], name: evolution_crate }
             logicalIndexIdentity: parallax.compatibility.Crate.evolution_crate_label
             unique: false

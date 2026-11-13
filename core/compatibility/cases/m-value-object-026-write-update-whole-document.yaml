@@ -33,8 +33,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into customer(id, name, address) values (?, ?, ?)
-        mariadb: insert into customer(id, name, address) values (?, ?, ?)
+        postgres: insert into px.customer(id, name, address) values (?, ?, ?)
+        mariadb: insert into px.customer(id, name, address) values (?, ?, ?)
       binds:
         - 200
         - Ingrid
@@ -45,8 +45,8 @@ then:
           phones:
             - { type: home, number: '555-1111' }
     - sql:
-        postgres: update customer set address = ? where id = ?
-        mariadb: update customer set address = ? where id = ?
+        postgres: update px.customer set address = ? where id = ?
+        mariadb: update px.customer set address = ? where id = ?
       binds:
         - street: 9 New Way
           city: Stavanger
@@ -54,12 +54,13 @@ then:
             - { type: work, number: '555-2222' }
         - 200
   tableState:
-    customer:
-      - id: 200
-        name: Ingrid
-        address:
-          street: 9 New Way
-          city: Stavanger
-          phones:
-            - { type: work, number: '555-2222' }
+    px:
+      customer:
+        - id: 200
+          name: Ingrid
+          address:
+            street: 9 New Way
+            city: Stavanger
+            phones:
+              - { type: work, number: '555-2222' }
   databaseCalls: 3

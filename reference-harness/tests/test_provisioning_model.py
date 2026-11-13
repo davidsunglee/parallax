@@ -15,6 +15,7 @@ from reference_harness.case import Case, Model, load_case, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_preflight import preflight_case_literals
 from reference_harness.data_loader import load_model as load_fixture_rows
+from reference_harness.database_binding import PhysicalTable
 from reference_harness.providers import DatabaseProvider
 from reference_harness.provisioning import provision
 from reference_harness.schema_validate import validate_tree
@@ -32,15 +33,18 @@ class _RecordingProvider:
         self.ddl: list[str] = []
         self.loads: dict[str, list[dict[str, Any]]] = {}
 
-    def reset(self) -> None:
+    def reset(self, qualifiers: object) -> None:
+        del qualifiers
         self.ddl.clear()
         self.loads.clear()
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         self.ddl.extend(statements)
 
-    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
-        self.loads.setdefault(table, []).extend(
+    def load(
+        self, table: PhysicalTable, columns: Sequence[str], rows: Sequence[Sequence[Any]]
+    ) -> None:
+        self.loads.setdefault(str(table), []).extend(
             dict(zip(columns, row, strict=True)) for row in rows
         )
 
@@ -73,9 +77,9 @@ def test_a_case_naming_no_provisioning_model_provisions_through_its_own() -> Non
 def test_provisioning_applies_the_setup_models_ddl_and_fixtures() -> None:
     provider = _provisioned(_case(_PARTIAL_ROOT))
 
-    assert set(provider.loads) == {"beast", "keeper", "den"}
-    assert [keeper["badge"] for keeper in provider.loads["keeper"]] == ["K-10", "K-11", "K-12"]
-    kinds = {beast["id"]: beast["kind"] for beast in provider.loads["beast"]}
+    assert set(provider.loads) == {"px.beast", "px.keeper", "px.den"}
+    assert [keeper["badge"] for keeper in provider.loads["px.keeper"]] == ["K-10", "K-11", "K-12"]
+    kinds = {beast["id"]: beast["kind"] for beast in provider.loads["px.beast"]}
     assert kinds == {1: "wolf", 2: "bear", 3: "wolf"}
     assert any("roar" in statement for statement in provider.ddl)
 
@@ -85,7 +89,11 @@ def test_setup_fixtures_resolved_through_the_reader_are_refused() -> None:
     misread = Model(case.model.path, case.model.descriptor, case.setup_model.fixtures)
 
     with pytest.raises((KeyError, ValueError)):
-        load_fixture_rows(misread, cast("DatabaseProvider", _RecordingProvider()))
+        load_fixture_rows(
+            misread,
+            cast("DatabaseProvider", _RecordingProvider()),
+            case.placement("postgres"),
+        )
 
 
 def test_a_corruption_addresses_a_row_only_the_setup_model_declares() -> None:
@@ -103,7 +111,7 @@ def test_a_corruption_addresses_a_row_only_the_setup_model_declares() -> None:
 
     provider = _provisioned(case)
 
-    (den,) = provider.loads["den_document"]
+    (den,) = provider.loads["px.den_document"]
     assert den["payload"] == {"name": 7}
 
 

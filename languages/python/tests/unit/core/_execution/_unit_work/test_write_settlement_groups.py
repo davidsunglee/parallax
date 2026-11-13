@@ -52,6 +52,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -108,7 +109,7 @@ def _finalize(
     concurrency: ConcurrencyPreference = "optimistic",
     instant: TransactionInstant = _INSTANT,
 ) -> WritePlan:
-    return build_write_planner(model).finalize(
+    return build_write_planner(bound_model(model)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,

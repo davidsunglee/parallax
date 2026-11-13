@@ -67,7 +67,7 @@ class RelationshipCandidateBranch:
     yield zero, one, or several rows; it takes no alias until it renders."""
 
     entity: CompiledEntity
-    table: str
+    table: TableLayout
     source_attribute: AttributeMetadata
     target_attribute: AttributeMetadata
     family_guard: _TagPredicate | None
@@ -130,7 +130,7 @@ def _branch(
 ) -> RelationshipCandidateBranch:
     return RelationshipCandidateBranch(
         entity=entity,
-        table=_table_layout(storage, facet, entity.identity).table.name,
+        table=_table_layout(storage, facet, entity.identity),
         source_attribute=relationship.source_attribute,
         target_attribute=relationship.target_attribute,
         family_guard=family_guard,

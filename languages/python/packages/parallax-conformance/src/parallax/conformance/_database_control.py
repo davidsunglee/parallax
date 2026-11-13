@@ -8,7 +8,6 @@ from parallax.core.internal.db_port import DatabaseAdapter, DatabaseConnection
 if TYPE_CHECKING:
     from parallax.conformance._lifecycle_observation import LifecycleObservation
     from parallax.core.internal.dialect import Dialect
-    from parallax.core.internal.entity import DomainModel
     from parallax.core.internal.execution import ServingModel, TxnOptions
     from parallax.core.internal.unit_work import Clock
     from parallax.snapshot import ScopedDatabase
@@ -163,7 +162,7 @@ class InterleavedExecutionFactory(Protocol):
 
     def __call__(
         self,
-        model: DomainModel | ServingModel,
+        model: ServingModel,
         *,
         observation: LifecycleObservation,
         options: TxnOptions | None = None,

@@ -21,6 +21,6 @@ def test_an_unprovisioned_run_answers_this_profiles_dialect_and_refuses_sql() ->
     with pytest.raises(AssertionError, match="must not execute SQL"):
         run.port.execute("select 1", [])
     with pytest.raises(AssertionError, match="must not execute SQL"):
-        run.port.execute_write("update t set a = 1", [])
+        run.port.execute_write("update px.t set a = 1", [])
     with pytest.raises(AssertionError, match="must not open a transaction"):
         run.port.transaction(lambda _port: None)

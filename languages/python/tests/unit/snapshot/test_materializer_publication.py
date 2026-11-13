@@ -93,6 +93,7 @@ from parallax.snapshot._publication._graph_view import (
 from parallax.snapshot._publication._root_publication import publication_issue, require_publishable
 from parallax.snapshot._publication._wire import InstanceReader
 from tests._support import snapshot_models as sm
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read, convert_cells
@@ -505,7 +506,7 @@ def _mixed_page(item_code: str) -> tuple[Page, int]:
             ((ChildSlot(items), ChildSlot(by_code)), (), ()), repeating_levels=frozenset({1, 2})
         )
     )
-    cataloged = CatalogedModel(meta)
+    cataloged = CatalogedModel(meta, TEST_BINDING)
     order = convert_cells(
         cataloged,
         compiled_read(meta, "EncodedOrder"),

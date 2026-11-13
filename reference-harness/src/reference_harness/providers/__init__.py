@@ -9,12 +9,13 @@ Each provider exposes:
 
 * ``dialect`` — the dialect identifier (e.g. ``"postgres"``) selecting the
   statement entry's ``sql`` dialect key and the sqlglot dialect.
-* ``reset()`` — return to a clean, empty state (drop everything).
+* ``reset(qualifiers)`` — drop every location an earlier reset created and
+  create each of *qualifiers* empty: a PostgreSQL schema, a MariaDB database.
 * ``apply_ddl(statements)`` — run derived ``CREATE TABLE`` DDL.
-* ``catalog(tables)`` — read back what the database itself holds for *tables*,
-  which is how an applied Schema Delta is compared against independently derived
-  provisioning DDL.
-* ``load(table, columns, rows)`` — bulk-insert fixture rows.
+* ``catalog(tables)`` — read back what the database itself holds for the
+  physical *tables*, which is how an applied Schema Delta is compared against
+  independently derived provisioning DDL.
+* ``load(table, columns, rows)`` — bulk-insert fixture rows into one physical table.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
 * ``open_session(isolation, access_mode)`` — a manual-commit :class:`Session`,
@@ -34,10 +35,12 @@ from the other.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+from ..database_binding import PhysicalTable
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class CatalogTable:
     data under the same names, types, and nullability.
     """
 
+    qualifier: tuple[str, ...]
     name: str
     columns: frozenset[CatalogColumn]
     indices: frozenset[CatalogIndex]
@@ -90,29 +94,32 @@ class Catalog:
 
 
 def build_catalog(
-    tables: Sequence[str],
-    columns: Sequence[tuple[str, str, str, bool]],
-    components: Sequence[tuple[str, str, bool, str]],
+    tables: Sequence[PhysicalTable],
+    columns: Sequence[tuple[str, str, str, str, bool]],
+    components: Sequence[tuple[str, str, str, bool, str]],
 ) -> Catalog:
     """Assemble one :class:`Catalog` from a provider's two catalog reads.
 
-    ``columns`` are ``(table, column, type, nullable)`` rows in any order and
-    ``components`` are ``(table, index, unique, column)`` rows in COMPONENT
-    order. Each requested table gets an entry whether or not the database holds
-    it, so a table one side of a comparison never created is a difference rather
-    than a silently absent key.
+    ``columns`` are ``(qualifier, table, column, type, nullable)`` rows in any
+    order and ``components`` are ``(qualifier, table, index, unique, column)``
+    rows in COMPONENT order, each naming a one-component qualifier. Each
+    requested table gets an entry whether or not the database holds it, so a
+    table one side of a comparison never created is a difference rather than a
+    silently absent key.
     """
-    index_columns: dict[tuple[str, str, bool], list[str]] = {}
-    for table, index, unique, column in components:
-        index_columns.setdefault((table, index, unique), []).append(column)
+    index_columns: dict[tuple[PhysicalTable, str, bool], list[str]] = {}
+    for qualifier, table, index, unique, column in components:
+        held = PhysicalTable((qualifier,), table)
+        index_columns.setdefault((held, index, unique), []).append(column)
     return Catalog(
         tables=tuple(
             CatalogTable(
-                name=table,
+                qualifier=table.qualifier,
+                name=table.name,
                 columns=frozenset(
                     CatalogColumn(name=name, type_sql=type_sql, nullable=nullable)
-                    for owner, name, type_sql, nullable in columns
-                    if owner == table
+                    for qualifier, owner, name, type_sql, nullable in columns
+                    if PhysicalTable((qualifier,), owner) == table
                 ),
                 indices=frozenset(
                     CatalogIndex(name=index, columns=tuple(members), unique=unique)
@@ -167,16 +174,22 @@ class DatabaseProvider(Protocol):
 
     dialect: str
 
-    def reset(self) -> None:
-        """Drop all objects, returning the database to a clean empty state."""
+    def reset(self, qualifiers: Collection[tuple[str, ...]]) -> None:
+        """Drop every location an earlier reset created, then create each of
+        *qualifiers* empty.
+
+        Only provider-owned locations are dropped: those an earlier reset created
+        and those requested now, so one case cannot leave objects behind for
+        the next.
+        """
         ...
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         """Execute derived DDL (``CREATE TABLE`` …)."""
         ...
 
-    def catalog(self, tables: Sequence[str]) -> Catalog:
-        """What the database itself holds for *tables*, read from its own catalog.
+    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
+        """What the database itself holds for the physical *tables*, read from its own catalog.
 
         The one observation of physical schema the seam offers, and the only way
         an applied Schema Delta can be compared against independently derived
@@ -186,8 +199,10 @@ class DatabaseProvider(Protocol):
         """
         ...
 
-    def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
-        """Bulk-insert fixture rows into *table* (column order matches *columns*)."""
+    def load(
+        self, table: PhysicalTable, columns: Sequence[str], rows: Sequence[Sequence[Any]]
+    ) -> None:
+        """Bulk-insert fixture rows into the physical *table* (column order matches *columns*)."""
         ...
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:

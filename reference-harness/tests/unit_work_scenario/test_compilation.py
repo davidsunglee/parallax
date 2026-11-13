@@ -119,7 +119,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
     assert instruction["mutation"] == "amend"
     assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 1, "balance": "175.00"}]
-    assert write["statements"][0]["sql"]["postgres"].startswith("update account set")
+    assert write["statements"][0]["sql"]["postgres"].startswith("update px.account set")
     assert "objectQuery" in find
     # The dependent find asserts the flushed new balance/version (the RYOW observable).
     assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "175.00", "version": 2}]
@@ -142,7 +142,7 @@ def test_read_your_own_writes_delete_scenario_observes_absence(corpus_case) -> N
     assert instruction["rows"] == [{"id": 3}]
     assert (
         write["statements"][0]["sql"]["postgres"]
-        == "delete from account where id = ? and version = ?"
+        == "delete from px.account where id = ? and version = ?"
     )
     # The dependent find returns ZERO rows — the deletion is visible.
     assert find["expectRows"] == []
@@ -157,7 +157,7 @@ def test_insert_update_combining_scenario_emits_exactly_one_insert(corpus_case) 
     assert "write" in write
     (statement,) = write["statements"]
     sql = statement["sql"]["postgres"]
-    assert sql.startswith("insert into account") and "amend" not in sql
+    assert sql.startswith("insert into px.account") and "amend" not in sql
     # The single INSERT carries the FINAL (post-combine) balance, not the initial one.
     assert statement["binds"] == [8, "Turing", "99.00", 1]
     assert_judged(case)
@@ -191,7 +191,7 @@ def test_a_case_level_database_call_mismatch_is_refused(damaged_case) -> None:
 
 def test_a_step_golden_must_be_canonical(damaged_case) -> None:
     case = damaged_case("m-concurrency-001-no-op-update-no-dml.yaml")
-    case.when["scenario"][0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM account t0"
+    case.when["scenario"][0]["statements"][0]["sql"]["postgres"] = "SELECT t0.id FROM px.account t0"
     with pytest.raises(CaseFailure, match="not canonical"):
         assert_unit_work_scenario(case, RefusingProvider())
 
@@ -276,8 +276,10 @@ def test_an_observable_a_verb_may_not_declare_is_refused_before_its_anchor_is_bo
 _HEAD = ("2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z")
 _KNOWN = "2024-04-01T00:00:00.000000Z"
 _AT = "2024-10-01T00:00:00.000000Z"
-_CLOSE = "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
-_OPEN = "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values "
+_CLOSE = (
+    "update px.position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
+)
+_OPEN = "insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values "
 _TUPLE = "(?, ?, ?, ?, ?, ?, ?)"
 
 

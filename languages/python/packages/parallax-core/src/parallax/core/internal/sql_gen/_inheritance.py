@@ -755,7 +755,6 @@ class SingleTableReadPlan:
     resolves Attributes across the family's superset.
     """
 
-    table: str
     root_table: TableLayout
     roots: tuple[ReadRoot, ...]
     position: InheritancePositionView
@@ -806,7 +805,7 @@ class TpcsUnionBranchPlan:
 
     identity: EntityIdentity
     variant: str
-    table: str
+    table: TableLayout
     columns: tuple[TpcsUnionBranchColumn, ...]
 
 
@@ -1021,7 +1020,6 @@ def _plan_single_table_read(
                 else family_tag_pairs(facet, view.root),
             )
     return SingleTableReadPlan(
-        table=table.table.name,
         root_table=table,
         roots=(ReadRoot(table, None),),
         position=position,
@@ -1139,7 +1137,7 @@ def _plan_tpcs_union_read(
         TpcsUnionBranchPlan(
             identity=branch.concrete_entities[0],
             variant=family_variant_name(facet, branch.concrete_entities[0]),
-            table=branch.layout.table.name,
+            table=branch.layout,
             columns=tuple(
                 TpcsUnionBranchColumn(
                     contributor=union_column.contributor,

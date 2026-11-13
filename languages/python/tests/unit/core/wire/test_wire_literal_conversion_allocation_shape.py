@@ -19,6 +19,7 @@ from parallax.core.internal.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.internal.wire import decode_canonical_wire, loads
+from tests._support.bindings import bound_model
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
@@ -46,7 +47,7 @@ _DECIMAL_DIGITS: Final = (64, 128, 192)
 
 def _builder() -> StatementBuilder:
     return StatementBuilder(
-        _MODEL,
+        bound_model(_MODEL),
         inheritance.inheritance_facet_of(_MODEL),
         storage_layout.storage_layout_facet_of(_MODEL),
         POSTGRES,
@@ -58,7 +59,7 @@ def _same_type_statement(bind_count: int) -> Callable[[], LoweredStatement]:
         membership = predicate.Membership(
             op="in", subject=predicate.FieldSubject("Wallet.owner"), values=("value",) * bind_count
         )
-        statement = compile_read(membership, _MODEL, _ARRAYLESS, _WALLET).statement
+        statement = compile_read(membership, bound_model(_MODEL), _ARRAYLESS, _WALLET).statement
         assert len(statement.binds) == bind_count
         assert statement.sql.endswith(
             f"where t0.owner in ({', '.join('?' for _ in range(bind_count))})"

@@ -289,10 +289,16 @@ into above-seam runtime modules.
 A provider contract suite must prove these capabilities; the names below label them
 and need not exist:
 
-- `reset`: return the database to an empty, isolated state
-- `applyDdl`: apply the ordered DDL derived for a case model
+- `reset`: return the database to an empty, isolated state: drop and recreate
+  every location (PostgreSQL schema, MariaDB database) the case's resolved
+  bindings place a table or sequence in, and every location an earlier reset
+  created, so no case leaks resources into the next; then grant the case's
+  sessions access to every bound location. Only provider-owned locations are
+  reset — a provider never treats arbitrary deployment resources as its own
+- `applyDdl`: apply the ordered DDL derived for a case model under its binding
 - `loadFixtures`: resolve fixture cells through the target Entity Layout and
-  insert them in Table Layout order
+  insert them in Table Layout order into the physical table the case binding
+  places each Entity's rows in
 - `query`: execute row-returning canonical SQL and return wire-normalized rows
 - `exec`: execute DML and return affected rows
 - `execRolledBack`: execute DML in a transaction that is rolled back

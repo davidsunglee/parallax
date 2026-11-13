@@ -25,6 +25,7 @@ from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
 from parallax.core.internal.object_query.serde import serialize
 from parallax.core.internal.predicate import PredicateNode
 from parallax.core.internal.predicate import serialize as serialize_predicate
+from tests._support.bindings import TEST_BINDING
 
 __all__ = [
     "canonical_document",
@@ -58,7 +59,7 @@ def predicate_document(query: ObjectQuery[Any, Any], model: DomainModel) -> dict
 
 @functools.cache
 def _selected(model: DomainModel) -> SelectedReadModel:
-    return read_projection(prepare_model(model, edition="query-probe"))
+    return read_projection(prepare_model(model, edition="query-probe", binding=TEST_BINDING))
 
 
 def typed_resolved(

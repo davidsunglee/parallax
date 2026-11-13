@@ -68,6 +68,7 @@ from parallax.core.internal.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
@@ -167,7 +168,7 @@ class _Preparer(LayoutPayloadPreparer):
     def __init__(
         self, meta: Metamodel = _META, failing: Mapping[int, BaseException] | None = None
     ) -> None:
-        super().__init__(meta)
+        super().__init__(bound_model(meta))
         self.prepared: list[WriteRow] = []
         self.failing = dict(failing or {})
 
@@ -187,7 +188,10 @@ def _cursor(
     dialect: Dialect = POSTGRES,
 ) -> LoweringCursor:
     return LoweringCursor(
-        steps, LayoutPayloadPreparer(_META) if preparer is None else preparer, _META, dialect
+        steps,
+        LayoutPayloadPreparer(bound_model(_META)) if preparer is None else preparer,
+        bound_model(_META),
+        dialect,
     )
 
 
@@ -211,7 +215,7 @@ def _first(cursor: LoweringCursor) -> PlannedStep:
 
 
 def _alone(step: PlannedStep, meta: Metamodel = _META) -> LoweredStatement:
-    return lowered(step, LayoutPayloadPreparer(meta), meta, POSTGRES)
+    return lowered(step, LayoutPayloadPreparer(bound_model(meta)), bound_model(meta), POSTGRES)
 
 
 _ARRAY_ELEMENTS: Final[Mapping[str, tuple[str, ...]]] = {
@@ -239,7 +243,7 @@ def _joined(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[str, tuple[ob
     if len(statements) == 1:
         return _spelled(statements[0])
     head, _values = statements[0].sql.split(" values ")
-    table = head.removeprefix("insert into ").split("(")[0]
+    table = head.removeprefix("insert into px.").split("(")[0]
     arrays = ", ".join(f"cast(? as {element}[])" for element in _ARRAY_ELEMENTS[table])
     return f"{head} select * from unnest({arrays})", tuple(
         [bind.document if isinstance(bind, StructuredDocument) else bind for bind in column]
@@ -283,7 +287,12 @@ def test_any_single_entry_insert_without_generated_values_begins_a_grouped_inser
             ),
         ),
     )
-    account_cursor = LoweringCursor((), LayoutPayloadPreparer(account_meta), account_meta, POSTGRES)
+    account_cursor = LoweringCursor(
+        (),
+        LayoutPayloadPreparer(bound_model(account_meta)),
+        bound_model(account_meta),
+        POSTGRES,
+    )
     assert account_cursor.grouped_insert_start(non_temporal) is non_temporal
 
 
@@ -303,7 +312,14 @@ def test_no_insert_begins_a_grouped_insert_on_a_dialect_binding_no_arrays() -> N
     expanding = replace(POSTGRES, name="mariadb", binds_arrays=False)
     steps = _openings(3)
     assert _cursor((), dialect=expanding).grouped_insert_start(opening) is None
-    statements = list(stream_physical(steps, LayoutPayloadPreparer(_META), _META, expanding))
+    statements = list(
+        stream_physical(
+            steps,
+            LayoutPayloadPreparer(bound_model(_META)),
+            bound_model(_META),
+            expanding,
+        )
+    )
     assert [_spelled(statement) for statement in statements] == [_joined(step) for step in steps]
 
 
@@ -332,7 +348,7 @@ def test_a_runs_arrays_name_their_element_types_and_need_no_span_metadata() -> N
 
 def test_backing_an_entry_already_carries_is_inserted_without_preparing_it_again() -> None:
     plain = _openings(3)
-    backing = LayoutPayloadPreparer(_META)
+    backing = LayoutPayloadPreparer(bound_model(_META))
     steps = tuple(
         replace(
             step,
@@ -424,7 +440,7 @@ def test_a_later_preparation_failure_ends_the_run_with_the_prefix_unchanged() ->
 
 def test_a_later_entry_storing_other_cells_than_its_shape_promised_ends_the_run() -> None:
     steps = _openings(3)
-    preparer = LayoutPayloadPreparer(_META)
+    preparer = LayoutPayloadPreparer(bound_model(_META))
     entry = steps[2].entries[0]
     narrower = preparer.row_slots(_POSITION, entry.row.presence & ~1)
     promise_broken = RowPayload(
@@ -456,7 +472,14 @@ def test_the_first_openings_failure_raises_with_no_statement() -> None:
 def test_a_dry_traversal_groups_each_run_in_place_and_never_transposes_objects() -> None:
     first, second = _openings(2), (_opening(_row(2, _JAN)), _opening(_row(2, _MAR)))
     steps = (_close(1), *first, _close(2), *second)
-    statements = list(stream_physical(steps, LayoutPayloadPreparer(_META), _META, POSTGRES))
+    statements = list(
+        stream_physical(
+            steps,
+            LayoutPayloadPreparer(bound_model(_META)),
+            bound_model(_META),
+            POSTGRES,
+        )
+    )
     assert [_spelled(statement) for statement in statements] == [
         _joined(steps[0]),
         _joined(*first),
@@ -472,7 +495,7 @@ def test_a_dry_traversal_answers_the_prefix_then_raises_a_later_openings_failure
     preparer = _Preparer(failing={id(openings[2].entries[0]): failure})
     answered: list[LoweredStatement] = []
     with pytest.raises(ValueError) as raised:
-        answered.extend(stream_physical(steps, preparer, _META, POSTGRES))
+        answered.extend(stream_physical(steps, preparer, bound_model(_META), POSTGRES))
     assert raised.value is failure
     assert [_spelled(statement) for statement in answered] == [
         _joined(steps[0]),
@@ -513,7 +536,14 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     steps = tuple(step for step, _statement in settled)
     assert [type(step) for step in steps] == [PlannedClose, *[PlannedInsert] * 3]
     raw = lower_instruction(instruction, model, POSTGRES, "locking", at, observation=observation)
-    physical = list(stream_physical(steps, LayoutPayloadPreparer(model), model, POSTGRES))
+    physical = list(
+        stream_physical(
+            steps,
+            LayoutPayloadPreparer(bound_model(model)),
+            bound_model(model),
+            POSTGRES,
+        )
+    )
     assert [_spelled(statement) for statement in physical] == [
         _spelled(raw[0]),
         _joined(*steps[1:], meta=model),
@@ -521,7 +551,9 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     assert physical[1].wire_binds() == _wire(*steps[1:], meta=model)
     assert [
         _spelled(statement)
-        for _step, statement in lowered_steps(steps, LayoutPayloadPreparer(model), model, POSTGRES)
+        for _step, statement in lowered_steps(
+            steps, LayoutPayloadPreparer(bound_model(model)), model, POSTGRES
+        )
     ] == [_spelled(statement) for statement in raw]
 
 
@@ -599,8 +631,8 @@ def test_a_collection_binds_as_one_document_and_its_elements_widen_no_entry(name
     (width,) = widths
     cursor = LoweringCursor(
         steps,
-        LayoutPayloadPreparer(_SPANS),
-        _SPANS,
+        LayoutPayloadPreparer(bound_model(_SPANS)),
+        bound_model(_SPANS),
         replace(POSTGRES, max_bind_parameters=width),
     )
     statement, following, failure = _grouped(cursor)

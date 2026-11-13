@@ -32,6 +32,7 @@ from parallax.snapshot._publication._root_publication import publish_roots, publ
 from parallax.snapshot._publication._typed import TypedRootPublisher
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.model_capabilities import (
     graph_construction_for,
@@ -755,7 +756,7 @@ def test_the_wire_renderer_forgets_a_root_whose_rendering_failed() -> None:
 
     includes = fixture.include_tree("EncodedOrder", (0, _ITEMS, "EncodedOrderItem"))
     publisher = WireRootPublisher(
-        fixture.model, wire_facts_for(CatalogedModel(fixture.model)), includes, encode
+        fixture.model, wire_facts_for(CatalogedModel(fixture.model, TEST_BINDING)), includes, encode
     )
 
     def publish_root(root: GraphView, ordinal: int) -> tuple[object, ...]:

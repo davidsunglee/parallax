@@ -4,7 +4,7 @@
 An effect span on a dialect binding arrays is one row-producing Database Call
 returning each changed row's source ordinal. The whole result is validated
 before any count is read, then each original step is enforced, in order,
-against how often its own ordinal returned. These cases answer the call from a
+against how often its own ordinal returned. These cases answer the call from px.a
 stand-in connection, so each result — malformed ones included — is whatever
 the case says the database returned.
 """
@@ -57,6 +57,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     Versioned,
 )
+from tests._support.bindings import bound_model
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit.core._execution._grouped_effect_support import (
     ACCOUNT,
@@ -115,7 +116,7 @@ class _Port:
 def _grouped(steps: Sequence[PlannedStep], meta: Any = WALLET) -> WriteGroup:
     return WriteGroup.from_members(
         ((SettledWrite(), (step,)) for step in steps),
-        effect_shape=LayoutPayloadPreparer(meta).effect_shape,
+        effect_shape=LayoutPayloadPreparer(bound_model(meta)).effect_shape,
     )
 
 
@@ -127,8 +128,8 @@ def _executor(
 ) -> WriteStepExecutor:
     return WriteStepExecutor(
         cast("DatabaseConnection", port),
-        payloads=LayoutPayloadPreparer(meta) if payloads is None else payloads,
-        meta=meta,
+        payloads=LayoutPayloadPreparer(bound_model(meta)) if payloads is None else payloads,
+        resolved=bound_model(meta),
         recoverable=(lambda error: None) if recognized is None else recognized.append,
     )
 
@@ -160,7 +161,7 @@ def test_ordinals_returned_in_any_order_satisfy_every_step() -> None:
     port = _Port([(3,), (1,), (2,)])
     assert _run(port, _grouped(_wallets(1, 2, 3))) is None
     ((sql, binds),) = port.calls
-    assert sql.startswith("update wallet t set balance = v.c2 from unnest(")
+    assert sql.startswith("update px.wallet t set balance = v.c2 from unnest(")
     assert len(binds) == 2
 
 
@@ -296,7 +297,7 @@ class _Failing(LayoutPayloadPreparer):
     __slots__ = ("failing", "failure")
 
     def __init__(self, failing: PlannedUpdate, failure: BaseException) -> None:
-        super().__init__(WALLET)
+        super().__init__(bound_model(WALLET))
         self.failing = failing
         self.failure = failure
 
@@ -365,8 +366,8 @@ def test_ordered_transport_never_takes_the_step_opening_a_span() -> None:
     port = _Port([(1,), (2,)], ordered=True)
     assert _run(port, group) is None
     assert [sql.split(" ")[:3] for sql, _ in port.calls] == [
-        ["update", "wallet", "set"],
-        ["update", "wallet", "t"],
+        ["update", "px.wallet", "set"],
+        ["update", "px.wallet", "t"],
     ]
 
 
@@ -383,14 +384,14 @@ def test_ordered_transport_stops_its_run_before_a_span() -> None:
     assert _run(port, group) is None
     assert port.calls[0][0] == "ordered"
     assert len(port.calls[0][1]) == 2
-    assert port.calls[1][0].startswith("update wallet t ")
+    assert port.calls[1][0].startswith("update px.wallet t ")
 
 
 def test_an_array_less_dialect_ignores_the_spans() -> None:
     arrayless = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
     port = _Port(dialect=arrayless)
     assert _run(port, _grouped(_wallets(1, 2))) is None
-    assert [sql for sql, _ in port.calls] == ["update wallet set balance = ? where id = ?"] * 2
+    assert [sql for sql, _ in port.calls] == ["update px.wallet set balance = ? where id = ?"] * 2
 
 
 @pytest.mark.parametrize(("rows", "completes"), [([1, 2], True), ([1], False)])
@@ -451,7 +452,7 @@ def test_a_deletes_missing_ordinal_names_its_own_key() -> None:
     assert raised.code == OPTIMISTIC_LOCK_CONFLICT
     assert raised.key == {"id": 2}
     ((sql, _binds),) = port.calls
-    assert sql.startswith("delete from account t using unnest(")
+    assert sql.startswith("delete from px.account t using unnest(")
 
 
 @pytest.mark.parametrize(
@@ -486,12 +487,15 @@ def test_a_matched_milestone_counts_once_whatever_it_changed() -> None:
 def test_an_exclusion_refusal_is_recognized_against_the_statements_entity() -> None:
     steps = [close(POSITION, "Position", milestone(POSITION, "Position", key)) for key in (1, 2)]
     exclusion = storage_layout.storage_layout_facet_of(POSITION).entity(steps[0].entity)
-    assert exclusion is not None and exclusion.layout.temporal_constraints is not None
+    assert exclusion is not None
+    table = bound_model(POSITION).table(exclusion.layout.mapping_owner)
+    assert table.temporal_constraints is not None
     failure = DatabaseError(
         category="constraintViolation",
         native_code="23P01",
         message="conflicting key value violates exclusion constraint",
-        constraint_name=exclusion.layout.temporal_constraints.exclusion_name,
+        constraint_name=table.temporal_constraints.exclusion_name,
+        constraint_table=table.physical,
     )
     recognized: list[DatabaseError] = []
     raised = _run(_Port(failure), _grouped(steps, POSITION), meta=POSITION, recognized=recognized)

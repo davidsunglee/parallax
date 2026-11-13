@@ -36,6 +36,7 @@ from parallax.core import (
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -93,7 +94,7 @@ _S = {"title": "s"}
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -110,7 +111,7 @@ def _rows(profile_run: Any, entity: type[Any]) -> list[_Row]:
     sql = (
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         f"case when thru_z = 'infinity' then null else thru_z end, {members} "
-        f"from {_TABLES[entity]} order by in_z, out_z, from_z"
+        f"from px.{_TABLES[entity]} order by in_z, out_z, from_z"
     )
     return [
         tuple(int(cell) if isinstance(cell, float) else cell for cell in row)
@@ -126,7 +127,7 @@ def _seeded(
 ) -> ScopedDatabase:
     """Span 1 as [January, April) at 100 opened at T0 and [April, July) at 200
     opened at T1, and tag 1."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _T1, *instants)
 
     def first(tx: TxnContext) -> None:
@@ -394,7 +395,7 @@ def test_a_write_after_a_predicate_flush_reaches_the_merged_row_through_its_own_
 def test_an_insertion_stands_while_its_part_of_a_merged_row_does_and_ends_with_it(
     profile_run: Any, entity: type[Any], flushed: bool
 ) -> None:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     db = _db(profile_run, _T0, _TA)
     db.transact(
         lambda tx: tx.insert(

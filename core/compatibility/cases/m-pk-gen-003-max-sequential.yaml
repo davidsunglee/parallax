@@ -19,15 +19,16 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-        mariadb: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+        postgres: insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from px.attendee t0
+        mariadb: insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from px.attendee t0
       binds: [0, 1, Ada]
     - sql:
-        postgres: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
-        mariadb: insert into attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from attendee t0
+        postgres: insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from px.attendee t0
+        mariadb: insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from px.attendee t0
       binds: [0, 1, Ben]
   tableState:
-    attendee:
-      - { id: 1, name: Ada }
-      - { id: 2, name: Ben }
+    px:
+      attendee:
+        - { id: 1, name: Ada }
+        - { id: 2, name: Ben }
   databaseCalls: 2

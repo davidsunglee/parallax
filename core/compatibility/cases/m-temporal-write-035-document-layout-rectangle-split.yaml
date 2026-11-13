@@ -38,8 +38,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
-        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - "2026-01-01T00:00:00.000000Z"
@@ -50,12 +50,12 @@ then:
           terms:
             clause: standard
     - sql:
-        postgres: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
-        mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+        postgres: update px.charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+        mariadb: update px.charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
       binds: ["2026-02-15T00:00:00.000000Z", 1, infinity, infinity]
     - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
-        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+        postgres: insert into px.charter(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+        mariadb: insert into px.charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
       binds:
         postgres:
           - [1, 1, 1]
@@ -90,41 +90,42 @@ then:
             terms:
               clause: standard
   tableState:
-    charter:
-      - id: 1
-        from_z: "2026-01-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2026-01-01T00:00:00.000000Z"
-        out_z: "2026-02-15T00:00:00.000000Z"
-        payload:
-          route: Oslo-Bergen
-          terms:
-            clause: standard
-      - id: 1
-        from_z: "2026-01-01T00:00:00.000000Z"
-        thru_z: "2026-03-01T00:00:00.000000Z"
-        in_z: "2026-02-15T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          route: Oslo-Bergen
-          terms:
-            clause: standard
-      - id: 1
-        from_z: "2026-03-01T00:00:00.000000Z"
-        thru_z: "2026-09-01T00:00:00.000000Z"
-        in_z: "2026-02-15T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          route: Oslo-Tromso
-          terms:
-            clause: winter
-      - id: 1
-        from_z: "2026-09-01T00:00:00.000000Z"
-        thru_z: infinity
-        in_z: "2026-02-15T00:00:00.000000Z"
-        out_z: infinity
-        payload:
-          route: Oslo-Bergen
-          terms:
-            clause: standard
+    px:
+      charter:
+        - id: 1
+          from_z: "2026-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2026-01-01T00:00:00.000000Z"
+          out_z: "2026-02-15T00:00:00.000000Z"
+          payload:
+            route: Oslo-Bergen
+            terms:
+              clause: standard
+        - id: 1
+          from_z: "2026-01-01T00:00:00.000000Z"
+          thru_z: "2026-03-01T00:00:00.000000Z"
+          in_z: "2026-02-15T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            route: Oslo-Bergen
+            terms:
+              clause: standard
+        - id: 1
+          from_z: "2026-03-01T00:00:00.000000Z"
+          thru_z: "2026-09-01T00:00:00.000000Z"
+          in_z: "2026-02-15T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            route: Oslo-Tromso
+            terms:
+              clause: winter
+        - id: 1
+          from_z: "2026-09-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2026-02-15T00:00:00.000000Z"
+          out_z: infinity
+          payload:
+            route: Oslo-Bergen
+            terms:
+              clause: standard
   databaseCalls: 4

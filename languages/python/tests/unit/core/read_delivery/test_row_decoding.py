@@ -26,6 +26,7 @@ from parallax.core.internal.read_delivery._page import ROOT_LEVEL, PageBuilder, 
 from parallax.core.internal.read_delivery._row_converter import bind
 from parallax.core.internal.read_delivery._row_decoding import row_coordinates, row_identity
 from parallax.core.internal.sql_gen._compile import CompiledRead
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.sql import compile_nonempty_read as compile_entity_query
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
@@ -39,7 +40,13 @@ PAYMENT = model("payment")
 
 
 def _read(meta: Metamodel, name: str) -> CompiledRead:
-    return compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), result_form="instance")
+    return compile_read(
+        oa.TrueNode(),
+        bound_model(meta),
+        POSTGRES,
+        target(meta, name),
+        result_form="instance",
+    )
 
 
 @pytest.mark.parametrize(
@@ -126,7 +133,9 @@ def test_a_shared_document_member_keeps_its_carriers_raw_state(
     # stored structure and must remain distinct before witness comparison.
     compiled = _read(DOCUMENT, "Person")
     builder = PageBuilder(ViewSchema.of())
-    converter = bind(CatalogedModel(DOCUMENT), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(DOCUMENT, TEST_BINDING), compiled.result_contract, compiled.projection
+    )
     index, *_ = converter.record_row(
         result_row(compiled, {"id": 1, "payload": payload}), builder, source=ROOT_LEVEL
     )

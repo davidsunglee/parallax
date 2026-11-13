@@ -29,41 +29,42 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into tag_asset(id, kind, payload) values (?, ?, ?)
-        mariadb: insert into tag_asset(id, kind, payload) values (?, ?, ?)
+        postgres: insert into px.tag_asset(id, kind, payload) values (?, ?, ?)
+        mariadb: insert into px.tag_asset(id, kind, payload) values (?, ?, ?)
       binds:
         - 3
         - phone
         - { tags: [n], ports: [], numbers: [x, x], codes: ["00"] }
     - sql:
-        postgres: insert into tag_saw(id, payload) values (?, ?)
-        mariadb: insert into tag_saw(id, payload) values (?, ?)
+        postgres: insert into px.tag_saw(id, payload) values (?, ?)
+        mariadb: insert into px.tag_saw(id, payload) values (?, ?)
       binds:
         - 3
         - { tags: [], blades: [a] }
     - sql:
-        postgres: update tag_asset set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ? and kind = ?
-        mariadb: update tag_asset set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ? and kind = ?
+        postgres: update px.tag_asset set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ? and kind = ?
+        mariadb: update px.tag_asset set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ? and kind = ?
       binds:
         postgres: ['{ports}', [9], '{numbers}', [], 1, phone]
         mariadb: ['$.ports', [9], '$.numbers', [], 1, phone]
   tableState:
-    tag_asset:
-      - id: 1
-        kind: phone
-        payload: { tags: [a, a], ports: [9], numbers: [], codes: ["01ff"] }
-      - id: 2
-        kind: desk
-        payload: { tags: [d], legs: [l, r] }
-      - id: 3
-        kind: phone
-        payload: { tags: [n], ports: [], numbers: [x, x], codes: ["00"] }
-    tag_drill:
-      - id: 1
-        payload: { tags: [t], bits: [8, 8] }
-    tag_saw:
-      - id: 2
-        payload: { tags: [], blades: [rip] }
-      - id: 3
-        payload: { tags: [], blades: [a] }
+    px:
+      tag_asset:
+        - id: 1
+          kind: phone
+          payload: { tags: [a, a], ports: [9], numbers: [], codes: ["01ff"] }
+        - id: 2
+          kind: desk
+          payload: { tags: [d], legs: [l, r] }
+        - id: 3
+          kind: phone
+          payload: { tags: [n], ports: [], numbers: [x, x], codes: ["00"] }
+      tag_drill:
+        - id: 1
+          payload: { tags: [t], bits: [8, 8] }
+      tag_saw:
+        - id: 2
+          payload: { tags: [], blades: [rip] }
+        - id: 3
+          payload: { tags: [], blades: [a] }
   databaseCalls: 4

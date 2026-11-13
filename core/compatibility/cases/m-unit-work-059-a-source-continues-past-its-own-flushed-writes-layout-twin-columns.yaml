@@ -133,8 +133,9 @@ then:
     continued: { outcome: committed }
     deleted: { outcome: committed }
   tableState:
-    sequence_tag:
-      - { id: 1, quantity: 7, label: kept }
-      - { id: 2, quantity: 4, label: again }
-    sequence_account:
-      - { id: 1, balance: 30, memo: { note: after }, version: 3 }
+    px:
+      sequence_tag:
+        - { id: 1, quantity: 7, label: kept }
+        - { id: 2, quantity: 4, label: again }
+      sequence_account:
+        - { id: 1, balance: 30, memo: { note: after }, version: 3 }

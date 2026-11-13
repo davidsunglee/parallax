@@ -1,0 +1,8 @@
+# Fixture rows for models/binding-ledgers.yaml. The two blocks load into two
+# physical tables that share the local name `ledger`, under the same keys.
+parallax.compatibility.SalesLedger:
+  - { id: 1, amount: "10.00" }
+  - { id: 2, amount: "20.00" }
+parallax.compatibility.AuditLedger:
+  - { id: 1, note: opened }
+  - { id: 2, note: reviewed }

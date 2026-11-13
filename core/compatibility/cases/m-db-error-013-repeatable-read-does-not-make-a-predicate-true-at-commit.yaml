@@ -20,8 +20,8 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.balance < ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.balance < ?
               binds: ["200.00"]
           expectRows:
             - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -30,8 +30,8 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: update account set balance = ?, version = ? where id = ? and version = ?
-                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+                postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
               binds: ["50.00", 2, 2, 1]
           affectedRows: [1]
       - B:
@@ -40,8 +40,8 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.balance < ?
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.balance < ?
               binds: ["200.00"]
           expectRows:
             - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -50,19 +50,20 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: update account set balance = ?, version = ? where id = ? and version = ?
-                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+                postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
               binds: ["0.00", 2, 1, 1]
             - sql:
-                postgres: update account set balance = ?, version = ? where id = ? and version = ?
-                mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+                postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+                mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
               binds: ["0.00", 2, 3, 1]
           affectedRows: [1, 1]
       - A:
           kind: commit
 then:
   tableState:
-    account:
-      - { id: 1, owner: Ada, balance: "0.00", version: 2 }
-      - { id: 2, owner: Linus, balance: "50.00", version: 2 }
-      - { id: 3, owner: Grace, balance: "0.00", version: 2 }
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "0.00", version: 2 }
+        - { id: 2, owner: Linus, balance: "50.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "0.00", version: 2 }

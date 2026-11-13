@@ -38,11 +38,16 @@ def test_run_error_case_reaches_the_port_with_the_dialects_own_spelling_and_bind
         {
             "then": {
                 "statements": [
-                    {"sql": {"postgres": "delete from widget", "mariadb": "delete from widget"}},
                     {
                         "sql": {
-                            "postgres": "insert into widget(id, label) values (?, ?)",
-                            "mariadb": "insert into widget(id, label) values (?, ?)",
+                            "postgres": "delete from px.widget",
+                            "mariadb": "delete from px.widget",
+                        }
+                    },
+                    {
+                        "sql": {
+                            "postgres": "insert into px.widget(id, label) values (?, ?)",
+                            "mariadb": "insert into px.widget(id, label) values (?, ?)",
                         },
                         "binds": [1, "dup"],
                     },
@@ -53,11 +58,11 @@ def test_run_error_case_reaches_the_port_with_the_dialects_own_spelling_and_bind
     port = FakeWritePort(parameterized_write_failure=_unique_violation())
     emissions, error_class, native_code, database_calls = error.run_error_case(case, port)
     assert port.writes == [
-        ("delete from widget", []),
-        ("insert into widget(id, label) values (?, ?)", [1, "dup"]),
+        ("delete from px.widget", []),
+        ("insert into px.widget(id, label) values (?, ?)", [1, "dup"]),
     ]
     assert [(emission.sql, emission.binds) for emission in emissions] == [
-        ("delete from widget", ()),
-        ("insert into widget(id, label) values (?, ?)", (1, "dup")),
+        ("delete from px.widget", ()),
+        ("insert into px.widget(id, label) values (?, ?)", (1, "dup")),
     ]
     assert (error_class, native_code, database_calls) == ("uniqueViolation", "23505", 2)

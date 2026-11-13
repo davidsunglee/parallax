@@ -19,10 +19,10 @@ then:
     postgres:
       delta:
         statements:
-          - alter table evolution_catalog add column reviewer varchar(64)
+          - alter table px.evolution_catalog add column reviewer varchar(64)
         createdIndices: []
     mariadb:
       delta:
         statements:
-          - alter table evolution_catalog add column reviewer varchar(64)
+          - alter table px.evolution_catalog add column reviewer varchar(64)
         createdIndices: []

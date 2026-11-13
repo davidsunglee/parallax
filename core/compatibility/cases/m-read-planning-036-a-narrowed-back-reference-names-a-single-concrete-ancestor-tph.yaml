@@ -20,12 +20,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.crew_id, t0.label from crew_task t0
+        postgres: select t0.id, t0.crew_id, t0.label from px.crew_task t0
     - sql:
-        postgres: select t0.id, t0.name from crew t0 where t0.id = any(cast(? as bigint[])) and t0.kind = ?
+        postgres: select t0.id, t0.name from px.crew t0 where t0.id = any(cast(? as bigint[])) and t0.kind = ?
       binds: [[1, 2, 3], cook]
     - sql:
-        postgres: select t0.id, t0.crew_id, t0.label from crew_task t0 where t0.crew_id = any(cast(? as bigint[])) order by t0.id asc
+        postgres: select t0.id, t0.crew_id, t0.label from px.crew_task t0 where t0.crew_id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[1]]
   graph:
     Task:

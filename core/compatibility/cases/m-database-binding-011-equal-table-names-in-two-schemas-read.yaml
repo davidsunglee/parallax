@@ -1,0 +1,35 @@
+# A read of the audit ledger selects from the table its binding places it in,
+# never the sales ledger that shares its local name and its keys.
+model: models/binding-ledgers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.AuditLedger: { schema: px_audit }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.AuditLedger: { database: px_audit }
+tags: [m-database-binding, m-sql, read, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.AuditLedger
+    predicate:
+      eq:
+        path: parallax.compatibility.AuditLedger.id
+        value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.note from px_audit.ledger t0 where t0.id = ?
+        mariadb: select t0.id, t0.note from px_audit.ledger t0 where t0.id = ?
+      binds: [2]
+  referenceSql: select id, note from px_audit.ledger where id = 2
+  rows:
+    - { id: 2, note: reviewed }
+  databaseCalls: 1

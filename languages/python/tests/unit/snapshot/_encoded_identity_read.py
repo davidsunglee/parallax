@@ -24,6 +24,7 @@ from parallax.core.internal.metamodel import entity_by_name
 from parallax.core.internal.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.sql import compile_read
 
 
@@ -70,11 +71,15 @@ def encoded_identity_read() -> ReadRowConverter:
     entity = entity_by_name(ENCODED_IDENTITY, "EncodedIdentity")
     assert entity is not None
     compiled = compile_read(
-        oa.TrueNode(), ENCODED_IDENTITY, _WIRE_UUID, entity, result_form="instance"
+        oa.TrueNode(),
+        bound_model(ENCODED_IDENTITY),
+        _WIRE_UUID,
+        entity,
+        result_form="instance",
     )
     assert compiled.statement.sql.startswith("select cast(t0.id as text) id_wire, ")
     return bind(
-        CatalogedModel(ENCODED_IDENTITY),
+        CatalogedModel(ENCODED_IDENTITY, TEST_BINDING),
         compiled.result_contract,
         compiled.projection,
     )

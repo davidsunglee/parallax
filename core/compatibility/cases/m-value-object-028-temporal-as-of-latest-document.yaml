@@ -15,10 +15,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.out_z = ?
-        mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.out_z = ?
+        postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from px.supplier t0 where t0.out_z = ?
+        mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from px.supplier t0 where t0.out_z = ?
       binds: [infinity]
-  referenceSql: select sup_id, name, in_z, out_z from supplier where out_z > '9000-01-01'
+  referenceSql: select sup_id, name, in_z, out_z from px.supplier where out_z > '9000-01-01'
   graph:
     Supplier:
       - id: 1

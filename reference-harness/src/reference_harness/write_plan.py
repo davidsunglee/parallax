@@ -38,6 +38,7 @@ from sqlglot.expressions.core import Expr
 from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
 from .case import Case, Entity
 from .case_assertions import CaseFailure, write_value_equal
+from .database_binding import PhysicalTable
 from .document_codec import encode_collection, encode_document, encode_leaf
 from .inheritance import tag_of
 from .keyed_write_validate import is_framework_marker, states_framework_marker
@@ -1028,9 +1029,9 @@ def _top_level_commas(clause: str) -> list[str]:
 # --- the write grammar every predicate fact is projected out of ------------------
 
 
-def _dml_target(statement: str, dialect: str) -> exp.Identifier | None:
-    """The identifier *statement* names its target table with, or None when it is no
-    table-targeting DML for *dialect*.
+def _dml_target(statement: str, dialect: str) -> exp.Table | None:
+    """The table reference *statement* names its target table with, or None when it
+    is no table-targeting DML for *dialect*.
 
     The one reader of WHICH TABLE a write lands in, covering the ``INSERT`` that
     :func:`_existing_row_write` does not: table-per-concrete-subtype routing asks it of
@@ -1044,8 +1045,8 @@ def _dml_target(statement: str, dialect: str) -> exp.Identifier | None:
     return None
 
 
-def _dml_target_of(tree: Expr) -> exp.Identifier | None:
-    """The target-table identifier of an already-parsed ``INSERT`` / ``UPDATE`` /
+def _dml_target_of(tree: Expr) -> exp.Table | None:
+    """The target-table reference of an already-parsed ``INSERT`` / ``UPDATE`` /
     ``DELETE``, or None for any other statement.
 
     An ``INSERT`` carries its table inside the column-list schema; the existing-row
@@ -1058,15 +1059,15 @@ def _dml_target_of(tree: Expr) -> exp.Identifier | None:
         target = target.this
     if not isinstance(target, exp.Table) or not isinstance(target.this, exp.Identifier):
         return None
-    return target.this
+    return target
 
 
 class _ExistingRowWrite(NamedTuple):
-    """The outer keyed DML a golden statement is: the identifier its ``UPDATE`` /
+    """The outer keyed DML a golden statement is: the reference its ``UPDATE`` /
     ``DELETE`` names the target table with, and its own top-level predicate
     conjuncts."""
 
-    table: exp.Identifier
+    table: exp.Table
     conjuncts: tuple[Expr, ...]
 
 
@@ -1152,6 +1153,21 @@ def _names(identifier: exp.Identifier, declared: str) -> bool:
     )
 
 
+def _names_table(reference: exp.Table, table: PhysicalTable) -> bool:
+    """Whether *reference*, as a golden spells it, is the physical *table*: each
+    qualifier component and the local name read as :func:`_names` reads one."""
+    spelled = [
+        part
+        for part in (reference.args.get("catalog"), reference.args.get("db"), reference.this)
+        if part is not None
+    ]
+    components = (*table.qualifier, table.name)
+    return len(spelled) == len(components) and all(
+        isinstance(part, exp.Identifier) and _names(part, component)
+        for part, component in zip(spelled, components, strict=True)
+    )
+
+
 # --- which object an existing-row statement addresses ----------------------------
 
 
@@ -1177,13 +1193,13 @@ class ObjectAddress:
     strings, and only :meth:`names_table` / :meth:`names_key_column` answer it.
     """
 
-    _table: exp.Identifier
+    _table: exp.Table
     _key_column: exp.Identifier
     key: Any
 
-    def names_table(self, declared: str) -> bool:
-        """Whether this address's target table is the physical *declared* one."""
-        return _names(self._table, declared)
+    def names_table(self, table: PhysicalTable) -> bool:
+        """Whether this address's target table is the physical *table*."""
+        return _names_table(self._table, table)
 
     def names_key_column(self, declared: str) -> bool:
         """Whether this address's key column is the physical *declared* one."""
@@ -1249,7 +1265,9 @@ def has_temporal_gate(statement: str, in_z: str, dialect: str) -> bool:
     return write is not None and _gates_on(write.conjuncts[-1], in_z)
 
 
-def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -> bool:
+def is_milestone_guard_statement(
+    statement: str, entity: Entity, table_placed: PhysicalTable, dialect: str
+) -> bool:
     """Whether *statement* is exactly the guard that keeps *entity*'s milestone: an
     ``UPDATE`` of its table alone assigning the Transaction-Time start to itself, whose
     predicate is the close address (:func:`close_address_binds`) followed by the
@@ -1258,6 +1276,7 @@ def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -
     Judged whole because a guard changes no value: neither the table state nor its
     affected count can tell an incomplete address from the complete one. With no
     source but the target table, every predicate column is the target's own.
+    *table_placed* is the physical table the case binding places *entity* in.
     """
     in_z = next(
         axis["start_column"]
@@ -1281,7 +1300,7 @@ def is_milestone_guard_statement(statement: str, entity: Entity, dialect: str) -
         return (
             {arm for arm, value in tree.args.items() if value} == {"this", "expressions", "where"}
             and not tree.this.args.get("joins")
-            and _names(table, entity.table)
+            and _names_table(table, table_placed)
             and len(assignments) == 1
             and isinstance(assignments[0], exp.EQ)
             and all(
@@ -1426,9 +1445,10 @@ def _assert_concrete_table_routing(
         raise CaseFailure(
             f"{case.path.name}: could not read the DML target table from golden {statement!r}."
         )
-    if not _names(target, entity.table):
+    own = case.entity_table(entity.canonical_name, dialect)
+    if not _names_table(target, own):
         raise CaseFailure(
             f"{case.path.name}: a table-per-concrete-subtype write of {entity.name} MUST "
-            f"target its own table {entity.table!r} (no shared table), but the golden "
+            f"target its own table {str(own)!r} (no shared table), but the golden "
             f"targets {target.sql(dialect=sqlglot_dialect(dialect))}: {statement!r}."
         )

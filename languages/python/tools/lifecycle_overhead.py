@@ -79,6 +79,7 @@ from typing import Final, NamedTuple, cast
 
 from durations import Spans, write_sidecar
 from interpreter_matrix import CURRENT_MINOR, current_identity, write_metadata
+from parallax.conformance.bindings import DEFAULT_BINDING
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -590,7 +591,9 @@ class _Shape(NamedTuple):
 def _shape() -> _Shape:
     port = _MemoryPort()
     counting = _CountingProvider()
-    root = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=counting)
+    root = Database(
+        _SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=counting, binding=DEFAULT_BINDING
+    )
     try:
         _workload(root.using_database_login())
     finally:
@@ -861,12 +864,17 @@ def main(argv: list[str]) -> int:
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()
-    plain_root = Database(_SoleRuntime(port), ACCOUNT_MODEL)
+    plain_root = Database(_SoleRuntime(port), ACCOUNT_MODEL, binding=DEFAULT_BINDING)
     plain = plain_root.using_database_login()
     measurements: dict[str, _Measurement] = {}
     try:
         for label, provider in _configurations(records):
-            observed_root = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=provider)
+            observed_root = Database(
+                _SoleRuntime(port),
+                ACCOUNT_MODEL,
+                lifecycle_provider=provider,
+                binding=DEFAULT_BINDING,
+            )
             try:
                 observed = observed_root.using_database_login()
                 measurements[label] = _measure(plain, observed, records)

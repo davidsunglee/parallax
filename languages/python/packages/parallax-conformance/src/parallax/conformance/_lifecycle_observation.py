@@ -80,7 +80,6 @@ from parallax.core.internal.db_port import (
     RoutePolicy,
 )
 from parallax.core.internal.diagnostics import FailureDiagnostic
-from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.execution import ServingModel, TxnOptions
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.unit_work import Clock, FlushTrigger
@@ -253,7 +252,7 @@ class LifecycleObservation:
     def connect[Auth](
         self,
         adapter: DatabaseAdapter[Auth],
-        model: DomainModel | ServingModel,
+        serving: ServingModel,
         *,
         options: TxnOptions | None = None,
         clock: Clock | None = None,
@@ -266,7 +265,7 @@ class LifecycleObservation:
         that really happened.
         """
         return Database.connect(
-            adapter, model, options=options, clock=clock, lifecycle_provider=self._recorder
+            adapter, serving, options=options, clock=clock, lifecycle_provider=self._recorder
         )
 
     @contextlib.contextmanager

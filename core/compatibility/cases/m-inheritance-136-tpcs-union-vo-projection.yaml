@@ -16,12 +16,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0) u order by jsonb_extract_path_text(u.payload, ?) desc
-        mariadb: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0) u order by json_value(u.payload, ?) desc
+        postgres: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from px.publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from px.publication_film t0) u order by jsonb_extract_path_text(u.payload, ?) desc
+        mariadb: select u.id, not u.payload is null, u.payload, u.family_variant from (select t0.id, t0.payload, 'Book' family_variant from px.publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from px.publication_film t0) u order by json_value(u.payload, ?) desc
       binds:
         postgres: [title]
         mariadb: ['$.title']
-  referenceSql: select id, payload, 'Film' as family_variant from publication_film union all select id, payload, 'Book' as family_variant from publication_book
+  referenceSql: select id, payload, 'Film' as family_variant from px.publication_film union all select id, payload, 'Book' as family_variant from px.publication_book
   graph:
     Publication:
       - { id: 10, title: Systems, detail: ISBN-10, pages: 320, _type: parallax.compatibility.Book }

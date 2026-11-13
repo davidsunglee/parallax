@@ -23,7 +23,7 @@ when:
       note: observe both spans' heads at March under the shared lock
       statements:
         - sql:
-            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from coverage_span t0 where t0.id < ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc for share of t0
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from px.coverage_span t0 where t0.id < ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc for share of t0
           binds: [3, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
       expectRows:
         - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
@@ -38,7 +38,7 @@ when:
       note: observe the ledger's head at March under the shared lock
       statements:
         - sql:
-            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from coverage_ledger t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from px.coverage_ledger t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0
           binds: [1, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
       expectRows:
         - { id: 1, amount: 100, label: l, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
@@ -51,10 +51,10 @@ when:
       note: the ledger's write between the spans' ends their acquisition span, so each of the three objects reads its uncovered June onward alone, at its own turn
       statements:
         - sql:
-            postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
+            postgres: update px.coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+            postgres: insert into px.coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
           binds:
             - [1, 1]
             - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
@@ -63,10 +63,10 @@ when:
             - [infinity, infinity]
             - [{amount: 100, label: a}, {amount: 150, label: a}]
         - sql:
-            postgres: update coverage_ledger set out_z = ? where id = ? and thru_z = ? and out_z = ?
+            postgres: update px.coverage_ledger set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_ledger(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+            postgres: insert into px.coverage_ledger(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
           binds:
             - [1, 1]
             - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
@@ -75,10 +75,10 @@ when:
             - [infinity, infinity]
             - [{amount: 100, label: l}, {amount: 150, label: l}]
         - sql:
-            postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
+            postgres: update px.coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 2, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+            postgres: insert into px.coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
           binds:
             - [2, 2]
             - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
@@ -89,18 +89,19 @@ when:
 then:
   databaseCalls: 11
   tableState:
-    coverage_span:
-      - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 3, payload: { amount: 100, label: c }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-    coverage_ledger:
-      - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
-      - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
-      - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+    px:
+      coverage_span:
+        - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 3, payload: { amount: 100, label: c }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+      coverage_ledger:
+        - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+        - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }

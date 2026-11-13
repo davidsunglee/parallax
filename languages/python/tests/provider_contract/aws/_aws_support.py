@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from tests._support.aws_run import READER_APPLICATION, WRITER_APPLICATION, AwsRun
+from tests._support.bindings import TEST_BINDING
 from tests._support.routed_reads import SEEDED, SEEDED_MODEL, TABLES, seeded_fixtures
 
 if TYPE_CHECKING:
@@ -33,13 +34,13 @@ def count(session: DriverControl, sql: str, binds: list[object]) -> int:
 
 def _seeded_on(session: DriverControl) -> bool:
     return all(
-        count(session, f"select count(*) from {table}", []) == len(SEEDED) for table in TABLES
+        count(session, f"select count(*) from px.{table}", []) == len(SEEDED) for table in TABLES
     )
 
 
 def seeded(run: AwsRun) -> None:
     """The run database reset to the seeded rows, visible on every instance."""
-    run.reset(SEEDED_MODEL, seeded_fixtures())
+    run.reset(SEEDED_MODEL, seeded_fixtures(), TEST_BINDING)
     for instance in run.environment.instances:
         session = run.session(instance.host)
         run.wait_until(

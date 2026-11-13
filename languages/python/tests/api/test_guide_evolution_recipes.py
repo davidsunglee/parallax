@@ -47,6 +47,7 @@ from parallax.evolution.operations import (
 )
 from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, TxnContext
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
 
@@ -55,15 +56,15 @@ _RELEASE_1 = DomainModel(Customer, Order, Payment, CardPayment, BankTransfer)
 _RELEASE_2 = DomainModel(Customer, Order, Payment, CardPayment, BankTransfer, GiftCardPayment)
 _WITHOUT_BANK_TRANSFERS = DomainModel(Customer, Order, Payment, CardPayment)
 _GIFT_CARDS = ConcreteSubtypeAdded(EntityIdentity(None, "GiftCardPayment"))
-_ADD_THE_GIFT_CARD_COLUMN = ("alter table payment add column card_number varchar(19)",)
+_ADD_THE_GIFT_CARD_COLUMN = ("alter table px.payment add column card_number varchar(19)",)
 
 
 def _release_one_root(profile_run: Any) -> tuple[Database[Any], ServingModel]:
-    profile_run.reset(model_of(_RELEASE_1), {})
+    profile_run.reset(model_of(_RELEASE_1), {}, TEST_BINDING)
     adapter = PostgresAdapter(
         writer=PostgresEndpoint(profile_run.connection_info, credentials=profile_run.credentials)
     )
-    root, serving = connect_serving(adapter, _RELEASE_1, "release-1")
+    root, serving = connect_serving(adapter, _RELEASE_1, TEST_BINDING, "release-1")
     own_root(root)
     root.using_database_login().transact(
         lambda tx: (
@@ -103,10 +104,12 @@ def test_a_rollout_migrates_then_publishes_while_an_open_transaction_keeps_its_e
     root, serving = _release_one_root(profile_run)
     db = root.using_database_login()
 
-    kept = migrate(export_yaml(_RELEASE_1), _RELEASE_2, _run_on_the_database(profile_run))
+    kept = migrate(
+        export_yaml(_RELEASE_1), _RELEASE_2, TEST_BINDING, _run_on_the_database(profile_run)
+    )
 
     def publish_mid_transaction(tx: TxnContext) -> tuple[str, str]:
-        adopt(serving, _RELEASE_2, "release-2")
+        adopt(serving, _RELEASE_2, TEST_BINDING, "release-2")
         standalone = db.find(Payment.where(Payment.order_id == 10))
         return tx.edition, standalone.edition
 
@@ -126,14 +129,14 @@ def test_a_rollout_migrates_then_publishes_while_an_open_transaction_keeps_its_e
         (CardPayment, 1),
         (GiftCardPayment, 2),
     ]
-    released = changes_since(kept, _RELEASE_2)
+    released = changes_since(kept, _RELEASE_2, TEST_BINDING)
     assert isinstance(released, UnilateralEvolution)
     assert released.operations == ()
 
 
 def test_an_earlier_edition_sets_aside_rows_a_later_edition_wrote(profile_run: Any) -> None:
     root, serving = _release_one_root(profile_run)
-    migrate(export_yaml(_RELEASE_1), _RELEASE_2, _run_on_the_database(profile_run))
+    migrate(export_yaml(_RELEASE_1), _RELEASE_2, TEST_BINDING, _run_on_the_database(profile_run))
     earlier = own_root(
         connect_serving(
             PostgresAdapter(
@@ -142,10 +145,11 @@ def test_an_earlier_edition_sets_aside_rows_a_later_edition_wrote(profile_run: A
                 )
             ),
             _RELEASE_1,
+            TEST_BINDING,
             "release-1",
         )[0]
     ).using_database_login()
-    adopt(serving, _RELEASE_2, "release-2")
+    adopt(serving, _RELEASE_2, TEST_BINDING, "release-2")
     root.using_database_login().transact(
         lambda tx: tx.insert(
             GiftCardPayment(
@@ -183,7 +187,9 @@ _GIFT_CARD_ROW: Mapping[str, object] = {
 
 def test_serving_an_edition_runs_through_the_shipped_surface() -> None:
     with ScriptedAdapter(Transact()) as adapter:
-        root, serving = connect_serving(cast("PostgresAdapter", adapter), _RELEASE_1, "release-1")
+        root, serving = connect_serving(
+            cast("PostgresAdapter", adapter), _RELEASE_1, TEST_BINDING, "release-1"
+        )
         own_root(root)
 
         assert edition_of_a_transaction(root.using_database_login()) == "release-1"
@@ -191,7 +197,7 @@ def test_serving_an_edition_runs_through_the_shipped_surface() -> None:
 
 
 def test_adding_gift_cards_is_unilateral_and_widens_what_a_payment_query_returns() -> None:
-    evolution = changes_since(export_yaml(_RELEASE_1), _RELEASE_2)
+    evolution = changes_since(export_yaml(_RELEASE_1), _RELEASE_2, TEST_BINDING)
 
     assert isinstance(evolution, UnilateralEvolution)
     assert evolution.operations == (_GIFT_CARDS,)
@@ -204,7 +210,7 @@ def test_adding_gift_cards_is_unilateral_and_widens_what_a_payment_query_returns
 def test_retiring_bank_transfers_needs_coordination_and_has_no_migration() -> None:
     retired = ConcreteSubtypeRemoved(EntityIdentity(None, "BankTransfer"))
 
-    evolution = changes_since(export_yaml(_RELEASE_1), _WITHOUT_BANK_TRANSFERS)
+    evolution = changes_since(export_yaml(_RELEASE_1), _WITHOUT_BANK_TRANSFERS, TEST_BINDING)
 
     assert isinstance(evolution, CoordinatedEvolution)
     requirement = CoordinationRequirement(
@@ -212,24 +218,27 @@ def test_retiring_bank_transfers_needs_coordination_and_has_no_migration() -> No
     )
     assert evolution.coordination_requirements == (requirement,)
     with pytest.raises(CoordinationRequiredError) as refused:
-        migration_for(export_yaml(_RELEASE_1), _WITHOUT_BANK_TRANSFERS)
+        migration_for(export_yaml(_RELEASE_1), _WITHOUT_BANK_TRANSFERS, TEST_BINDING)
     assert refused.value.args == ((requirement,),)
 
 
 def test_a_migration_is_generated_handed_to_the_runner_and_its_descriptor_kept() -> None:
     ran: list[tuple[str, ...]] = []
 
-    kept = migrate(export_yaml(_RELEASE_1), _RELEASE_2, ran.append)
+    kept = migrate(export_yaml(_RELEASE_1), _RELEASE_2, TEST_BINDING, ran.append)
 
-    assert migration_for(export_yaml(_RELEASE_1), _RELEASE_2) == _ADD_THE_GIFT_CARD_COLUMN
+    assert (
+        migration_for(export_yaml(_RELEASE_1), _RELEASE_2, TEST_BINDING)
+        == _ADD_THE_GIFT_CARD_COLUMN
+    )
     assert ran == [_ADD_THE_GIFT_CARD_COLUMN]
     assert kept == export_yaml(_RELEASE_2)
 
 
 def test_adopting_a_release_publishes_it_over_the_selection_it_found() -> None:
-    serving = ServingModel(prepare_model(_RELEASE_1, edition="release-1"))
+    serving = ServingModel(prepare_model(_RELEASE_1, edition="release-1", binding=TEST_BINDING))
 
-    adopt(serving, _RELEASE_2, "release-2")
+    adopt(serving, _RELEASE_2, TEST_BINDING, "release-2")
 
     assert serving.current().edition == "release-2"
     assert serving.current().model is _RELEASE_2
@@ -237,7 +246,9 @@ def test_adopting_a_release_publishes_it_over_the_selection_it_found() -> None:
 
 def test_reading_through_the_overlap_runs_through_the_shipped_surface() -> None:
     with ScriptedAdapter(Read(rows=[_CARD_ROW, _GIFT_CARD_ROW])) as adapter:
-        db = own_root(Database.connect(adapter, _RELEASE_1)).using_database_login()
+        db = own_root(
+            Database.connect(adapter, _RELEASE_1, binding=TEST_BINDING)
+        ).using_database_login()
 
         readable = payments_this_edition_can_read(db, 10)
 

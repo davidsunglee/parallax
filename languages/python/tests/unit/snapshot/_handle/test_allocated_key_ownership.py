@@ -18,6 +18,7 @@ from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
 from tests._support.write_preparation import write_preparation_of
@@ -64,7 +65,7 @@ _JAN, _MAR, _JUN = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 
 
 def _db(profile_run: Any, *instants: dt.datetime) -> ScopedDatabase:
     return own_root(
-        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)))
+        connect(profile_run.port, _MODEL, clock=ScriptedClock(list(instants)), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -96,7 +97,7 @@ def _insert_allocated(
 def _seed(profile_run: Any, entity: type[Any], key: int) -> None:
     """A committed row holding ``key``, so the allocation the test makes is
     the next one rather than the first."""
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     valid_from = _JAN if issubclass(entity, Bitemporal) else None
     _db(profile_run, _T0).transact(
         lambda tx: tx.insert(entity(id=key, amount=1), **stated_start(valid_from))
@@ -119,7 +120,7 @@ def test_a_transaction_time_row_whose_key_the_database_allocated_is_revised_in_p
     _db(profile_run, _T).transact(fn)
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, "
-        f"{_amount(entity)} from {_TABLES[entity]} where id = 8 order by in_z",
+        f"{_amount(entity)} from px.{_TABLES[entity]} where id = 8 order by in_z",
         [],
     )
     assert [_plain(row) for row in rows] == [(_T, None, 175)]
@@ -140,7 +141,7 @@ def test_a_bitemporal_row_whose_key_the_database_allocated_is_split_in_place(
     rows = profile_run.port.execute(
         "select in_z, case when out_z = 'infinity' then null else out_z end, from_z, "
         "case when thru_z = 'infinity' then null else thru_z end, "
-        f"{_amount(entity)} from {_TABLES[entity]} where id = 8 order by from_z, in_z",
+        f"{_amount(entity)} from px.{_TABLES[entity]} where id = 8 order by from_z, in_z",
         [],
     )
     assert [_plain(row) for row in rows] == [

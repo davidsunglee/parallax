@@ -21,6 +21,7 @@ import pytest
 
 from reference_harness.case import load_model, temporal_corruption_refusal
 from reference_harness.data_loader import load_model as load_fixture_rows
+from reference_harness.database_binding import resolve_binding
 from reference_harness.schema_validate import _validate_corruptions
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -69,4 +70,9 @@ def test_the_loader_refuses_a_temporal_address_before_any_row_lands() -> None:
 
     model = load_model(_COMPATIBILITY_ROOT, "models/position.yaml")
     with pytest.raises(ValueError, match="a temporal Entity: its model primary key"):
-        load_fixture_rows(model, cast("Any", _RefusingProvider()), [_corruption(_POSITION)])
+        load_fixture_rows(
+            model,
+            cast("Any", _RefusingProvider()),
+            resolve_binding(model, {"default": {"schema": "px"}}, "postgres"),
+            [_corruption(_POSITION)],
+        )

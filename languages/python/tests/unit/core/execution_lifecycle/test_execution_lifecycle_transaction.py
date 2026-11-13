@@ -27,7 +27,7 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import ConflictError
+from parallax.core import ConflictError, ServingModel
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
@@ -73,7 +73,6 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.execution import (
     RetryPolicy,
-    ServingModel,
     TransactionRollbackError,
     prepare_model,
 )
@@ -81,6 +80,7 @@ from parallax.core.internal.object_query import deserialize as deserialize_query
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -104,9 +104,17 @@ from tests.unit._transact_support import (
 
 
 def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
-    return own_root(
-        connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
-    ).using_database_login()
+    if isinstance(model, ServingModel):
+        root = connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+    else:
+        root = connect(
+            adapter,
+            model,
+            clock=FixedClock(FIXED),
+            lifecycle_provider=provider,
+            binding=TEST_BINDING,
+        )
+    return own_root(root).using_database_login()
 
 
 def _transitions(events: Sequence[ExecutionEvent]) -> list[str]:
@@ -682,6 +690,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
                 ACCOUNT,
                 clock=FixedClock(FIXED),
                 lifecycle_provider=recorder,
+                binding=TEST_BINDING,
             )
         ).using_database_login().transact(body, retry=RetryPolicy(max_retries=0))
 
@@ -1061,8 +1070,8 @@ def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_las
     # failed last.
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()))
-    a = prepare_model(ACCOUNT, edition="a")
-    b = prepare_model(ACCOUNT, edition="b")
+    a = prepare_model(ACCOUNT, edition="a", binding=TEST_BINDING)
+    b = prepare_model(ACCOUNT, edition="b", binding=TEST_BINDING)
     serving = ServingModel(a)
     db = _db(port, recorder, serving)
     seen: list[str] = []

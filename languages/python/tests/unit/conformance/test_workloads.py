@@ -30,8 +30,10 @@ from parallax.conformance.workloads import (
 )
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.internal import inheritance, read_planning
+from parallax.core.internal.database_binding import DatabaseBinding
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.sql import (
     compile_nonempty_read as compile_read,
 )
@@ -50,13 +52,16 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
             workload.model,
             projection=read_planning.ReadProjectionRequest("all", True),
         )
-        compile_read(plan.root, workload.model, POSTGRES, result_form="instance")
+        compile_read(plan.root, bound_model(workload.model), POSTGRES, result_form="instance")
         for step in plan.fetch_steps:
             if isinstance(step, read_planning.BackReferenceFetchStep):
                 continue
-            compile_template(step.query, workload.model, POSTGRES, result_form="instance").render(
-                [0]
-            )
+            compile_template(
+                step.query,
+                bound_model(workload.model),
+                POSTGRES,
+                result_form="instance",
+            ).render([0])
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:
@@ -336,7 +341,10 @@ class _Provisioner:
     def __init__(self) -> None:
         self.rows: Mapping[str, object] | None = None
 
-    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
+    def reset(
+        self, model: Metamodel, fixtures: Mapping[str, object], binding: DatabaseBinding
+    ) -> None:
+        assert binding == TEST_BINDING
         assert any(
             entity.identity.canonical == "parallax.compatibility.Order" for entity in model.entities
         )

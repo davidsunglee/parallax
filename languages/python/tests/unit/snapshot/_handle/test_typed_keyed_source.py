@@ -46,6 +46,7 @@ from parallax.snapshot._handle._typed_writes import (
     TypedKeyedWriteSource,
 )
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.errors import raises_code
 from tests._support.model_capabilities import cataloged_for, preparation_for
@@ -277,7 +278,9 @@ def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name
     monkeypatch.setattr(EntityBase, "__parallax_member_values__", positional)
     monkeypatch.setattr(EntityBase, "__parallax_row_values__", named)
     meta = cataloged_for(ACCOUNT).meta
-    proven = write_projection(prepare_model(ACCOUNT, edition="e1")).preparation
+    proven = write_projection(
+        prepare_model(ACCOUNT, edition="e1", binding=TEST_BINDING)
+    ).preparation
     for preparation in (proven, preparation_for(meta)):
         source = TypedKeyedInsertSource(new_account())
         prepared = source.prepare(

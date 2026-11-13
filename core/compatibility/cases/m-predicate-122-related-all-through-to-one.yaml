@@ -11,7 +11,7 @@ when:
           endsWith: {path: label, value: e}
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 left join basket_owner t1 on t1.id = t0.owner_id where not exists (select 1 from basket t2 where t2.owner_id = t1.id and not (t2.label like ?) is true)'}
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from px.basket t0 left join px.basket_owner t1 on t1.id = t0.owner_id where not exists (select 1 from px.basket t2 where t2.owner_id = t1.id and not (t2.label like ?) is true)'}
     binds: ['%e']
   graph:
     Basket:

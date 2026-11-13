@@ -23,6 +23,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.unit_work import MISSING_TARGET, STALE_WRITE, TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
@@ -50,8 +51,8 @@ _BIN = f"{_NAMESPACE}.Bin"
 
 
 def _db(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    db = own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
     db.transact(
         lambda tx: [
             tx.insert(Shelf(id=1, name="top")),
@@ -75,7 +76,7 @@ def _control(profile_run: Any, *statements: str) -> None:
 
 
 def _bins(profile_run: Any) -> list[tuple[object, ...]]:
-    rows = profile_run.port.execute("select id, label, quantity from pc_bin order by id", [])
+    rows = profile_run.port.execute("select id, label, quantity from px.pc_bin order by id", [])
     return [tuple(row) for row in rows]
 
 
@@ -187,7 +188,7 @@ def test_an_update_a_before_update_trigger_suppresses_is_not_counted(profile_run
     db = _db(profile_run)
     _control(
         profile_run,
-        "create trigger pc_bin_unchanged before update on pc_bin "
+        "create trigger pc_bin_unchanged before update on px.pc_bin "
         "for each row execute function suppress_redundant_updates_trigger()",
     )
     # Bins 1 and 3 already hold label "a": the trigger skips both, so neither is
@@ -261,7 +262,9 @@ def test_a_statement_failure_surfaces_at_the_call_and_dooms_the_transaction(
     profile_run: Any,
 ) -> None:
     db = _db(profile_run)
-    _control(profile_run, "alter table pc_bin add constraint pc_bin_stocked check (quantity >= 0)")
+    _control(
+        profile_run, "alter table px.pc_bin add constraint pc_bin_stocked check (quantity >= 0)"
+    )
     caught: list[BaseException] = []
 
     def fn(tx: TxnContext) -> None:
@@ -286,9 +289,9 @@ def test_a_deferred_constraint_a_predicate_write_violates_fails_at_commit(
     db = _db(profile_run)
     _control(
         profile_run,
-        "create table pc_ref (id bigint primary key, shelf_id bigint not null "
-        "references pc_shelf (id) deferrable initially deferred)",
-        "insert into pc_ref (id, shelf_id) values (1, 2)",
+        "create table px.pc_ref (id bigint primary key, shelf_id bigint not null "
+        "references px.pc_shelf (id) deferrable initially deferred)",
+        "insert into px.pc_ref (id, shelf_id) values (1, 2)",
     )
     answered: list[int] = []
 

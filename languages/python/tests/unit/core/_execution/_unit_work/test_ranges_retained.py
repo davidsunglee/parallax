@@ -33,6 +33,7 @@ from parallax.core.internal.unit_work import WritePlanningRequest
 from parallax.core.internal.write_plan import PlannedClose, PredecessorRow
 from parallax.core.internal.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.internal.write_plan.plan import BoundRange, SettledWrite
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit._positional_row_support import positional_row
@@ -83,7 +84,7 @@ def _holding(item: TargetWrite, state: RetainedTargetState) -> TargetWrite:
 
 def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWrite:
     buffered = admitted_writes(POSITION, list(writes))
-    plan = build_write_planner(POSITION).finalize(
+    plan = build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,

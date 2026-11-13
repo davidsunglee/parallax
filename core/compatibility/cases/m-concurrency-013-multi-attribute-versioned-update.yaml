@@ -14,11 +14,12 @@ when:
 then:
   statements:
     - sql:
-        postgres: update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+        postgres: update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?
       binds: [Ling, "300.00", 2, 2, 1]
   affectedRows: 1
   tableState:
-    account:
-      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
-      - { id: 2, owner: Ling, balance: "300.00", version: 2 }
-      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Ling, balance: "300.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }

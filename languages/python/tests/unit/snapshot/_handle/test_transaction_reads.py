@@ -67,6 +67,7 @@ from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -259,7 +260,7 @@ def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_loc
     assert port.calls == [
         BeginCall(),
         ReadCall(
-            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+            "select t0.id, t0.consignment_id, t0.carrier from px.consignment_leg t0 "
             "where t0.id = ? for share of t0",
             (1,),
             read_only=True,
@@ -287,9 +288,9 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, CommitCall]
     root, level = (call for call in port.calls if isinstance(call, ReadCall))
     root_sql, level_sql = root.sql, level.sql
-    assert root_sql == "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
+    assert root_sql == "select t0.id, t0.total, t0.version from px.consignment t0 where t0.id = ?"
     assert level_sql == (
-        "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
+        "select t0.id, t0.consignment_id, t0.carrier from px.consignment_leg t0 "
         "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
     )
 
@@ -322,7 +323,8 @@ def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
     db_for(mx.MIXED_STRATEGY_MODEL, port).find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
     assert port.calls == [
         ReadCall(
-            "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 where t0.id = ?",
+            "select t0.id, t0.consignment_id, t0.carrier from px.consignment_leg t0 where t0.id "
+            "= ?",
             (1,),
             read_only=True,
         )
@@ -347,7 +349,9 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
             ]
         )
     )
-    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     statement = mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
@@ -377,7 +381,9 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
         )
     )
     rate = MODELS["rate"]
-    db = own_root(Database.connect(port, rate, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        Database.connect(port, rate, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     statement = im.DepositRate.where(im.DepositRate.all).as_of(valid_time=LATEST, tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
@@ -432,7 +438,7 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 1
     sql = write_ops[0].sql
-    assert sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert sql == "update px.balance set out_z = ? where bal_id = ? and out_z = ?"
 
 
 def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields() -> None:
@@ -455,7 +461,9 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(write_ops) == 2  # the close, then the merged chain
     close_sql, close_binds = write_ops[0].sql, write_ops[0].binds
-    assert close_sql == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    assert (
+        close_sql == "update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+    )
     assert close_binds == (
         FIXED,
         1,
@@ -465,7 +473,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     chain_sql, chain_binds = write_ops[1].sql, write_ops[1].binds
     assert (
         chain_sql
-        == "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
+        == "insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
     assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, INFINITY_INSTANT)
 
@@ -720,7 +728,7 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     retained = observation.predecessor.document
     close, opened = (op for op in port.calls if isinstance(op, WriteCall))
     head, tail = inserted_rows(opened)
-    assert close.sql.startswith(f"update {table} set out_z")
+    assert close.sql.startswith(f"update px.{table} set out_z")
     assert handler.documents
     assert handler.mutated == []
     if layout == "document":
@@ -778,7 +786,9 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     from parallax.core import Pin
 
     port = ScriptedAdapter(Read(rows=_balance_history_rows()))
-    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
     # `scans_resolved_axis` reads the resolved Temporal Selections alone, so no
     # other clause can stand between the scan and its classification.
@@ -790,7 +800,9 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
-    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
@@ -819,7 +831,9 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))])),
         Transact(Read(rows=_balance_history_rows())),
     )
-    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
+    db = own_root(
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED), binding=TEST_BINDING)
+    ).using_database_login()
     pinned = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert _retained_evidence(pinned) is not None
 
@@ -882,7 +896,7 @@ def test_a_locking_temporal_close_missing_its_row_is_a_stale_write__m_temporal_r
         db_for(BALANCE, port).transact(_terminate_balance_1, concurrency="locking")
     assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
     (close,) = [call for call in port.calls if isinstance(call, WriteCall)]
-    assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ?"
+    assert close.sql == "update px.balance set out_z = ? where bal_id = ? and out_z = ?"
 
 
 def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_read_011() -> None:
@@ -899,7 +913,7 @@ def test_a_retried_temporal_close_gates_on_the_start_its_retry_read__m_temporal_
     db_for(BALANCE, port).transact(_terminate_balance_1)
     closes = [call for call in port.calls if isinstance(call, WriteCall)]
     assert {close.sql for close in closes} == {
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
+        "update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     }
     assert [close.binds[-1] for close in closes] == [observed, reread]
 
@@ -947,7 +961,7 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     close_sql = write_ops[0].sql
     close_binds = write_ops[0].binds
-    assert close_sql.startswith("update branch set out_z = ")
+    assert close_sql.startswith("update px.branch set out_z = ")
     assert in_z in close_binds  # the OBSERVED Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
     assert any(
@@ -971,7 +985,9 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
 
     with raises_code(UsageError, "query-target-not-in-model") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -990,7 +1006,12 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
 
     with raises_code(UnsupportedError, "execution-feature-deferred") as caught:
         own_root(
-            Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
+            Database.connect(
+                ScriptedAdapter(Transact()),
+                POLICY_MODEL,
+                clock=FixedClock(FIXED),
+                binding=TEST_BINDING,
+            )
         ).using_database_login().transact(fn)
     assert caught.value.code == "execution-feature-deferred"
     assert "has deferred snapshot-history-includes and" in caught.value.args[1]
@@ -1009,7 +1030,7 @@ def test_tx_find_read_query_resolution_rejects_before_a_pending_write_can_flush(
         assert port.calls == [BeginCall()]
 
     own_root(
-        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     assert port.calls == [BeginCall(), WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)), CommitCall()]
 
@@ -1030,7 +1051,7 @@ def test_a_bad_continuation_is_refused_before_a_pending_write_can_flush() -> Non
         assert [type(call) for call in port.calls] == [BeginCall]
 
     own_root(
-        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login().transact(fn)
     assert [type(call) for call in port.calls] == [BeginCall, WriteCall, CommitCall]
 
@@ -1041,7 +1062,7 @@ def test_a_writable_transaction_read_executes_a_deep_include_to_its_leaf(
 ) -> None:
     with ScriptedAdapter(Transact(*deep.deep_order_reads())) as port:
         database = own_root(
-            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login()
         assert database.transact(lambda tx: leaves(read(tx))) == deep.LEAF_ITEMS
     assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
@@ -1053,7 +1074,7 @@ def test_a_read_only_transaction_read_executes_a_deep_include_to_its_leaf(
 ) -> None:
     with ScriptedAdapter(Transact(*deep.deep_order_reads())) as port:
         database = own_root(
-            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+            Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING)
         ).using_database_login()
         assert database.read_only(lambda tx: leaves(read(tx))) == deep.LEAF_ITEMS
     assert len([call for call in port.calls if isinstance(call, ReadCall)]) == 5
@@ -1066,7 +1087,7 @@ def test_a_transaction_read_past_a_back_reference_is_refused_before_any_statemen
 ) -> None:
     port = ScriptedAdapter(Transact())
     database = own_root(
-        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED))
+        Database.connect(port, ORDERS_MODEL, clock=FixedClock(FIXED), binding=TEST_BINDING)
     ).using_database_login()
     with pytest.raises(UsageError, match="back-reference") as refused:
         getattr(database, lane)(read)
@@ -1128,7 +1149,7 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
 
     db_for(POLICY_MODEL, port).transact(fn)
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_ops[0].sql.startswith("update coverage set out_z = ")
+    assert write_ops[0].sql.startswith("update px.coverage set out_z = ")
     assert any(10 in op.binds for op in write_ops)
 
 
@@ -1151,7 +1172,9 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
 
     db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_op.sql == "update obs_slip set memo = ?, version = ? where id = ? and version = ?"
+    assert (
+        write_op.sql == "update px.obs_slip set memo = ?, version = ? where id = ? and version = ?"
+    )
     assert write_op.binds == ("after", 5, 10, 4)
 
 
@@ -1201,7 +1224,7 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
     assert (
         write_op.sql
-        == "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+        == "update px.obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert write_op.binds[1:3] == (10, "tug")
 
@@ -1240,6 +1263,6 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
     (write_op,) = [op for op in port.calls if isinstance(op, WriteCall)]
     assert (
         write_op.sql
-        == "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
+        == "update px.obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert write_op.binds[1:3] == (11, "barge")

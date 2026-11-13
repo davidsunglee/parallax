@@ -66,6 +66,7 @@ from parallax.core.internal.write_plan import (
     object_state_key_from_observation,
 )
 from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from tests._support.bindings import bound_model
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
@@ -134,13 +135,13 @@ _VOYAGE_DOCUMENT: Mapping[str, object] = {
 
 
 def _unit_of_work(model: AcceptedMetamodel) -> UnitOfWork:
-    planner = build_write_planner(model)
+    planner = build_write_planner(bound_model(model))
     return UnitOfWork(
         lifetime=TxnAttemptLifetime(),
         settings=TransactionSettings(),
         clock=FixedClock(_FIXED),
         meta=model,
-        execute_write_steps=SimulatedWriteSteps(planner.payloads, model, POSTGRES),
+        execute_write_steps=SimulatedWriteSteps(planner.payloads, bound_model(model), POSTGRES),
         execute_counted_step=NO_COUNTED_STEPS,
         acquire_rows=NO_ROW_READS,
         planner=planner,

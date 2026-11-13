@@ -15,14 +15,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)
-        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where lower(json_value(t0.address, ?)) like lower(?)
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where lower(jsonb_extract_path_text(t0.address, ?)) like lower(?)
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where lower(json_value(t0.address, ?)) like lower(?)
       binds:
         postgres: [city, OSLO]
         mariadb: ['$.city', OSLO]
   referenceSql:
-    postgres: select id, name from customer where upper(address ->> 'city') = 'OSLO'
-    mariadb: select id, name from customer where upper(nullif(json_unquote(json_extract(address, '$.city')), 'null')) = 'OSLO'
+    postgres: select id, name from px.customer where upper(address ->> 'city') = 'OSLO'
+    mariadb: select id, name from px.customer where upper(nullif(json_unquote(json_extract(address, '$.city')), 'null')) = 'OSLO'
   rows:
     - { id: 1, name: Ada }
     - { id: 2, name: Linus }

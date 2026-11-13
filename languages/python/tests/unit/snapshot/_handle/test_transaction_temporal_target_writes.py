@@ -270,7 +270,7 @@ def test_a_locking_target_refuses_a_stale_or_missing_start_at_the_call(
 
     _db(port).transact(fn, concurrency="locking")
     (insert,) = _writes(port)
-    assert insert.sql.startswith("insert into where_position")
+    assert insert.sql.startswith("insert into px.where_position")
 
 
 def test_a_locking_target_reuses_a_held_read_of_exactly_its_start() -> None:
@@ -686,7 +686,7 @@ def test_an_equal_temporal_patch_keeps_its_milestone_by_a_guard_on_the_stated_st
     port = ScriptedAdapter(Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write()))
     _db(port).transact(lambda tx: _patch(tx, value="100.00"))
     (guard,) = _writes(port)
-    assert guard.sql.startswith("update where_position set in_z = in_z where id = ?")
+    assert guard.sql.startswith("update px.where_position set in_z = in_z where id = ?")
     assert guard.binds[-1] == _T0
     lost = ScriptedAdapter(
         Transact(Read(rows=[_rectangle(_JAN, INFINITY_INSTANT)]), Write(affected=0))
@@ -834,7 +834,7 @@ def test_a_temporal_target_of_a_subtype_writes_its_own_table_and_refuses_a_sibli
 
     db_for(RATE, port).transact(fn)
     (coverage,) = _reads(port)
-    assert " from deposit_rate t0 " in coverage.sql
+    assert " from px.deposit_rate t0 " in coverage.sql
     assert all("deposit_rate" in call.sql for call in _writes(port))
 
 
@@ -1049,7 +1049,7 @@ def _sql_kinds(port: ScriptedAdapter) -> list[str]:
             kinds.append("read")
         elif sql.startswith("insert"):
             kinds.append("insert")
-        elif sql.startswith("update where_tag"):
+        elif sql.startswith("update px.where_tag"):
             kinds.append("predicate")
         elif " set out_z = " in sql:
             kinds.append("close")
@@ -1127,7 +1127,7 @@ def test_an_observed_write_after_a_predicate_write_continues_from_the_row_the_fi
     ]
     first, second = _writes(port)[-2], _writes(port)[-1]
     for revision, value in ((first, "O"), (second, "again")):
-        assert revision.sql.startswith("update where_position set acct_num = ? where")
+        assert revision.sql.startswith("update px.where_position set acct_num = ? where")
         assert revision.binds[0] == value
         assert Decimal("100.00") not in revision.binds
 
@@ -1205,7 +1205,7 @@ def test_a_destruction_after_a_predicate_write_removes_what_the_first_opened_unr
     # read for it again.
     assert len(_reads(port)) == 2
     removal = _writes(port)[-1]
-    assert removal.sql.startswith("delete from where_position where id = ? and thru_z = ?")
+    assert removal.sql.startswith("delete from px.where_position where id = ? and thru_z = ?")
 
 
 def test_a_deferred_unit_completes_before_a_later_statement_is_prepared(
@@ -1261,7 +1261,7 @@ def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_c
 
     db_for(BALANCE, port).transact(fn)
     (coverage,) = _reads(port)
-    assert coverage.sql.endswith("from balance t0 where t0.bal_id = ? and t0.out_z = ?")
+    assert coverage.sql.endswith("from px.balance t0 where t0.bal_id = ? and t0.out_z = ?")
     (close,) = _writes(port)
     assert close.sql.endswith("where bal_id = ? and out_z = ? and in_z = ?")
     assert close.binds[1:] == (1, "infinity", _T0)

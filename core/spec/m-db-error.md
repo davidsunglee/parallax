@@ -45,6 +45,12 @@ interprets nothing; this module owns the rules below. A driver whose
 diagnostics carry no name, or whose detecting path named none, yields no name at
 all — which is an ordinary outcome, not a defect. An empty name is no name.
 
+The error likewise carries the **constraint's physical table** — its schema or
+database and its local name, as structured components — when those diagnostics
+report both, and nothing otherwise. The pair `(physical table, constraint name)`
+is what identifies a violated constraint: equal names on tables in different
+locations are different constraints.
+
 The **violated Physical Index Name** is that same name read as an Index. It is
 present only when the category is `uniqueViolation` and a name is: a check,
 exclusion, or foreign-key constraint reports its own name through the same driver
@@ -56,11 +62,12 @@ backing index is as legitimate as one `m-schema-delta` generated, and matching
 nothing a rollout created is an ordinary negative correlation. Deciding whether a
 name corresponds to an index a rollout created, and what to do about it, is the
 host's question: it holds its own Schema Delta's created-index provenance and
-compares the two. Nothing in this module or below it consults a rollout.
+compares the pair `(physical table, name)` with it. Nothing in this module or below it consults a rollout.
 
-A `constraintViolation`'s name may be one `m-storage-layout` compiled for a
-temporal table's interval check or exclusion. The error carries it as reported
-and is not otherwise distinguished from any other check or exclusion failure.
+A `constraintViolation`'s name may be one a resolved binding derived for a
+temporal table's interval check or exclusion (`m-database-binding`). The error
+carries it as reported and is not otherwise distinguished from any other check
+or exclusion failure.
 
 ## Per-dialect native codes
 

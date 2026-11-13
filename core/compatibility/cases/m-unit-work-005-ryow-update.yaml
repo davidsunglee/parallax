@@ -20,7 +20,7 @@ when:
       note: observe account 1 (balance 100.00, version 1) before the update, inside the SAME unit of work as the write below
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: "100.00", version: 1 }
@@ -34,7 +34,7 @@ when:
       note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the unit of work commits at the group's last step below
       statements:
         - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["175.00", 2, 1, 1]
     - uow: observed-update
       objectQuery:
@@ -47,7 +47,7 @@ when:
       note: a dependent find MUST observe the flushed update (read-your-own-writes); the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: "175.00", version: 2 }

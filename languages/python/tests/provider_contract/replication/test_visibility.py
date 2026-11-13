@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from parallax.snapshot import ReadOnlyTxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import (
     MODEL,
@@ -35,7 +36,9 @@ _LAGGING = [3, 4]
 
 def _lagging_scope(profile_run: Any) -> Any:
     pair = replicated(profile_run)
-    db = own_root(connect(pair.adapter(synchronous_commit="local"), MODEL)).using_database_login()
+    db = own_root(
+        connect(pair.adapter(synchronous_commit="local"), MODEL, binding=TEST_BINDING)
+    ).using_database_login()
     return pair, db
 
 

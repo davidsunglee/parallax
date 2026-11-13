@@ -41,7 +41,7 @@ def render_relationship_candidate(
     return RenderedRelationshipCandidate(
         entity=branch.entity,
         alias=alias,
-        table=branch.table,
+        table=parent.table_sql(branch.table),
         correlation_sql=correlation,
         family_guard_sql=guard_sql,
         family_guard_binds=guard_binds,

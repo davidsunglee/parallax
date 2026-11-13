@@ -677,8 +677,10 @@ Creating an Index depends on each component's Neutral Type and String bound besi
 its Column, because that is what index admissibility depends on: Postgres indexes
 every Column type this system spells, while InnoDB refuses an index over an
 unbounded String without a key length and therefore answers with why not for such
-a component. Dropping an Index depends on its Table, because MariaDB names it in
-the statement and Postgres does not.
+a component. Dropping an Index depends on its physical table: Postgres names the
+Index within that table's schema (`drop index <schema>.<index>`), never through
+the connection's search path, and MariaDB names the qualified table
+(`drop index <index> on <database>.<table>`).
 
 A Physical Index Name need only be a nonempty identifier. A name read back off a
 driver diagnostic is as legitimate as a generated one, and the identifier byte
@@ -713,12 +715,33 @@ lowering step substitutes another proof for the count.
 ### Identifier byte limit
 
 `maxIdentifierBytes` is how many bytes of an identifier the database stores
-without truncating it: **63** on Postgres and **64** on MariaDB. It constrains
-DERIVED identifiers only. An authored Table or Column name is the author's own
-and is spelled as declared; a Physical Index Name is shortened to this limit by
-`m-schema-delta`'s rule. A temporal constraint name is compiled with the model,
-before any Dialect is chosen, so `m-storage-layout` fits it to a fixed 63 bytes,
-within both limits.
+without truncating it: **63** on Postgres and **64** on MariaDB. A Physical
+Index Name is shortened to this limit by `m-schema-delta`'s rule, and a temporal
+constraint name is fitted to a fixed 63 bytes, within both limits, by
+`m-storage-layout`'s rule. A resolved table or sequence component is never
+shortened: the dialect's **identifier validity** refuses an empty component, one
+containing NUL, or one longer than this limit, which `m-database-binding`
+reports as `binding-identifier-invalid` before anything executes. An authored
+Column name is spelled as declared.
+
+### Physical table references
+
+A physical table is structured components — its location's qualifier
+components, then its local name — and the dialect renders it by quoting each
+component alone under the identifier-quoting rule and joining them with `.`
+(`px.account`, `"legacy.crm"."Customer"`, `` px.`position` ``). A dot inside a
+component is part of it, never qualification. Quoting doubles an embedded quote
+character (`"a""b"`). Only resolution renders table references
+(`m-database-binding`); statements and DDL reuse the rendering.
+
+### Object-name scopes
+
+Tables and sequences share one relation namespace per qualifier on both
+dialects, and CHECK constraints are scoped per table on both. Index names —
+including the indexes backing PRIMARY KEY, UNIQUE, and EXCLUDE constraints —
+are scoped per qualifier on Postgres (they share the relation namespace) and per
+table on MariaDB. `m-database-binding` and `m-schema-delta` consult this scope
+rather than assuming either.
 
 ### Bind parameter limit
 
@@ -831,9 +854,10 @@ placement-free spelling `m-read-planning-012` already witnesses).
   This normative artifact defines the exact canonical Parallax keyword-based
   quoting sets, not complete vendor keyword catalogs; it does not promise to
   cover every vendor-reserved identifier. A member of that set or otherwise
-  non-simple name MUST be quoted, for both tables and columns. The quote
-  character is per-dialect: Postgres double-quotes (`"order"`), MariaDB backticks
-  (`` `order` ``). `position` belongs only to the MariaDB set, so the Bitemporal
+  non-simple name MUST be quoted, for every table, qualifier, and column
+  component. The quote character is per-dialect: Postgres double-quotes
+  (`"order"`), MariaDB backticks (`` `order` ``), and an embedded quote character
+  is doubled. `position` belongs only to the MariaDB set, so the Bitemporal
   `m-temporal-write` cases quote it on MariaDB and leave it bare on Postgres.
   `m-descriptor-001` witnesses the shared `order` keyword, and the `m-sql`
   normalizer preserves quoted identifiers. Implementations derive their sets

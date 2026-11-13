@@ -123,13 +123,13 @@ _CASH_DETAIL = "cast(jsonb_extract_path_text(p.payload, ?) as numeric) = ?"
     [
         pytest.param(
             f"p.kind = ? and {_CASH_DETAIL} and exists "
-            "(select 1 from payment_document q where q.kind = ?)",
+            "(select 1 from px.payment_document q where q.kind = ?)",
             ["cash", "detail", 25, "card"],
             {2: Numeric(18, 2)},
             id="its-own-scope-tags-the-owner",
         ),
         pytest.param(
-            f"{_CASH_DETAIL} and exists (select 1 from payment_document q where q.kind = ?)",
+            f"{_CASH_DETAIL} and exists (select 1 from px.payment_document q where q.kind = ?)",
             ["detail", 25, "cash"],
             {},
             id="a-nested-scope-tags-another-row",
@@ -146,12 +146,12 @@ def test_a_shared_document_is_typed_only_by_a_tag_its_own_row_is_pinned_to(
     where: str, binds: list[object], expected: dict[int, object]
 ) -> None:
     model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
-    sql = f"select p.id from payment_document p where {where}"
+    sql = f"select p.id from px.payment_document p where {where}"
     assert statement_bind_positions(model, sql, binds) == expected
 
 
 _FLOAT_ARRAYS = (
-    "insert into writable_scalars(id, f32, f64) select * from "
+    "insert into px.writable_scalars(id, f32, f64) select * from "
     "unnest(cast(? as bigint[]), cast(? as real[]), cast(? as double precision[]))"
 )
 
@@ -175,7 +175,7 @@ def test_a_declared_float_column_array_refuses_negative_zero_at_any_element() ->
 def test_a_document_column_array_refuses_a_negative_zero_leaf_in_any_row() -> None:
     case = corpus_case("m-document-codec-016")
     sql = (
-        "insert into sample(id, label, profile) select * from "
+        "insert into px.sample(id, label, profile) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
     golden: list[Any] = [
@@ -196,7 +196,7 @@ def test_a_document_column_array_refuses_a_negative_zero_leaf_in_any_row() -> No
 def test_a_shared_document_column_array_types_each_row_by_its_own_tag() -> None:
     model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
     sql = (
-        "insert into payment_document(id, kind, payload) select * from "
+        "insert into px.payment_document(id, kind, payload) select * from "
         "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
     binds: list[object] = [

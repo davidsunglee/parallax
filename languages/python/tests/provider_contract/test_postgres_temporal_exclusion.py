@@ -21,19 +21,20 @@ import pytest
 from parallax.conformance import models, provision
 from parallax.conformance.models import default_models_dir
 from parallax.core import Attr, Bitemporal, DomainModel, Int32, TxTemporal, attr
-from parallax.core.internal import storage_layout
 from parallax.core.internal.base import INFINITY
+from parallax.core.internal.database_binding import ResolvedTemporalConstraints
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.metamodel import Metamodel, Table
+from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.storage_layout import TemporalHistoryConstraints
+from tests._support.bindings import TEST_BINDING, TEST_SCHEMA, bound_model
 
 _JAN, _FEB, _MAR, _APR, _JUN, _SEP = (
     datetime(2024, month, 1, tzinfo=UTC) for month in (1, 2, 3, 4, 6, 9)
 )
 
 _INSERT_POSITION = (
-    "insert into position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
+    "insert into px.position (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
     "values (?, ?, ?, ?, ?, ?, ?)"
 )
 _CONSTRAINTS = (
@@ -42,7 +43,7 @@ _CONSTRAINTS = (
     "where t1.relname = ? and t0.contype in ('p', 'x') order by t0.contype"
 )
 _OVERLAPS = (
-    "select a.pos_id, a.in_z, b.in_z from position a join position b "
+    "select a.pos_id, a.in_z, b.in_z from px.position a join px.position b "
     "on a.pos_id = b.pos_id and a.ctid < b.ctid "
     "and tstzrange(a.in_z, a.out_z) && tstzrange(b.in_z, b.out_z) "
     "and tstzrange(a.from_z, a.thru_z) && tstzrange(b.from_z, b.thru_z) "
@@ -57,21 +58,19 @@ _OLDER_TRANSACTIONS = (
 
 def _provision(profile_run: Any, model_file: str) -> Metamodel:
     model = models.load_model(default_models_dir() / model_file)
-    for statement in provision.reset_statements():
+    for statement in provision.reset_statements(frozenset({TEST_SCHEMA})):
         profile_run.port.execute_write(statement, [])
-    for statement in provision.schema_statements(model):
+    for statement in provision.schema_statements(bound_model(model)):
         profile_run.port.execute_write(statement, [])
     return model
 
 
-def _constraints(model: Metamodel, table: str) -> TemporalHistoryConstraints:
-    (layout,) = (
-        layout
-        for layout in storage_layout.storage_layout_facet_of(model).tables
-        if layout.table == Table(table)
+def _constraints(model: Metamodel, table: str) -> ResolvedTemporalConstraints:
+    (resolved,) = (
+        resolved for resolved in bound_model(model).tables if resolved.physical.name == table
     )
-    assert layout.temporal_constraints is not None
-    return layout.temporal_constraints
+    assert resolved.temporal_constraints is not None
+    return resolved.temporal_constraints
 
 
 def _refused(profile_run: Any, sql: str, binds: list[object]) -> DatabaseError:
@@ -117,11 +116,11 @@ def test_the_catalog_holds_each_named_key_and_immediate_exclusion(
     ) == [("btree_gist",)]
     for table in tables:
         constraints = _constraints(model, table)
-        key = ", ".join(slot.column.name for slot in constraints.primary_key.columns)
+        key = ", ".join(slot.column.name for slot in constraints.definition.primary_key.columns)
         rows = profile_run.port.execute(_CONSTRAINTS, [table])
         assert [tuple(row) for row in rows] == [
             (constraints.primary_key_name, "p", f"PRIMARY KEY ({key})", False),
-            (constraints.exclusion_name, "x", _exclusion_definition(constraints), False),
+            (constraints.exclusion_name, "x", _exclusion_definition(constraints.definition), False),
         ]
 
 
@@ -152,7 +151,7 @@ def test_an_external_update_moving_a_row_into_overlap_is_refused(profile_run: An
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 2, _MAR, INFINITY, _JAN, INFINITY])
     error = _refused(
         profile_run,
-        "update position set from_z = ? where pos_id = ? and thru_z = ?",
+        "update px.position set from_z = ? where pos_id = ? and thru_z = ?",
         [_FEB, 1, INFINITY],
     )
     assert error.constraint_name == _constraints(model, "position").exclusion_name
@@ -165,13 +164,13 @@ def test_rows_meeting_in_either_period_are_not_an_overlap(profile_run: Any) -> N
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 3, _JUN, INFINITY, _JAN, _FEB])
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 4, _JUN, INFINITY, _FEB, INFINITY])
     profile_run.port.execute_write(_INSERT_POSITION, [2, "B", 5, _JAN, INFINITY, _JAN, INFINITY])
-    assert len(profile_run.port.execute("select t0.pos_id from position t0", [])) == 5
+    assert len(profile_run.port.execute("select t0.pos_id from px.position t0", [])) == 5
 
 
 def test_a_shared_table_refuses_overlap_across_subtypes_of_one_key(profile_run: Any) -> None:
     model = _provision(profile_run, "instrument.yaml")
     insert = (
-        "insert into instrument (id, kind, price, from_z, thru_z, in_z, out_z) "
+        "insert into px.instrument (id, kind, price, from_z, thru_z, in_z, out_z) "
         "values (?, ?, ?, ?, ?, ?, ?)"
     )
     profile_run.port.execute_write(insert, [1, "bond", 1, _JAN, _JUN, _JAN, INFINITY])
@@ -183,13 +182,14 @@ def test_each_concrete_table_constrains_only_its_own_rows(profile_run: Any) -> N
     model = _provision(profile_run, "rate.yaml")
     for table in ("deposit_rate", "loan_rate"):
         profile_run.port.execute_write(
-            f"insert into {table} (id, amount, from_z, thru_z, in_z, out_z) "
+            f"insert into px.{table} (id, amount, from_z, thru_z, in_z, out_z) "
             "values (?, ?, ?, ?, ?, ?)",
             [1, 1, _JAN, INFINITY, _JAN, INFINITY],
         )
     error = _refused(
         profile_run,
-        "insert into loan_rate (id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)",
+        "insert into px.loan_rate (id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, "
+        "?, ?)",
         [1, 2, _MAR, _JUN, _FEB, INFINITY],
     )
     assert error.constraint_name == _constraints(model, "loan_rate").exclusion_name
@@ -227,7 +227,7 @@ def test_every_accepted_key_type_is_excluded_by_equality(
     profile_run: Any, table: str, key: object, bitemporal: bool
 ) -> None:
     model = model_of(_KEYED)
-    profile_run.reset(model, {})
+    profile_run.reset(model, {}, TEST_BINDING)
     # The second row ends elsewhere than the first on every axis, so only the
     # exclusion can refuse it.
     columns = "id, from_z, thru_z, in_z, out_z" if bitemporal else "id, in_z, out_z"
@@ -235,7 +235,7 @@ def test_every_accepted_key_type_is_excluded_by_equality(
         ([_JAN, INFINITY], [_MAR, _JUN]) if bitemporal else ([], [])
     )
     marks = ", ".join(["?"] * (len(valid[0]) + 3))
-    insert = f"insert into {table} ({columns}) values ({marks})"
+    insert = f"insert into px.{table} ({columns}) values ({marks})"
     profile_run.port.execute_write(insert, [key, *valid[0], _JAN, _JUN])
     error = _refused(profile_run, insert, [key, *valid[1], _FEB, INFINITY])
     assert error.constraint_name == _constraints(model, table).exclusion_name
@@ -244,20 +244,21 @@ def test_every_accepted_key_type_is_excluded_by_equality(
 # --------------------------------------------------------------------------- #
 # Adopting named keys, checks, and the exclusion on an existing table         #
 # --------------------------------------------------------------------------- #
-def _legacy(profile_run: Any, *, inverted: bool = True) -> TemporalHistoryConstraints:
+def _legacy(profile_run: Any, *, inverted: bool = True) -> ResolvedTemporalConstraints:
     """A ``position`` table as a release before named temporal keys created it:
     its key named by the database, no checks, no exclusion, and illegal rows:
     an overlapping pair and, if ``inverted``, a row whose interval is inverted."""
     constraints = _constraints(_provision(profile_run, "position.yaml"), "position")
-    assert constraints.valid_axis is not None
+    assert constraints.valid_check_name is not None
     for name in (
         constraints.exclusion_name,
-        constraints.transaction_axis.interval_check_name,
-        constraints.valid_axis.interval_check_name,
+        constraints.transaction_check_name,
+        constraints.valid_check_name,
     ):
-        profile_run.port.execute_write(f"alter table position drop constraint {name}", [])
+        profile_run.port.execute_write(f"alter table px.position drop constraint {name}", [])
     profile_run.port.execute_write(
-        f"alter table position rename constraint {constraints.primary_key_name} to position_pkey",
+        f"alter table px.position rename constraint {constraints.primary_key_name} to "
+        "position_pkey",
         [],
     )
     if inverted:
@@ -267,10 +268,10 @@ def _legacy(profile_run: Any, *, inverted: bool = True) -> TemporalHistoryConstr
     return constraints
 
 
-def _add_exclusion(constraints: TemporalHistoryConstraints, *, not_valid: bool = False) -> str:
+def _add_exclusion(constraints: ResolvedTemporalConstraints, *, not_valid: bool = False) -> str:
     deferral = " not valid" if not_valid else ""
     return (
-        f"alter table position add constraint {constraints.exclusion_name} exclude using gist "
+        f"alter table px.position add constraint {constraints.exclusion_name} exclude using gist "
         "(pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&)"
         f"{deferral}"
     )
@@ -281,7 +282,7 @@ def test_the_validation_queries_find_every_inverted_and_overlapping_row(
 ) -> None:
     _legacy(profile_run)
     inverted = profile_run.port.execute(
-        "select pos_id from position where not (in_z < out_z) or not (from_z < thru_z)", []
+        "select pos_id from px.position where not (in_z < out_z) or not (from_z < thru_z)", []
     )
     assert [row[0] for row in inverted] == [1]
     assert [row[0] for row in profile_run.port.execute(_OVERLAPS, [])] == [2]
@@ -313,19 +314,20 @@ def test_an_exclusion_cannot_be_staged_unvalidated(profile_run: Any) -> None:
 
 def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any) -> None:
     constraints = _legacy(profile_run)
-    assert constraints.valid_axis is not None
-    profile_run.port.execute_write("update position set out_z = ? where pos_id = ?", [_APR, 1])
+    assert constraints.valid_check_name is not None
+    profile_run.port.execute_write("update px.position set out_z = ? where pos_id = ?", [_APR, 1])
     profile_run.port.execute_write(
-        "update position set thru_z = ? where pos_id = ? and val = ?", [_JUN, 2, 1]
+        "update px.position set thru_z = ? where pos_id = ? and val = ?", [_JUN, 2, 1]
     )
     ((corrected_at,),) = profile_run.port.execute("select clock_timestamp()", [])
     _await_older_transactions(profile_run, corrected_at)
     assert profile_run.port.execute(_OVERLAPS, []) == []
     for statement in (
-        f"alter table position rename constraint position_pkey to {constraints.primary_key_name}",
-        f"alter table position add constraint {constraints.transaction_axis.interval_check_name} "
+        "alter table px.position rename constraint position_pkey to "
+        f"{constraints.primary_key_name}",
+        f"alter table px.position add constraint {constraints.transaction_check_name} "
         "check (in_z < out_z)",
-        f"alter table position add constraint {constraints.valid_axis.interval_check_name} "
+        f"alter table px.position add constraint {constraints.valid_check_name} "
         "check (from_z < thru_z)",
         "create extension if not exists btree_gist",
         _add_exclusion(constraints),
@@ -334,5 +336,5 @@ def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any
     rows = profile_run.port.execute(_CONSTRAINTS, ["position"])
     assert [tuple(row) for row in rows] == [
         (constraints.primary_key_name, "p", "PRIMARY KEY (pos_id, thru_z, out_z)", False),
-        (constraints.exclusion_name, "x", _exclusion_definition(constraints), False),
+        (constraints.exclusion_name, "x", _exclusion_definition(constraints.definition), False),
     ]

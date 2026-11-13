@@ -24,6 +24,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.internal.base import INFINITY
 from parallax.snapshot import connect
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, BALANCE, FIXED, PERSON
@@ -142,7 +143,7 @@ def writable_reads(
             sample()
             assert len(held) == count
 
-        with connect(port, model, clock=FixedClock(FIXED)) as root:
+        with connect(port, model, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:
             root.using_database_login().transact(body)
 
     return run

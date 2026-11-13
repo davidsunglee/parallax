@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Final
 
 from parallax.core.internal.base import InternalError
+from parallax.core.internal.database_binding import PhysicalTable
 from parallax.core.internal.dialect import Dialect, Unsupported
 from parallax.evolution.internal.model_evolution import UnilateralEvolution
 from parallax.evolution.internal.schema_delta._order import order
@@ -18,26 +19,29 @@ from parallax.evolution.internal.schema_delta._values import (
     CollidingTemporalConstraint,
     CollisionGroup,
     CreatedIndex,
-    PhysicalLocation,
     SchemaDelta,
+    SchemaTarget,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
 
 __all__ = [
     "CreatedIndex",
-    "PhysicalLocation",
     "SchemaDelta",
+    "SchemaTarget",
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",
     "schema_delta",
 ]
 
 
-def schema_delta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelta:
-    """Render a `UnilateralEvolution` as SQL statements for a Dialect.
+def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
+    """Render a `UnilateralEvolution` as SQL statements for its later binding's backend.
 
-    The ordered ``dialect`` statements that apply ``evolution`` to a database.
+    The ordered statements that apply ``evolution`` to a database, naming every
+    table as the later binding places it and dropping every index where the
+    earlier binding placed it. Nothing here moves, renames, or provisions a
+    table, schema, or sequence.
 
     The complete plan is named, ordered, and rendered before any statement
     escapes, so a Dialect that cannot spell one operation yields no partial
@@ -51,7 +55,8 @@ def schema_delta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelt
     idempotent; creating a unique Index is the authoritative validation of the
     data already stored.
     """
-    built = plan(evolution, dialect)
+    dialect = evolution.later.dialect
+    built = plan(evolution)
     _reject_collisions(built, dialect)
     ordered = order(built.operations)
     rendered = tuple((operation, render(operation, dialect)) for operation in ordered)
@@ -67,7 +72,7 @@ def schema_delta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelt
         created_indices=tuple(
             CreatedIndex(
                 physical_index_name=operation.name,
-                physical_table=operation.definition.table,
+                physical_table=operation.definition.table.physical,
                 logical_index_identity=operation.definition.index,
                 unique=operation.definition.unique,
             )
@@ -122,13 +127,17 @@ def _spelled_index(definition: CollidingIndex) -> str:
     unique = "unique " if definition.unique else ""
     return (
         f"{unique}Index {definition.index.entity.canonical}.{definition.index.name} on "
-        f"{definition.table.name} ({components}) [{definition.presence.value}]"
+        f"{_spelled_table(definition.table)} ({components}) [{definition.presence.value}]"
     )
 
 
 def _spelled_constraint(constraint: CollidingTemporalConstraint) -> str:
     columns = ", ".join(column.name for column in constraint.columns)
     return (
-        f"temporal {constraint.kind} on {constraint.table.name} ({columns}) "
+        f"temporal {constraint.kind} on {_spelled_table(constraint.table)} ({columns}) "
         f"[{constraint.presence.value}]"
     )
+
+
+def _spelled_table(table: PhysicalTable) -> str:
+    return ".".join((*table.qualifier, table.name))

@@ -21,7 +21,7 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?
               binds: [2, infinity]
           expectRows:
             - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
@@ -29,7 +29,7 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?
+                postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?
               binds: [2, infinity]
           expectRows:
             - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
@@ -37,7 +37,7 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
+                postgres: update px.balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?
               binds: [2, infinity, "2024-02-01T00:00:00.000000Z"]
           affectedRows: [1]
       - B:
@@ -45,7 +45,7 @@ when:
           blocks: true
           statements:
             - sql:
-                postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+                postgres: update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
               binds: ["2024-09-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
           affectedRows: [1]
       - A:
@@ -54,28 +54,29 @@ when:
           kind: write
           statements:
             - sql:
-                postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+                postgres: insert into px.balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
               binds: [2, B, "999.00", "2024-09-01T00:00:00.000000Z", infinity]
           affectedRows: [1]
       - B:
           kind: commit
 then:
   tableState:
-    balance:
-      - bal_id: 1
-        acct_num: A
-        val: "100.00"
-        in_z: "2024-01-01T00:00:00.000000Z"
-        out_z: "2024-06-01T00:00:00.000000Z"
-      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
-      - bal_id: 2
-        acct_num: B
-        val: "200.00"
-        in_z: "2024-02-01T00:00:00.000000Z"
-        out_z: "2024-09-01T00:00:00.000000Z"
-      - { bal_id: 2, acct_num: B, val: "999.00", in_z: "2024-09-01T00:00:00.000000Z", out_z: infinity }
-      - bal_id: 3
-        acct_num: C
-        val: "50.00"
-        in_z: "2024-03-01T00:00:00.000000Z"
-        out_z: "2024-08-01T00:00:00.000000Z"
+    px:
+      balance:
+        - bal_id: 1
+          acct_num: A
+          val: "100.00"
+          in_z: "2024-01-01T00:00:00.000000Z"
+          out_z: "2024-06-01T00:00:00.000000Z"
+        - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+        - bal_id: 2
+          acct_num: B
+          val: "200.00"
+          in_z: "2024-02-01T00:00:00.000000Z"
+          out_z: "2024-09-01T00:00:00.000000Z"
+        - { bal_id: 2, acct_num: B, val: "999.00", in_z: "2024-09-01T00:00:00.000000Z", out_z: infinity }
+        - bal_id: 3
+          acct_num: C
+          val: "50.00"
+          in_z: "2024-03-01T00:00:00.000000Z"
+          out_z: "2024-08-01T00:00:00.000000Z"

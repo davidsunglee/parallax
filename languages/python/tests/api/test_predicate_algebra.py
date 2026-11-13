@@ -37,6 +37,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import TablePerConcreteSubtype
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, is_view_loaded
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NS = "predicate.algebra"
@@ -171,8 +172,8 @@ _MODEL = DomainModel(
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
 
 
 def _write(profile_run: Any, statements: Iterable[str]) -> None:
@@ -274,7 +275,7 @@ def test_json_null_and_non_array_carriers_hold_no_elements(
     _write(
         profile_run,
         [
-            "insert into pa_basket (id, tags, scores, parcels) "
+            "insert into px.pa_basket (id, tags, scores, parcels) "
             "values (5, 'null', '[]', '[]'), "
             "(6, '\"a\"', '[]', '[]'), (7, '{\"0\": \"a\"}', '[]', '[]')",
         ],
@@ -291,7 +292,7 @@ def test_a_wrong_kind_or_null_element_is_an_unknown_candidate(profile_run: Any) 
     _write(
         profile_run,
         [
-            "insert into pa_basket (id, tags, scores, parcels) values "
+            "insert into px.pa_basket (id, tags, scores, parcels) values "
             "(1, '[]', '[1, \"1\", null]', '[]'), (2, '[]', '[1]', '[]')",
         ],
     )
@@ -370,9 +371,9 @@ def test_shared_joins_page_stream_and_lock_only_their_roots(profile_run: Any) ->
         found = [basket.id for basket in tx.find(query.order_by(Basket.id.asc())).results()]
         control = profile_run.control()
         try:
-            control.execute("select id from pa_owner where id = 1 for update nowait", [])
+            control.execute("select id from px.pa_owner where id = 1 for update nowait", [])
             with pytest.raises(Exception, match="could not obtain lock"):
-                control.execute("select id from pa_basket where id = 1 for update nowait", [])
+                control.execute("select id from px.pa_basket where id = 1 for update nowait", [])
         finally:
             control.close()
         return found
@@ -541,16 +542,16 @@ def _seed_plans(profile_run: Any) -> None:
         profile_run,
         (
             *(
-                "insert into pa_plan (id, premium, from_z, thru_z, in_z, out_z) values "
+                "insert into px.pa_plan (id, premium, from_z, thru_z, in_z, out_z) values "
                 f"({plan}, {premium}, '{valid}', '{until}', '{since}', '{out}')"
                 for plan, premium, valid, until, since, out in rows
             ),
             *(
-                "insert into pa_policy (id, plan_id, note, from_z, thru_z, in_z, out_z) "
+                "insert into px.pa_policy (id, plan_id, note, from_z, thru_z, in_z, out_z) "
                 f"values ({policy}, {policy}, 'n', {current})"
                 for policy in (1, 2, 3)
             ),
-            "insert into pa_desk (id, plan_id) values (1, 1), (2, 2), (3, 3), (4, null)",
+            "insert into px.pa_desk (id, plan_id) values (1, 1), (2, 2), (3, 3), (4, null)",
         ),
     )
 
@@ -615,9 +616,9 @@ def test_a_locking_read_through_a_temporal_join_locks_only_its_roots(profile_run
         found = [desk.id for desk in tx.find(query).results()]
         control = profile_run.control()
         try:
-            control.execute("select id from pa_plan where id = 1 for update nowait", [])
+            control.execute("select id from px.pa_plan where id = 1 for update nowait", [])
             with pytest.raises(Exception, match="could not obtain lock"):
-                control.execute("select id from pa_desk where id = 1 for update nowait", [])
+                control.execute("select id from px.pa_desk where id = 1 for update nowait", [])
         finally:
             control.close()
         return found
@@ -645,9 +646,9 @@ def _seed_shelves(profile_run: Any, db: ScopedDatabase) -> None:
     _write(
         profile_run,
         [
-            "insert into pa_shelf (id, tags, scores, parcels) values (3, 'null', '[]', '[]'), "
+            "insert into px.pa_shelf (id, tags, scores, parcels) values (3, 'null', '[]', '[]'), "
             "(4, '\"a\"', '[]', '[]'), (5, '[\"a\", 7, null]', '[]', '[]')",
-            "insert into pa_crate (id, shelf_id) values "
+            "insert into px.pa_crate (id, shelf_id) values "
             "(1, 1), (2, 1), (3, 2), (4, 3), (5, 4), (6, 5), (7, null)",
         ],
     )
@@ -696,9 +697,9 @@ def test_owner_results_deliver_wire_streamed_paged_and_root_locked_roots_alike(
         found = [crate.id for crate in tx.find(ordered).results()]
         control = profile_run.control()
         try:
-            control.execute("select id from pa_shelf where id = 1 for update nowait", [])
+            control.execute("select id from px.pa_shelf where id = 1 for update nowait", [])
             with pytest.raises(Exception, match="could not obtain lock"):
-                control.execute("select id from pa_crate where id = 1 for update nowait", [])
+                control.execute("select id from px.pa_crate where id = 1 for update nowait", [])
         finally:
             control.close()
         return found
@@ -714,7 +715,7 @@ def test_a_cast_that_can_fail_reads_only_the_owners_a_root_reaches(profile_run: 
     _write(
         profile_run,
         [
-            "insert into pa_shelf (id, tags, scores, parcels) values "
+            "insert into px.pa_shelf (id, tags, scores, parcels) values "
             '(9, \'["a"]\', \'[1.5]\', \'[{"sku": "p", "qty": "x", "notes": []}]\')'
         ],
     )
@@ -722,7 +723,7 @@ def test_a_cast_that_can_fail_reads_only_the_owners_a_root_reaches(profile_run: 
     assert _ids(db, Crate, scores.any(scores.element > 1)) == {1, 2}
     assert _ids(db, Crate, parcels.all(Parcel.qty > 1)) == {1, 2, 3, 4, 5, 6, 7}
     assert _ids(db, Crate, Crate.shelf.tags.any(Crate.shelf.tags.element == "a")) == {1, 2, 6}
-    _write(profile_run, ["insert into pa_crate (id, shelf_id) values (8, 9)"])
+    _write(profile_run, ["insert into px.pa_crate (id, shelf_id) values (8, 9)"])
     for failing in (scores.any(scores.element > 1), parcels.all(Parcel.qty > 1)):
         with pytest.raises(Exception) as raised:
             db.find(Crate.where(failing)).results()
@@ -763,12 +764,12 @@ def _seed_tariffs(profile_run: Any) -> None:
     _write(
         profile_run,
         [
-            "insert into pa_tariff (id, codes, from_z, thru_z, in_z, out_z) values "
+            "insert into px.pa_tariff (id, codes, from_z, thru_z, in_z, out_z) values "
             "(1, '[\"z\"]', '2024-01-01', 'infinity', '2024-01-01', '2024-04-01'), "
             "(1, '[\"a\"]', '2024-01-01', '2024-06-01', '2024-04-01', 'infinity'), "
             "(1, '[\"b\"]', '2024-06-01', 'infinity', '2024-04-01', 'infinity'), "
             "(2, '[]', '2024-01-01', 'infinity', '2024-01-01', 'infinity')",
-            "insert into pa_counter (id, tariff_id) values (1, 1), (2, 1), (3, 2), (4, null)",
+            "insert into px.pa_counter (id, tariff_id) values (1, 1), (2, 1), (3, 2), (4, null)",
         ],
     )
 
@@ -864,7 +865,10 @@ def test_a_readless_write_converts_only_the_elements_of_owners_its_rows_reach(
     _seed_shelves(profile_run, db)
     _write(
         profile_run,
-        ["insert into pa_shelf (id, tags, scores, parcels) values (9, '[\"a\"]', '[1.5]', '[]')"],
+        [
+            "insert into px.pa_shelf (id, tags, scores, parcels) values (9, '[\"a\"]', '[1.5]', "
+            "'[]')"
+        ],
     )
     scores = Crate.shelf.scores
     # The occupancy test shares the shelf, so the write selects its keys; the
@@ -872,7 +876,7 @@ def test_a_readless_write_converts_only_the_elements_of_owners_its_rows_reach(
     failing = Crate.shelf.tags.any() & scores.any(scores.element > 1)
     db.transact(lambda tx: tx.delete_where(Crate.where(failing)))
     assert _ids(db, Crate, Crate.shelf.exists() | Crate.shelf.not_exists()) == {3, 4, 5, 6, 7}
-    _write(profile_run, ["insert into pa_crate (id, shelf_id) values (8, 9)"])
+    _write(profile_run, ["insert into px.pa_crate (id, shelf_id) values (8, 9)"])
     with pytest.raises(Exception) as raised:
         db.transact(lambda tx: tx.delete_where(Crate.where(failing)))
     cause: BaseException | None = raised.value

@@ -17,7 +17,6 @@ from parallax.conformance.guide_models import (
     Supplier,
 )
 from parallax.core import (
-    POSTGRES,
     TABLE_PER_CONCRETE_SUBTYPE,
     TX_TIME,
     VALID_TIME,
@@ -38,7 +37,7 @@ from parallax.core import (
     attr,
 )
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresEndpoint, PostgresRole
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -146,12 +145,13 @@ __all__ = [
 ]
 
 
-def table_statements(model: DomainModel) -> tuple[str, ...]:
-    """The SQL that creates the model's tables in an empty PostgreSQL schema.
+def table_statements(model: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
+    """The SQL that creates the model's tables where ``binding`` places them.
 
-    Parallax never changes a schema itself: run these with your migration tool.
+    Parallax never changes a schema itself, and never creates one: create the
+    binding's schemas and run these with your migration tool.
     """
-    return schema_delta(evolve(ABSENT, model), POSTGRES).statements
+    return schema_delta(evolve(ABSENT, model, later_binding=binding)).statements
 
 
 def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:
@@ -159,9 +159,9 @@ def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:
     return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=Password(password)))
 
 
-def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
+def add_and_find_a_customer(adapter: PostgresAdapter, binding: PostgresBinding) -> Customer:
     model = DomainModel(Customer, Order)
-    with connect(adapter, model) as database:
+    with connect(adapter, model, binding=binding) as database:
         db = database.using_database_login()
         db.transact(
             lambda tx: tx.insert(Customer(id=1, name="Ada Lovelace", email="ada@example.com"))
@@ -880,12 +880,13 @@ def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> 
 
 
 def connect_with_transaction_defaults(
-    adapter: PostgresAdapter, model: DomainModel
+    adapter: PostgresAdapter, model: DomainModel, binding: PostgresBinding
 ) -> Database[PostgresRole]:
     """Every transaction of this root makes at most four attempts and prefers locking."""
     return connect(
         adapter,
         model,
+        binding=binding,
         options=TxnOptions(retry=RetryPolicy(max_retries=3), concurrency="locking"),
     )
 

@@ -16,14 +16,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and jsonb_extract_path_text(t1.payload, ?) = ?)
-        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and json_value(t1.payload, ?) = ?)
+        postgres: select t0.id, not t0.payload is null, t0.payload from px.traveler t0 where exists (select 1 from px.trip t1 where t1.traveler_id = t0.id and jsonb_extract_path_text(t1.payload, ?) = ?)
+        mariadb: select t0.id, not t0.payload is null, t0.payload from px.traveler t0 where exists (select 1 from px.trip t1 where t1.traveler_id = t0.id and json_value(t1.payload, ?) = ?)
       binds:
         postgres: [destination, Oslo]
         mariadb: ['$.destination', Oslo]
   referenceSql:
-    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from traveler where id in (select traveler_id from trip where payload ->> 'destination' = 'Oslo')
-    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where id in (select traveler_id from trip where json_value(payload, '$.destination') = 'Oslo')
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from px.traveler where id in (select traveler_id from px.trip where payload ->> 'destination' = 'Oslo')
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from px.traveler where id in (select traveler_id from px.trip where json_value(payload, '$.destination') = 'Oslo')
   rows:
     - { id: 1, display_name: Ada, score: 7, joined_on: '2026-01-15', note: north wing }
   databaseCalls: 1

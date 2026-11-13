@@ -44,6 +44,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, SnapshotStream, TxnContext, connect
 from tests._support.binary32 import narrowed, rounded_once, shortest_spelling
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "native.float"
@@ -225,8 +226,8 @@ def _wire32(authored: float) -> float:
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
 
 
 def _wire_query(entity: str, **clauses: object) -> dict[str, object]:

@@ -38,7 +38,7 @@ from parallax.conformance._postgres_control import (
     PostgresInterleavedExecution,
     initialized_session,
 )
-from parallax.core import UsageError
+from parallax.core import ServingModel, UsageError, prepare_model
 from parallax.core.internal.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
@@ -50,6 +50,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.execution import RetryPolicy, TxnOptions
 from parallax.postgres import PostgresRole
+from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
 from tests.unit._contention_support import observing
@@ -202,7 +203,10 @@ def _context(runtime: Any) -> Any:
 
 def _execution(connection: _FakeConnection, **kwargs: Any) -> PostgresInterleavedExecution:
     return PostgresInterleavedExecution(
-        _adapter(connection), SNAP_ORDERS_MODEL, observation=LifecycleObservation(), **kwargs
+        _adapter(connection),
+        ServingModel(prepare_model(SNAP_ORDERS_MODEL, binding=TEST_BINDING, edition="orders")),
+        observation=LifecycleObservation(),
+        **kwargs,
     )
 
 
@@ -233,13 +237,13 @@ def test_a_control_forwards_every_verb_to_the_shipped_execution_over_its_session
     assert control.dialect is POSTGRES
     assert control.execute("select 1 as n", []) == [(1,)]
     assert control.execute_pipeline((PipelineStatement("select 1 as n"),)) == [[(1,)]]
-    assert control.execute_write("update t set a = 1", [2]) == 1
+    assert control.execute_write("update px.t set a = 1", [2]) == 1
     control.transaction(lambda port: port.execute("select 1 as n", []))
 
     assert connection.statements == [
         ("select 1 as n", ()),
         ("select 1 as n", ()),
-        ("update t set a = 1", (2,)),
+        ("update px.t set a = 1", (2,)),
         ("select 1 as n", ()),
     ]
     assert (connection.begins, connection.commits) == (1, 1)

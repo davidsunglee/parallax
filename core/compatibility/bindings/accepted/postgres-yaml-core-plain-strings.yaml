@@ -1,0 +1,9 @@
+format_version: 1
+backend: postgres
+default: { schema: yes }
+namespaces:
+  audit: { schema: 2024-01-01 }
+entities:
+  commerce.Customer: { schema: off, table: 1_000 }
+sequences:
+  documentNumbers: { sequence: "1:30" }

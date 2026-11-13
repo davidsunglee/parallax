@@ -26,6 +26,7 @@ from parallax.core.internal.execution import RetryPolicy, ServingModel, prepare_
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.snapshot import Database, TxnContext
+from tests._support.bindings import TEST_BINDING
 from tests._support.retry import fast_retry
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -47,7 +48,7 @@ def _run[T](
 ) -> T:
     domain = models.load_domain_model(models.default_models_dir() / f"{name}.yaml")
     model = models.accepted_model_of(domain)
-    serving = ServingModel(prepare_model(domain, edition=name))
+    serving = ServingModel(prepare_model(domain, edition=name, binding=TEST_BINDING))
     with Database.connect(
         write_adapter(port, rollback=False), serving, clock=FixedClock(_NOW)
     ) as root:

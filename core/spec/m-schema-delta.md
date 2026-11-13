@@ -13,10 +13,15 @@ rollout coordination, so it is not an input to schema generation at all.
 
 It depends on `m-model-evolution` for the description it lowers, on `m-metamodel`
 for the declarations an operation names, on `m-inheritance` for the position each
-Table materializes, on `m-storage-layout` for every physical fact, and on
-`m-dialect` for every spelling. It composes no key, no Column order, and no
-nullability of its own, and it branches on no Dialect Identity: the `Dialect`
-value passed in determines the whole output.
+Table materializes, on `m-storage-layout` for every logical layout fact, on
+`m-database-binding` for each endpoint's resolved physical tables and their
+temporal constraint names, and on `m-dialect` for every spelling. It composes no
+key, no Column order, and no nullability of its own, and it branches on no
+Dialect Identity: the later endpoint's binding names the backend, and its
+dialect determines the whole output. Every created or altered table is named as
+the later binding places it, and every dropped index where the earlier binding
+placed its table. It never emits a schema or database creation, a table move or
+rename, a data copy, or any sequence allocation.
 
 The decision record is
 [ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md).
@@ -24,7 +29,7 @@ The decision record is
 ## The generation algebra
 
 ```text
-schemaDelta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelta
+schemaDelta(evolution: UnilateralEvolution) -> SchemaDelta
 
 SchemaDelta
   statements                   ordered dialect statements, as plain strings
@@ -32,7 +37,7 @@ SchemaDelta
 
 CreatedIndex
   physicalIndexName            the name a later violation reports
-  physicalTable                the Table the Index sits on
+  physicalTable                the physical table the Index sits on: qualifier, local name
   logicalIndexIdentity         the authored Index Identity it was derived from
   unique                       whether it enforces uniqueness
 ```
@@ -167,7 +172,8 @@ any Table, so every prerequisite precedes every Table operation, in name order.
 Among the Table operations the algebra admits a total key —
 
 ```text
-orderKey(operation) = (physical Table, physicalOperationKindRank, member addressed)
+orderKey(operation) = (physical local name, physical qualifier,
+                       physicalOperationKindRank, member addressed)
 physicalOperationKindRank:
     CreateTable < AddColumn < RestateColumnDomain < CreateIndex < DropIndex
 ```
@@ -235,6 +241,10 @@ Each Physical Index Name is:
 pxi_<readable-prefix>_<fingerprint>
 ```
 
+The physical Table in both inputs is the raw local name of the table the
+endpoint's binding resolves, never its qualifier, so a qualifier-only move keeps
+every name and a local-name override changes it.
+
 The **readable input** concatenates the physical Table, the complete declaring
 Entity Identity, the authored Index name, and a unique/non-unique marker. ASCII
 letters are lowercased, digits are retained, each maximal remaining run becomes
@@ -276,10 +286,16 @@ provisioning reports, then drop the Index the catalog holds — never by a delta
 between equal model editions, which stays empty.
 
 The indices backing a temporal Table's primary key and exclusion share the same
-namespace. They enter the census under the names their Table Layouts compiled
-(`m-storage-layout`), never under a name derived here, each identified by its
-Table, its kind, and its Columns in constraint order. No delta drops one, so one
-held at either endpoint is present throughout.
+namespace. They enter the census under the names their resolved tables carry
+(`m-database-binding`), never under a name derived here, each identified by its
+physical table, mapping owner, kind, and Columns in constraint order. No delta
+drops one, so one held at either endpoint is present throughout.
+
+A name is unique within the scope the dialect gives index names
+(`m-dialect` *Object-name scopes*): every relation of one qualifier on Postgres,
+one table on MariaDB. The census groups names by that scope, so equal names in
+different scopes never collide, and identifies each definition by its physical
+table and mapping owner.
 
 ## Errors
 
@@ -290,8 +306,8 @@ Neither returns a partial Schema Delta.
 checked against the selected Dialect. If any operation is unsupported, generation
 raises one atomic error carrying the Dialect Identity and the complete nonempty
 sequence of unsupported operations in deterministic physical-operation order.
-Each record carries the operation kind, its physical location — a Table and the
-member within it, or the extension a prerequisite installs — and its causal
+Each record carries the operation kind, its schema target — a physical table and
+the member within it, or the extension a prerequisite installs — and its causal
 Evolution Operations in canonical operation order. This does **not** reclassify
 the dialect-independent Unilateral Evolution as coordinated: renderer support is a
 deployment capability, not a model-semantic fact.

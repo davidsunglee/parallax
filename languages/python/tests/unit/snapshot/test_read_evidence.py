@@ -57,6 +57,7 @@ from parallax.snapshot import (
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of, stored_provenance_of
 from tests._support import mirrored_models as mm
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
@@ -436,7 +437,7 @@ def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"street": "Main"})}])
     )
     customer = (
-        own_root(connect(port, vo.CUSTOMER_MODEL))
+        own_root(connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING))
         .using_database_login()
         .find(vo.Customer.where(vo.Customer.id == 1))
         .result()
@@ -1016,7 +1017,7 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}]),
         Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}]),
     )
-    db = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
+    db = own_root(connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING)).using_database_login()
     query = vo.Customer.where(vo.Customer.id == 1)
     typed = db.find(query).checked().result()
     wire = db.wire.find(query).checked().result()
@@ -1042,7 +1043,7 @@ def test_a_classified_temporal_roots_hydrated_data_answers_its_pin_without_write
     row, _document = _census_row()
     invalid = {**row, "payload": StructuredDocument({"title": "Northbound", "legs": {"port": "x"}})}
     port = ScriptedAdapter(Read(rows=[invalid]), Read(rows=[invalid]))
-    db = own_root(connect(port, _CENSUS_MODEL)).using_database_login()
+    db = own_root(connect(port, _CENSUS_MODEL, binding=TEST_BINDING)).using_database_login()
     query = _CensusCharter.where(_CensusCharter.id == 1).as_of(valid_time=_CENSUS_AT)
     typed = db.find(query).checked().result()
     wire = db.wire.find(query).checked().result()
@@ -1214,7 +1215,7 @@ def test_a_hydratable_invalid_root_carries_no_write_authority() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": StructuredDocument({"city": "Berlin"})}])
     )
     record = (
-        own_root(connect(port, vo.CUSTOMER_MODEL))
+        own_root(connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING))
         .using_database_login()
         .find(vo.Customer.where(vo.Customer.id == 1))
         .checked()
@@ -1268,7 +1269,9 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         tx.amend(invalid_customer.edit(name="Rejected"))
 
     with raises_code(UsageError, "write-value-not-stored"):
-        own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)
+        own_root(
+            connect(port, vo.CUSTOMER_MODEL, binding=TEST_BINDING)
+        ).using_database_login().transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 

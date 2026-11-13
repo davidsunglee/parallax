@@ -25,6 +25,7 @@ from reference_harness.case_runner import (
     _pk_sequence_counter_column,
     _pk_sequence_target,
 )
+from reference_harness.database_binding import resolve_binding
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -88,8 +89,10 @@ class _FakePkDb:
 
 def _pass_case() -> SimpleNamespace:
     model = load_model(COMPATIBILITY_ROOT, "models/pk-sequence.yaml")
+    placement = resolve_binding(model, {"default": {"schema": "px"}}, "postgres")
     return SimpleNamespace(
         model=model,
+        placement=lambda dialect: placement,
         write_sequence=[
             {"mutation": "amend", "entity": "parallax.compatibility.PkSequence"},
             {"mutation": "insert", "entity": "parallax.compatibility.Pass"},
@@ -102,8 +105,8 @@ def test_oracle_passes_for_correct_allocation() -> None:
     case = _pass_case()
     db = _FakePkDb(
         {
-            "pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
-            "pk_sequence": [{"name": "pass_seq", "next_val": 4}],
+            "px.pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
+            "px.pk_sequence": [{"name": "pass_seq", "next_val": 4}],
         }
     )
     _assert_pk_allocation(case, db)  # no raise
@@ -113,8 +116,8 @@ def test_oracle_rejects_wrong_ids() -> None:
     case = _pass_case()
     db = _FakePkDb(
         {
-            "pass": [{"id": 1, "zone": "A"}, {"id": 3, "zone": "B"}],  # gap-skipped wrongly
-            "pk_sequence": [{"name": "pass_seq", "next_val": 4}],
+            "px.pass": [{"id": 1, "zone": "A"}, {"id": 3, "zone": "B"}],  # gap-skipped wrongly
+            "px.pk_sequence": [{"name": "pass_seq", "next_val": 4}],
         }
     )
     with pytest.raises(CaseFailure):
@@ -125,8 +128,8 @@ def test_oracle_rejects_wrong_counter() -> None:
     case = _pass_case()
     db = _FakePkDb(
         {
-            "pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
-            "pk_sequence": [{"name": "pass_seq", "next_val": 3}],  # should be 4
+            "px.pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
+            "px.pk_sequence": [{"name": "pass_seq", "next_val": 3}],  # should be 4
         }
     )
     with pytest.raises(CaseFailure):
@@ -262,7 +265,7 @@ def test_pkgen_temporal_composition_allocation_oracle_passes() -> None:
     case = _pkgen_case("m-pk-gen-014")
     db = _FakePkDb(
         {
-            "audit_entry": [
+            "px.audit_entry": [
                 {
                     "id": 1,
                     "note": "opened",
@@ -270,7 +273,7 @@ def test_pkgen_temporal_composition_allocation_oracle_passes() -> None:
                     "out_z": "infinity",
                 }
             ],
-            "audit_seq": [{"name": "entry_seq", "next_val": 2}],
+            "px.audit_seq": [{"name": "entry_seq", "next_val": 2}],
         }
     )
     _assert_pk_allocation(case, db)  # no raise

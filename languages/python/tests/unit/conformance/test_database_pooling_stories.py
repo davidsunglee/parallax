@@ -18,6 +18,7 @@ from parallax.core.internal.execution import (
     ServingModel,
     prepare_model,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, ScriptedRuntime
 
 _ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
@@ -26,7 +27,7 @@ _ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
 def test_each_routed_scope_requests_the_policy_its_story_names() -> None:
     adapter = ScriptedAdapter(Read(rows=[_ROW], times=3), routes=("writer", "reader"))
 
-    balances = stories.each_scope_reads_where_its_policy_says(adapter, ACCOUNT_MODEL)
+    balances = stories.each_scope_reads_where_its_policy_says(adapter, ACCOUNT_MODEL, TEST_BINDING)
 
     assert balances == stories.RoutedBalances(
         [Decimal("10.00")], [Decimal("10.00")], [Decimal("10.00")]
@@ -41,7 +42,10 @@ def test_both_model_forms_close_the_runtime_each_opened() -> None:
     adapter = ScriptedAdapter(Read(rows=[_ROW], times=2))
 
     stories.a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
-        adapter, ACCOUNT_MODEL, ServingModel(prepare_model(ACCOUNT_MODEL, edition="published"))
+        adapter,
+        ACCOUNT_MODEL,
+        TEST_BINDING,
+        ServingModel(prepare_model(ACCOUNT_MODEL, edition="published", binding=TEST_BINDING)),
     )
 
     assert adapter.closes == 2
@@ -50,7 +54,7 @@ def test_both_model_forms_close_the_runtime_each_opened() -> None:
 def test_two_handles_over_one_configuration_each_close_their_own_runtime() -> None:
     adapter = ScriptedAdapter(Read(rows=[_ROW], times=2))
 
-    stories.one_configuration_opens_independent_runtimes(adapter, ACCOUNT_MODEL)
+    stories.one_configuration_opens_independent_runtimes(adapter, ACCOUNT_MODEL, TEST_BINDING)
 
     assert adapter.closes == 2
 
@@ -69,7 +73,7 @@ def test_the_lifespan_opens_the_handle_off_the_loop_as_well() -> None:
     adapter = _Recording()
 
     async def scenario() -> int:
-        async with stories.pooled_database(adapter, ACCOUNT_MODEL):
+        async with stories.pooled_database(adapter, ACCOUNT_MODEL, TEST_BINDING):
             return threading.get_ident()
 
     loop_thread = asyncio.run(scenario())

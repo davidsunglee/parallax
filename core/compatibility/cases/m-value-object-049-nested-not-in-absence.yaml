@@ -15,14 +15,14 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where not jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))
-        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where not json_value(t0.address, ?) in (?)
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where not jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from px.customer t0 where not json_value(t0.address, ?) in (?)
       binds:
         postgres: [city, [Oslo]]
         mariadb: ['$.city', Oslo]
   referenceSql:
-    postgres: select id, name from customer where address ->> 'city' not in ('Oslo')
-    mariadb: select id, name from customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') not in ('Oslo')
+    postgres: select id, name from px.customer where address ->> 'city' not in ('Oslo')
+    mariadb: select id, name from px.customer where nullif(json_unquote(json_extract(address, '$.city')), 'null') not in ('Oslo')
   rows:
     - { id: 3, name: Grace }
     - { id: 6, name: Rin }

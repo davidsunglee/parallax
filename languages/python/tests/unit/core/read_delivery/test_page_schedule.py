@@ -44,6 +44,7 @@ from parallax.core.internal.read_delivery._page import (
 )
 from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.temporal_read import Pin
+from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells
 from tests.unit._root_publication_support import deferring_schedule
@@ -72,7 +73,7 @@ class Journal(TxTemporal, table="journal", namespace=_NAMESPACE):
 
 
 _META = model_of(DomainModel(Ledger, Entry, Account, Journal))
-_CATALOGED = CatalogedModel(_META)
+_CATALOGED = CatalogedModel(_META, TEST_BINDING)
 _ANIMAL = corpus_model("animal")
 
 _ROWS: Mapping[str, Mapping[str, object]] = {
@@ -335,7 +336,7 @@ def _shared_keyless_animal(owners: Sequence[int]) -> tuple[Page, int]:
     reaching it."""
     animals = _view("Person", "animals", _ANIMAL)
     builder = PageBuilder(ViewSchema.of(animals))
-    cataloged = CatalogedModel(_ANIMAL)
+    cataloged = CatalogedModel(_ANIMAL, TEST_BINDING)
     animal = convert_cells(
         cataloged,
         compiled_read(_ANIMAL, "Animal"),

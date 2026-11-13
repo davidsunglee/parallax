@@ -40,6 +40,7 @@ from parallax.core.internal.sql_gen._predicate import (
     render_predicate,
     render_shared_sources,
 )
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import (
     compile_nonempty_read,
@@ -66,29 +67,35 @@ def test_a_to_many_any_lowers_to_a_correlated_exists() -> None:
     op = oa.Quantifier(
         "any", "Order.items", oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="A-100")
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from order_item t1 where t1.order_id = t0.id and t1.sku = ?)"
+        "where exists (select 1 from px.order_item t1 where t1.order_id = t0.id and t1.sku = ?)"
     )
     assert compiled.statement.binds == ("A-100",)
 
 
 def test_a_bare_any_is_a_pure_correlation_check() -> None:
     compiled = compile_read(
-        oa.Quantifier("any", "Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+        oa.Quantifier("any", "Order.items"),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
     )
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from order_item t1 where t1.order_id = t0.id)"
+        "where exists (select 1 from px.order_item t1 where t1.order_id = t0.id)"
     )
     assert compiled.statement.binds == ()
 
 
 def test_none_negates_the_correlated_exists() -> None:
     compiled = compile_read(
-        oa.Quantifier("none", "Order.items"), ORDERS, POSTGRES, target(ORDERS, "Order")
+        oa.Quantifier("none", "Order.items"),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
     )
     assert compiled.statement.sql.endswith(
-        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id)"
+        "where not exists (select 1 from px.order_item t1 where t1.order_id = t0.id)"
     )
 
 
@@ -98,9 +105,9 @@ def test_all_lowers_to_the_absence_of_a_counterexample() -> None:
     op = oa.Quantifier(
         "all", "Order.items", oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="A-100")
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id "
+        "where not exists (select 1 from px.order_item t1 where t1.order_id = t0.id "
         "and not (t1.sku = ?) is true)"
     )
 
@@ -112,9 +119,10 @@ def test_a_quantifier_composes_inside_the_boolean_algebra() -> None:
             oa.Comparison(op="eq", subject=oa.FieldSubject("Order.active"), value=True),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id) and t0.active = ?"
+        "where not exists (select 1 from px.order_item t1 where t1.order_id = t0.id) and "
+        "t0.active = ?"
     )
     assert compiled.statement.binds == (True,)
 
@@ -130,10 +138,13 @@ def test_a_disjunctive_where_stays_whole_beside_the_correlation(
         )
     )
     compiled = compile_read(
-        oa.Quantifier(kind, "Order.items", either), ORDERS, POSTGRES, target(ORDERS, "Order")
+        oa.Quantifier(kind, "Order.items", either),
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "Order"),
     )
     assert compiled.statement.sql.endswith(
-        "exists (select 1 from order_item t1 where t1.order_id = t0.id "
+        "exists (select 1 from px.order_item t1 where t1.order_id = t0.id "
         "and (t1.sku = ? or t1.sku = ?))"
     )
 
@@ -147,18 +158,18 @@ def test_a_negated_conjunction_is_negated_whole() -> None:
             )
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where not (not exists (select 1 from order_item t1 where t1.order_id = t0.id) "
+        "where not (not exists (select 1 from px.order_item t1 where t1.order_id = t0.id) "
         "and t0.active = ?)"
     )
 
 
 def test_a_field_past_a_primary_key_hop_reads_a_shared_join() -> None:
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada")
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ?"
+        "from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id where t1.name = ?"
     )
     assert compiled.statement.binds == ("Ada",)
 
@@ -166,9 +177,9 @@ def test_a_field_past_a_primary_key_hop_reads_a_shared_join() -> None:
 def test_a_field_past_a_unique_foreign_key_hop_reads_a_shared_join() -> None:
     # The passport's unique `person_id` index is the key the correlation fixes.
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Person.passport.number"), value="P-AAA")
-    compiled = compile_read(op, PERSON, POSTGRES, target(PERSON, "Person"))
+    compiled = compile_read(op, bound_model(PERSON), POSTGRES, target(PERSON, "Person"))
     assert compiled.statement.sql.endswith(
-        "from person t0 left join passport t1 on t1.person_id = t0.id where t1.number = ?"
+        "from px.person t0 left join px.passport t1 on t1.person_id = t0.id where t1.number = ?"
     )
 
 
@@ -176,10 +187,10 @@ def test_a_field_two_hops_away_joins_each_hop_in_source_alias_order() -> None:
     op = oa.Comparison(
         op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="Ada"
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
-        "left join orders t2 on t2.id = t1.order_id where t2.name = ?"
+        "from px.order_status t0 left join px.order_item t1 on t1.id = t0.order_item_id "
+        "left join px.orders t2 on t2.id = t1.order_id where t2.name = ?"
     )
 
 
@@ -187,13 +198,15 @@ def test_readless_predicate_dml_nests_the_scalars_in_source_alias_order() -> Non
     # The inner hop's subquery precedes the outer one's FROM in the statement
     # text, so it takes the lower alias (m-sql source-order allocation).
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Parking.vehicle.dealer.name"), value="N")
-    compiled = compile_write_predicate(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Parking"))
+    compiled = compile_write_predicate(
+        op, bound_model(TRAVERSAL), POSTGRES, target(TRAVERSAL, "Parking")
+    )
     assert not compiled.selection
     assert compiled.sql == (
-        "(select (select t1.name from traversal_dealer t1 where t1.id = t2.dealer_id) "
-        "from traversal_bike t2 where t2.id = vehicle_id union all "
-        "select (select t3.name from traversal_dealer t3 where t3.id = t4.dealer_id) "
-        "from traversal_car t4 where t4.id = vehicle_id) = ?"
+        "(select (select t1.name from px.traversal_dealer t1 where t1.id = t2.dealer_id) "
+        "from px.traversal_bike t2 where t2.id = vehicle_id union all "
+        "select (select t3.name from px.traversal_dealer t3 where t3.id = t4.dealer_id) "
+        "from px.traversal_car t4 where t4.id = vehicle_id) = ?"
     )
 
 
@@ -201,11 +214,14 @@ def test_readless_predicate_dml_selects_its_keys_through_a_shared_prefix() -> No
     op = oa.Comparison(
         op="eq", subject=oa.FieldSubject("OrderStatus.orderItem.order.name"), value="Ada"
     )
-    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_write_predicate(
+        op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus")
+    )
     assert compiled.selection
     assert compiled.sql == (
-        "select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
-        "left join orders t2 on t2.id = t1.order_id where t2.name = ?"
+        "select t0.id from px.order_status t0 left join px.order_item t1 on t1.id = "
+        "t0.order_item_id "
+        "left join px.orders t2 on t2.id = t1.order_id where t2.name = ?"
     )
     assert compiled.binds == ("Ada",)
 
@@ -213,12 +229,12 @@ def test_readless_predicate_dml_selects_its_keys_through_a_shared_prefix() -> No
 def test_presence_of_a_nullable_many_to_one_correlates_on_the_owned_fk() -> None:
     compiled = compile_read(
         oa.Presence("exists", "OrderStatus.orderItem"),
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
         target(ORDERS, "OrderStatus"),
     )
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)"
+        "where exists (select 1 from px.order_item t1 where t1.id = t0.order_item_id)"
     )
 
 
@@ -232,20 +248,20 @@ def test_a_nested_quantifier_continues_the_single_alias_sequence() -> None:
             oa.Comparison(op="eq", subject=oa.FieldSubject("code"), value="PACKED"),
         ),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from order_item t1 where t1.order_id = t0.id and "
-        "exists (select 1 from order_status t2 where t2.order_item_id = t1.id and t2.code = ?))"
+        "where exists (select 1 from px.order_item t1 where t1.order_id = t0.id and "
+        "exists (select 1 from px.order_status t2 where t2.order_item_id = t1.id and t2.code = ?))"
     )
     assert compiled.statement.binds == ("PACKED",)
 
 
 def test_none_over_a_nested_quantifier_negates_only_the_outer_hop() -> None:
     op = oa.Quantifier("none", "Order.items", oa.Quantifier("any", "statuses"))
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where not exists (select 1 from order_item t1 where t1.order_id = t0.id and "
-        "exists (select 1 from order_status t2 where t2.order_item_id = t1.id))"
+        "where not exists (select 1 from px.order_item t1 where t1.order_id = t0.id and "
+        "exists (select 1 from px.order_status t2 where t2.order_item_id = t1.id))"
     )
 
 
@@ -259,11 +275,11 @@ def test_sibling_hops_continue_one_alias_sequence() -> None:
             oa.Quantifier("any", "Order.tags"),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from order_item t1 where t1.order_id = t0.id and "
-        "exists (select 1 from order_status t2 where t2.order_item_id = t1.id)) and "
-        "exists (select 1 from order_tag t3 where t3.order_id = t0.id)"
+        "where exists (select 1 from px.order_item t1 where t1.order_id = t0.id and "
+        "exists (select 1 from px.order_status t2 where t2.order_item_id = t1.id)) and "
+        "exists (select 1 from px.order_tag t3 where t3.order_id = t0.id)"
     )
 
 
@@ -272,49 +288,58 @@ def test_sibling_hops_continue_one_alias_sequence() -> None:
 # --------------------------------------------------------------------------- #
 def test_tph_abstract_root_relationship_target_injects_no_tag() -> None:
     compiled = compile_read(
-        oa.Quantifier("any", "Person.animals"), ANIMAL, POSTGRES, target(ANIMAL, "Person")
+        oa.Quantifier("any", "Person.animals"),
+        bound_model(ANIMAL),
+        POSTGRES,
+        target(ANIMAL, "Person"),
     )
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from animal t1 where t1.owner_id = t0.id)"
+        "where exists (select 1 from px.animal t1 where t1.owner_id = t0.id)"
     )
 
 
 def test_tph_abstract_subtype_relationship_target_injects_the_in_list() -> None:
     compiled = compile_read(
-        oa.Quantifier("any", "Person.pets"), ANIMAL, POSTGRES, target(ANIMAL, "Person")
+        oa.Quantifier("any", "Person.pets"),
+        bound_model(ANIMAL),
+        POSTGRES,
+        target(ANIMAL, "Person"),
     )
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
+        "where exists (select 1 from px.animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
     )
     assert compiled.statement.binds == ("cat", "dog")
 
 
 def test_tph_relationship_narrow_to_one_concrete_lowers_to_eq() -> None:
     op = oa.Quantifier("any", "Person.pets", oa.Narrow(to=("Cat",), operand=oa.TrueNode()))
-    compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
+    compiled = compile_read(op, bound_model(ANIMAL), POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind = ?)"
+        "where exists (select 1 from px.animal t1 where t1.owner_id = t0.id and t1.kind = ?)"
     )
     assert compiled.statement.binds == ("cat",)
 
 
 def test_tph_relationship_narrow_to_abstract_subtype_matches_the_broad_relationship() -> None:
     op = oa.Quantifier("any", "Person.animals", oa.Narrow(to=("Pet",), operand=oa.TrueNode()))
-    compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
+    compiled = compile_read(op, bound_model(ANIMAL), POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
+        "where exists (select 1 from px.animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
     )
     assert compiled.statement.binds == ("cat", "dog")
 
 
 def test_tpcs_abstract_root_relationship_target_groups_every_branch_alphabetically() -> None:
     compiled = compile_read(
-        oa.Quantifier("any", "Folder.documents"), DOCUMENT, POSTGRES, target(DOCUMENT, "Folder")
+        oa.Quantifier("any", "Folder.documents"),
+        bound_model(DOCUMENT),
+        POSTGRES,
+        target(DOCUMENT, "Folder"),
     )
     assert compiled.statement.sql.endswith(
-        "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
-        "or exists (select 1 from memo t2 where t2.folder_id = t0.id) "
-        "or exists (select 1 from receipt t3 where t3.folder_id = t0.id))"
+        "where (exists (select 1 from px.invoice t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from px.memo t2 where t2.folder_id = t0.id) "
+        "or exists (select 1 from px.receipt t3 where t3.folder_id = t0.id))"
     )
 
 
@@ -322,18 +347,18 @@ def test_tpcs_relationship_narrow_drops_the_excluded_branch_but_keeps_its_alias_
     op = oa.Quantifier(
         "any", "Folder.documents", oa.Narrow(to=("FinancialDocument",), operand=oa.TrueNode())
     )
-    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
+    compiled = compile_read(op, bound_model(DOCUMENT), POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
-        "where (exists (select 1 from invoice t1 where t1.folder_id = t0.id) "
-        "or exists (select 1 from receipt t2 where t2.folder_id = t0.id))"
+        "where (exists (select 1 from px.invoice t1 where t1.folder_id = t0.id) "
+        "or exists (select 1 from px.receipt t2 where t2.folder_id = t0.id))"
     )
 
 
 def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping() -> None:
     op = oa.Quantifier("any", "Folder.documents", oa.Narrow(to=("Invoice",), operand=oa.TrueNode()))
-    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
+    compiled = compile_read(op, bound_model(DOCUMENT), POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"
+        "where exists (select 1 from px.invoice t1 where t1.folder_id = t0.id)"
     )
 
 
@@ -342,12 +367,12 @@ def test_a_universal_over_tpcs_keeps_every_branch_as_a_counterexample_source() -
     # counterexamples, so `all` searches every declared branch and lets the
     # narrow decide each branch's verdict.
     op = oa.Quantifier("all", "Folder.documents", oa.Narrow(to=("Invoice",), operand=oa.TrueNode()))
-    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
+    compiled = compile_read(op, bound_model(DOCUMENT), POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
-        "where not (exists (select 1 from invoice t1 where t1.folder_id = t0.id "
+        "where not (exists (select 1 from px.invoice t1 where t1.folder_id = t0.id "
         "and not (1 = 1) is true) "
-        "or exists (select 1 from memo t2 where t2.folder_id = t0.id and not (1 = 0) is true) "
-        "or exists (select 1 from receipt t3 where t3.folder_id = t0.id "
+        "or exists (select 1 from px.memo t2 where t2.folder_id = t0.id and not (1 = 0) is true) "
+        "or exists (select 1 from px.receipt t3 where t3.folder_id = t0.id "
         "and not (1 = 0) is true))"
     )
 
@@ -437,11 +462,11 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
         "Folder.docs",
         oa.Comparison(op="eq", subject=oa.FieldSubject("owner.name"), value="N"),
     )
-    compiled = compile_read(op, meta, POSTGRES, target(meta, "Folder"))
+    compiled = compile_read(op, bound_model(meta), POSTGRES, target(meta, "Folder"))
     assert compiled.statement.sql.endswith(
-        "where (exists (select 1 from inv t1 left join owner t2 on t2.id = t1.owner_id "
+        "where (exists (select 1 from px.inv t1 left join px.owner t2 on t2.id = t1.owner_id "
         "where t1.folder_id = t0.id and t2.name = ?) "
-        "or exists (select 1 from rec t3 left join owner t4 on t4.id = t3.owner_id "
+        "or exists (select 1 from px.rec t3 left join px.owner t4 on t4.id = t3.owner_id "
         "where t3.folder_id = t0.id and t4.name = ?))"
     )
 
@@ -449,11 +474,14 @@ def test_tpcs_branches_take_their_aliases_as_each_branch_opens() -> None:
 def test_presence_two_hops_away_tests_its_target_at_the_joined_prefix() -> None:
     # Presence alone opens no join for its own target: only the dotted prefix joins.
     compiled = compile_read(
-        oa.Presence("exists", "Leash.collar.pet"), TRAVERSAL, POSTGRES, target(TRAVERSAL, "Leash")
+        oa.Presence("exists", "Leash.collar.pet"),
+        bound_model(TRAVERSAL),
+        POSTGRES,
+        target(TRAVERSAL, "Leash"),
     )
     assert compiled.statement.sql.endswith(
-        "left join traversal_collar t1 on t1.id = t0.collar_id "
-        "where exists (select 1 from traversal_pet t2 where t2.id = t1.pet_id)"
+        "left join px.traversal_collar t1 on t1.id = t0.collar_id "
+        "where exists (select 1 from px.traversal_pet t2 where t2.id = t1.pet_id)"
     )
 
 
@@ -464,14 +492,20 @@ def test_a_match_tests_its_whole_operand_in_every_candidate_branch() -> None:
     narrowed = oa.Narrow(to=("Car",), operand=oa.Or(operands=(_SEATS, _title("maker", "Saab"))))
     parking = target(TRAVERSAL, "Parking")
     positive = compile_read(
-        oa.Presence("exists", "Parking.vehicle", narrowed), TRAVERSAL, POSTGRES, parking
+        oa.Presence("exists", "Parking.vehicle", narrowed),
+        bound_model(TRAVERSAL),
+        POSTGRES,
+        parking,
     )
     negative = compile_read(
-        oa.Presence("notExists", "Parking.vehicle", narrowed), TRAVERSAL, POSTGRES, parking
+        oa.Presence("notExists", "Parking.vehicle", narrowed),
+        bound_model(TRAVERSAL),
+        POSTGRES,
+        parking,
     )
     branches = (
-        "exists (select 1 from traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) "
-        "or exists (select 1 from traversal_car t2 where t2.id = t0.vehicle_id "
+        "exists (select 1 from px.traversal_bike t1 where t1.id = t0.vehicle_id and 1 = 0) "
+        "or exists (select 1 from px.traversal_car t2 where t2.id = t0.vehicle_id "
         "and (t2.seats > ? or t2.maker = ?))"
     )
     assert positive.statement.sql.endswith(f"where ({branches})")
@@ -482,22 +516,24 @@ def test_a_match_tests_its_whole_operand_in_every_candidate_branch() -> None:
 def test_a_match_past_a_dotted_prefix_is_false_where_the_prefix_reaches_nothing() -> None:
     compiled = compile_read(
         oa.Presence("notExists", "Leash.collar.pet", _title("name", "Rex")),
-        TRAVERSAL,
+        bound_model(TRAVERSAL),
         POSTGRES,
         target(TRAVERSAL, "Leash"),
     )
     assert compiled.statement.sql.endswith(
-        "left join traversal_collar t1 on t1.id = t0.collar_id where not exists "
-        "(select 1 from traversal_pet t2 where t2.id = t1.pet_id and t2.name = ?)"
+        "left join px.traversal_collar t1 on t1.id = t0.collar_id where not exists "
+        "(select 1 from px.traversal_pet t2 where t2.id = t1.pet_id and t2.name = ?)"
     )
 
 
 def test_a_narrow_of_a_joined_target_tests_its_presence_and_keeps_its_operand() -> None:
     claim = target(POLICY, "Claim")
-    coverage = "left join coverage t1 on t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ?"
+    coverage = (
+        "left join px.coverage t1 on t1.id = t0.coverage_id and t1.thru_z = ? and t1.out_z = ?"
+    )
     bare = compile_read(
         oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=oa.TrueNode()),
-        POLICY,
+        bound_model(POLICY),
         POSTGRES,
         claim,
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
@@ -506,7 +542,7 @@ def test_a_narrow_of_a_joined_target_tests_its_presence_and_keeps_its_operand() 
     amount = oa.Comparison(op="greaterThan", subject=oa.FieldSubject("amount"), value="1.00")
     operand = compile_read(
         oa.Narrow(path="Claim.coverage", to=("Coverage",), operand=amount),
-        POLICY,
+        bound_model(POLICY),
         POSTGRES,
         claim,
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
@@ -520,7 +556,7 @@ def test_a_narrow_of_a_joined_target_tests_its_presence_and_keeps_its_operand() 
 def test_presence_of_a_single_value_object_inside_an_element_reads_the_element() -> None:
     compiled = compile_read(
         oa.Quantifier("any", "CollectionTwinItem.parts", oa.Presence("exists", "note")),
-        TWIN,
+        bound_model(TWIN),
         POSTGRES,
         target(TWIN, "CollectionTwinItem"),
     )
@@ -554,8 +590,8 @@ def test_a_relationship_to_a_target_without_concrete_subtypes_reaches_no_candida
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
     model = dormant_target_model(strategy)
-    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
-    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    compiled = compile_read(predicate, bound_model(model), POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from px.holder t0 where {expected}")
     assert compiled.statement.binds == ()
 
 
@@ -573,22 +609,25 @@ def test_a_position_past_a_target_without_candidates_answers_its_absence(
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
     model = dormant_target_model(strategy)
-    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
-    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    compiled = compile_read(predicate, bound_model(model), POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from px.holder t0 where {expected}")
     assert compiled.statement.binds == ()
 
 
 def test_a_relationship_to_a_target_without_candidates_answers_inside_a_hop() -> None:
     model = dormant_target_model("tpcs")
     compiled = compile_read(
-        oa.Quantifier("none", "Holder.next.empties"), model, POSTGRES, target(model, "Holder")
+        oa.Quantifier("none", "Holder.next.empties"),
+        bound_model(model),
+        POSTGRES,
+        target(model, "Holder"),
     )
     assert compiled.statement.sql.endswith(
-        "where coalesce((select 1 = 1 from holder t1 where t1.id = t0.next_id), true)"
+        "where coalesce((select 1 = 1 from px.holder t1 where t1.id = t0.next_id), true)"
     )
 
 
-_NEXT = "from holder t1 where t1.id = t0.next_id)"
+_NEXT = "from px.holder t1 where t1.id = t0.next_id)"
 
 
 @pytest.mark.parametrize("strategy", ["tph", "tpcs"])
@@ -614,8 +653,8 @@ def test_a_target_without_candidates_answers_inside_every_preceding_hop(
     strategy: Literal["tph", "tpcs"], predicate: oa.PredicateNode, expected: str
 ) -> None:
     model = dormant_target_model(strategy)
-    compiled = compile_read(predicate, model, POSTGRES, target(model, "Holder"))
-    assert compiled.statement.sql.endswith(f"from holder t0 where {expected}")
+    compiled = compile_read(predicate, bound_model(model), POSTGRES, target(model, "Holder"))
+    assert compiled.statement.sql.endswith(f"from px.holder t0 where {expected}")
     assert compiled.statement.binds == ()
 
 
@@ -623,16 +662,18 @@ def test_a_target_without_candidates_answers_inside_every_preceding_hop(
 # Shared to-one joins (m-sql "Shared to-one joins").                           #
 # --------------------------------------------------------------------------- #
 CUSTOMER = model("customer")
-_ORDER_ITEM_ROW = "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0"
+_ORDER_ITEM_ROW = (
+    "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0"
+)
 _ADA = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.name"), value="Ada")
 _ACTIVE = oa.Comparison(op="eq", subject=oa.FieldSubject("OrderItem.order.active"), value=True)
 
 
 def test_fields_and_presence_of_one_target_share_its_join_under_negation() -> None:
     op = oa.Not(oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA, _ACTIVE)))
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql == (
-        f"{_ORDER_ITEM_ROW} left join orders t1 on t1.id = t0.order_id "
+        f"{_ORDER_ITEM_ROW} left join px.orders t1 on t1.id = t0.order_id "
         "where not (not t1.id is null and t1.name = ? and t1.active = ?)"
     )
     assert compiled.statement.binds == ("Ada", True)
@@ -640,9 +681,9 @@ def test_fields_and_presence_of_one_target_share_its_join_under_negation() -> No
 
 def test_absence_of_a_shared_target_reads_its_primary_key() -> None:
     op = oa.Or(operands=(oa.Presence("notExists", "OrderItem.order"), _ADA))
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "left join orders t1 on t1.id = t0.order_id where t1.id is null or t1.name = ?"
+        "left join px.orders t1 on t1.id = t0.order_id where t1.id is null or t1.name = ?"
     )
 
 
@@ -666,10 +707,10 @@ def test_a_common_prefix_is_joined_once_beneath_every_suffix() -> None:
             ),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
-        "left join orders t2 on t2.id = t1.order_id "
+        "from px.order_status t0 left join px.order_item t1 on t1.id = t0.order_item_id "
+        "left join px.orders t2 on t2.id = t1.order_id "
         "where t1.sku = ? or (t2.name = ? and t1.shipped_on is null)"
     )
     assert compiled.statement.binds == ("S", "Ada")
@@ -687,9 +728,9 @@ def test_every_scalar_operation_reads_a_shared_join() -> None:
             oa.NullCheck(op="isNotNull", subject=item("shippedOn")),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "left join order_item t1 on t1.id = t0.order_item_id where "
+        "left join px.order_item t1 on t1.id = t0.order_item_id where "
         "t1.sku = any(cast(? as text[])) and "
         "t1.quantity between ? and ? and t1.sku like ? and not t1.shipped_on is null"
     )
@@ -705,11 +746,11 @@ def test_distinct_relationships_to_one_entity_open_their_own_joins() -> None:
             ),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "from order_status t0 left join orders t1 on t1.id = t0.order_id "
-        "left join order_item t2 on t2.id = t0.order_item_id "
-        "left join orders t3 on t3.id = t2.order_id where t1.name = ? and t3.name = ?"
+        "from px.order_status t0 left join px.orders t1 on t1.id = t0.order_id "
+        "left join px.order_item t2 on t2.id = t0.order_item_id "
+        "left join px.orders t3 on t3.id = t2.order_id where t1.name = ? and t3.name = ?"
     )
 
 
@@ -726,9 +767,10 @@ def test_joins_take_their_aliases_and_binds_before_the_predicate() -> None:
             _ADA,
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "left join orders t1 on t1.id = t0.order_id where exists (select 1 from order_status t2 "
+        "left join px.orders t1 on t1.id = t0.order_id where exists (select 1 from "
+        "px.order_status t2 "
         "where t2.order_item_id = t0.id and t2.code = ?) and t1.name = ?"
     )
     assert compiled.statement.binds == ("PACKED", "Ada")
@@ -737,9 +779,10 @@ def test_joins_take_their_aliases_and_binds_before_the_predicate() -> None:
 def test_a_tag_guard_binds_in_its_join_ahead_of_the_predicate() -> None:
     family = _tph_owner_model()
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Leash.dog.name"), value="Rex")
-    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Leash"))
     assert compiled.statement.sql.endswith(
-        "from leash t0 left join pet t1 on t1.id = t0.dog_id and t1.kind = ? where t1.name = ?"
+        "from px.leash t0 left join px.pet t1 on t1.id = t0.dog_id and t1.kind = ? where "
+        "t1.name = ?"
     )
     assert compiled.statement.binds == ("dog", "Rex")
 
@@ -755,9 +798,9 @@ def test_a_match_reuses_a_shared_target_beneath_its_presence() -> None:
             ),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "left join orders t1 on t1.id = t0.order_id where t1.name <> ? "
+        "left join px.orders t1 on t1.id = t0.order_id where t1.name <> ? "
         "and not case when t1.id is null then false else (t1.active = ?) is true end"
     )
     assert compiled.statement.binds == ("X", True)
@@ -771,9 +814,9 @@ def test_a_compound_match_reading_its_target_row_reuses_the_shared_target() -> N
         )
     )
     op = oa.And(operands=(_ADA, oa.Presence("exists", "OrderItem.order", operand)))
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql.endswith(
-        "left join orders t1 on t1.id = t0.order_id where t1.name = ? and case when t1.id "
+        "left join px.orders t1 on t1.id = t0.order_id where t1.name = ? and case when t1.id "
         "is null then false else (not t1.sku is null or t1.name like ?) is true end"
     )
 
@@ -784,18 +827,21 @@ def test_a_match_alone_opens_no_join() -> None:
         "OrderItem.order",
         oa.Comparison(op="eq", subject=oa.FieldSubject("name"), value="Ada"),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem"))
     assert compiled.statement.sql == (
         f"{_ORDER_ITEM_ROW} where exists "
-        "(select 1 from orders t1 where t1.id = t0.order_id and t1.name = ?)"
+        "(select 1 from px.orders t1 where t1.id = t0.order_id and t1.name = ?)"
     )
 
 
 def _location_where(*operands: oa.PredicateNode) -> str:
     compiled = compile_read(
-        oa.And(operands=operands), CUSTOMER, POSTGRES, target(CUSTOMER, "Location")
+        oa.And(operands=operands),
+        bound_model(CUSTOMER),
+        POSTGRES,
+        target(CUSTOMER, "Location"),
     )
-    return compiled.statement.sql.partition(" from location t0 ")[2]
+    return compiled.statement.sql.partition(" from px.location t0 ")[2]
 
 
 _CUSTOMER_NAMED = oa.Comparison(
@@ -814,9 +860,9 @@ def test_a_converted_document_member_keeps_its_scalar_form_beside_a_shared_join(
             value=5.0,
         ),
     ) == (
-        "left join customer t1 on t1.id = t0.customer_id where t1.name = ? and "
+        "left join px.customer t1 on t1.id = t0.customer_id where t1.name = ? and "
         "(select cast(jsonb_extract_path_text(t2.address, ?, ?) as double precision) "
-        "from customer t2 where t2.id = t0.customer_id) > ?"
+        "from px.customer t2 where t2.id = t0.customer_id) > ?"
     )
 
 
@@ -827,7 +873,7 @@ def test_a_text_compared_document_member_reads_the_shared_join() -> None:
             op="eq", subject=oa.FieldSubject("Location.customer.address.city"), value="Oslo"
         ),
     ) == (
-        "left join customer t1 on t1.id = t0.customer_id "
+        "left join px.customer t1 on t1.id = t0.customer_id "
         "where t1.name = ? and jsonb_extract_path_text(t1.address, ?) = ?"
     )
 
@@ -845,8 +891,8 @@ def test_the_same_conversion_inside_a_match_keeps_its_correlated_exists() -> Non
             ),
         ),
     ) == (
-        "left join customer t1 on t1.id = t0.customer_id where t1.name = ? and "
-        "exists (select 1 from customer t2 where t2.id = t0.customer_id and "
+        "left join px.customer t1 on t1.id = t0.customer_id where t1.name = ? and "
+        "exists (select 1 from px.customer t2 where t2.id = t0.customer_id and "
         "cast(jsonb_extract_path_text(t2.address, ?, ?) as double precision) > ?)"
     )
 
@@ -862,10 +908,10 @@ def test_a_match_reading_through_a_further_hop_joins_it_inside_its_correlated_ex
             ),
         )
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "left join order_item t1 on t1.id = t0.order_item_id where t1.sku = ? and "
-        "exists (select 1 from order_item t2 left join orders t3 on t3.id = t2.order_id "
+        "left join px.order_item t1 on t1.id = t0.order_item_id where t1.sku = ? and "
+        "exists (select 1 from px.order_item t2 left join px.orders t3 on t3.id = t2.order_id "
         "where t2.id = t0.order_item_id and t3.name = ?)"
     )
 
@@ -881,15 +927,15 @@ def test_a_match_past_a_dotted_prefix_keeps_its_scalar_form_when_its_operand_qua
                 oa.Comparison(op="eq", subject=oa.FieldSubject("sku"), value="S"),
             ),
         ),
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
         target(ORDERS, "OrderStatus"),
     )
     assert compiled.statement.sql.endswith(
-        "from order_status t0 where not coalesce((select exists (select 1 from orders t1 "
-        "where t1.id = t3.order_id and exists (select 1 from order_item t2 "
+        "from px.order_status t0 where not coalesce((select exists (select 1 from px.orders t1 "
+        "where t1.id = t3.order_id and exists (select 1 from px.order_item t2 "
         "where t2.order_id = t1.id and t2.sku = ?)) "
-        "from order_item t3 where t3.id = t0.order_item_id), false)"
+        "from px.order_item t3 where t3.id = t0.order_item_id), false)"
     )
 
 
@@ -900,15 +946,15 @@ def test_a_quantifier_past_a_dotted_prefix_joins_nothing_inside_its_scalar_subqu
             "OrderStatus.orderItem.order.items",
             oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
         ),
-        ORDERS,
+        bound_model(ORDERS),
         POSTGRES,
         target(ORDERS, "OrderStatus"),
     )
     assert compiled.statement.sql.endswith(
-        "from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
-        "where coalesce((select exists (select 1 from order_item t2 where t2.order_id = t4.id "
-        "and (select t3.name from orders t3 where t3.id = t2.order_id) = ?) "
-        "from orders t4 where t4.id = t1.order_id and t1.id = t0.order_item_id), false)"
+        "from px.order_status t0 left join px.order_item t1 on t1.id = t0.order_item_id "
+        "where coalesce((select exists (select 1 from px.order_item t2 where t2.order_id = t4.id "
+        "and (select t3.name from px.orders t3 where t3.id = t2.order_id) = ?) "
+        "from px.orders t4 where t4.id = t1.order_id and t1.id = t0.order_item_id), false)"
     )
 
 
@@ -919,12 +965,12 @@ def test_a_multi_table_target_keeps_its_full_candidate_assertion() -> None:
             oa.Presence("exists", "Parking.vehicle"),
         )
     )
-    compiled = compile_read(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Parking"))
+    compiled = compile_read(op, bound_model(TRAVERSAL), POSTGRES, target(TRAVERSAL, "Parking"))
     assert compiled.statement.sql.endswith(
-        "where (select t1.maker from traversal_bike t1 where t1.id = t0.vehicle_id union all "
-        "select t2.maker from traversal_car t2 where t2.id = t0.vehicle_id) = ? and "
-        "(exists (select 1 from traversal_bike t3 where t3.id = t0.vehicle_id) "
-        "or exists (select 1 from traversal_car t4 where t4.id = t0.vehicle_id))"
+        "where (select t1.maker from px.traversal_bike t1 where t1.id = t0.vehicle_id union all "
+        "select t2.maker from px.traversal_car t2 where t2.id = t0.vehicle_id) = ? and "
+        "(exists (select 1 from px.traversal_bike t3 where t3.id = t0.vehicle_id) "
+        "or exists (select 1 from px.traversal_car t4 where t4.id = t0.vehicle_id))"
     )
 
 
@@ -937,13 +983,13 @@ def test_a_narrow_whose_operand_reads_past_its_target_keeps_a_monomorphic_envelo
             to=("Coverage",),
             operand=oa.Comparison(op="eq", subject=oa.FieldSubject("policy.name"), value="Auto"),
         ),
-        POLICY,
+        bound_model(POLICY),
         POSTGRES,
         target(POLICY, "Claim"),
         temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
     )
     assert "join" not in compiled.statement.sql
-    assert "where (coalesce((select array [ (select t1.name from policy t1 where " in (
+    assert "where (coalesce((select array [ (select t1.name from px.policy t1 where " in (
         compiled.statement.sql
     )
 
@@ -968,13 +1014,14 @@ def test_a_temporal_target_at_one_coordinate_per_axis_reads_a_shared_join(
         oa.Comparison(
             op="greaterThan", subject=oa.FieldSubject("Claim.coverage.amount"), value="1.00"
         ),
-        POLICY,
+        bound_model(POLICY),
         POSTGRES,
         target(POLICY, "Claim"),
         temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf(transaction_time)},
     )
-    assert f"from claim t0 left join coverage t1 on t1.id = t0.coverage_id and {visible} " in (
-        compiled.statement.sql
+    assert (
+        f"from px.claim t0 left join px.coverage t1 on t1.id = t0.coverage_id and {visible} "
+        in (compiled.statement.sql)
     )
     assert " where t1.amount > ? and " in compiled.statement.sql
 
@@ -982,14 +1029,14 @@ def test_a_temporal_target_at_one_coordinate_per_axis_reads_a_shared_join(
 def test_each_temporal_hop_is_proven_at_the_coordinates_propagated_to_it() -> None:
     compiled = compile_read(
         oa.Comparison(op="eq", subject=oa.FieldSubject("Claim.coverage.policy.name"), value="A"),
-        POLICY,
+        bound_model(POLICY),
         POSTGRES,
         target(POLICY, "Claim"),
         temporal={"valid-time": AsOf(_MARCH), "transaction-time": AsOf("latest")},
     )
     assert compiled.statement.sql.endswith(
-        "left join coverage t1 on t1.id = t0.coverage_id and t1.from_z <= ? and t1.thru_z > ? "
-        "and t1.out_z = ? left join policy t2 on t2.id = t1.policy_id and t2.from_z <= ? "
+        "left join px.coverage t1 on t1.id = t0.coverage_id and t1.from_z <= ? and t1.thru_z > ? "
+        "and t1.out_z = ? left join px.policy t2 on t2.id = t1.policy_id and t2.from_z <= ? "
         "and t2.thru_z > ? and t2.out_z = ? where t2.name = ? and t0.from_z <= ? "
         "and t0.thru_z > ? and t0.out_z = ?"
     )
@@ -1076,14 +1123,14 @@ def test_a_hop_to_a_concrete_subtype_is_visible_on_its_family_root_s_axes(
     )
     statement = compile_read(
         op,
-        family,
+        bound_model(family),
         POSTGRES,
         target(family, "Kennel"),
         temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf("latest")},
     ).statement
     assert statement.sql.endswith(
-        f"from kennel t0 left join {table} t1 on t1.id = t0.dog_id and {visible.format(1)}"
-        f"{guard.format(1)} where t1.name = ? and exists (select 1 from {table} t2 where "
+        f"from px.kennel t0 left join px.{table} t1 on t1.id = t0.dog_id and {visible.format(1)}"
+        f"{guard.format(1)} where t1.name = ? and exists (select 1 from px.{table} t2 where "
         f"t2.kennel_id = t0.id and {visible.format(2)}{guard.format(2)}) and {visible.format(0)}"
     )
     binds = (*visible_binds, *guard_binds, "Rex", *visible_binds, *guard_binds, *visible_binds)
@@ -1099,8 +1146,8 @@ def test_a_hop_to_a_concrete_subtype_is_visible_on_its_family_root_s_axes(
 @pytest.mark.parametrize(
     ("unique", "expected"),
     [
-        (True, "left join badge t1 on t1.holder_id = t0.id and t1.thru_z = ? and t1.out_z = ? "),
-        (False, "where (select t1.code from badge t1 where t1.holder_id = t0.id and t1.thru_z"),
+        (True, "left join px.badge t1 on t1.holder_id = t0.id and t1.thru_z = ? and t1.out_z = ? "),
+        (False, "where (select t1.code from px.badge t1 where t1.holder_id = t0.id and t1.thru_z"),
     ],
 )
 def test_a_temporal_target_correlated_off_its_logical_key_needs_a_unique_key(
@@ -1119,7 +1166,7 @@ def test_a_temporal_target_correlated_off_its_logical_key_needs_a_unique_key(
         ),
     )
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
-    compiled = compile_read(op, family, POSTGRES, target(family, "Holder"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Holder"))
     assert expected in compiled.statement.sql
 
 
@@ -1150,15 +1197,15 @@ def test_a_unique_key_off_the_logical_key_proves_a_temporal_target_only_at_lates
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
     compiled = compile_read(
         op,
-        family,
+        bound_model(family),
         POSTGRES,
         target(family, "Holder"),
         temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf(transaction_time)},
     )
-    shared = "from holder t0 left join badge t1 on t1.holder_id = t0.id and " in (
+    shared = "from px.holder t0 left join px.badge t1 on t1.holder_id = t0.id and " in (
         compiled.statement.sql
     )
-    correlated = "where (select t1.code from badge t1 where t1.holder_id = t0.id and " in (
+    correlated = "where (select t1.code from px.badge t1 where t1.holder_id = t0.id and " in (
         compiled.statement.sql
     )
     latest = valid_time == "latest" and transaction_time == "latest"
@@ -1168,8 +1215,8 @@ def test_a_unique_key_off_the_logical_key_proves_a_temporal_target_only_at_lates
 @pytest.mark.parametrize(
     ("unique", "expected"),
     [
-        (True, "left join badge t1 on t1.holder_id = t0.id where t1.code = ?"),
-        (False, "where (select t1.code from badge t1 where t1.holder_id = t0.id) = ?"),
+        (True, "left join px.badge t1 on t1.holder_id = t0.id where t1.code = ?"),
+        (False, "where (select t1.code from px.badge t1 where t1.holder_id = t0.id) = ?"),
     ],
 )
 def test_only_a_unique_key_proves_a_declared_one_to_one_target(unique: bool, expected: str) -> None:
@@ -1178,16 +1225,21 @@ def test_only_a_unique_key_proves_a_declared_one_to_one_target(unique: bool, exp
     # the declared one-to-one cardinality alone proves nothing.
     family = badge_model(unique=unique)
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
-    compiled = compile_read(op, family, POSTGRES, target(family, "Holder"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Holder"))
     assert compiled.statement.sql.endswith(expected)
 
 
 def test_a_locking_read_locks_only_its_root_beside_a_shared_join() -> None:
     compiled = compile_read(
-        _ADA, ORDERS, POSTGRES, target(ORDERS, "OrderItem"), limit=5, preference="locking"
+        _ADA,
+        bound_model(ORDERS),
+        POSTGRES,
+        target(ORDERS, "OrderItem"),
+        limit=5,
+        preference="locking",
     )
     assert compiled.statement.sql == (
-        f"{_ORDER_ITEM_ROW} left join orders t1 on t1.id = t0.order_id where t1.name = ? "
+        f"{_ORDER_ITEM_ROW} left join px.orders t1 on t1.id = t0.order_id where t1.name = ? "
         "limit ? for share of t0"
     )
     assert compiled.statement.binds == ("Ada", 5)
@@ -1195,10 +1247,12 @@ def test_a_locking_read_locks_only_its_root_beside_a_shared_join() -> None:
 
 def test_readless_predicate_dml_reads_a_presence_through_its_key_selection_s_join() -> None:
     op = oa.Not(oa.And(operands=(oa.Presence("exists", "OrderItem.order"), _ADA)))
-    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    compiled = compile_write_predicate(
+        op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderItem")
+    )
     assert compiled.selection
     assert compiled.sql == (
-        "select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id "
+        "select t0.id from px.order_item t0 left join px.orders t1 on t1.id = t0.order_id "
         "where not (not t1.id is null and t1.name = ?)"
     )
 
@@ -1208,11 +1262,13 @@ def test_readless_predicate_dml_keeps_a_match_alone_in_place() -> None:
     # further hop stays in its local form.
     ada = oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada")
     op = oa.Presence("exists", "OrderStatus.orderItem", ada)
-    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_write_predicate(
+        op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus")
+    )
     assert not compiled.selection
     assert compiled.sql == (
-        "exists (select 1 from order_item t1 where t1.id = order_item_id "
-        "and (select t2.name from orders t2 where t2.id = t1.order_id) = ?)"
+        "exists (select 1 from px.order_item t1 where t1.id = order_item_id "
+        "and (select t2.name from px.orders t2 where t2.id = t1.order_id) = ?)"
     )
 
 
@@ -1228,11 +1284,14 @@ def test_a_key_selection_joins_inside_a_match_its_shared_target_cannot_answer() 
             oa.Presence("exists", "OrderStatus.orderItem", order),
         )
     )
-    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
-    read = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
+    compiled = compile_write_predicate(
+        op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus")
+    )
+    read = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.sql == (
-        "select t0.id from order_status t0 left join order_item t1 on t1.id = t0.order_item_id "
-        "where t1.quantity < ? and exists (select 1 from order_item t2 left join orders t3 "
+        "select t0.id from px.order_status t0 left join px.order_item t1 on t1.id = "
+        "t0.order_item_id "
+        "where t1.quantity < ? and exists (select 1 from px.order_item t2 left join px.orders t3 "
         "on t3.id = t2.order_id where t2.id = t0.order_item_id and t3.name = ?)"
     )
     assert read.statement.sql.endswith(compiled.sql.removeprefix("select t0.id"))
@@ -1244,10 +1303,10 @@ def test_readless_predicate_dml_keeps_a_quantifier_operand_s_scalar_form() -> No
         "Order.items",
         oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
     )
-    compiled = compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_write_predicate(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.sql == (
-        "exists (select 1 from order_item t1 where t1.order_id = id "
-        "and (select t2.name from orders t2 where t2.id = t1.order_id) = ?)"
+        "exists (select 1 from px.order_item t1 where t1.order_id = id "
+        "and (select t2.name from px.orders t2 where t2.id = t1.order_id) = ?)"
     )
 
 
@@ -1282,12 +1341,12 @@ def test_an_unproven_hop_behind_a_joined_prefix_reads_only_that_prefix_s_candida
     # subquery that runs once per row.
     family = _vehicle_desk_model()
     op = oa.Comparison(op="eq", subject=oa.FieldSubject("Desk.span.vehicle.dealer.name"), value="x")
-    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Desk"))
     assert compiled.statement.sql.endswith(
-        f"from desk t0 left join span t1 on {_SPAN_REACHED} where (select (select t2.name "
-        "from dealer t2 where t2.id = t3.dealer_id) from bike t3 where t3.id = t1.vehicle_id "
-        f"and {_SPAN_REACHED} union all select (select t4.name from dealer t4 where "
-        f"t4.id = t5.dealer_id) from car t5 where t5.id = t1.vehicle_id and {_SPAN_REACHED}) = ?"
+        f"from px.desk t0 left join px.span t1 on {_SPAN_REACHED} where (select (select t2.name "
+        "from px.dealer t2 where t2.id = t3.dealer_id) from px.bike t3 where t3.id = t1.vehicle_id "
+        f"and {_SPAN_REACHED} union all select (select t4.name from px.dealer t4 where "
+        f"t4.id = t5.dealer_id) from px.car t5 where t5.id = t1.vehicle_id and {_SPAN_REACHED}) = ?"
     )
     assert compiled.statement.binds == (*(INFINITY,) * 6, "x")
 
@@ -1296,15 +1355,16 @@ def test_a_presence_past_an_unproven_hop_keeps_its_absence_default_behind_the_jo
     family = _vehicle_desk_model()
     compiled = compile_read(
         oa.Presence("notExists", "Desk.span.vehicle.dealer"),
-        family,
+        bound_model(family),
         POSTGRES,
         target(family, "Desk"),
     )
     assert compiled.statement.sql.endswith(
-        f"from desk t0 left join span t1 on {_SPAN_REACHED} where not coalesce((select exists "
-        "(select 1 from dealer t2 where t2.id = t3.dealer_id) from bike t3 where "
+        f"from px.desk t0 left join px.span t1 on {_SPAN_REACHED} where not coalesce((select "
+        "exists "
+        "(select 1 from px.dealer t2 where t2.id = t3.dealer_id) from px.bike t3 where "
         f"t3.id = t1.vehicle_id and {_SPAN_REACHED} union all select exists (select 1 from "
-        f"dealer t4 where t4.id = t5.dealer_id) from car t5 where t5.id = t1.vehicle_id and "
+        f"px.dealer t4 where t4.id = t5.dealer_id) from px.car t5 where t5.id = t1.vehicle_id and "
         f"{_SPAN_REACHED}), false)"
     )
 
@@ -1324,10 +1384,10 @@ def test_a_conversion_past_proven_hops_shares_all_but_its_last_hop() -> None:
     op = oa.Comparison(
         op="greaterThan", subject=oa.FieldSubject("Shelf.box.crate.weight"), value="1.00"
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Shelf"))
     assert compiled.statement.sql.endswith(
-        "from shelf t0 left join box t1 on t1.id = t0.box_id where (select "
-        "cast(jsonb_extract_path_text(t2.payload, ?) as decimal(18, 2)) from crate t2 "
+        "from px.shelf t0 left join px.box t1 on t1.id = t0.box_id where (select "
+        "cast(jsonb_extract_path_text(t2.payload, ?) as decimal(18, 2)) from px.crate t2 "
         "where t2.id = t1.crate_id and t1.id = t0.box_id) > ?"
     )
 
@@ -1383,19 +1443,22 @@ def _partial_pet_owner_model() -> Metamodel:
 
 def test_a_partially_composed_root_quantifier_candidate_carries_no_tag_guard() -> None:
     compiled = compile_read(
-        oa.Quantifier("any", "Keeper.beasts"), BEAST, POSTGRES, target(BEAST, "Keeper")
+        oa.Quantifier("any", "Keeper.beasts"),
+        bound_model(BEAST),
+        POSTGRES,
+        target(BEAST, "Keeper"),
     )
     assert compiled.statement.sql.endswith(
-        "where exists (select 1 from beast t1 where t1.keeper_id = t0.id)"
+        "where exists (select 1 from px.beast t1 where t1.keeper_id = t0.id)"
     )
     narrowed = compile_read(
         oa.Quantifier("any", "Keeper.beasts", oa.Narrow(to=("Wolf",), operand=oa.TrueNode())),
-        BEAST,
+        bound_model(BEAST),
         POSTGRES,
         target(BEAST, "Keeper"),
     )
     assert narrowed.statement.sql.endswith(
-        "where exists (select 1 from beast t1 where t1.keeper_id = t0.id and t1.kind = ?)"
+        "where exists (select 1 from px.beast t1 where t1.keeper_id = t0.id and t1.kind = ?)"
     )
     assert narrowed.statement.binds == ("wolf",)
 
@@ -1404,22 +1467,22 @@ def test_a_partially_composed_root_shares_its_to_one_source_unguarded() -> None:
     family = _partial_pet_owner_model()
     compiled = compile_read(
         oa.Comparison(op="eq", subject=oa.FieldSubject("Leash.collar.pet.name"), value="Rex"),
-        family,
+        bound_model(family),
         POSTGRES,
         target(family, "Leash"),
     )
     assert compiled.statement.sql.endswith(
-        "from leash t0 left join collar t1 on t1.id = t0.collar_id "
-        "left join pet t2 on t2.id = t1.pet_id where t2.name = ?"
+        "from px.leash t0 left join px.collar t1 on t1.id = t0.collar_id "
+        "left join px.pet t2 on t2.id = t1.pet_id where t2.name = ?"
     )
     narrowed = compile_read(
         oa.Narrow(path="Collar.pet", to=("Dog",), operand=oa.TrueNode()),
-        family,
+        bound_model(family),
         POSTGRES,
         target(family, "Collar"),
     )
     assert narrowed.statement.sql.endswith(
-        "left join pet t1 on t1.id = t0.pet_id where (not t1.id is null and t1.kind = ?)"
+        "left join px.pet t1 on t1.id = t0.pet_id where (not t1.id is null and t1.kind = ?)"
     )
     assert narrowed.statement.binds == ("dog",)
 
@@ -1433,19 +1496,22 @@ def test_a_partially_composed_root_correlated_candidate_carries_no_tag_guard() -
         to=("Dog",),
         operand=oa.Comparison(op="eq", subject=oa.FieldSubject("owner.name"), value="Ann"),
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Leash"))
     assert compiled.statement.sql.endswith(
-        "where (coalesce((select array [ case when t3.kind = ? then (select t2.name from owner "
-        "t2 where t2.id = t3.owner_id) = ? else false end ] from pet t3 where t3.id = t1.pet_id "
+        "where (coalesce((select array [ case when t3.kind = ? then (select t2.name from px.owner "
+        "t2 where t2.id = t3.owner_id) = ? else false end ] from px.pet t3 where t3.id = t1.pet_id "
         "and t1.id = t0.collar_id), array [ false ])) [ 1 ]"
     )
 
 
 def test_a_predicate_write_keeps_the_partially_composed_root_candidate_unguarded() -> None:
     compiled = compile_write_predicate(
-        oa.Quantifier("any", "Keeper.beasts"), BEAST, POSTGRES, target(BEAST, "Keeper")
+        oa.Quantifier("any", "Keeper.beasts"),
+        bound_model(BEAST),
+        POSTGRES,
+        target(BEAST, "Keeper"),
     )
-    assert compiled.sql == "exists (select 1 from beast t1 where t1.keeper_id = id)"
+    assert compiled.sql == "exists (select 1 from px.beast t1 where t1.keeper_id = id)"
     assert compiled.binds == ()
 
 
@@ -1457,9 +1523,9 @@ def test_a_joined_narrow_stays_one_term_under_negation_and_disjunction() -> None
             oa.Comparison(op="eq", subject=oa.FieldSubject("Collar.id"), value=13),
         )
     )
-    compiled = compile_read(op, TRAVERSAL, POSTGRES, target(TRAVERSAL, "Collar"))
+    compiled = compile_read(op, bound_model(TRAVERSAL), POSTGRES, target(TRAVERSAL, "Collar"))
     assert compiled.statement.sql.endswith(
-        "left join traversal_pet t1 on t1.id = t0.pet_id "
+        "left join px.traversal_pet t1 on t1.id = t0.pet_id "
         "where not (not t1.id is null and t1.kind = ?) or t0.id = ?"
     )
     assert compiled.statement.binds == ("dog", 13)
@@ -1475,11 +1541,11 @@ def test_a_narrow_whose_operand_reads_past_its_target_keeps_its_candidate_subque
         to=("Dog",),
         operand=oa.Comparison(op="eq", subject=oa.FieldSubject("owner.name"), value="Ann"),
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Leash"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Leash"))
     assert compiled.statement.sql.endswith(
-        "from leash t0 left join collar t1 on t1.id = t0.collar_id where (coalesce((select "
-        "array [ case when t3.kind = ? then (select t2.name from owner t2 where t2.id = "
-        "t3.owner_id) = ? else false end ] from pet t3 where t3.id = t1.pet_id and "
+        "from px.leash t0 left join px.collar t1 on t1.id = t0.collar_id where (coalesce((select "
+        "array [ case when t3.kind = ? then (select t2.name from px.owner t2 where t2.id = "
+        "t3.owner_id) = ? else false end ] from px.pet t3 where t3.id = t1.pet_id and "
         "t1.id = t0.collar_id), array [ false ])) [ 1 ]"
     )
     assert compiled.statement.binds == ("dog", "Ann")
@@ -1491,9 +1557,10 @@ def test_a_narrowing_of_the_read_row_joins_the_hops_its_operand_reads() -> None:
         to=("Dog",),
         operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Dog.owner.name"), value="Ann"),
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Pet"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Pet"))
     assert compiled.statement.sql.endswith(
-        "from pet t0 left join owner t1 on t1.id = t0.owner_id where (t1.name = ? and t0.kind = ?)"
+        "from px.pet t0 left join px.owner t1 on t1.id = t0.owner_id where (t1.name = ? and "
+        "t0.kind = ?)"
     )
     assert compiled.statement.binds == ("Ann", "dog")
 
@@ -1517,11 +1584,11 @@ def test_a_union_branch_outside_a_narrowing_joins_nothing_for_its_operand() -> N
         to=("Car",),
         operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Car.owner.name"), value="Ann"),
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Vehicle"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Vehicle"))
     bike, car = compiled.statement.sql.split(" union all ")
     assert "join" not in bike
-    assert bike.endswith("from bike t0 where 1 = 0")
-    assert "from car t0 left join owner t1 on t1.id = t0.owner_id where t1.name = ?" in car
+    assert bike.endswith("from px.bike t0 where 1 = 0")
+    assert "from px.car t0 left join px.owner t1 on t1.id = t0.owner_id where t1.name = ?" in car
 
 
 def test_a_partition_of_a_table_per_hierarchy_read_joins_its_proven_hops() -> None:
@@ -1564,12 +1631,15 @@ def test_a_partition_of_a_table_per_hierarchy_read_joins_its_proven_hops() -> No
     )
     named = oa.Comparison(op="eq", subject=oa.FieldSubject("Payment.account.name"), value="A")
     compiled = compile_read(
-        oa.And(operands=(detail, named)), family, POSTGRES, target(family, "Payment")
+        oa.And(operands=(detail, named)),
+        bound_model(family),
+        POSTGRES,
+        target(family, "Payment"),
     )
     card, cash = compiled.statement.sql.split(" union all ")
     for branch, alias in ((card, "p1"), (cash, "p2")):
         assert (
-            f"offset 0) {alias} left join account t1 on t1.id = {alias}.account_id where "
+            f"offset 0) {alias} left join px.account t1 on t1.id = {alias}.account_id where "
         ) in branch
         assert branch.endswith(" and t1.name = ?")
 
@@ -1580,9 +1650,9 @@ def test_a_universal_joins_its_operands_proven_hop_beside_its_counterexample() -
         "Order.items",
         oa.Comparison(op="eq", subject=oa.FieldSubject("order.name"), value="Ada"),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(op, bound_model(ORDERS), POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith(
-        "where not exists (select 1 from order_item t1 left join orders t2 on "
+        "where not exists (select 1 from px.order_item t1 left join px.orders t2 on "
         "t2.id = t1.order_id where t1.order_id = t0.id and not (t2.name = ?) is true)"
     )
 
@@ -1703,7 +1773,8 @@ def _crate_model() -> Metamodel:
 
 
 _CRATE_JOINS = (
-    "from shelf t0 left join box t1 on t1.id = t0.box_id left join crate t2 on t2.id = t1.crate_id"
+    "from px.shelf t0 left join px.box t1 on t1.id = t0.box_id left join px.crate t2 on t2.id = "
+    "t1.crate_id"
 )
 
 
@@ -1717,14 +1788,14 @@ def test_document_collections_of_a_shared_target_read_one_owner_result_relation(
             oa.Quantifier("none", "Shelf.box.crate.parcels", sku),
         )
     )
-    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Shelf"))
     assert compiled.statement.sql.endswith(
         f"{_CRATE_JOINS} left join (select t5.id, exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(t5.tags) = ? then t5.tags else cast(? as jsonb) end) t3 where "
         "case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0, not exists "
         "(select 1 from jsonb_array_elements(case when jsonb_typeof(t5.parcels) = ? then "
         "t5.parcels else cast(? as jsonb) end) t4 where jsonb_extract_path_text(t4.value, ?) = ?) "
-        "q1 from crate t5) r0 on r0.id = t2.id where coalesce(r0.q0, false) and "
+        "q1 from px.crate t5) r0 on r0.id = t2.id where coalesce(r0.q0, false) and "
         "coalesce(r0.q1, true)"
     )
     assert compiled.statement.binds == (
@@ -1764,7 +1835,7 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
 def _rendered_at(plan: StatementPlan, family: Metamodel, root: str, path: tuple[int, ...]) -> str:
     entity = target(family, root)
     builder: StatementBuilder[EntityRowScope] = StatementBuilder(
-        family,
+        bound_model(family),
         inheritance.inheritance_facet_of(family),
         storage_layout.storage_layout_facet_of(family),
         POSTGRES,
@@ -1809,13 +1880,13 @@ def test_owner_results_are_keyed_by_every_physical_primary_key_column() -> None:
         _entity("Span", temporality="bitemporal", members=[_TAGS]),
     )
     op = oa.Quantifier("any", "Desk.span.tags", _element("eq", "a"))
-    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Desk"))
     assert compiled.statement.sql.endswith(
-        "left join span t1 on t1.id = t0.span_id and t1.thru_z = ? and t1.out_z = ? "
+        "left join px.span t1 on t1.id = t0.span_id and t1.thru_z = ? and t1.out_z = ? "
         "left join (select t3.id, t3.thru_z, t3.out_z, exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else "
         "cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then "
-        "t2.value #>> ? end = ?) q0 from span t3) r0 on r0.id = t1.id and r0.thru_z = t1.thru_z "
+        "t2.value #>> ? end = ?) q0 from px.span t3) r0 on r0.id = t1.id and r0.thru_z = t1.thru_z "
         "and r0.out_z = t1.out_z where coalesce(r0.q0, false)"
     )
 
@@ -1826,12 +1897,15 @@ def test_owner_results_read_a_document_resident_collection_at_its_placed_path() 
         _entity("Span", layout={"document": {"column": "payload"}}, members=[_TAGS]),
     )
     compiled = compile_read(
-        oa.Quantifier("none", "Desk.span.tags"), family, POSTGRES, target(family, "Desk")
+        oa.Quantifier("none", "Desk.span.tags"),
+        bound_model(family),
+        POSTGRES,
+        target(family, "Desk"),
     )
     assert compiled.statement.sql.endswith(
-        "left join span t1 on t1.id = t0.span_id left join (select t3.id, not exists (select 1 "
+        "left join px.span t1 on t1.id = t0.span_id left join (select t3.id, not exists (select 1 "
         "from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t3.payload, ?)) = ? "
-        "then jsonb_extract_path(t3.payload, ?) else cast(? as jsonb) end) t2) q0 from span t3) "
+        "then jsonb_extract_path(t3.payload, ?) else cast(? as jsonb) end) t2) q0 from px.span t3) "
         "r0 on r0.id = t1.id where coalesce(r0.q0, true)"
     )
     assert compiled.statement.binds == ("tags", "array", "tags", "[]")
@@ -1847,11 +1921,14 @@ def test_a_result_column_takes_no_name_a_key_column_spells() -> None:
         },
     )
     compiled = compile_read(
-        oa.Quantifier("any", "Desk.span.tags"), family, POSTGRES, target(family, "Desk")
+        oa.Quantifier("any", "Desk.span.tags"),
+        bound_model(family),
+        POSTGRES,
+        target(family, "Desk"),
     )
     assert compiled.statement.sql.endswith(
         "(select t3.q0, exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t3.tags) "
-        "= ? then t3.tags else cast(? as jsonb) end) t2) q1 from span t3) r0 on r0.q0 = t1.q0 "
+        "= ? then t3.tags else cast(? as jsonb) end) t2) q1 from px.span t3) r0 on r0.q0 = t1.q0 "
         "where coalesce(r0.q1, false)"
     )
 
@@ -1885,10 +1962,10 @@ def test_a_quantifier_whose_element_projection_can_fail_is_confined_past_the_sha
     # Owner results would test the cast on every crate's elements; confined to
     # the joined box, the quantifier reads only the crate the shelf reaches.
     family = _crate_model()
-    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Shelf"))
     assert compiled.statement.sql.endswith(
-        "from shelf t0 left join box t1 on t1.id = t0.box_id where "
-        f"{evaluated} from crate t3 where t3.id = t1.crate_id and t1.id = t0.box_id), "
+        "from px.shelf t0 left join px.box t1 on t1.id = t0.box_id where "
+        f"{evaluated} from px.crate t3 where t3.id = t1.crate_id and t1.id = t0.box_id), "
         f"{'false' if op.kind == 'any' else 'true'})"
     )
 
@@ -1896,11 +1973,12 @@ def test_a_quantifier_whose_element_projection_can_fail_is_confined_past_the_sha
 def test_a_failing_projection_one_proven_hop_away_keeps_its_scalar_form() -> None:
     family = _crate_model()
     op = oa.Quantifier("any", "Box.crate.scores", _element("greaterThan", 3))
-    compiled = compile_read(op, family, POSTGRES, target(family, "Box"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Box"))
     assert compiled.statement.sql.endswith(
-        "from box t0 where coalesce((select exists (select 1 from jsonb_array_elements(case when "
+        "from px.box t0 where coalesce((select exists (select 1 from jsonb_array_elements(case "
+        "when "
         "jsonb_typeof(t2.scores) = ? then t2.scores else cast(? as jsonb) end) t1 where case when "
-        "jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?) from crate t2 "
+        "jsonb_typeof(t1.value) = ? then cast(t1.value #>> ? as bigint) end > ?) from px.crate t2 "
         "where t2.id = t0.crate_id), false)"
     )
 
@@ -1935,7 +2013,7 @@ def _lot_model() -> Metamodel:
 
 _MAKER = oa.Comparison(op="eq", subject=oa.FieldSubject("maker"), value="x")
 _CAR = oa.Narrow(to=("Car",), operand=oa.TrueNode())
-_DEALER_JOIN = "from lot t0 left join dealer t1 on t1.id = t0.dealer_id where "
+_DEALER_JOIN = "from px.lot t0 left join px.dealer t1 on t1.id = t0.dealer_id where "
 
 
 @pytest.mark.parametrize(
@@ -1943,19 +2021,19 @@ _DEALER_JOIN = "from lot t0 left join dealer t1 on t1.id = t0.dealer_id where "
     [
         pytest.param(
             oa.Quantifier("any", "Lot.dealer.vehicles", _MAKER),
-            "(exists (select 1 from bike t2 where t2.dealer_id = t1.id and t2.maker = ?) or "
-            "exists (select 1 from car t3 where t3.dealer_id = t1.id and t3.maker = ?))",
+            "(exists (select 1 from px.bike t2 where t2.dealer_id = t1.id and t2.maker = ?) or "
+            "exists (select 1 from px.car t3 where t3.dealer_id = t1.id and t3.maker = ?))",
             id="every-branch",
         ),
         pytest.param(
             oa.Quantifier("any", "Lot.dealer.vehicles", _CAR),
-            "exists (select 1 from car t2 where t2.dealer_id = t1.id)",
+            "exists (select 1 from px.car t2 where t2.dealer_id = t1.id)",
             id="selected-branch",
         ),
         pytest.param(
             oa.Quantifier("all", "Lot.dealer.vehicles", _CAR),
-            "not (exists (select 1 from bike t2 where t2.dealer_id = t1.id and not (1 = 0) is "
-            "true) or exists (select 1 from car t3 where t3.dealer_id = t1.id and not (1 = 1) "
+            "not (exists (select 1 from px.bike t2 where t2.dealer_id = t1.id and not (1 = 0) is "
+            "true) or exists (select 1 from px.car t3 where t3.dealer_id = t1.id and not (1 = 1) "
             "is true))",
             id="unselected-counterexample",
         ),
@@ -1965,7 +2043,7 @@ def test_a_related_collection_of_a_shared_target_is_quantified_at_its_joined_row
     op: oa.Quantifier, where: str
 ) -> None:
     family = _lot_model()
-    compiled = compile_read(op, family, POSTGRES, target(family, "Lot"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Lot"))
     assert compiled.statement.sql.endswith(_DEALER_JOIN + where)
 
 
@@ -1976,11 +2054,14 @@ def test_a_related_quantifier_narrowing_with_an_operand_stays_in_its_hop() -> No
         operand=oa.Comparison(op="greaterThan", subject=oa.FieldSubject("seats"), value=2),
     )
     compiled = compile_read(
-        oa.Quantifier("any", "Lot.dealer.vehicles", roomy), family, POSTGRES, target(family, "Lot")
+        oa.Quantifier("any", "Lot.dealer.vehicles", roomy),
+        bound_model(family),
+        POSTGRES,
+        target(family, "Lot"),
     )
     assert compiled.statement.sql.endswith(
-        "from lot t0 where coalesce((select exists (select 1 from car t1 "
-        "where t1.dealer_id = t2.id and t1.seats > ?) from dealer t2 "
+        "from px.lot t0 where coalesce((select exists (select 1 from px.car t1 "
+        "where t1.dealer_id = t2.id and t1.seats > ?) from px.dealer t2 "
         "where t2.id = t0.dealer_id), false)"
     )
 
@@ -1988,12 +2069,12 @@ def test_a_related_quantifier_narrowing_with_an_operand_stays_in_its_hop() -> No
 def test_each_union_branch_reads_its_own_owner_results() -> None:
     family = _lot_model()
     op = oa.Quantifier("any", "Vehicle.dealer.tags", _element("eq", "a"))
-    compiled = compile_read(op, family, POSTGRES, target(family, "Vehicle"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Vehicle"))
     branch = (
-        "left join dealer t1 on t1.id = t0.dealer_id left join (select t3.id, exists (select 1 "
+        "left join px.dealer t1 on t1.id = t0.dealer_id left join (select t3.id, exists (select 1 "
         "from jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else "
         "cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then t2.value #>> ? "
-        "end = ?) q0 from dealer t3) r0 on r0.id = t1.id where coalesce(r0.q0, false)"
+        "end = ?) q0 from px.dealer t3) r0 on r0.id = t1.id where coalesce(r0.q0, false)"
     )
     assert compiled.statement.sql.count(branch) == 2
     assert compiled.statement.binds == ("array", "[]", "string", "{}", "a") * 2
@@ -2002,13 +2083,13 @@ def test_each_union_branch_reads_its_own_owner_results() -> None:
 def test_a_match_body_reads_its_own_owner_results() -> None:
     family = _crate_model()
     op = oa.Presence("exists", "Shelf.box", oa.Quantifier("any", "crate.tags", _element("eq", "a")))
-    compiled = compile_read(op, family, POSTGRES, target(family, "Shelf"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Shelf"))
     assert compiled.statement.sql.endswith(
-        "from shelf t0 where exists (select 1 from box t1 left join crate t2 "
+        "from px.shelf t0 where exists (select 1 from px.box t1 left join px.crate t2 "
         "on t2.id = t1.crate_id left join (select t4.id, exists (select 1 from "
         "jsonb_array_elements(case when "
         "jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t3 where case when "
-        "jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from crate t4) r0 on "
+        "jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from px.crate t4) r0 on "
         "r0.id = t2.id where t1.id = t0.box_id and coalesce(r0.q0, false))"
     )
 
@@ -2033,19 +2114,19 @@ def test_a_collection_past_an_unproven_hop_is_confined_and_reads_no_owner_result
         _entity("Dealer", members=[_TAGS]),
     )
     op = oa.Quantifier("none", "Desk.span.vehicle.dealer.tags", _element("eq", "a"))
-    compiled = compile_read(op, family, POSTGRES, target(family, "Desk"))
+    compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Desk"))
     dealer = (
         "select coalesce((select not exists (select 1 from jsonb_array_elements(case when "
         "jsonb_typeof(t{tags}.tags) = ? then t{tags}.tags else cast(? as jsonb) end) t{element} "
         "where case when jsonb_typeof(t{element}.value) = ? then t{element}.value #>> ? end = ?) "
-        "from dealer t{tags} where t{tags}.id = t{vehicle}.dealer_id), true) "
+        "from px.dealer t{tags} where t{tags}.id = t{vehicle}.dealer_id), true) "
     )
     assert compiled.statement.sql.endswith(
-        f"from desk t0 left join span t1 on {_SPAN_REACHED} where coalesce(("
+        f"from px.desk t0 left join px.span t1 on {_SPAN_REACHED} where coalesce(("
         + dealer.format(element=2, tags=3, vehicle=4)
-        + f"from bike t4 where t4.id = t1.vehicle_id and {_SPAN_REACHED} union all "
+        + f"from px.bike t4 where t4.id = t1.vehicle_id and {_SPAN_REACHED} union all "
         + dealer.format(element=5, tags=6, vehicle=7)
-        + f"from car t7 where t7.id = t1.vehicle_id and {_SPAN_REACHED}), true)"
+        + f"from px.car t7 where t7.id = t1.vehicle_id and {_SPAN_REACHED}), true)"
     )
 
 
@@ -2053,12 +2134,17 @@ def test_a_locking_read_locks_only_its_root_beside_owner_results() -> None:
     family = _crate_model()
     op = oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a"))
     compiled = compile_read(
-        op, family, POSTGRES, target(family, "Shelf"), limit=3, preference="locking"
+        op,
+        bound_model(family),
+        POSTGRES,
+        target(family, "Shelf"),
+        limit=3,
+        preference="locking",
     )
     assert compiled.statement.sql.endswith(
         f"{_CRATE_JOINS} left join (select t4.id, exists (select 1 from jsonb_array_elements("
         "case when jsonb_typeof(t4.tags) = ? then t4.tags else cast(? as jsonb) end) t3 where "
-        "case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from crate t4) r0 "
+        "case when jsonb_typeof(t3.value) = ? then t3.value #>> ? end = ?) q0 from px.crate t4) r0 "
         "on r0.id = t2.id where coalesce(r0.q0, false) limit ? for share of t0"
     )
 
@@ -2066,13 +2152,14 @@ def test_a_locking_read_locks_only_its_root_beside_owner_results() -> None:
 def test_readless_predicate_dml_selects_its_keys_through_owner_results() -> None:
     family = _crate_model()
     op = oa.Quantifier("any", "Shelf.box.crate.tags", _element("eq", "a"))
-    compiled = compile_write_predicate(op, family, POSTGRES, target(family, "Shelf"))
+    compiled = compile_write_predicate(op, bound_model(family), POSTGRES, target(family, "Shelf"))
     assert compiled.selection
     assert compiled.sql == (
         f"select t0.id {_CRATE_JOINS} left join (select t4.id, exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(t4.tags) = ? then t4.tags else "
         "cast(? as jsonb) end) t3 where case when jsonb_typeof(t3.value) = ? then "
-        "t3.value #>> ? end = ?) q0 from crate t4) r0 on r0.id = t2.id where coalesce(r0.q0, false)"
+        "t3.value #>> ? end = ?) q0 from px.crate t4) r0 on r0.id = t2.id where coalesce(r0.q0, "
+        "false)"
     )
 
 
@@ -2132,8 +2219,8 @@ def test_a_key_selection_evaluates_every_demand_where_a_read_does(
     # The write selection is planned by the read's own demand planner, so a
     # demand unsafe over a joined row keeps the guard or confinement it keeps
     # in the read rather than a placement of the write's own.
-    compiled = compile_write_predicate(op, family, POSTGRES, target(family, root))
-    read = compile_read(op, family, POSTGRES, target(family, root))
+    compiled = compile_write_predicate(op, bound_model(family), POSTGRES, target(family, root))
+    read = compile_read(op, bound_model(family), POSTGRES, target(family, root))
     assert compiled.selection
     assert compiled.sql.partition(" from ")[2] == read.statement.sql.partition(" from ")[2]
     assert read.statement.binds[len(read.statement.binds) - len(compiled.binds) :] == (

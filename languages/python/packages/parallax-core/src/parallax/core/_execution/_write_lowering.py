@@ -5,10 +5,10 @@ from typing import Final, NamedTuple, cast
 
 from parallax.core._stored_data import InvalidDataError
 from parallax.core.internal.base import InternalError
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.metamodel import (
     EntityIdentity,
-    Metamodel,
 )
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
@@ -102,9 +102,9 @@ class LoweringCursor:
         "_capture_insert",
         "_capture_revision",
         "_dialect",
-        "_meta",
         "_payloads",
         "_position",
+        "_resolved",
         "_span",
         "_span_slots",
         "_spans",
@@ -115,7 +115,7 @@ class LoweringCursor:
         self,
         steps: tuple[PlannedStep, ...],
         payloads: WritePayloadPreparer,
-        meta: Metamodel,
+        resolved: ResolvedBinding,
         dialect: Dialect,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
@@ -129,7 +129,7 @@ class LoweringCursor:
         self._span: EffectSpan | None = next(self._spans, None)
         self._span_slots: EffectSlots | None = None
         self._payloads = payloads
-        self._meta = meta
+        self._resolved = resolved
         self._dialect = dialect
         self._capture_insert = capture_insert
         self._capture_revision = capture_revision
@@ -154,7 +154,7 @@ class LoweringCursor:
         return _within(step, parameter_ceiling, self._lowered(step))
 
     def _lowered(self, step: PlannedStep) -> LoweredStatement:
-        return compile_write_step(step, self._demanded_payload(step), self._meta, self._dialect)
+        return compile_write_step(step, self._demanded_payload(step), self._resolved, self._dialect)
 
     def _demanded_payload(self, step: PlannedStep) -> StepPayload:
         payload = _demanded_payload(step, self._payloads)
@@ -195,7 +195,7 @@ class LoweringCursor:
                 SQL_GENERATION_FAILED,
                 f"{first.entity.canonical}: a grouped effect opens at its own span",
             )
-        builder = GroupedEffectBuilder(slots, self._meta, self._dialect)
+        builder = GroupedEffectBuilder(slots, self._resolved, self._dialect)
         builder.append(first, self._demanded_payload(first))
         steps = [first]
         for _ in range(span.stop - span.start - 1):
@@ -260,7 +260,7 @@ class LoweringCursor:
         presence = entry.row.presence
         slots = _entry_slots(self._payloads, entity, entry)
         builder = InsertStatementBuilder(
-            slots, self._captured_cells(entity, slots, entry), self._meta, self._dialect
+            slots, self._captured_cells(entity, slots, entry), self._resolved, self._dialect
         )
         while True:
             following = self.take()
@@ -277,7 +277,7 @@ class LoweringCursor:
 def stream_physical(
     steps: tuple[PlannedStep, ...],
     payloads: WritePayloadPreparer,
-    meta: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
     *,
     effect_spans: tuple[EffectSpan, ...] = (),
@@ -300,7 +300,7 @@ def stream_physical(
     cursor = LoweringCursor(
         steps,
         payloads,
-        meta,
+        resolved,
         dialect,
         effect_spans=effect_spans,
         capture_insert=capture_insert,
@@ -329,12 +329,12 @@ def stream_physical(
 
 
 def lowered(
-    step: PlannedStep, payloads: WritePayloadPreparer, meta: Metamodel, dialect: Dialect
+    step: PlannedStep, payloads: WritePayloadPreparer, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """The one statement ``step`` lowers to, storing the payload its statement
     demands: backing settlement already prepared where an entry carries it, and
     otherwise what ``payloads`` prepares now."""
-    return compile_write_step(step, _demanded_payload(step, payloads), meta, dialect)
+    return compile_write_step(step, _demanded_payload(step, payloads), resolved, dialect)
 
 
 def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None:
@@ -367,7 +367,7 @@ def lowered_within(
     step: PlannedStep,
     parameter_ceiling: int,
     payloads: WritePayloadPreparer,
-    meta: Metamodel,
+    resolved: ResolvedBinding,
     dialect: Dialect,
 ) -> LoweredStatement:
     """``step``'s one statement, which carries no more SQL parameters than the
@@ -376,7 +376,7 @@ def lowered_within(
     A statement exceeding its promise is refused as a lowering failure rather
     than presented to transport selected on the strength of that promise.
     """
-    return _within(step, parameter_ceiling, lowered(step, payloads, meta, dialect))
+    return _within(step, parameter_ceiling, lowered(step, payloads, resolved, dialect))
 
 
 def _within(

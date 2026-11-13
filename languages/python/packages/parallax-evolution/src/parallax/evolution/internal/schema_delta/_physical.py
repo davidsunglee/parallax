@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from typing import Literal
 
 from parallax.core.internal.base import NeutralType
+from parallax.core.internal.database_binding import ResolvedTable
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     Column,
     EntityIdentity,
     IndexIdentity,
-    Table,
 )
 from parallax.evolution.internal.model_evolution import EvolutionOperation
-from parallax.evolution.internal.schema_delta._values import PhysicalLocation
+from parallax.evolution.internal.schema_delta._values import SchemaTarget
 
 __all__ = [
     "AddColumn",
@@ -54,20 +54,23 @@ class PhysicalColumn:
 class IndexDefinition:
     """One authored Index as one physical Table holds it.
 
-    ``mapping_owner`` identifies the holding Table and ``table`` is its declared
-    name. ``components`` retains the authored Attribute Identities, which a
-    collision report names. ``column_attributes`` is the Attribute behind each of
-    ``columns`` — the authored components, then a temporal Table's axis ends —
-    from which the Physical Index Name is derived.
+    ``table`` is the holding mapping owner's table as the endpoint's binding
+    resolves it. ``components`` retains the authored Attribute Identities, which
+    a collision report names. ``column_attributes`` is the Attribute behind each
+    of ``columns`` — the authored components, then a temporal Table's axis ends
+    — from which the Physical Index Name is derived.
     """
 
-    mapping_owner: EntityIdentity
-    table: Table
+    table: ResolvedTable
     index: IndexIdentity
     components: tuple[AttributeIdentity, ...]
     column_attributes: tuple[AttributeIdentity, ...]
     columns: tuple[PhysicalColumn, ...]
     unique: bool
+
+    @property
+    def mapping_owner(self) -> EntityIdentity:
+        return self.table.mapping_owner
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,16 +101,18 @@ class TemporalBackingIndex:
     """The Index backing a temporal Table's primary key or exclusion.
 
     It shares the schema's Index namespace with authored Indices, so the
-    Physical Index Name census counts it, under the name the Table Layout
-    compiled for its constraint. ``mapping_owner`` identifies the holding Table
-    and ``table`` is its declared name.
+    Physical Index Name census counts it, under the name its resolved table
+    derived for its constraint.
     """
 
-    mapping_owner: EntityIdentity
-    table: Table
+    table: ResolvedTable
     kind: Literal["primaryKey", "exclusion"]
     columns: tuple[Column, ...]
     name: PhysicalIndexName
+
+    @property
+    def mapping_owner(self) -> EntityIdentity:
+        return self.table.mapping_owner
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,13 +132,13 @@ class CreateTable:
     """Create one whole Table: every target Column, the derived primary key, and
     a temporal Table's interval checks and exclusion.
 
-    A temporal Table's primary key carries its compiled ``primary_key_name``;
+    A temporal Table's primary key carries its resolved ``primary_key_name``;
     any other key is left for the database to name. Authored secondary Indices
     are deliberately excluded — each is its own separately named statement, so
     a violation reports a name a rollout can correlate.
     """
 
-    table: Table
+    table: ResolvedTable
     columns: tuple[PhysicalColumn, ...]
     primary_key: tuple[Column, ...]
     interval_checks: tuple[IntervalCheck, ...]
@@ -146,7 +151,7 @@ class CreateTable:
 class AddColumn:
     """Add one new physical Column to an existing Table."""
 
-    table: Table
+    table: ResolvedTable
     column: PhysicalColumn
     caused_by: tuple[EvolutionOperation, ...]
 
@@ -163,7 +168,7 @@ class RestateColumnDomain:
     against is never unilateral and never arrives here.
     """
 
-    table: Table
+    table: ResolvedTable
     earlier: PhysicalColumn
     later: PhysicalColumn
     caused_by: tuple[EvolutionOperation, ...]
@@ -194,7 +199,7 @@ type PhysicalOperation = CreateExtension | TableOperation
 """Everything a Unilateral Evolution can ask a relational schema to do."""
 
 
-def table_of(operation: TableOperation) -> Table:
+def table_of(operation: TableOperation) -> ResolvedTable:
     """The one Table ``operation`` acts on.
 
     Every Table operation is local to that Table — the algebra emits no foreign
@@ -224,16 +229,16 @@ def member_key(operation: TableOperation) -> str:
             return operation.name.value
 
 
-def location_of(operation: PhysicalOperation) -> PhysicalLocation:
+def location_of(operation: PhysicalOperation) -> SchemaTarget:
     """Where ``operation`` acts, as a refusal reports it."""
     match operation:
         case CreateExtension():
-            return PhysicalLocation(extension=operation.name)
+            return SchemaTarget(extension=operation.name)
         case CreateTable():
-            return PhysicalLocation(table=operation.table)
+            return SchemaTarget(table=operation.table.physical)
         case AddColumn():
-            return PhysicalLocation(table=operation.table, column=operation.column.column)
+            return SchemaTarget(table=operation.table.physical, column=operation.column.column)
         case RestateColumnDomain():
-            return PhysicalLocation(table=operation.table, column=operation.later.column)
+            return SchemaTarget(table=operation.table.physical, column=operation.later.column)
         case CreateIndex() | DropIndex():
-            return PhysicalLocation(table=operation.definition.table, index=operation.name)
+            return SchemaTarget(table=operation.definition.table.physical, index=operation.name)

@@ -22,6 +22,7 @@ from parallax.core.internal.execution import (
     prepare_model,
 )
 from parallax.snapshot import TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
@@ -31,13 +32,13 @@ _CASE_ID = "m-execution-lifecycle-004"
 
 def _seeded(profile_run: Any) -> Any:
     case = corpus_case(_CASE_ID)
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     return profile_run.port
 
 
 def _editions() -> tuple[Any, Any, ServingModel]:
-    a = prepare_model(MODELS["account"], edition="2026-09-a")
-    b = prepare_model(MODELS["account"], edition="2026-09-b")
+    a = prepare_model(MODELS["account"], edition="2026-09-a", binding=TEST_BINDING)
+    b = prepare_model(MODELS["account"], edition="2026-09-b", binding=TEST_BINDING)
     return a, b, ServingModel(a)
 
 
@@ -78,7 +79,9 @@ def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
     # loop re-executes the callback on a fresh attempt, which adopts B.
     assert db.transact(body) == "2026-09-b"
     assert seen == ["2026-09-a", "2026-09-b"]
-    verify = own_root(connect(profile_run.port, MODELS["account"])).using_database_login()
+    verify = own_root(
+        connect(profile_run.port, MODELS["account"], binding=TEST_BINDING)
+    ).using_database_login()
     committed = verify.transact(lambda tx: tx.find(Account.where(Account.id == TARGET_ID)).result())
     assert committed.balance == Decimal("251.00")
 

@@ -444,7 +444,7 @@ def _settled_close(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(entity.table)
+        if address.names_table(case.entity_table(entity.canonical_name))
         and address.names_key_column(entity.identity_column)
         and write_value_equal(address.key, pk)
     ]
@@ -492,7 +492,7 @@ def _settled_statement(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(entity.table)
+        if address.names_table(case.entity_table(entity.canonical_name))
         and address.names_key_column(entity.identity_column)
         and write_value_equal(address.key, pk)
     ]

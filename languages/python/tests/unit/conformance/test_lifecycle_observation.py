@@ -667,7 +667,7 @@ def test_an_emission_no_call_named_is_an_adapter_defect() -> None:
     handed out landed, and an emission was still left unnamed."""
     call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "read", _STATEMENT)
     with pytest.raises(StatementIndexError, match="named only 1"):
-        _portable(call, statements=[_STATEMENT.sql, "insert into account(id) values (?)"])
+        _portable(call, statements=[_STATEMENT.sql, "insert into px.account(id) values (?)"])
 
 
 # --- the statement and count projections of the same delivery ------------------

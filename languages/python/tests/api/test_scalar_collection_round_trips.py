@@ -31,6 +31,7 @@ from parallax.core import (
 )
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING, TEST_SCHEMA, bound_model
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "scalar.collection"
@@ -143,13 +144,13 @@ _PUBLISHED: Mapping[str, tuple[object, ...]] = {
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
 
 
 def _stored_row(profile_run: Any, layout: Layout) -> Mapping[str, object]:
-    state = engine.read_table_state(profile_run.port, model_of(_MODEL))
-    (row,) = state[_TABLES[layout]]
+    state = engine.read_table_state(profile_run.port, bound_model(model_of(_MODEL)))
+    (row,) = state[TEST_SCHEMA][_TABLES[layout]]
     return row
 
 
@@ -288,7 +289,7 @@ def test_a_document_update_keeps_unknown_content_beside_an_assigned_collection(
     db = _served(profile_run)
     db.transact(lambda tx: tx.insert(Sheet(id=1, tags=("a",), counts=(1,))))
     profile_run.port.execute_write(
-        """update sc_sheet set payload = payload || '{"futureKey": [1, "x"]}'::jsonb""", []
+        """update px.sc_sheet set payload = payload || '{"futureKey": [1, "x"]}'::jsonb""", []
     )
 
     db.transact(lambda tx: tx.amend_where(Sheet.where(Sheet.id == 1), Sheet.tags.set(("b", "b"))))

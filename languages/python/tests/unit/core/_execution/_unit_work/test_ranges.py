@@ -77,6 +77,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     WriteRow,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import CountingClock, instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -171,7 +172,7 @@ def _plan(
     instant: TransactionInstant | None = None,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return build_write_planner(_SPANS).finalize(
+    return build_write_planner(bound_model(_SPANS)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),

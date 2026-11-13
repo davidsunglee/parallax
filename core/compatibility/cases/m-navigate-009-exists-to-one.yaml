@@ -11,8 +11,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where exists (select 1 from order_item t1 where t1.id = t0.order_item_id)
-  referenceSql: select id, order_id, order_item_id, code from order_status where order_item_id in (select id from order_item)
+        postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from px.order_status t0 where exists (select 1 from px.order_item t1 where t1.id = t0.order_item_id)
+  referenceSql: select id, order_id, order_item_id, code from px.order_status where order_item_id in (select id from px.order_item)
   rows:
     - { id: 201, order_id: 1, order_item_id: 11, code: PICKED }
     - { id: 202, order_id: 1, order_item_id: 11, code: PACKED }

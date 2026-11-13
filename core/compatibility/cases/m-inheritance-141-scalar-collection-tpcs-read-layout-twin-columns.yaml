@@ -17,8 +17,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as jsonb) blades, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.tags, cast(null as jsonb) bits, t0.blades, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
-        mariadb: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as char) blades, 'TagDrill' family_variant from tag_drill t0 union all select t0.id, t0.tags, cast(null as char) bits, t0.blades, 'TagSaw' family_variant from tag_saw t0) u order by u.id asc
+        postgres: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as jsonb) blades, 'TagDrill' family_variant from px.tag_drill t0 union all select t0.id, t0.tags, cast(null as jsonb) bits, t0.blades, 'TagSaw' family_variant from px.tag_saw t0) u order by u.id asc
+        mariadb: select u.id, not u.tags is null, u.tags, not u.bits is null, u.bits, not u.blades is null, u.blades, u.family_variant from (select t0.id, t0.tags, t0.bits, cast(null as char) blades, 'TagDrill' family_variant from px.tag_drill t0 union all select t0.id, t0.tags, cast(null as char) bits, t0.blades, 'TagSaw' family_variant from px.tag_saw t0) u order by u.id asc
   graph:
     TagKit:
       - { id: 1, tags: [t], bits: [8, 8], _type: parallax.compatibility.TagDrill }

@@ -18,6 +18,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-case-format` | `case-format` |
 | `m-conformance-adapter` | `conformance` |
 | `m-core` | `core` |
+| `m-database-binding` | `database-binding` |
 | `m-db-error` | `db-error` |
 | `m-db-port` | `db-port` |
 | `m-read-planning` | `deep-fetch` |

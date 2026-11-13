@@ -40,6 +40,7 @@ from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.unit_work import WritePreconditionError
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "source.continuation"
@@ -91,8 +92,10 @@ type _Source = Any
 
 
 def _seeded(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    db = own_root(connect(profile_run.port, _MODEL, clock=FixedClock(_AT))).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = own_root(
+        connect(profile_run.port, _MODEL, clock=FixedClock(_AT), binding=TEST_BINDING)
+    ).using_database_login()
 
     def seed(tx: TxnContext) -> None:
         for entity in _ENTITIES:
@@ -404,7 +407,7 @@ def _temporal_seeded(
     ``kept``, Bitemporal ones current from January. Where ``split``, a later
     transaction notes each Bitemporal object ``later`` from September, so its
     coverage stands as two rows."""
-    profile_run.reset(model_of(_TEMPORAL_MODEL), {})
+    profile_run.reset(model_of(_TEMPORAL_MODEL), {}, TEST_BINDING)
     observation = LifecycleObservation()
     instants = [_SEEDED, _RESEEDED] if split else [_SEEDED]
     db = own_root(
@@ -413,6 +416,7 @@ def _temporal_seeded(
             _TEMPORAL_MODEL,
             clock=ScriptedClock([*instants, _ATTEMPT, _RETRIED]),
             lifecycle_provider=observation.provider,
+            binding=TEST_BINDING,
         )
     ).using_database_login()
 
@@ -523,13 +527,13 @@ def _current(profile_run: Any, entity: type[Any], key: int = 1) -> list[tuple[ob
     order = "from_z" if entity in _TERMS else "in_z"
     sql = (
         f"select in_z, {valid}{_member(entity, 'label')}, {_member(entity, 'note')} "
-        f"from {_TABLES[entity]} where id = ? and out_z = 'infinity' order by {order}"
+        f"from px.{_TABLES[entity]} where id = ? and out_z = 'infinity' order by {order}"
     )
     return [tuple(row) for row in profile_run.port.execute(sql, [key])]
 
 
 def _closed(profile_run: Any, entity: type[Any], key: int = 1) -> int:
-    sql = f"select count(*) from {_TABLES[entity]} where id = ? and out_z <> 'infinity'"
+    sql = f"select count(*) from px.{_TABLES[entity]} where id = ? and out_z <> 'infinity'"
     ((count,),) = profile_run.port.execute(sql, [key])
     return int(count)
 
@@ -779,7 +783,7 @@ def test_document_content_no_member_declares_survives_in_every_row_a_source_cont
     # member declares reaches every row without being read again.
     db, observation = _temporal_seeded(profile_run)
     profile_run.port.execute(
-        'update sc_document_term set payload = payload || \'{"undeclared": "x"}\' where id = 1',
+        'update px.sc_document_term set payload = payload || \'{"undeclared": "x"}\' where id = 1',
         [],
     )
     reads: list[int] = []
@@ -800,7 +804,7 @@ def test_document_content_no_member_declares_survives_in_every_row_a_source_cont
     assert reads == [2]
     rows = profile_run.port.execute(
         "select from_z, payload->>'label', payload->>'note', payload->>'undeclared' "
-        "from sc_document_term where id = 1 and out_z = 'infinity' order by from_z",
+        "from px.sc_document_term where id = 1 and out_z = 'infinity' order by from_z",
         [],
     )
     assert [tuple(row) for row in rows] == [

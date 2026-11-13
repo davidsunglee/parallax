@@ -44,6 +44,7 @@ from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.core.internal.write_plan import (
     WritePlan,
 )
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.fake_metadata import facets_of
 from tests._support.planner_probes import (
@@ -140,7 +141,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
         write_preparation_of(_POSITION),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
-    plan = build_write_planner(_POSITION).finalize(
+    plan = build_write_planner(bound_model(_POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(clock),
@@ -191,7 +192,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             until=_MAR,
         ),
     ]
-    plan = build_write_planner(_POSITION).finalize(
+    plan = build_write_planner(bound_model(_POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),

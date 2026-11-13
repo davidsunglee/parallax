@@ -61,6 +61,7 @@ from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._wire import read_evidence_of
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests._support.errors import raises_code
 from tests.unit import _deep_include_support as deep
@@ -190,7 +191,7 @@ def _database(
 ) -> tuple[Database[Any], ScopedDatabase]:
     root = cast(
         "Database[Any]",
-        Database.connect(ScriptedAdapter(*reads), vo.CUSTOMER_MODEL),
+        Database.connect(ScriptedAdapter(*reads), vo.CUSTOMER_MODEL, binding=TEST_BINDING),
     )
     return root, root.using_database_login()
 
@@ -271,7 +272,11 @@ def test_projection_ignores_pydantic_extensions_and_is_directly_json_serializabl
     row = {"entity_id": 1, "label_col": "Ada"}
     root = cast(
         "Database[Any]",
-        Database.connect(ScriptedAdapter(Read(rows=[row]), Read(rows=[row])), _EXTENDED_MODEL),
+        Database.connect(
+            ScriptedAdapter(Read(rows=[row]), Read(rows=[row])),
+            _EXTENDED_MODEL,
+            binding=TEST_BINDING,
+        ),
     )
     db = root.using_database_login()
     query = _ExtendedEntity.where(_ExtendedEntity.id == 1)
@@ -360,6 +365,7 @@ def test_element_projection_refuses_a_mismatched_published_layout_before_positio
         Database.connect(
             ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada", "loyalty": 4}])),
             _FOREIGN_CUSTOMER_MODEL,
+            binding=TEST_BINDING,
         ),
     )
     foreign = (
@@ -433,6 +439,7 @@ def test_invalid_narrowed_view_projects_only_its_position_evidence() -> None:
                 Read(rows=[invalid_left]),
             ),
             _NARROWED_MODEL,
+            binding=TEST_BINDING,
         ),
     )
     db = root.using_database_login()
@@ -514,7 +521,10 @@ def _refuse_unrequested_positions(project: Any, order: Any) -> None:
 
 def test_an_eager_projection_binds_a_requested_position_at_any_depth() -> None:
     root = cast(
-        "Database[Any]", Database.connect(ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL)
+        "Database[Any]",
+        Database.connect(
+            ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL, binding=TEST_BINDING
+        ),
     )
     snapshot = root.using_database_login().find(deep.deep_order_query())
     order = snapshot.result()
@@ -525,7 +535,10 @@ def test_an_eager_projection_binds_a_requested_position_at_any_depth() -> None:
 
 def test_a_paused_stream_binds_a_requested_position_at_any_depth() -> None:
     root = cast(
-        "Database[Any]", Database.connect(ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL)
+        "Database[Any]",
+        Database.connect(
+            ScriptedAdapter(*deep.deep_order_reads()), ORDERS_MODEL, binding=TEST_BINDING
+        ),
     )
     with root.using_database_login().stream(deep.deep_order_query(), batch_size=10) as stream:
         order = next(iter(stream))
@@ -536,7 +549,8 @@ def test_a_paused_stream_binds_a_requested_position_at_any_depth() -> None:
 
 def test_a_projection_position_spells_renamed_and_inherited_members_as_the_read_did() -> None:
     root = cast(
-        "Database[Any]", Database.connect(ScriptedAdapter(*deep.family_reads()), deep.FAMILY)
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(*deep.family_reads()), deep.FAMILY, binding=TEST_BINDING),
     )
     snapshot = root.using_database_login().find(
         deep.Keeper.where(deep.Keeper.id == 1).include(deep.Keeper.animals.toys.maker)
@@ -573,8 +587,8 @@ def test_whole_result_projection_accepts_no_position_override() -> None:
 
 
 def test_projection_uses_the_retained_model_for_equivalent_positions() -> None:
-    old = prepare_model(ANIMAL_MODEL, edition="old")
-    current = prepare_model(_EXPANDED_ANIMAL_MODEL, edition="current")
+    old = prepare_model(ANIMAL_MODEL, edition="old", binding=TEST_BINDING)
+    current = prepare_model(_EXPANDED_ANIMAL_MODEL, edition="current", binding=TEST_BINDING)
     serving = ServingModel(old)
     root = cast(
         "Database[Any]",
@@ -643,6 +657,7 @@ def test_history_projection_preserves_canonical_scalars() -> None:
         Database.connect(
             ScriptedAdapter(Read(rows=rows), Read(rows=rows)),
             BALANCE_MODEL,
+            binding=TEST_BINDING,
         ),
     )
     db = root.using_database_login()
@@ -734,7 +749,10 @@ _POLICY_QUERY = (
 
 def _projected_policy(delivery: str) -> tuple[Any, WireEntity]:
     """One Typed Policy read with its coverage, and its Wire projection."""
-    root = cast("Database[Any]", Database.connect(ScriptedAdapter(*_POLICY_READS), POLICY_MODEL))
+    root = cast(
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(*_POLICY_READS), POLICY_MODEL, binding=TEST_BINDING),
+    )
     db = root.using_database_login()
     if delivery == "eager":
         typed = db.find(_POLICY_QUERY)
@@ -805,7 +823,8 @@ _BALANCE_MILESTONES = Read(
 @pytest.mark.parametrize("delivery", ["eager", "streamed"])
 def test_each_projected_milestone_root_keeps_its_own_milestone_pin(delivery: str) -> None:
     root = cast(
-        "Database[Any]", Database.connect(ScriptedAdapter(_BALANCE_MILESTONES), BALANCE_MODEL)
+        "Database[Any]",
+        Database.connect(ScriptedAdapter(_BALANCE_MILESTONES), BALANCE_MODEL, binding=TEST_BINDING),
     )
     query = Balance.where(Balance.id == 1).history(TX_TIME)
     db = root.using_database_login()
@@ -826,7 +845,9 @@ def test_each_projected_milestone_root_keeps_its_own_milestone_pin(delivery: str
 def test_a_deep_narrowed_projected_node_keeps_its_roots_pin_on_its_own_edge(delivery: str) -> None:
     root = cast(
         "Database[Any]",
-        Database.connect(ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY),
+        Database.connect(
+            ScriptedAdapter(*deep.temporal_reads()), deep.TEMPORAL_FAMILY, binding=TEST_BINDING
+        ),
     )
     db = root.using_database_login()
     if delivery == "eager":

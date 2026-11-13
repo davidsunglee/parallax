@@ -11,6 +11,7 @@ from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.workloads import Provisioning, catalog
 from parallax.core import Attr, Bitemporal, Document, DomainModel, ObjectQuery, TxTemporal, attr
 from parallax.snapshot import ScopedDatabase
+from tests._support.bindings import TEST_BINDING
 
 ROOTS: Final = 200
 PAGE_SIZE: Final = 32
@@ -117,7 +118,7 @@ def provision(workload: str, provisioner: Provisioning) -> None:
         return
     model = models.accepted_model_of(domain_model(workload))
     entity = model.entities[0].identity.canonical
-    provisioner.reset(model, {entity: history_rows(workload)})
+    provisioner.reset(model, {entity: history_rows(workload)}, TEST_BINDING)
 
 
 def wire_query(workload: str) -> Mapping[str, object]:

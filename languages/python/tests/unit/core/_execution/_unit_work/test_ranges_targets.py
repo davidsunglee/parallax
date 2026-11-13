@@ -48,6 +48,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalGuard,
 )
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
@@ -116,7 +117,7 @@ def _plan(
     guards: bool = False,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> WritePlan:
-    return build_write_planner(POSITION).finalize(
+    return build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),

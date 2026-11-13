@@ -67,12 +67,12 @@ from parallax.evolution.internal.model_evolution._values import (
     EntitySelectionFacts,
     EntityWriteCapability,
     EntityWriteShape,
-    EvolutionOperation,
     IndexAdded,
     IndexAltered,
     IndexRemoved,
     InheritanceChanged,
     JoinChanged,
+    LogicalOperation,
     OccurrenceAdmissibility,
     OptimisticLockingChanged,
     OrderingChanged,
@@ -119,7 +119,7 @@ class _Endpoint:
 @dataclass(frozen=True, slots=True)
 class _Analysis:
     matching: Matching
-    operations: tuple[EvolutionOperation, ...]
+    operations: tuple[LogicalOperation, ...]
     earlier: _Endpoint
     later: _Endpoint
     altered_attributes: Mapping[AttributeIdentity, AttributeAltered]
@@ -128,7 +128,7 @@ class _Analysis:
 
 
 def impacts(
-    earlier: Metamodel, matching: Matching, operations: Sequence[EvolutionOperation]
+    earlier: Metamodel, matching: Matching, operations: Sequence[LogicalOperation]
 ) -> tuple[BehavioralImpact, ...]:
     """Every Behavioral Impact the two endpoints differ by, in canonical order."""
     described = tuple(operations)
@@ -232,7 +232,7 @@ def _enforcement_causes(
     entity: EntityIdentity,
     before: tuple[UniqueTuple, ...],
     after: tuple[UniqueTuple, ...],
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     """The Index operations on ``entity`` carrying a rule the two sets differ by.
 
     The impact compares collapsed semantic rules, so an Index whose rule another
@@ -399,7 +399,7 @@ def _control(source: VersionSource | None) -> ConcurrencyControl:
 
 def _version_causes(
     analysis: _Analysis, earlier: EntityFacts, later: EntityFacts
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     family = _family(earlier, later)
     return tuple(
         operation
@@ -410,7 +410,7 @@ def _version_causes(
 
 def _moves_the_version_source(
     analysis: _Analysis,
-    operation: EvolutionOperation,
+    operation: LogicalOperation,
     family: frozenset[EntityIdentity],
 ) -> bool:
     match operation:
@@ -512,7 +512,7 @@ def _axes(endpoint: _Endpoint, entity: EntityIdentity) -> tuple[TemporalAxisFact
 
 def _membership_causes(
     analysis: _Analysis, scope: EntityIdentity, earlier: EntityFacts, later: EntityFacts
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     denoted = frozenset(earlier.family.concrete_subtypes) | frozenset(
         later.family.concrete_subtypes
     )
@@ -526,7 +526,7 @@ def _membership_causes(
 
 def _moves_the_denoted_rows(
     analysis: _Analysis,
-    operation: EvolutionOperation,
+    operation: LogicalOperation,
     scope: EntityIdentity,
     denoted: frozenset[EntityIdentity],
     family: frozenset[EntityIdentity],
@@ -620,7 +620,7 @@ def _write_capability(analysis: _Analysis) -> Iterator[_Located]:
 
 def _attribute_input_causes(
     analysis: _Analysis, attribute: AttributeIdentity
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     """The operations that moved what one Attribute admits from a caller.
 
     Its own alteration, and any As-Of Axis operation naming it as an endpoint:
@@ -636,7 +636,7 @@ def _attribute_input_causes(
 
 
 def _moves_attribute_input(
-    analysis: _Analysis, operation: EvolutionOperation, attribute: AttributeIdentity
+    analysis: _Analysis, operation: LogicalOperation, attribute: AttributeIdentity
 ) -> bool:
     match operation:
         case AttributeAltered():
@@ -692,7 +692,7 @@ def _write_shape(endpoint: _Endpoint, entity: EntityIdentity) -> EntityWriteShap
 
 def _write_surface_causes(
     analysis: _Analysis, entity: EntityIdentity, earlier: EntityFacts, later: EntityFacts
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     family = _family(earlier, later)
     return tuple(
         operation
@@ -703,7 +703,7 @@ def _write_surface_causes(
 
 def _moves_the_write_surface(
     analysis: _Analysis,
-    operation: EvolutionOperation,
+    operation: LogicalOperation,
     entity: EntityIdentity,
     family: frozenset[EntityIdentity],
 ) -> bool:
@@ -770,7 +770,7 @@ def _relationship_causes(
     deltas: tuple[type, ...],
     *,
     through_peer: bool,
-) -> tuple[EvolutionOperation, ...]:
+) -> tuple[LogicalOperation, ...]:
     """The Relationship alterations that moved the fact under analysis.
 
     ``through_peer`` extends the search to the peer declaration, for the facts a

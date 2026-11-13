@@ -16,6 +16,7 @@ from parallax.core.internal.document_codec import UNAVAILABLE, DocumentFinding
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import CompiledEntity, entity_by_name
 from parallax.core.internal.read_delivery._row_decoding import member_classifiers
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.sql import compile_read
 from tests.unit.core.sql_gen._delivery_support import deliver
 
@@ -28,15 +29,15 @@ _ITEM: CompiledEntity = _FOUND
 
 
 def test_a_bytes_collection_decodes_each_element_it_stores_encoded() -> None:
-    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
+    compiled = compile_read(oa.TrueNode(), bound_model(_COLUMNS), POSTGRES, _ITEM)
     (row,) = deliver(_COLUMNS, compiled, [{"id": 1, "tags": ["b", "a"], "blobs": ["0a1b"]}])
 
     assert (row.members["tags"], row.members["blobs"]) == (("b", "a"), (b"\x0a\x1b",))
 
 
 def test_a_collection_column_classifies_through_the_codec_with_its_logical_path() -> None:
-    compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
-    layout = CatalogedModel(_COLUMNS).layouts.entity(_ITEM.identity)
+    compiled = compile_read(oa.TrueNode(), bound_model(_COLUMNS), POSTGRES, _ITEM)
+    layout = CatalogedModel(_COLUMNS, TEST_BINDING).layouts.entity(_ITEM.identity)
     sources = compiled.result_contract.sources(_ITEM.identity)
     classifiers = member_classifiers(
         compiled.result_contract,

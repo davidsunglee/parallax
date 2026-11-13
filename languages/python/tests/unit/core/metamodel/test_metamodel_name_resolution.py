@@ -39,6 +39,7 @@ from parallax.core.internal.predicate._perspective import TemporalPerspective
 from parallax.core.internal.predicate._resolved import ResolvedPresence, ResolvedRelationship
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
+from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read
 from tests._support.write_preparation import write_preparation_of
@@ -149,9 +150,9 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
         root = _named(model, f"{namespace}.Person")
         op = oa.Comparison(op="eq", subject=oa.FieldSubject(f"{namespace}.Person.id"), value=1)
         validate_predicate(root, op, model)
-        compiled = compile_read(op, model, POSTGRES, root)
+        compiled = compile_read(op, bound_model(model), POSTGRES, root)
         assert compiled.statement.sql == (
-            f"select t0.id from {namespace}_person t0 where t0.id = ?"
+            f"select t0.id from px.{namespace}_person t0 where t0.id = ?"
         )
 
 
@@ -241,7 +242,7 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
 
     top_level = Narrow(to=("Wolf",), operand=TrueNode())
     validate_predicate(root, top_level, model)
-    assert compile_read(top_level, model, POSTGRES, root).statement.binds == ("wolf",)
+    assert compile_read(top_level, bound_model(model), POSTGRES, root).statement.binds == ("wolf",)
 
     branches = oa.Or(
         operands=(
@@ -250,7 +251,10 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
         )
     )
     validate_predicate(root, branches, model)
-    assert compile_read(branches, model, POSTGRES, root).statement.binds == ("wolf", "bear")
+    assert compile_read(branches, bound_model(model), POSTGRES, root).statement.binds == (
+        "wolf",
+        "bear",
+    )
 
 
 def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
@@ -262,9 +266,9 @@ def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
 
     op = oa.Quantifier("any", "Den.beasts", Narrow(to=("Wolf",), operand=TrueNode()))
     validate_predicate(den, op, model)
-    compiled = compile_read(op, model, POSTGRES, den)
+    compiled = compile_read(op, bound_model(model), POSTGRES, den)
     assert compiled.statement.sql == (
-        "select t0.id from den t0 where exists (select 1 from beast t1 "
+        "select t0.id from px.den t0 where exists (select 1 from px.beast t1 "
         "where t1.den_id = t0.id and t1.kind = ?)"
     )
     assert compiled.statement.binds == ("wolf",)
@@ -366,9 +370,9 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
 
     hop = oa.Quantifier("any", "den.Den.beasts", Narrow(to=("Wolf",), operand=TrueNode()))
     validate_predicate(den, hop, model)
-    compiled = compile_read(hop, model, POSTGRES, den)
+    compiled = compile_read(hop, bound_model(model), POSTGRES, den)
     assert compiled.statement.sql == (
-        "select t0.id from den t0 where exists (select 1 from beast t1 "
+        "select t0.id from px.den t0 where exists (select 1 from px.beast t1 "
         "where t1.den_id = t0.id and t1.kind = ?)"
     )
     assert compiled.statement.binds == ("wolf",)

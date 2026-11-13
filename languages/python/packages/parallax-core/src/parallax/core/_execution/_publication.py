@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import Final, NoReturn
 
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.internal.base import ConflictError
+from parallax.core.internal.base import ConflictError, UsageError
+from parallax.core.internal.database_binding import (
+    PhysicalSequence,
+    PhysicalTable,
+    Relocation,
+    TableRelocated,
+    relocations_between,
+)
 from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.entity._model import ClassIndex
@@ -14,6 +21,8 @@ from parallax.core.internal.read_planning import NarrowedViewKeys
 from parallax.core.internal.wire._facts import WireModelFacts
 
 __all__ = [
+    "PUBLICATION_BACKEND_MISMATCH",
+    "PUBLICATION_RELOCATION_REFUSED",
     "ModelSelection",
     "PublicationConflictError",
     "SelectedReadModel",
@@ -24,6 +33,13 @@ __all__ = [
     "select_model",
     "write_projection",
 ]
+
+
+PUBLICATION_RELOCATION_REFUSED: Final = "publication-relocation-refused"
+"""`publish` refused a candidate that moves a surviving table or sequence."""
+
+PUBLICATION_BACKEND_MISMATCH: Final = "publication-backend-mismatch"
+"""`publish` refused a candidate prepared for another backend."""
 
 
 def check_edition(edition: str, /) -> str:
@@ -263,13 +279,19 @@ class ServingModel:
         """Replace ``expected`` with ``candidate``, or refuse without changing
         anything.
 
-        Raises :class:`PublicationConflictError` when the held selection is not
+        A candidate prepared for another backend than ``expected`` is refused
+        with ``publication-backend-mismatch``, and one under which any table or
+        sequence ``expected`` also holds resolves to another physical object
+        with ``publication-relocation-refused``: moving a surviving object
+        needs a coordinated migration behind a replacement root. Raises
+        :class:`PublicationConflictError` when the held selection is not
         ``expected`` by identity; the error carries what was actually held.
         """
         if not isinstance(candidate, ModelSelection):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
             raise TypeError(
                 f"a ServingModel publishes a prepared ModelSelection, not {candidate!r}"
             )
+        _check_placement(expected, candidate)
         with self._lock:
             held = self._selection
             if held is not expected:
@@ -278,3 +300,42 @@ class ServingModel:
 
     def __repr__(self) -> str:
         return f"ServingModel(current={self._selection!r})"
+
+
+def _check_placement(expected: ModelSelection, candidate: ModelSelection) -> None:
+    """Refuse ``candidate`` if it changes backend or moves a surviving physical object.
+
+    Compared against ``expected`` rather than the held selection, outside the
+    lock: the identity check under the lock then confirms ``expected`` is what
+    the candidate replaces.
+    """
+    held = read_projection(expected).model.resolved
+    placed = read_projection(candidate).model.resolved
+    if held.dialect.name != placed.dialect.name:
+        raise UsageError(
+            PUBLICATION_BACKEND_MISMATCH,
+            f"publication refused: {candidate!r} is prepared for {placed.dialect.name!r}, "
+            f"but {expected!r} serves {held.dialect.name!r}",
+        )
+    relocations = relocations_between(held, placed)
+    if relocations:
+        moved = "; ".join(_spelled(relocation) for relocation in relocations)
+        raise UsageError(
+            PUBLICATION_RELOCATION_REFUSED,
+            f"publication refused: {candidate!r} moves objects {expected!r} serves ({moved}); "
+            "relocating a surviving table or sequence needs a coordinated migration and a "
+            "replacement root",
+        )
+
+
+def _spelled(relocation: Relocation) -> str:
+    subject = (
+        relocation.mapping_owner.canonical
+        if isinstance(relocation, TableRelocated)
+        else f"sequence {relocation.allocator!r}"
+    )
+    return f"{subject} from {_location(relocation.earlier)} to {_location(relocation.later)}"
+
+
+def _location(physical: PhysicalTable | PhysicalSequence) -> str:
+    return ".".join((*physical.qualifier, physical.name))

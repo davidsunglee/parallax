@@ -35,7 +35,7 @@ Declare models, configure and observe execution, and handle errors.
 - `attr`: Declare a member's options, such as its column, primary-key role or type details.
 - `desc`: A descending ordering term over a member.
 - `index`: Declare one local index over ``members``, in the order given.
-- `prepare_model`: Prepare one complete immutable model selection without database I/O.
+- `prepare_model`: Prepare one complete immutable model selection under ``binding``, without database I/O.
 - `rel`: Declare a relationship: its cardinality and join, or the relationship it reverses.
 
 ### Classes
@@ -142,6 +142,7 @@ Declare models, configure and observe execution, and handle errors.
 - `ONE_TO_ONE`: Relationship cardinality: one source row has at most one target row.
 - `POSTGRES`: The PostgreSQL Dialect.
 - `PRINCIPAL_INVALID`: Code for a Principal whose subject or authorization the database runtime cannot accept.
+- `PUBLICATION_RELOCATION_REFUSED`: `publish` refused a candidate that moves a surviving table or sequence.
 - `PoolSample`: One pool metrics sample: available, unavailable or detached.
 - `QUERY_TARGET_NOT_IN_MODEL`: Code for a query whose target Entity the connected model does not declare.
 - `READ_ONLY`: Persistence mode for an Entity whose rows another system writes.
@@ -270,8 +271,8 @@ Compare two Domain Models and produce the schema change between them.
 
 ### Functions
 
-- `evolve`: Describe every difference between two Domain Models.
-- `schema_delta`: Render a `UnilateralEvolution` as SQL statements for a Dialect.
+- `evolve`: Describe every difference between two Domain Models, each under its binding.
+- `schema_delta`: Render a `UnilateralEvolution` as SQL statements for its later binding's backend.
 
 ### Classes
 
@@ -280,8 +281,8 @@ Compare two Domain Models and produce the schema change between them.
 - `CoordinationReason`: Why an operation cannot be applied without coordination.
 - `CoordinationRequirement`: An operation that needs coordination, with its reasons.
 - `CreatedIndex`: An index a schema change creates, so a later violation can be traced to it.
-- `PhysicalLocation`: The table and member, or database extension, a schema operation acts on.
 - `SchemaDelta`: The ordered dialect statements carrying a database to the later model.
+- `SchemaTarget`: The table and member, or database extension, a schema operation acts on.
 - `UnilateralEvolution`: A model change a live database can apply directly with `schema_delta`.
 - `UnsupportedSchemaOperation`: An operation the Dialect cannot express as SQL.
 
@@ -345,9 +346,11 @@ The operations and behavioral impacts an evolution reports.
 - `RelationshipSelectionFacts`: The predicate-free selection rule of one Relationship position.
 - `ReverseOfChanged`: The peer a surviving reverse Relationship names.
 - `ScalarAdmissibility`: The accepted value domain of one scalar position.
+- `SequenceRelocated`: A logical allocator both selections declare resolves to a different physical sequence.
 - `StorageChanged`: The accepted Storage Location of a surviving Attribute or top-level Value Object occurrence.
 - `StorageContainerChanged`: The accepted Storage Container of a surviving Entity.
 - `StorageLayoutChanged`: The accepted Storage Layout of a surviving Entity.
+- `TableRelocated`: A mapping owner both selections hold resolves to a different physical table.
 - `TemporalAxisFacts`: One axis of a selection's effective Temporal Shape.
 - `TransactionTimeGated`: Writes gate on the Transaction-Time start Attribute.
 - `TypeChanged`: The accepted Neutral Type of a surviving scalar value position.
@@ -369,7 +372,7 @@ The operations and behavioral impacts an evolution reports.
 ### Constants and types
 
 - `BehavioralImpact`: Any behavioral impact an evolution reports.
-- `EvolutionOperation`: Any operation an evolution reports.
+- `EvolutionOperation`: Any operation an evolution reports, logical or a relocation.
 
 ## `parallax.postgres`
 

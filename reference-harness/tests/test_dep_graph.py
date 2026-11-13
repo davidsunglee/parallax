@@ -174,12 +174,11 @@ def test_storage_layout_has_exact_direct_dependencies_and_manifest_ownership() -
         line for line in manifest.splitlines() if line.startswith("| `m-inheritance` |")
     )
     assert (
-        "| required | `storage-layout-table-mapping-collision`, "
-        "`storage-layout-column-collision`, "
+        "| required | `storage-layout-column-collision`, "
         "`storage-layout-document-member-column-override`, "
         "`storage-layout-index-over-document-member` |" in storage_row
     )
-    assert "storage-layout-table-mapping-collision" in storage_row
+    assert "storage-layout-table-mapping-collision" not in storage_row
     assert "storage-layout-table-boundary-collision" not in storage_row
     assert "`StorageLayoutFacet` under `FacetKey(m-storage-layout)`" in storage_row
     assert "`FacetKey(m-inheritance)`" in storage_row
@@ -669,7 +668,7 @@ def test_real_corpus_declares_the_snapshot_slice() -> None:
 @pytest.mark.parametrize(
     ("slice_tag", "expected"),
     [
-        ("slice-snapshot-1", 980),
+        ("slice-snapshot-1", 993),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

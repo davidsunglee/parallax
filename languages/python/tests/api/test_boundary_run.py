@@ -44,6 +44,7 @@ from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
 from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.corpus import case_document, case_fixtures
 from tests._support.errors import raises_code
 
@@ -179,7 +180,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
         # about (`m-case-format`), so there is nothing here to grade — the same
         # rule a dialect-keyed `then.sql` already carries.
         pytest.skip(f"{case.case_id} states no outcome for {dialect.name}")
-    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case))
+    profile_run.reset(engine.load_case_setup_metamodel(case), case_fixtures(case), TEST_BINDING)
     meta = MODELS[Path(case.model).stem]
     target = boundary_runner.boundary_target(case)
 
@@ -215,7 +216,9 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # Prepared explicitly under the case's own edition — the model descriptor's
     # stem — so the attempt events the case authors carry the literal it names
     # (`m-conformance-adapter`).
-    serving = ServingModel(prepare_model(meta, edition=engine.case_edition(case)))
+    serving = ServingModel(
+        prepare_model(meta, edition=engine.case_edition(case), binding=TEST_BINDING)
+    )
     database_root = connect(port, serving, options=root, lifecycle_provider=observed.provider)
     request.addfinalizer(database_root.close)
 
@@ -244,7 +247,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
     # and driving it through the SAME `port` would arm the fault against it.
-    verify_root = connect(profile_run.port, meta)
+    verify_root = connect(profile_run.port, meta, binding=TEST_BINDING)
     request.addfinalizer(verify_root.close)
     verify_db = verify_root.using_database_login()
     raise_after = fault is None and outcome == "aborted"

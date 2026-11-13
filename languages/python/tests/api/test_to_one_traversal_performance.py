@@ -66,6 +66,7 @@ from parallax.core.internal.unit_work import (
     WriteAssignment,
 )
 from parallax.snapshot import ScopedDatabase, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.lowering_probes import lower_instruction
 from tests._support.query_probes import canonical_document, predicate_node, typed_resolved
 from tests._support.repo import REPO_ROOT
@@ -348,23 +349,23 @@ def seed_statements(scale: Scale) -> list[str]:
     )
     absent = "false" if a == 0 else f"mod(g, {a}) = 0"
     return [
-        "insert into top_region (id, name) select g, case when g = 10 then null else 'R' || g "
+        "insert into px.top_region (id, name) select g, case when g = 10 then null else 'R' || g "
         "end from generate_series(1, 10) g",
-        "insert into top_dealer (id, name) select g, 'D' || g from generate_series(1, 100) g",
-        "insert into top_customer (id, name, tier, region_id) select g, 'C' || g, "
+        "insert into px.top_dealer (id, name) select g, 'D' || g from generate_series(1, 100) g",
+        "insert into px.top_customer (id, name, tier, region_id) select g, 'C' || g, "
         "case mod(g, 3) when 0 then null when 1 then 'gold' else 'silver' end, "
         "case when mod(g, 50) = 0 then null else mod(g, 10) + 1 end "
         f"from generate_series(1, {customers}) g",
-        "insert into top_car (id, maker, dealer_id, seats) select g, case when mod(g, 8) = 1 "
+        "insert into px.top_car (id, maker, dealer_id, seats) select g, case when mod(g, 8) = 1 "
         "then 'Volvo' else 'Saab' end, mod(g, 100) + 1, case when mod(g, 6) = 5 then null "
         f"else mod(g, 7) end from generate_series(1, {vehicles}) g where mod(g, 2) = 1",
-        "insert into top_bike (id, maker, dealer_id, gears) select g, 'Trek', mod(g, 100) + 1, "
+        "insert into px.top_bike (id, maker, dealer_id, gears) select g, 'Trek', mod(g, 100) + 1, "
         f"mod(g, 21) from generate_series(1, {vehicles}) g where mod(g, 2) = 0",
-        "insert into top_pet (id, kind, name, bark_volume, indoor) select g, case mod(g, 2) "
+        "insert into px.top_pet (id, kind, name, bark_volume, indoor) select g, case mod(g, 2) "
         "when 0 then 'dog' else 'cat' end, 'P' || g, case when mod(g, 2) = 0 and mod(g, 10) <> 0 "
         "then mod(g, 9) end, case when mod(g, 2) = 1 then mod(g, 4) = 1 end "
         f"from generate_series(1, {pets}) g",
-        "insert into top_order (id, name, status, qty, customer_id, vehicle_id, pet_id, tags, "
+        "insert into px.top_order (id, name, status, qty, customer_id, vehicle_id, pet_id, tags, "
         f"parcels) select g, case when mod(g, {m}) = 0 then 'Ada' else 'N' || g end, "
         "case mod(g, 7) when 0 then null when 1 then 'open' else 'closed' end, "
         f"case when mod(g, {m}) = 0 then mod(7 * (g / {m}), 20) else mod(g, 20) end, "
@@ -372,50 +373,51 @@ def seed_statements(scale: Scale) -> list[str]:
         f"case when mod(g, 89) = 0 then null else mod(g, {vehicles}) + 1 end, "
         f"case when mod(g, 11) = 0 then null else mod(g, {pets}) + 1 end, {tags}, {parcels} "
         f"from generate_series(1, {p}) g",
-        "insert into top_order_note (id, order_id, kind) select g, mod(g - 1, "
+        "insert into px.top_order_note (id, order_id, kind) select g, mod(g - 1, "
         f"{p}) + 1, case when mod(g, 5) = 0 then 'urgent' else 'info' end "
         f"from generate_series(1, {p * scale.notes}) g where mod(mod(g - 1, {p}) + 1, 3) <> 0",
-        "insert into top_invoice (id, order_id, amount) select g, g, mod(g, 1000) "
+        "insert into px.top_invoice (id, order_id, amount) select g, g, mod(g, 1000) "
         f"from generate_series(1, {p}) g where mod(g, 13) <> 0",
-        "insert into top_item (id, order_id, sku, quantity, flagged) select g, "
+        "insert into px.top_item (id, order_id, sku, quantity, flagged) select g, "
         f"case when {absent} then null else mod(g - 1, {p}) + 1 end, 'S' || mod(g, 100), "
         f"mod(g, 10), false from generate_series(1, {scale.items}) g",
-        "insert into top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
+        "insert into px.top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
         f"case when mod(g, {m}) = 0 then 500 else 50 end, timestamptz '2024-01-01', "
         "timestamptz 'infinity', timestamptz '2024-01-01', timestamptz '2024-04-01' "
         f"from generate_series(1, {coverages}) g",
-        "insert into top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
+        "insert into px.top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
         f"case when mod(g, {m}) = 0 then 600 else 100 end, timestamptz '2024-01-01', "
         "timestamptz '2024-06-01', timestamptz '2024-04-01', timestamptz 'infinity' "
         f"from generate_series(1, {coverages}) g",
-        "insert into top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
+        "insert into px.top_coverage (id, amount, from_z, thru_z, in_z, out_z) select g, "
         f"case when mod(g, {m}) = 0 then 700 else 200 end, timestamptz '2024-06-01', "
         "timestamptz 'infinity', timestamptz '2024-04-01', timestamptz 'infinity' "
         f"from generate_series(1, {coverages}) g",
-        "insert into top_claim (id, coverage_id, reserve, from_z, thru_z, in_z, out_z) "
+        "insert into px.top_claim (id, coverage_id, reserve, from_z, thru_z, in_z, out_z) "
         f"select g, mod(g - 1, {coverages}) + 1, mod(g, 1000), timestamptz '2024-01-01', "
         "timestamptz 'infinity', timestamptz '2024-01-01', timestamptz 'infinity' "
         f"from generate_series(1, {claims}) g",
-        "create table top_item_seed as table top_item",
+        "create table px.top_item_seed as table px.top_item",
     ]
 
 
 _DISTRIBUTIONS: Final[Mapping[str, str]] = {
-    "absentParents": "select count(*) from top_item where order_id is null",
-    "matchingParents": "select count(*) from top_order where name = 'Ada'",
+    "absentParents": "select count(*) from px.top_item where order_id is null",
+    "matchingParents": "select count(*) from px.top_order where name = 'Ada'",
     "rootsOfMatchingParents": (
-        "select count(*) from top_item i join top_order o on o.id = i.order_id where o.name = 'Ada'"
+        "select count(*) from px.top_item i join px.top_order o on o.id = i.order_id where "
+        "o.name = 'Ada'"
     ),
     "maxRootsPerParent": (
-        "select coalesce(max(n), 0) from (select count(*) n from top_item "
+        "select coalesce(max(n), 0) from (select count(*) n from px.top_item "
         "where order_id is not null group by order_id) r"
     ),
-    "tagElements": "select coalesce(sum(jsonb_array_length(tags)), 0) from top_order",
-    "distinctTagCollections": "select count(distinct tags) from top_order",
-    "distinctParcelCollections": "select count(distinct parcels) from top_order",
-    "notes": "select count(*) from top_order_note",
+    "tagElements": "select coalesce(sum(jsonb_array_length(tags)), 0) from px.top_order",
+    "distinctTagCollections": "select count(distinct tags) from px.top_order",
+    "distinctParcelCollections": "select count(distinct parcels) from px.top_order",
+    "notes": "select count(*) from px.top_order_note",
     "rootsOfMatchingLatestCoverages": (
-        "select count(*) from top_item i join top_coverage v on v.id = i.order_id "
+        "select count(*) from px.top_item i join px.top_coverage v on v.id = i.order_id "
         "where v.amount = 700 and v.thru_z = 'infinity' and v.out_z = 'infinity'"
     ),
 }
@@ -425,8 +427,8 @@ _DISTRIBUTIONS: Final[Mapping[str, str]] = {
 # The executable workload manifest                                             #
 # --------------------------------------------------------------------------- #
 
-_JOINED: Final = "from top_item i join top_order o on o.id = i.order_id"
-_ADA_ORDERS: Final = "select o.id from top_order o where o.name = 'Ada'"
+_JOINED: Final = "from px.top_item i join px.top_order o on o.id = i.order_id"
+_ADA_ORDERS: Final = "select o.id from px.top_order o where o.name = 'Ada'"
 _HEADLINE: Final = ("ticket", "ticket-selective", "ticket-unshared")
 _COLLECTION_SCALES: Final = ("ticket", "collections-empty", "collections-large", "ticket-unshared")
 
@@ -494,7 +496,7 @@ class Workload:
         )
 
 
-_ROW: Final = "select i.id, i.order_id, i.sku, i.quantity, i.flagged from top_item i"
+_ROW: Final = "select i.id, i.order_id, i.sku, i.quantity, i.flagged from px.top_item i"
 _TAG: Final = "case when jsonb_typeof(e.value) = 'string' then e.value #>> '{}' end"
 
 
@@ -502,7 +504,7 @@ def _elements(collection: _Collection, owner: str) -> tuple[str, str | None]:
     """The source of ``owner``'s elements, and the correlation a related
     collection needs beside it."""
     if collection == "notes":
-        return "top_order_note e", f"e.order_id = {owner}.id"
+        return "px.top_order_note e", f"e.order_id = {owner}.id"
     carrier = f"{owner}.{collection}"
     guarded = f"case when jsonb_typeof({carrier}) = 'array' then {carrier} else '[]'::jsonb end"
     return f"jsonb_array_elements({guarded}) e", None
@@ -526,15 +528,15 @@ def _grouped(demands: Sequence[_Quantified], *, reachable: bool) -> str:
         for index, demand in enumerate(demands)
     )
     restricted = (
-        " where exists (select 1 from top_item x where x.order_id = g.id)" if reachable else ""
+        " where exists (select 1 from px.top_item x where x.order_id = g.id)" if reachable else ""
     )
-    return f"select g.id, {cells} from top_order g {joined}{restricted} group by g.id"
+    return f"select g.id, {cells} from px.top_order g {joined}{restricted} group by g.id"
 
 
 def placement_statement(placements: _Placements, name: _Placement) -> LoweredStatement:
     """``name``'s spelling of a collection workload's read."""
     demands = placements.demands
-    joins = ["left join top_order o on o.id = i.order_id"]
+    joins = ["left join px.top_order o on o.id = i.order_id"]
     answers: list[str] = []
     if name == "local-exists":
         answers = [
@@ -546,7 +548,7 @@ def placement_statement(placements: _Placements, name: _Placement) -> LoweredSta
             f"{'' if demand.exists else 'not '}{_some(demand, 'g')} d{index}"
             for index, demand in enumerate(demands)
         )
-        joins.append(f"left join (select g.id, {cells} from top_order g) r on r.id = o.id")
+        joins.append(f"left join (select g.id, {cells} from px.top_order g) r on r.id = o.id")
         answers = [
             f"coalesce(r.d{index}, {'false' if demand.exists else 'true'})"
             for index, demand in enumerate(demands)
@@ -557,7 +559,7 @@ def placement_statement(placements: _Placements, name: _Placement) -> LoweredSta
             joined = f"join {source} on {correlation}" if correlation else f"cross join {source}"
             where = f" where {demand.test}" if demand.test else ""
             joins.append(
-                f"left join (select g.id from top_order g {joined}{where} group by g.id) "
+                f"left join (select g.id from px.top_order g {joined}{where} group by g.id) "
                 f"m{index} on m{index}.id = o.id"
             )
             answers.append(f"{'not ' if demand.exists else ''}m{index}.id is null")
@@ -597,8 +599,8 @@ def _ids(where: str) -> str:
 
 def _claims_where(coverage: str, claim: str) -> str:
     return (
-        f"select c.id from top_claim c where {claim} and c.coverage_id in "
-        f"(select v.id from top_coverage v where {coverage})"
+        f"select c.id from px.top_claim c where {claim} and c.coverage_id in "
+        f"(select v.id from px.top_coverage v where {coverage})"
     )
 
 
@@ -607,11 +609,13 @@ _LATEST_CLAIM: Final = "c.thru_z = 'infinity' and c.out_z = 'infinity'"
 _MARCH_VALID: Final = "{0}.from_z <= '2024-03-01' and {0}.thru_z > '2024-03-01'"
 _MARCH_TX: Final = "{0}.in_z <= '2024-03-01' and {0}.out_z > '2024-03-01'"
 _GUARDED_NEGATION: Final = (
-    "select i.id from top_item i where not exists "
-    "(select 1 from top_order o where o.id = i.order_id and o.name = 'Ada')"
+    "select i.id from px.top_item i where not exists "
+    "(select 1 from px.top_order o where o.id = i.order_id and o.name = 'Ada')"
 )
-_VIP: Final = "select o.id from top_order o where o.tags @> '[\"vip\"]'"
-_LATEST_700: Final = f"select v.id from top_coverage v where v.amount = 700 and {_LATEST_COVERAGE}"
+_VIP: Final = "select o.id from px.top_order o where o.tags @> '[\"vip\"]'"
+_LATEST_700: Final = (
+    f"select v.id from px.top_coverage v where v.amount = 700 and {_LATEST_COVERAGE}"
+)
 
 
 def _workloads() -> tuple[Workload, ...]:
@@ -623,7 +627,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "bare dotted equality: the ticket's positive query",
             _item(lambda: Item.order.name == "Ada"),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             final_scales=_HEADLINE,
         ),
         Workload(
@@ -631,7 +635,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "presence-guarded dotted equality (m-navigate-007)",
             _item(lambda: Item.order.exists() & (Item.order.name == "Ada")),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             final_scales=_HEADLINE,
         ),
         Workload(
@@ -668,7 +672,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "two fields of one parent in a disjunction with a null check",
             _item(lambda: (Item.order.name == "Ada") | Item.order.status.is_null()),
-            "select i.id from top_item i left join top_order o on o.id = i.order_id "
+            "select i.id from px.top_item i left join px.top_order o on o.id = i.order_id "
             "where o.name = 'Ada' or o.status is null",
         ),
         Workload(
@@ -680,31 +684,31 @@ def _workloads() -> tuple[Workload, ...]:
                     (Item.order.customer.tier == "gold") & (Item.order.customer.region.name == "R2")
                 )
             ),
-            f"select i.id {_JOINED} join top_customer c on c.id = o.customer_id "
-            "join top_region r on r.id = c.region_id where c.tier = 'gold' and r.name = 'R2'",
+            f"select i.id {_JOINED} join px.top_customer c on c.id = o.customer_id "
+            "join px.top_region r on r.id = c.region_id where c.tier = 'gold' and r.name = 'R2'",
         ),
         Workload(
             "reads.multi-hop-null-check",
             "paired",
             "a null check three hops away sees every missing intermediate",
             _item(lambda: Item.order.customer.region.name.is_null()),
-            "select i.id from top_item i left join top_order o on o.id = i.order_id "
-            "left join top_customer c on c.id = o.customer_id "
-            "left join top_region r on r.id = c.region_id where r.name is null",
+            "select i.id from px.top_item i left join px.top_order o on o.id = i.order_id "
+            "left join px.top_customer c on c.id = o.customer_id "
+            "left join px.top_region r on r.id = c.region_id where r.name is null",
         ),
         Workload(
             "reads.presence",
             "paired",
             "bare parent presence",
             _item(lambda: Item.order.exists()),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o)",
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o)",
         ),
         Workload(
             "reads.reverse-unique",
             "paired",
             "a one-to-one target reached through its unique foreign key",
             lambda: Order.where(Order.invoice.amount < 10),
-            "select o.id from top_order o join top_invoice v on v.order_id = o.id "
+            "select o.id from px.top_order o join px.top_invoice v on v.order_id = o.id "
             "where v.amount < 10",
         ),
         Workload(
@@ -712,7 +716,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "dotted equality under an ordered page",
             lambda: Item.where(Item.order.name == "Ada").order_by(Item.id.asc()).limit(100),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS}) "
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS}) "
             "order by i.id limit 100",
             observation="ordered",
         ),
@@ -721,7 +725,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "relationship matching: a parent named Ada",
             _item(lambda: Item.order.exists(Order.name == "Ada")),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             final_scales=_HEADLINE,
         ),
         Workload(
@@ -737,16 +741,16 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "matching a compound operand over a nullable field",
             _item(lambda: Item.order.exists((Order.status == "open") | (Order.qty >= 15))),
-            "select i.id from top_item i where i.order_id in "
-            "(select o.id from top_order o where o.status = 'open' or o.qty >= 15)",
+            "select i.id from px.top_item i where i.order_id in "
+            "(select o.id from px.top_order o where o.status = 'open' or o.qty >= 15)",
         ),
         Workload(
             "reads.match-nested",
             "current-only",
             "a parent match nesting a customer match",
             _item(lambda: Item.order.exists(Order.customer.exists(Customer.tier == "gold"))),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
-            "join top_customer c on c.id = o.customer_id where c.tier = 'gold')",
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o "
+            "join px.top_customer c on c.id = o.customer_id where c.tier = 'gold')",
         ),
         Workload(
             "reads.match-reuse",
@@ -760,7 +764,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "no parent named Ada, or a parent without a status",
             _item(lambda: Item.order.status.is_null() | Item.order.not_exists(Order.name == "Ada")),
-            "select i.id from top_item i left join top_order o on o.id = i.order_id "
+            "select i.id from px.top_item i left join px.top_order o on o.id = i.order_id "
             "where o.status is null or o.id is null or o.name <> 'Ada'",
         ),
         Workload(
@@ -810,7 +814,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a narrowed table-per-hierarchy target behind the parent",
             _item(lambda: Item.order.pet.is_a(Dog, where=Dog.bark_volume > 5)),
-            f"select i.id {_JOINED} join top_pet p on p.id = o.pet_id "
+            f"select i.id {_JOINED} join px.top_pet p on p.id = o.pet_id "
             "where p.kind = 'dog' and p.bark_volume > 5",
         ),
         Workload(
@@ -818,31 +822,31 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a narrowed table-per-concrete-subtype target behind the parent",
             _item(lambda: Item.order.vehicle.is_a(Car, where=Car.seats > 2)),
-            f"select i.id {_JOINED} join top_car c on c.id = o.vehicle_id where c.seats > 2",
+            f"select i.id {_JOINED} join px.top_car c on c.id = o.vehicle_id where c.seats > 2",
         ),
         Workload(
             "mixed.unsafe-middle-hop",
             "paired",
             "an eligible parent, a multi-table vehicle, and an eligible dealer",
             _item(lambda: Item.order.vehicle.dealer.name == "D2"),
-            f"select i.id {_JOINED} join (select id, dealer_id from top_car union all "
-            "select id, dealer_id from top_bike) v on v.id = o.vehicle_id "
-            "join top_dealer d on d.id = v.dealer_id where d.name = 'D2'",
+            f"select i.id {_JOINED} join (select id, dealer_id from px.top_car union all "
+            "select id, dealer_id from px.top_bike) v on v.id = o.vehicle_id "
+            "join px.top_dealer d on d.id = v.dealer_id where d.name = 'D2'",
         ),
         Workload(
             "mixed.unsafe-terminal-field",
             "paired",
             "a field of a multi-table vehicle behind the parent",
             _item(lambda: Item.order.vehicle.maker == "Volvo"),
-            f"select i.id {_JOINED} join (select id, maker from top_car union all "
-            "select id, maker from top_bike) v on v.id = o.vehicle_id where v.maker = 'Volvo'",
+            f"select i.id {_JOINED} join (select id, maker from px.top_car union all "
+            "select id, maker from px.top_bike) v on v.id = o.vehicle_id where v.maker = 'Volvo'",
         ),
         Workload(
             "collections.scalar-any",
             "paired",
             "a parent's scalar collection holds vip (m-predicate-080)",
             _item(lambda: Item.order.tags.any(Item.order.tags.element == "vip")),
-            f"select i.id from top_item i where i.order_id in ({_VIP})",
+            f"select i.id from px.top_item i where i.order_id in ({_VIP})",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(
                 _DOCUMENT_PLACEMENTS, (_Quantified("tags", True, f"{_TAG} = ?", ("vip",)),)
@@ -855,7 +859,7 @@ def _workloads() -> tuple[Workload, ...]:
             _item(
                 lambda: (Item.id <= 1_000) & Item.order.tags.any(Item.order.tags.element == "vip")
             ),
-            f"select i.id from top_item i where i.id <= 1000 and i.order_id in ({_VIP})",
+            f"select i.id from px.top_item i where i.id <= 1000 and i.order_id in ({_VIP})",
             final_scales=("ticket", "ticket-unshared"),
             placements=_Placements(
                 _DOCUMENT_PLACEMENTS,
@@ -868,7 +872,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a parent's scalar collection is empty or absent (m-predicate-081)",
             _item(lambda: Item.order.tags.none()),
-            "select i.id from top_item i left join top_order o on o.id = i.order_id "
+            "select i.id from px.top_item i left join px.top_order o on o.id = i.order_id "
             "where o.id is null or jsonb_array_length(o.tags) = 0",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(_DOCUMENT_PLACEMENTS, (_Quantified("tags", False),)),
@@ -878,7 +882,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "strict universal truth over a parent's scalar collection",
             _item(lambda: Item.order.tags.all(Item.order.tags.element.starts_with("t"))),
-            "select i.id from top_item i left join top_order o on o.id = i.order_id "
+            "select i.id from px.top_item i left join px.top_order o on o.id = i.order_id "
             "where o.id is null or not exists (select 1 from jsonb_array_elements_text(o.tags) "
             "e(v) where left(v, 1) <> 't')",
             final_scales=_COLLECTION_SCALES,
@@ -897,7 +901,7 @@ def _workloads() -> tuple[Workload, ...]:
                     & Item.order.tags.any(Item.order.tags.element == "t3")
                 )
             ),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o "
             "where o.tags @> '[\"vip\"]' and o.tags @> '[\"t3\"]')",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(
@@ -918,7 +922,7 @@ def _workloads() -> tuple[Workload, ...]:
                     (Item.order.tags.element >= "t1") & (Item.order.tags.element < "t2")
                 )
             ),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o "
             "where exists (select 1 from jsonb_array_elements_text(o.tags) e(v) "
             "where v >= 't1' and v < 't2'))",
             final_scales=_COLLECTION_SCALES,
@@ -932,7 +936,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a parent's many Value Object holds a large parcel",
             _item(lambda: Item.order.parcels.any(Parcel.qty > 3)),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o "
             "where exists (select 1 from jsonb_array_elements(o.parcels) e "
             "where (e ->> 'qty')::int > 3))",
             final_scales=_COLLECTION_SCALES,
@@ -953,7 +957,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "a parent's many Value Object holds a gift parcel, compared as text",
             _item(lambda: Item.order.parcels.any(Parcel.sku == "gift")),
-            "select i.id from top_item i where i.order_id in (select o.id from top_order o "
+            "select i.id from px.top_item i where i.order_id in (select o.id from px.top_order o "
             'where o.parcels @> \'[{"sku": "gift"}]\')',
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(
@@ -970,8 +974,8 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a parent's related notes include an urgent one",
             _item(lambda: Item.order.notes.any(OrderNote.kind == "urgent")),
-            "select i.id from top_item i where i.order_id in "
-            "(select n.order_id from top_order_note n where n.kind = 'urgent')",
+            "select i.id from px.top_item i where i.order_id in "
+            "(select n.order_id from px.top_order_note n where n.kind = 'urgent')",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(
                 _RELATED_PLACEMENTS, (_Quantified("notes", True, "e.kind = ?", ("urgent",)),)
@@ -982,8 +986,8 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a parent has no related notes, or there is no parent",
             _item(lambda: Item.order.notes.none()),
-            "select i.id from top_item i where not exists "
-            "(select 1 from top_order_note n where n.order_id = i.order_id)",
+            "select i.id from px.top_item i where not exists "
+            "(select 1 from px.top_order_note n where n.order_id = i.order_id)",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(_RELATED_PLACEMENTS, (_Quantified("notes", False),)),
         ),
@@ -992,8 +996,8 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "a present parent whose scalar collection is occupied",
             _item(lambda: Item.order.exists() & Item.order.tags.any()),
-            "select i.id from top_item i where i.order_id in "
-            "(select o.id from top_order o where jsonb_array_length(o.tags) > 0)",
+            "select i.id from px.top_item i where i.order_id in "
+            "(select o.id from px.top_order o where jsonb_array_length(o.tags) > 0)",
             final_scales=_COLLECTION_SCALES,
             placements=_Placements(
                 _DOCUMENT_PLACEMENTS, (_Quantified("tags", True),), "not o.id is null and {0}"
@@ -1004,7 +1008,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "readless UPDATE selected by dotted equality",
             _item(lambda: ada),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             kind="update",
             observation="affected",
             final_scales=("ticket", "ticket-selective"),
@@ -1014,7 +1018,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "readless DELETE selected by dotted equality",
             _item(lambda: ada),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             kind="delete",
             observation="affected",
         ),
@@ -1032,7 +1036,7 @@ def _workloads() -> tuple[Workload, ...]:
             "paired",
             "readless UPDATE selected by a parent's scalar collection",
             _item(lambda: Item.order.tags.any(Item.order.tags.element == "vip")),
-            f"select i.id from top_item i where i.order_id in ({_VIP})",
+            f"select i.id from px.top_item i where i.order_id in ({_VIP})",
             kind="update",
             observation="affected",
         ),
@@ -1041,7 +1045,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "readless UPDATE selected by relationship matching",
             _item(lambda: Item.order.exists(Order.name == "Ada")),
-            f"select i.id from top_item i where i.order_id in ({_ADA_ORDERS})",
+            f"select i.id from px.top_item i where i.order_id in ({_ADA_ORDERS})",
             kind="update",
             observation="affected",
         ),
@@ -1050,7 +1054,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "readless UPDATE selected by dotted equality across a temporal hop at Latest",
             _item(lambda: Item.coverage.amount == 700),
-            f"select i.id from top_item i where i.order_id in ({_LATEST_700})",
+            f"select i.id from px.top_item i where i.order_id in ({_LATEST_700})",
             kind="update",
             observation="affected",
         ),
@@ -1059,7 +1063,7 @@ def _workloads() -> tuple[Workload, ...]:
             "current-only",
             "readless UPDATE selected by matching across a temporal hop at Latest",
             _item(lambda: Item.coverage.exists(Coverage.amount == 700)),
-            f"select i.id from top_item i where i.order_id in ({_LATEST_700})",
+            f"select i.id from px.top_item i where i.order_id in ({_LATEST_700})",
             kind="update",
             observation="affected",
         ),
@@ -1083,7 +1087,7 @@ def compile_statement(workload: Workload) -> LoweredStatement:
     if workload.kind == "read":
         plan = UNCACHED_READ_PLANNER.plan(
             edition="to-one-evidence",
-            model=CatalogedModel(META),
+            model=CatalogedModel(META, TEST_BINDING),
             dialect=POSTGRES,
             query=typed_resolved(query, MODEL),
             preference=None,
@@ -1119,7 +1123,7 @@ def _driver_files() -> list[Path]:
 
 
 def _schema_text() -> str:
-    return "\n".join(schema_statements(META))
+    return "\n".join(schema_statements(bound_model(META)))
 
 
 def _seed_text() -> str:
@@ -1234,7 +1238,7 @@ class _Server:
         with self._control.native.transaction(force_rollback=True):
             count = self._control.execute_write(statement.sql, statement.binds)
             changed = self.ids(_changed_rows(workload))
-        self.write("vacuum top_item")
+        self.write("vacuum px.top_item")
         return int(count), changed
 
     def timed(self, workload: Workload, statement: LoweredStatement) -> int:
@@ -1247,7 +1251,7 @@ class _Server:
             started = time.perf_counter_ns()
             self._control.execute_write(canonical_sql, statement.binds)
             elapsed = time.perf_counter_ns() - started
-        self.write("vacuum top_item")
+        self.write("vacuum px.top_item")
         return elapsed
 
     def explained(self, workload: Workload, statement: LoweredStatement) -> Mapping[str, Any]:
@@ -1257,7 +1261,7 @@ class _Server:
         else:
             with self._control.native.transaction(force_rollback=True):
                 document = self._control.execute(sql, statement.binds)[0][0]
-            self.write("vacuum top_item")
+            self.write("vacuum px.top_item")
         plans = cast("list[Mapping[str, Any]]", document)
         return plans[0]
 
@@ -1265,7 +1269,9 @@ class _Server:
         return {name: str(self.rows(f"show {name}")[0][0]) for name in _SETTINGS}
 
     def counts(self) -> dict[str, int]:
-        return {table: int(self.rows(f"select count(*) from {table}")[0][0]) for table in _TABLES}
+        return {
+            table: int(self.rows(f"select count(*) from px.{table}")[0][0]) for table in _TABLES
+        }
 
     def distributions(self) -> dict[str, int]:
         return {name: int(self.rows(sql)[0][0]) for name, sql in _DISTRIBUTIONS.items()}
@@ -1275,48 +1281,48 @@ class _Server:
             int(value)
             for value in self.rows(
                 "select count(*), coalesce(sum(id), 0), count(*) filter (where flagged) "
-                "from top_item"
+                "from px.top_item"
             )[0]
         ]
 
 
 def _changed_rows(workload: Workload) -> str:
     if workload.kind == "update":
-        return "select id from top_item where flagged"
+        return "select id from px.top_item where flagged"
     return (
-        "select s.id from top_item_seed s where not exists "
-        "(select 1 from top_item i where i.id = s.id)"
+        "select s.id from px.top_item_seed s where not exists "
+        "(select 1 from px.top_item i where i.id = s.id)"
     )
 
 
 def _restore(server: _Server, workload: Workload) -> None:
     if workload.kind == "update":
-        server.write("update top_item set flagged = false where flagged")
+        server.write("update px.top_item set flagged = false where flagged")
     else:
         server.write(
-            "insert into top_item select * from top_item_seed s where not exists "
-            "(select 1 from top_item i where i.id = s.id)"
+            "insert into px.top_item select * from px.top_item_seed s where not exists "
+            "(select 1 from px.top_item i where i.id = s.id)"
         )
-    server.write("vacuum analyze top_item")
+    server.write("vacuum analyze px.top_item")
 
 
 def _compact(server: _Server) -> None:
     """Rewrite the mutated table in key order and refresh its statistics, so
     each mutation workload starts from the physical layout seeding left rather
     than the dead space and appended rows an earlier one did."""
-    server.write("cluster top_item using top_item_pkey")
-    server.write("analyze top_item")
+    server.write("cluster px.top_item using top_item_pkey")
+    server.write("analyze px.top_item")
 
 
 def _seeded(profile_run: Any, scale: Scale) -> tuple[ScopedDatabase, _Server, Any]:
-    profile_run.reset(META, {})
-    db = own_root(connect(profile_run.port, MODEL)).using_database_login()
+    profile_run.reset(META, {}, TEST_BINDING)
+    db = own_root(connect(profile_run.port, MODEL, binding=TEST_BINDING)).using_database_login()
     control = profile_run.control()
     server = _Server(control)
     for statement in seed_statements(scale):
         server.write(statement)
     for table in (*_TABLES, "top_item_seed"):
-        server.write(f"vacuum analyze {table}")
+        server.write(f"vacuum analyze px.{table}")
     return db, server, control
 
 

@@ -18,9 +18,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from person t0 where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))
+        postgres: select t0.id, t0.name from px.person t0 where exists (select 1 from px.animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))
       binds: [cat, dog]
-  referenceSql: select id, name from person where id in (select owner_id from animal where kind in ('cat', 'dog'))
+  referenceSql: select id, name from px.person where id in (select owner_id from px.animal where kind in ('cat', 'dog'))
   rows:
     - { id: 10, name: Alice }
     - { id: 11, name: Bob }

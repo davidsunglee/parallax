@@ -17,6 +17,7 @@ from parallax.conformance.target_write_stories import (
     an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction,
     reviewed_accounts_are_deleted_under_the_versions_their_review_saw,
 )
+from tests._support.bindings import TEST_BINDING
 
 
 def _reset(profile_run: Any, case_file: str) -> None:
@@ -24,6 +25,7 @@ def _reset(profile_run: Any, case_file: str) -> None:
     profile_run.reset(
         engine.load_case_setup_metamodel(case),
         provision.load_fixtures(engine.case_setup_model_ref(case)),
+        TEST_BINDING,
     )
 
 
@@ -33,7 +35,7 @@ def test_the_reviewed_deletion_story_runs_against_a_real_database(profile_run: A
         "m-concurrency-041-a-stale-or-missing-target-deletion-fails-its-precondition.yaml",
     )
     report = reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
-        profile_run.port, MODELS["account"]
+        profile_run.port, MODELS["account"], TEST_BINDING
     )
     assert report == ClosingReport(closed=(3,), refused=(2,), remaining=(1, 2))
 
@@ -41,6 +43,6 @@ def test_the_reviewed_deletion_story_runs_against_a_real_database(profile_run: A
 def test_the_unversioned_write_story_runs_against_a_real_database(profile_run: Any) -> None:
     _reset(profile_run, "m-concurrency-023-unversioned-locking-fallback.yaml")
     balance = an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction(
-        profile_run.port, MODELS["wallet"]
+        profile_run.port, MODELS["wallet"], TEST_BINDING
     )
     assert balance == Decimal("175.00")

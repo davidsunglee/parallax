@@ -32,6 +32,7 @@ from parallax.snapshot._publication._wire_render import (
     entity_plan,
     requested_plan,
 )
+from tests._support.bindings import TEST_BINDING
 from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of
@@ -149,7 +150,7 @@ def test_direct_reads_and_typed_projection_render_through_the_same_plans(
 ) -> None:
     fixture = _fixture()
     includes = _includes(fixture)
-    cataloged = CatalogedModel(fixture.model)
+    cataloged = CatalogedModel(fixture.model, TEST_BINDING)
     facts = wire_facts_for(cataloged)
     order = _order(fixture, 1)
     direct = _published(fixture, includes, facts, order)

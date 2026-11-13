@@ -30,6 +30,7 @@ from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNE
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots
+from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS
@@ -78,7 +79,7 @@ def _order_read() -> tuple[Metamodel, ReadPlan]:
     )
     return meta, UNCACHED_READ_PLANNER.plan_acquisition(
         edition="",
-        model=CatalogedModel(meta),
+        model=CatalogedModel(meta, TEST_BINDING),
         dialect=POSTGRES,
         query=plan.root,
         preference=None,

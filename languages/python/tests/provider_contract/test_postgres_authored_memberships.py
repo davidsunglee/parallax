@@ -23,6 +23,7 @@ from parallax.core import Attr, Document, DomainModel, Entity, Float32, Int32, V
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, connect
+from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
 
 _NAMESPACE = "authored.memberships"
@@ -93,10 +94,12 @@ nulls. Row 2's value is never listed, and a membership lists rows 1 and 3."""
 
 
 def _seeded(profile_run: Any) -> tuple[ScopedDatabase, LifecycleObservation]:
-    profile_run.reset(model_of(_MODEL), {})
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
     observation = LifecycleObservation()
     db = own_root(
-        connect(profile_run.port, _MODEL, lifecycle_provider=observation.provider)
+        connect(
+            profile_run.port, _MODEL, lifecycle_provider=observation.provider, binding=TEST_BINDING
+        )
     ).using_database_login()
 
     def seed(tx: Any) -> None:

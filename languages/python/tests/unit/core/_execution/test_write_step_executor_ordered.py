@@ -78,6 +78,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from tests._support.bindings import bound_model
 from tests._support.db_port import (
     Ordered,
     OrderedCall,
@@ -196,10 +197,10 @@ def test_single_key_non_temporal_effects_share_an_invocation_and_a_batch_runs_al
     )
     with open_flush() as flush:
         step_executor(port, meta).execute(steps, allocates=False, flush=flush)
-    payloads = build_write_planner(meta).payloads
+    payloads = build_write_planner(bound_model(meta)).payloads
 
     def call(step: PlannedStep) -> WriteCall:
-        lowered_step = lowered(step, payloads, meta, POSTGRES)
+        lowered_step = lowered(step, payloads, bound_model(meta), POSTGRES)
         return WriteCall(lowered_step.sql, lowered_step.binds)
 
     assert port.calls == [

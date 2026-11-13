@@ -55,6 +55,7 @@ from parallax.core.internal.execution import (
 )
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
+from tests._support.bindings import TEST_BINDING
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -212,7 +213,7 @@ def _faulted(
 
 def _db(adapter: DatabaseAdapter[Any]) -> ScopedDatabase:
     return own_root(
-        Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
+        Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED), binding=TEST_BINDING)
     ).using_database_login()
 
 
@@ -227,29 +228,29 @@ def test_fault_injecting_port_fires_once_by_default() -> None:
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault="deadlock", persistent=False)
     with pytest.raises(DatabaseError):
-        port.execute_write("update x set y = 1", [])
+        port.execute_write("update px.x set y = 1", [])
     # A second call, same instance: the state already fired, so it passes through.
-    assert port.execute_write("update x set y = 1", []) == 1
+    assert port.execute_write("update px.x set y = 1", []) == 1
 
 
 def test_fault_injecting_port_fires_every_attempt_when_persistent() -> None:
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault="deadlock", persistent=True)
     with pytest.raises(DatabaseError):
-        port.execute_write("update x set y = 1", [])
+        port.execute_write("update px.x set y = 1", [])
     with pytest.raises(DatabaseError):
-        port.execute_write("update x set y = 1", [])
+        port.execute_write("update px.x set y = 1", [])
 
 
 def test_fault_injecting_port_optimistic_conflict_returns_zero_never_raises() -> None:
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault="optimistic-lock-conflict", persistent=False)
-    assert port.execute_write("update x set version = 2 where id = 1 and version = 1", []) == 0
+    assert port.execute_write("update px.x set version = 2 where id = 1 and version = 1", []) == 0
     # The inner (real) port never saw the faulted call.
     assert inner.writes == []
     # The next call passes through to the inner port.
-    assert port.execute_write("update x set version = 2 where id = 1 and version = 1", []) == 1
-    assert inner.writes == [("update x set version = 2 where id = 1 and version = 1", ())]
+    assert port.execute_write("update px.x set version = 2 where id = 1 and version = 1", []) == 1
+    assert inner.writes == [("update px.x set version = 2 where id = 1 and version = 1", ())]
 
 
 def test_fault_injecting_port_answers_a_setup_failure_as_a_boundary_never_opened() -> None:
@@ -289,7 +290,7 @@ def test_a_setup_failure_leaves_the_write_seam_alone() -> None:
     # raised at the write seam, which would report one failure twice.
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault="isolation-setup-failure", persistent=False)
-    assert port.execute_write("update x set y = 1", []) == 1
+    assert port.execute_write("update px.x set y = 1", []) == 1
 
 
 def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
@@ -310,9 +311,9 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
 
 
 _PRESENTED: tuple[LoweredStatement, ...] = (
-    LoweredStatement("update x set y = ? where id = ?", (1, 1)),
-    LoweredStatement("update x set y = ? where id = ?", (2, 2)),
-    LoweredStatement("delete from x where id = ?", (3,)),
+    LoweredStatement("update px.x set y = ? where id = ?", (1, 1)),
+    LoweredStatement("update px.x set y = ? where id = ?", (2, 2)),
+    LoweredStatement("delete from px.x where id = ?", (3,)),
 )
 
 
@@ -553,6 +554,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
             _ACCOUNT,
             options=case_format.database_options(case),
             clock=FixedClock(_FIXED),
+            binding=TEST_BINDING,
         )
     ).using_database_login()
     steps = boundary_runner.boundary_steps(case)

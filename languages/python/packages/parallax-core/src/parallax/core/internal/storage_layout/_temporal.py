@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.internal.metamodel import AsOfAxisMetadata, Column, Table, TemporalDimension
@@ -14,7 +15,12 @@ from parallax.core.internal.storage_layout._facet import (
     TemporalHistoryConstraints,
 )
 
-__all__ = ["constraint_name", "temporal_history_constraints"]
+__all__ = [
+    "TemporalConstraintNames",
+    "constraint_name",
+    "temporal_constraint_names",
+    "temporal_history_constraints",
+]
 
 _NAMESPACE: Final = "pxc"
 _FINGERPRINT_VERSION: Final = "pxc-1"
@@ -40,18 +46,18 @@ type OperandGroup = tuple[str, tuple[Column, ...]]
 """One operand group's comparison or range semantics and its ordered Columns."""
 
 
-def _readable_prefix(table: Table) -> str:
-    return _UNREADABLE.sub("_", table.name).strip("_").lower() or _EMPTY_PREFIX
+def _readable_prefix(table: str) -> str:
+    return _UNREADABLE.sub("_", table).strip("_").lower() or _EMPTY_PREFIX
 
 
-def _fingerprint(table: Table, kind: str, groups: Sequence[OperandGroup]) -> str:
+def _fingerprint(table: str, kind: str, groups: Sequence[OperandGroup]) -> str:
     """The first 128 bits of SHA-256 over the definition's versioned fields.
 
     Every field is UTF-8 behind a four-byte big-endian length, and each operand
     group is preceded by its semantics and its operand count, so the digest
     depends on the group boundaries rather than on a joined string.
     """
-    fields = [_FINGERPRINT_VERSION, table.name, kind, str(len(groups))]
+    fields = [_FINGERPRINT_VERSION, table, kind, str(len(groups))]
     for semantics, columns in groups:
         fields.extend((semantics, str(len(columns)), *(column.name for column in columns)))
     digest = hashlib.sha256()
@@ -62,10 +68,11 @@ def _fingerprint(table: Table, kind: str, groups: Sequence[OperandGroup]) -> str
     return digest.hexdigest()[:_FINGERPRINT_HEX]
 
 
-def constraint_name(table: Table, kind: str, groups: Sequence[OperandGroup]) -> str:
+def constraint_name(table: str, kind: str, groups: Sequence[OperandGroup]) -> str:
     """``pxc_<kind>_<readable-table-prefix>_<fingerprint>`` within 63 bytes.
 
-    Only the readable prefix is shortened; the trim and fallback apply again
+    ``table`` is the raw physical local table name, never a qualified or quoted
+    spelling. Only the readable prefix is shortened; the trim and fallback apply again
     after the cut so a shortened prefix never ends in a separator.
     """
     fingerprint = _fingerprint(table, kind, groups)
@@ -83,12 +90,7 @@ def _axis(
     end = by_contributor.get(axis.end_attribute)
     if start is None or end is None:  # pragma: no cover - validation keeps endpoints direct
         raise RuntimeError(f"Table {table.name!r} does not carry both endpoints of an As-Of Axis")
-    name = constraint_name(
-        table,
-        _INTERVAL_CHECK_KINDS[axis.dimension],
-        ((_LESS_THAN, (start.column, end.column)),),
-    )
-    return PhysicalTemporalAxis(axis, start, end, name)
+    return PhysicalTemporalAxis(axis, start, end)
 
 
 def temporal_history_constraints(
@@ -117,18 +119,58 @@ def temporal_history_constraints(
     )
     ranged = tuple(axis for axis in (valid_axis, transaction_axis) if axis is not None)
     ends = {axis.end for axis in ranged}
-    logical_key = tuple(slot for slot in primary_key.columns if slot not in ends)
-    exclusion_groups: list[OperandGroup] = [(_EQUAL, tuple(slot.column for slot in logical_key))]
-    exclusion_groups.extend((_OVERLAP, (axis.start.column, axis.end.column)) for axis in ranged)
     return TemporalHistoryConstraints(
         primary_key=primary_key,
-        primary_key_name=constraint_name(
-            table,
-            _PRIMARY_KEY,
-            ((_UNIQUE, tuple(slot.column for slot in primary_key.columns)),),
-        ),
-        logical_key=logical_key,
+        logical_key=tuple(slot for slot in primary_key.columns if slot not in ends),
         transaction_axis=transaction_axis,
         valid_axis=valid_axis,
-        exclusion_name=constraint_name(table, _EXCLUSION, exclusion_groups),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalConstraintNames:
+    """The names one physical table gives its temporal-history constraints.
+
+    ``valid_check`` is absent exactly when the table carries no Valid-Time axis.
+    """
+
+    primary_key: str
+    transaction_check: str
+    valid_check: str | None
+    exclusion: str
+
+
+def temporal_constraint_names(
+    table: str, constraints: TemporalHistoryConstraints
+) -> TemporalConstraintNames:
+    """The names ``constraints`` take on the physical table named ``table``.
+
+    ``table`` is the raw resolved local table name: a qualifier never enters a
+    name, so moving a table between qualifiers preserves every name.
+    """
+    ranged = tuple(
+        axis for axis in (constraints.valid_axis, constraints.transaction_axis) if axis is not None
+    )
+    exclusion_groups: list[OperandGroup] = [
+        (_EQUAL, tuple(slot.column for slot in constraints.logical_key))
+    ]
+    exclusion_groups.extend((_OVERLAP, (axis.start.column, axis.end.column)) for axis in ranged)
+    valid = constraints.valid_axis
+    return TemporalConstraintNames(
+        primary_key=constraint_name(
+            table,
+            _PRIMARY_KEY,
+            ((_UNIQUE, tuple(slot.column for slot in constraints.primary_key.columns)),),
+        ),
+        transaction_check=_interval_check_name(table, constraints.transaction_axis),
+        valid_check=None if valid is None else _interval_check_name(table, valid),
+        exclusion=constraint_name(table, _EXCLUSION, exclusion_groups),
+    )
+
+
+def _interval_check_name(table: str, axis: PhysicalTemporalAxis) -> str:
+    return constraint_name(
+        table,
+        _INTERVAL_CHECK_KINDS[axis.declaration.dimension],
+        ((_LESS_THAN, (axis.start.column, axis.end.column)),),
     )

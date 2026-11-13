@@ -5,6 +5,7 @@ from itertools import chain
 from typing import cast
 
 from parallax.core.internal.base import InternalError, ManagedValue, NeutralType
+from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.document_codec import (
     NULL,
     DocumentPatch,
@@ -19,7 +20,6 @@ from parallax.core.internal.document_codec._leaf import encode_managed_scalar_ma
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     EntityIdentity,
-    Metamodel,
     ValueObjectIdentity,
 )
 from parallax.core.internal.storage_layout import ColumnTier, EntityLayoutView, RelationalDocument
@@ -50,7 +50,7 @@ __all__ = ["LayoutPayloadPreparer"]
 
 
 class LayoutPayloadPreparer:
-    """The write payload preparer of one accepted Metamodel.
+    """The write payload preparer of one accepted Metamodel under its binding.
 
     Every member is placed where the model's Storage Layout puts it and encoded
     by the document codec, so lowering only renders and binds what this
@@ -59,8 +59,8 @@ class LayoutPayloadPreparer:
 
     __slots__ = ("_comparisons", "_storage")
 
-    def __init__(self, model: Metamodel) -> None:
-        self._storage = StorageCatalog(model)
+    def __init__(self, resolved: ResolvedBinding) -> None:
+        self._storage = StorageCatalog(resolved)
         self._comparisons: dict[EntityIdentity, _Comparison] = {}
 
     def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:

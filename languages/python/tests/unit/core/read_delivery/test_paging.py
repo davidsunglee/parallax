@@ -25,6 +25,7 @@ from parallax.core.internal.object_query._resolved import ContinuationCoordinate
 from parallax.core.internal.predicate import TrueNode
 from parallax.core.internal.read_delivery._paging import PagingParameters, PagingPlan, page_decision
 from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
+from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -45,7 +46,7 @@ def _page_plan(*, batch_size: int, limit: int | None = None) -> PagingPlan:
     return PagingPlan(
         ReadPlanCache(0).plan(
             edition="test",
-            model=CatalogedModel(ORDERS),
+            model=CatalogedModel(ORDERS, TEST_BINDING),
             dialect=POSTGRES,
             query=validate_object_query(entity, query, ORDERS),
             preference=None,

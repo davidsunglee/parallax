@@ -1,0 +1,22 @@
+# Every binding key names something the model declares: an override for an
+# Entity the model does not declare is refused rather than ignored, so a typo
+# never silently leaves a table at the default.
+model: models/wallet.yaml
+tags: [m-database-binding, rejected, negative, binding, slice-snapshot-1]
+shape: rejected
+when:
+  binding:
+    postgres:
+      format_version: 1
+      backend: postgres
+      default: { schema: px }
+      entities:
+        parallax.compatibility.Purse: { table: purse }
+    mariadb:
+      format_version: 1
+      backend: mariadb
+      default: { database: px }
+      entities:
+        parallax.compatibility.Purse: { table: purse }
+then:
+  rejectedRule: binding-entity-unknown

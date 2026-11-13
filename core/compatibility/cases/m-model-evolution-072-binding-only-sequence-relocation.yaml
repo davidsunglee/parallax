@@ -1,0 +1,41 @@
+# A binding-only SEQUENCE RELOCATION (m-model-evolution, m-database-binding):
+# the later binding gives one logical allocator its own sequence entry in
+# another qualifier while every table stays put. The surviving allocator's
+# physical sequence differs, so the evolution is coordinated by that relocation
+# alone; moving an allocator never follows, or moves, a table.
+tags: [m-model-evolution, m-database-binding, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/pk-sequence.yaml
+    later: models/pk-sequence.yaml
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        sequences:
+          badge_seq: { schema: px_keys }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        sequences:
+          badge_seq: { database: px_keys }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: SequenceRelocated
+        sequence: badge_seq
+        earlier: { qualifier: [px], name: badge_seq }
+        later: { qualifier: [px_keys], name: badge_seq }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: SequenceRelocated
+          sequence: badge_seq
+          earlier: { qualifier: [px], name: badge_seq }
+          later: { qualifier: [px_keys], name: badge_seq }
+        reasons: [DatabaseMigrationRequired]

@@ -1,0 +1,14 @@
+# Escrow (v2): the later endpoint of the MASKED STORAGE CONTAINER scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-temporal-container-v1.yaml declaring a different Table name.
+entity:
+  name: Escrow
+  namespace: parallax.compatibility
+  table: evolution_escrow_archive
+  temporality: transaction-time
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: reference, type: string, maxLength: 32 }
+  indices:
+    - { name: escrow_reference, attributes: [reference], unique: true }

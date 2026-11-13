@@ -59,7 +59,7 @@ def test_parse_rounds_reads_node_presence_and_dialect_keyed_sql() -> None:
                         },
                         {
                             "B": {
-                                "statements": [{"sql": {"postgres": "update t set x = 1"}}],
+                                "statements": [{"sql": {"postgres": "update px.t set x = 1"}}],
                             }
                         },
                     ]
@@ -75,7 +75,7 @@ def test_parse_rounds_reads_node_presence_and_dialect_keyed_sql() -> None:
     assert rounds[0]["A"].kind is None
     assert rounds[0]["A"].expect_rows is None
     # A statement with no authored `binds` defaults to the empty tuple.
-    assert rounds[1]["B"].statements == (("update t set x = 1", ()),)
+    assert rounds[1]["B"].statements == (("update px.t set x = 1", ()),)
 
 
 def test_parse_rounds_reads_kind_and_expect_rows_for_concurrency_success() -> None:
@@ -91,7 +91,7 @@ def test_parse_rounds_reads_kind_and_expect_rows_for_concurrency_success() -> No
                                 "expectRows": [{"id": 2}],
                             },
                             "B": {
-                                "statements": [{"sql": {"postgres": "update t set x = 1"}}],
+                                "statements": [{"sql": {"postgres": "update px.t set x = 1"}}],
                                 "kind": "write",
                             },
                         }
@@ -176,7 +176,7 @@ def _is_session_setup(sql: str) -> bool:
     `"deadlock_timeout"`, so a substring guard would keep working here for the
     wrong reason and would silently stop matching if either GUC were renamed.
     No authored step in this module's corpus begins with `set ` (a DML
-    `update t set x = 1` does not).
+    `update px.t set x = 1` does not).
     """
     return sql.startswith("set ")
 
@@ -207,7 +207,7 @@ def test_run_rounds_dispatches_read_and_write_kinds_to_the_right_verb() -> None:
                 statements=(("select 1", ()),), kind="read", expect_rows=({"id": 2},)
             ),
             "B": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),), kind="write", expect_rows=None
+                statements=(("update px.t set x = 1", ()),), kind="write", expect_rows=None
             ),
         }
     )
@@ -240,7 +240,7 @@ def test_run_rounds_an_undeclared_kind_step_executes_verbatim() -> None:
         },
         {
             "B": ConcurrencyStep(
-                statements=(("update account set balance = ?", (999,)),),
+                statements=(("update px.account set balance = ?", (999,)),),
                 kind=None,
                 expect_rows=None,
             )
@@ -264,7 +264,7 @@ def test_run_rounds_captures_a_database_error_on_its_own_node_and_round() -> Non
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)},
         {
             "B": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),), kind=None, expect_rows=None
+                statements=(("update px.t set x = 1", ()),), kind=None, expect_rows=None
             )
         },
     )
@@ -536,7 +536,7 @@ def test_run_rounds_an_already_errored_node_skips_its_own_authored_commit() -> N
     rounds = _rounds(
         {
             "A": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),), kind=None, expect_rows=None
+                statements=(("update px.t set x = 1", ()),), kind=None, expect_rows=None
             )
         },
         {"A": _commit(), "B": _commit()},
@@ -558,7 +558,7 @@ def test_parse_rounds_reads_a_blocking_step_and_affected_row_counts() -> None:
                             "B": {
                                 "kind": "write",
                                 "blocks": True,
-                                "statements": [{"sql": {"postgres": "delete from t"}}],
+                                "statements": [{"sql": {"postgres": "delete from px.t"}}],
                                 "affectedRows": [2],
                             }
                         },
@@ -581,7 +581,7 @@ def test_run_rounds_reports_each_write_statements_affected_rows() -> None:
     rounds = _rounds(
         {
             "A": ConcurrencyStep(
-                statements=(("update t set x = 1", ()), ("update t set y = 2", ())),
+                statements=(("update px.t set x = 1", ()), ("update px.t set y = 2", ())),
                 kind="write",
                 expect_rows=None,
             )
@@ -606,7 +606,10 @@ def test_run_rounds_refuses_a_blocking_step_it_cannot_observe() -> None:
     rounds = _rounds(
         {
             "A": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),), kind=None, expect_rows=None, blocks=True
+                statements=(("update px.t set x = 1", ()),),
+                kind=None,
+                expect_rows=None,
+                blocks=True,
             )
         }
     )
@@ -673,12 +676,12 @@ def test_run_rounds_ends_a_blocking_round_once_the_wait_is_seen() -> None:
     rounds = _rounds(
         {
             "A": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),), kind="write", expect_rows=None
+                statements=(("update px.t set x = 1", ()),), kind="write", expect_rows=None
             )
         },
         {
             "B": ConcurrencyStep(
-                statements=(("update t set x = 2", ()),),
+                statements=(("update px.t set x = 2", ()),),
                 kind="write",
                 expect_rows=None,
                 blocks=True,
@@ -691,7 +694,7 @@ def test_run_rounds_ends_a_blocking_round_once_the_wait_is_seen() -> None:
     assert run.rounds[1]["B"].waited is True
     assert run.rounds[1]["B"].affected == (1,)
     b_calls = sessions["B"].calls
-    assert b_calls[-3:] == ["set lock_timeout = '10s'", "update t set x = 2", "commit"]
+    assert b_calls[-3:] == ["set lock_timeout = '10s'", "update px.t set x = 2", "commit"]
 
 
 def test_run_rounds_reports_a_blocking_step_that_never_waited() -> None:
@@ -700,7 +703,7 @@ def test_run_rounds_reports_a_blocking_step_that_never_waited() -> None:
     rounds = _rounds(
         {
             "A": ConcurrencyStep(
-                statements=(("update t set x = 1", ()),),
+                statements=(("update px.t set x = 1", ()),),
                 kind="write",
                 expect_rows=None,
                 blocks=True,
@@ -737,8 +740,8 @@ def _blocking_write(sql: str) -> ConcurrencyStep:
     [
         (
             (
-                {"A": _blocking_write("update t set x = 1")},
-                {"B": _blocking_write("update t set y = 1")},
+                {"A": _blocking_write("update px.t set x = 1")},
+                {"B": _blocking_write("update px.t set y = 1")},
                 {"A": _commit(), "B": _commit()},
             ),
             1,
@@ -747,9 +750,9 @@ def _blocking_write(sql: str) -> ConcurrencyStep:
             (
                 {
                     "A": ConcurrencyStep(
-                        statements=(("update t set y = 1", ()),), kind="write", expect_rows=None
+                        statements=(("update px.t set y = 1", ()),), kind="write", expect_rows=None
                     ),
-                    "B": _blocking_write("update t set x = 1"),
+                    "B": _blocking_write("update px.t set x = 1"),
                 },
                 {"A": _commit()},
                 {"B": _commit()},
@@ -774,7 +777,7 @@ def test_run_rounds_reraises_a_blocking_statements_unexpected_failure() -> None:
 
     a, b = _FakeSession(), _Broken()
     peers = iter([a, b])
-    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    rounds = _rounds({"B": _blocking_write("delete from px.t")}, {"A": _commit()})
     with pytest.raises(RuntimeError, match="the blocked statement's own defect"):
         concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lambda: 0)
     assert a.closed
@@ -794,7 +797,7 @@ def test_run_rounds_refuses_a_blocking_statement_nothing_releases(
 
     a, b = _FakeSession(), _Stuck()
     peers = iter([a, b])
-    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    rounds = _rounds({"B": _blocking_write("delete from px.t")}, {"A": _commit()})
     try:
         with pytest.raises(
             RuntimeError, match="round 0: a blocking step's statement never finished"
@@ -828,7 +831,7 @@ def test_run_rounds_keeps_polling_until_the_wait_is_reported() -> None:
             return 1
 
     peers = iter([_Holder(), _Waiter()])
-    rounds = _rounds({"B": _blocking_write("delete from t")}, {"A": _commit()})
+    rounds = _rounds({"B": _blocking_write("delete from px.t")}, {"A": _commit()})
     run = concurrency_runner.run_rounds(rounds, lambda: next(peers), lock_waits=lock_waits)
     assert run.rounds[0]["B"].waited is True
     assert looks["count"] == 2

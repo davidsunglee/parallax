@@ -47,6 +47,7 @@ from parallax.core.internal.metamodel import Metamodel, TablePerConcreteSubtype
 from parallax.core.internal.predicate import PredicateNode
 from parallax.core.internal.predicate import deserialize as deserialize_predicate
 from parallax.snapshot import ScopedDatabase, connect
+from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 
@@ -156,7 +157,7 @@ class _Statement:
 
 def _production(model: Metamodel, predicate: PredicateNode) -> _Statement:
     target = next(entity for entity in model.entities if entity.identity == Holder.identity)
-    compiled = compile_read(predicate, model, POSTGRES, target, result_form="instance")
+    compiled = compile_read(predicate, bound_model(model), POSTGRES, target, result_form="instance")
     return _Statement(compiled.statement.sql, tuple(compiled.statement.binds))
 
 
@@ -194,7 +195,7 @@ class _Server:
 
     def analyze(self) -> None:
         for table in ("scp_team", "scp_person", "scp_car", "scp_bike", "scp_holder"):
-            self._control.execute_write(f"analyze {table}", [])
+            self._control.execute_write(f"analyze px.{table}", [])
 
 
 def _topology(plan: Mapping[str, Any]) -> list[str]:
@@ -278,8 +279,8 @@ def _measure_alone(server: _Server, statement: _Statement) -> dict[str, object]:
 
 
 def _served(profile_run: Any) -> ScopedDatabase:
-    profile_run.reset(model_of(_MODEL), {})
-    return own_root(connect(profile_run.port, _MODEL)).using_database_login()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    return own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
 
 
 def _owner_of(key: int) -> int | None:
