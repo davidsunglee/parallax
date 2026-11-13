@@ -1,6 +1,3 @@
-# The shrunk release of binding-release-v1: it removes Refund, the Entity its
-# binding maps explicitly, and Statement, the last Entity of the `archive`
-# namespace. The binding that places this release drops both keys with them.
 entities:
   - name: Invoice
     namespace: parallax.compatibility

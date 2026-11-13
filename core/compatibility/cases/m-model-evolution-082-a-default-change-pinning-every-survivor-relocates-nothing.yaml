@@ -1,10 +1,3 @@
-# A default change that PINS every survivor (m-model-evolution,
-# m-database-binding, m-schema-delta, m-pk-gen): the later binding moves its
-# default to `px_next`, but first pins Invoice and the defaulted
-# `invoiceNumbers` allocator to `px`, where the earlier default placed them.
-# Nothing surviving resolves anywhere new, so the evolution is unilateral, and
-# only the release's new owners follow the new placements: Credit to the new
-# default, Note to `audit`, and Charge to its newly keyed `billing` namespace.
 tags: [m-model-evolution, m-database-binding, m-schema-delta, m-pk-gen, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:

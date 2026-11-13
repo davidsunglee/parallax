@@ -332,20 +332,26 @@ the gift card as a `GiftCardPayment`.
 
 ## Changing a binding
 
-A selection is prepared from a model and its binding together, so a binding change rolls
-out like a model change: `migrate` creates what the new binding places and `adopt`
-publishes it, with no restart and no new root, provided nothing the database already
-holds moves. These binding changes roll out that way:
+A selection is prepared from a model and its binding together, so a binding change is
+published like a model change, with no restart and no new root, provided nothing the
+database already holds moves. These binding changes move nothing:
 
 - a new entity placed by an existing default or namespace entry;
 - a new namespace's entry, shipped in the release that adds that namespace's first
   entities;
 - a new entry for a new entity or sequence;
+- a new default, once every existing table and sequence the old default placed has an
+  entry keeping it where it is;
 - removing an entity together with its entry, or a namespace's last entity together with
   that namespace's entry, since a binding naming something the model doesn't declare is
-  refused;
-- a new default, once every existing table and sequence the old default placed has an
-  entry keeping it where it is.
+  refused.
+
+On their own, the first four are unilateral: `migrate` creates what the new binding
+places and `adopt` publishes it. Removing an entity is coordinated with
+`AUTHORING_SURFACE_CHANGE_REQUIRED`, because code naming it stops being valid, so
+`migration_for` refuses it. It needs no statement, because the removed entity's table
+can stay where it is: once no code you run names the entity, `adopt` publishes the
+release in each process, and you keep its descriptor and binding as deployed yourself.
 
 Before the migration runs, your deployment creates each schema the new binding names
 that doesn't exist yet, and grants your application's role access to it: Parallax

@@ -189,7 +189,6 @@ _SHIPMENTS_APART = PostgresBinding(
     default=PostgresLocation(schema="px"),
     entities={"Shipment": PostgresTable(schema="px_fulfillment")},
 )
-"""The release binding: shipments, new in the release, live in a schema of their own."""
 
 
 def test_a_release_placing_a_new_entity_in_a_new_schema_migrates_then_publishes(

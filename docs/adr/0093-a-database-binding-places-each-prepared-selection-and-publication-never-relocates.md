@@ -48,7 +48,7 @@ resolves elsewhere ([m-execution](../../core/spec/m-execution.md#model-editions)
 Evolution reports those same relocations as coordinated operations, from the one
 comparison publication uses ([m-model-evolution](../../core/spec/m-model-evolution.md)).
 Growth, removal together with its binding entries, and a default change that pins every
-survivor therefore roll out hot. Moving a surviving table or sequence is a coordinated
+survivor therefore publish hot. Moving a surviving table or sequence is a coordinated
 migration behind a replacement root.
 
 Derived constraint and index names follow a table's physical local name and never its
