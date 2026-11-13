@@ -101,6 +101,21 @@ def export_yaml(model: DomainModel) -> str:
     return _text(model, "yaml")
 
 
+class _DescriptorDumper(yaml.SafeDumper):
+    pass
+
+
+def _represent_text(dumper: yaml.SafeDumper, text: str) -> yaml.ScalarNode:
+    # PyYAML folds a NEL into a space in every scalar style except double-quoted,
+    # where it escapes it.
+    if "\x85" in text:
+        return yaml.ScalarNode("tag:yaml.org,2002:str", text, style='"')
+    return dumper.represent_str(text)
+
+
+_DescriptorDumper.add_representer(str, _represent_text)
+
+
 def _sealed(source: UnresolvedMetamodel) -> DomainModel:
     return DomainModel._from_unresolved(source)  # pyright: ignore[reportPrivateUsage] - first-party seam calls the hub's own private constructor
 
@@ -117,6 +132,6 @@ def _text(model: DomainModel, target: ExportTarget) -> str:
     try:
         if target == "json":
             return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
-        return yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+        return yaml.dump(document, Dumper=_DescriptorDumper, sort_keys=False, allow_unicode=True)
     except Exception as error:
         raise export_defect(target, error) from error
