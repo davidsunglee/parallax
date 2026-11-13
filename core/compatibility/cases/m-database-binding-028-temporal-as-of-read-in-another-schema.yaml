@@ -1,0 +1,41 @@
+# An as-of read of a Transaction-Time table the binding places in `px_hist`:
+# the half-open containment predicate over the pinned past instant reads the
+# history rows of the bound table.
+model: models/balance.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Balance: { schema: px_hist }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Balance: { database: px_hist }
+tags: [m-database-binding, m-temporal-read, m-object-query, m-sql, as-of, audit-only, past, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Balance
+    predicate:
+      "true": {}
+    temporal:
+      transaction-time:
+        asOf: "2024-04-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px_hist.balance t0 where t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px_hist.balance t0 where t0.in_z <= ? and t0.out_z > ?
+      binds: ["2024-04-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z"]
+  referenceSql:
+    postgres: "select bal_id, acct_num, val, in_z, out_z from px_hist.balance where in_z <= '2024-04-01T00:00:00+00:00'::timestamptz and out_z > '2024-04-01T00:00:00+00:00'::timestamptz"
+    mariadb: "select bal_id, acct_num, val, in_z, out_z from px_hist.balance where in_z <= '2024-04-01 00:00:00' and out_z > '2024-04-01 00:00:00'"
+  rows:
+    - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+    - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+    - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+  databaseCalls: 1

@@ -95,16 +95,28 @@ def _corpus_case_bindings() -> Mapping[str, PostgresBinding]:
         if not isinstance(document, Mapping):
             continue
         fields = cast("Mapping[str, object]", document)
-        model, bindings = fields.get("model"), fields.get("binding")
-        if isinstance(model, str) and bindings is not None:
-            held.setdefault(
-                Path(model).stem,
-                PostgresBinding.from_document(binding_document(bindings, "postgres")),
+        bindings = fields.get("binding")
+        when = fields.get("when")
+        evolve = (
+            cast("Mapping[str, object]", when).get("evolve") if isinstance(when, Mapping) else None
+        )
+        placed: list[tuple[object, object]] = [(fields.get("model"), bindings)]
+        if isinstance(evolve, Mapping):
+            endpoints = cast("Mapping[str, object]", evolve)
+            placed.extend(
+                (endpoints.get(side), endpoints.get(f"{side}Binding") or bindings)
+                for side in ("earlier", "later")
             )
+        for model, authored in placed:
+            if isinstance(model, str) and authored is not None:
+                held.setdefault(
+                    Path(model).stem,
+                    PostgresBinding.from_document(binding_document(authored, "postgres")),
+                )
     return held
 
 
 def corpus_binding(stem: str) -> PostgresBinding:
-    """The binding the corpus places model ``stem`` under: the one its cases
-    author where the default cannot place it, else :data:`TEST_BINDING`."""
+    """The binding the corpus places model ``stem`` under: the first a case or
+    an evolution endpoint authors for it, else :data:`TEST_BINDING`."""
     return _corpus_case_bindings().get(stem, TEST_BINDING)

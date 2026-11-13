@@ -720,10 +720,26 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "table-per-concrete-subtype shape plus the root-owned optimistic-lock version "
             "`account` already proves"
         ),
+        "binding-fleet": (
+            "no mirror authored; its allocator shared by a tableless table-per-concrete-subtype "
+            "root and a standalone Entity is a placement fixture the binding resolution and "
+            "relocation cases read, and its declarations repeat constructs the mirrored "
+            "`rate` and `pk-sequence` families prove"
+        ),
+        "binding-identifiers": (
+            "no mirror authored; its two plain Entities are ordinary declarations whose only "
+            "subject is the identifiers a case binding gives them, which the placement API "
+            "stories declare in classes of their own"
+        ),
         "binding-ledgers": (
             "no mirror authored; its two independent ledgers declaring one table name are a "
             "placement fixture only a case binding can place, which the binding cases read "
             "and write directly"
+        ),
+        "binding-temporal-ledgers": (
+            "no mirror authored; its two Transaction-Time owners declaring one table name are "
+            "a provisioning fixture only a case binding can place, and its declarations "
+            "repeat the mirrored `balance` family's"
         ),
         "buffered-sequence-layout-twin-columns": _BUFFERED_SEQUENCE_TWIN,
         "bytes-cell": (

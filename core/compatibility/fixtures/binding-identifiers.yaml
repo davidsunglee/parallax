@@ -1,0 +1,8 @@
+# Fixture rows for models/binding-identifiers.yaml, loaded into whatever
+# physical tables a case's binding names.
+parallax.compatibility.Entry:
+  - { id: 1, label: a }
+  - { id: 2, label: b }
+parallax.compatibility.Tick:
+  - { id: 11, entryId: 1, note: x }
+  - { id: 12, entryId: 1, note: "y" }

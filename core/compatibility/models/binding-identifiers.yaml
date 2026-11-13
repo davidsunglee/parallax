@@ -1,0 +1,27 @@
+# Two plain Entities whose declared table names are ordinary identifiers. Their
+# placement cases bind them to physical identifiers that a dialect must quote
+# component by component: a reserved word, mixed case, a raw dot, and each
+# dialect's quote character. The model itself stays unremarkable, so every edge
+# a case observes is the binding's.
+entities:
+  - name: Entry
+    namespace: parallax.compatibility
+    table: entry
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: label, type: string, maxLength: 32 }
+    relationships:
+      - name: ticks
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Tick, attribute: entryId }
+        orderBy:
+          - { attribute: id }
+  - name: Tick
+    namespace: parallax.compatibility
+    table: tick
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: entryId, type: int64 }
+      - { name: note, type: string, maxLength: 32, nullable: true }

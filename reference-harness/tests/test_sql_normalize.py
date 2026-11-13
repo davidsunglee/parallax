@@ -99,6 +99,20 @@ def test_quoted_identifier_in_insert_is_canonical() -> None:
     assert is_canonical("insert into grade(id, `order`, label) values (?, ?, ?)", "mariadb")
 
 
+@pytest.mark.parametrize(
+    ("dialect", "canonical"),
+    [
+        ("postgres", 'insert into "Px.Edge""q"."order"(id, label) values (?, ?)'),
+        ("mariadb", 'insert into `Px.Edge"q`.`Tick``Mark`(id, label) values (?, ?)'),
+    ],
+)
+def test_a_quoted_table_keeps_its_doubled_quote_and_binds_tight_to_its_columns(
+    dialect: str, canonical: str
+) -> None:
+    assert normalize(canonical.replace("(id", " (id"), dialect) == canonical
+    assert is_canonical(canonical, dialect)
+
+
 # --- canonical-rule enforcement (m-sql rule 1: t0,t1 aliases + qualified columns;
 #     rule 4: parameters as ? binds) ----------------------------------------
 # Lowercasing + re-spacing alone is not enough: a lowercase-but-non-canonical

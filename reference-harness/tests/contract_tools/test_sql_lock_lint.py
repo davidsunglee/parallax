@@ -578,3 +578,24 @@ def test_a_wrapped_single_select_stays_unmappable_outside_a_union_branch(
     errors = _lock_errors(_read_corpus(tmp_path, [_entry(sql)], uow={}))
     assert len(errors) == 1
     assert "cannot map emitted read unambiguously" in errors[0]
+
+
+def test_reads_map_through_the_case_binding_not_the_declared_table_name(tmp_path: Path) -> None:
+    # Two owners declare the table name `ledger`; the case binding places them
+    # in two schemas, so each emitted table names exactly one of them.
+    raw = _borrow(tmp_path, "m-database-binding-016-equal-table-names-joined-read.yaml")
+    (tmp_path / "cases" / "lock.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    assert _lock_errors(tmp_path) == []
+
+
+def test_a_read_of_another_owners_qualified_table_is_outside_the_query(tmp_path: Path) -> None:
+    raw = _borrow(tmp_path, "m-database-binding-011-equal-table-names-in-two-schemas-read.yaml")
+    for entry in raw["then"]["statements"]:
+        entry["sql"] = {
+            dialect: sql.replace("px_audit.ledger", "px.ledger")
+            for dialect, sql in entry["sql"].items()
+        }
+    (tmp_path / "cases" / "lock.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    errors = _lock_errors(tmp_path)
+    assert len(errors) == 2
+    assert all("outside the authored root/includes" in error for error in errors)

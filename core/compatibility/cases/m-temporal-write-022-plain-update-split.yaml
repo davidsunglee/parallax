@@ -31,7 +31,7 @@ then:
   statements:
     - sql:
         postgres: insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into px.`position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.`position`(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
         postgres: update px.position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
@@ -39,7 +39,7 @@ then:
       binds: ["2024-07-01T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
         postgres: insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
-        mariadb: insert into px.`position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.`position`(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
       binds:
         postgres:
           - [1, 1]

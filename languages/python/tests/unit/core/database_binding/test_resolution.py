@@ -175,6 +175,93 @@ def test_every_key_must_name_something_the_model_declares() -> None:
     }
 
 
+def test_every_resolution_issue_is_reported_in_path_order_with_its_related_entries() -> None:
+    issues = _refused(
+        PostgresBinding(
+            namespaces={"shipping": _APP},
+            entities={
+                "commerce.Order": PostgresTable(schema="app", name="customer"),
+                "commerce.Customer": PostgresTable(schema="app"),
+                "billing.CardPayment": PostgresTable(),
+            },
+            sequences={"basketIds": PostgresSequence(), "orderIds": PostgresSequence(schema="k")},
+        )
+    )
+    # Paths compare segment by segment in codepoint order, so the uppercase
+    # `Note` sorts before every namespaced owner.
+    assert [(issue.code, issue.path, issue.related) for issue in issues] == [
+        ("binding-table-unresolved", ("entities", "Note"), ()),
+        ("binding-table-unresolved", ("entities", "audit.Event"), ()),
+        ("binding-entity-owns-no-table", ("entities", "billing.CardPayment"), ()),
+        ("binding-table-unresolved", ("entities", "billing.Payment"), ()),
+        (
+            "binding-table-collision",
+            ("entities", "commerce.Order"),
+            (("entities", "commerce.Customer"),),
+        ),
+        ("binding-namespace-unknown", ("namespaces", "shipping"), ()),
+        ("binding-sequence-unknown", ("sequences", "basketIds"), ()),
+        ("binding-sequence-unresolved", ("sequences", "customerIds"), ()),
+    ]
+
+
+_FLEET: Final[Metamodel] = model_of(
+    domain_model_from_yaml(
+        """
+entities:
+  - name: Vehicle
+    namespace: fleet
+    inheritance: { role: root, strategy: table-per-concrete-subtype }
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: fleetIds }
+  - name: Car
+    namespace: fleet
+    table: car
+    inheritance: { role: concrete-subtype, parent: fleet.Vehicle }
+    attributes:
+      - { name: doors, type: int32, nullable: true }
+  - name: Truck
+    namespace: fleet
+    table: truck
+    inheritance: { role: concrete-subtype, parent: fleet.Vehicle }
+    attributes:
+      - { name: axles, type: int32, nullable: true }
+  - name: Depot
+    namespace: fleet
+    table: depot
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: fleetIds }
+"""
+    )
+)
+
+
+def test_one_shared_family_allocator_resolves_once_wherever_its_tables_sit() -> None:
+    placed = PostgresBinding(
+        default=_APP,
+        entities={
+            "fleet.Car": PostgresTable(schema="eu"),
+            "fleet.Truck": PostgresTable(schema="us"),
+            "fleet.Depot": PostgresTable(schema="depots"),
+        },
+    )
+    resolved = ResolvedBinding(_FLEET, placed)
+    assert dict(resolved.sequences) == {"fleetIds": PhysicalSequence(("app",), "fleetIds")}
+
+
+def test_one_model_under_two_bindings_resolves_an_allocator_to_two_sequences() -> None:
+    tenant_a = ResolvedBinding(_FLEET, PostgresBinding(default=PostgresLocation(schema="a")))
+    tenant_b = ResolvedBinding(_FLEET, PostgresBinding(default=PostgresLocation(schema="b")))
+    assert tenant_a.sequence("fleetIds") == PhysicalSequence(("a",), "fleetIds")
+    assert tenant_b.sequence("fleetIds") == PhysicalSequence(("b",), "fleetIds")
+
+
 @pytest.mark.parametrize(
     ("binding", "path"),
     [

@@ -172,6 +172,7 @@ def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
         "insert into px.wallet(id) select * from unnest(cast(? as bigint[]))",
         "delete from px.wallet where id in (?, ?)",
         "delete from px.wallet where id = ?",
+        'update `Px.Edge"q`.`order` set label = ? where id = ?',
     ],
 )
 def test_any_other_statement_is_left_alone(statement: str) -> None:

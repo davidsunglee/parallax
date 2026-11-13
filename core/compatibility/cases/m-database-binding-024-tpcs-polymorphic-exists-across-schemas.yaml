@@ -1,0 +1,38 @@
+# A polymorphic relationship into a table-per-concrete-subtype family whose
+# leaves sit in three schemas: the folder in `px` tests each leaf's bound table
+# in one grouped OR of per-branch EXISTS.
+model: models/document.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Invoice: { schema: px_fin }
+      parallax.compatibility.Memo: { schema: px_notes }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Invoice: { database: px_fin }
+      parallax.compatibility.Memo: { database: px_notes }
+tags: [m-database-binding, m-navigate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, exists, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Folder
+    predicate:
+      any:
+        path: parallax.compatibility.Folder.documents
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from px.folder t0 where (exists (select 1 from px_fin.invoice t1 where t1.folder_id = t0.id) or exists (select 1 from px_notes.memo t2 where t2.folder_id = t0.id) or exists (select 1 from px.receipt t3 where t3.folder_id = t0.id))
+        mariadb: select t0.id, t0.name from px.folder t0 where (exists (select 1 from px_fin.invoice t1 where t1.folder_id = t0.id) or exists (select 1 from px_notes.memo t2 where t2.folder_id = t0.id) or exists (select 1 from px.receipt t3 where t3.folder_id = t0.id))
+  referenceSql: select id, name from px.folder where id in (select folder_id from px_fin.invoice) or id in (select folder_id from px_notes.memo) or id in (select folder_id from px.receipt)
+  rows:
+    - { id: 100, name: Alpha }
+    - { id: 101, name: Beta }
+    - { id: 102, name: Gamma }
+  databaseCalls: 1

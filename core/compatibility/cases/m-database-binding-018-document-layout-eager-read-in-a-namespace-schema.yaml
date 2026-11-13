@@ -1,0 +1,45 @@
+# An eager read of a Document-layout Entity whose exact namespace default places
+# it in `px_docs`: the typed-cast predicate and ordering over the document path
+# read the bound table, on Postgres and MariaDB.
+model: models/document-layout.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    namespaces:
+      parallax.compatibility: { schema: px_docs }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    namespaces:
+      parallax.compatibility: { database: px_docs }
+tags: [m-database-binding, m-storage-layout, m-sql, m-dialect, read, json, document-layout, cast, order-by, limit, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      greaterThan:
+        path: parallax.compatibility.Traveler.score
+        value: 5
+    orderBy:
+      - attr: parallax.compatibility.Traveler.score
+        direction: desc
+        nulls: last
+    limit: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from px_docs.traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last limit ?
+        mariadb: select t0.id, not t0.payload is null, t0.payload from px_docs.traveler t0 where cast(json_value(t0.payload, ?) as signed) > ? order by cast(json_value(t0.payload, ?) as signed) desc limit ?
+      binds:
+        postgres: [score, 5, score, 1]
+        mariadb: ['$.score', 5, '$.score', 1]
+  referenceSql:
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from px_docs.traveler where cast(payload ->> 'score' as bigint) > 5 order by cast(payload ->> 'score' as bigint) desc nulls last limit 1
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from px_docs.traveler where cast(json_value(payload, '$.score') as signed) > 5 order by cast(json_value(payload, '$.score') as signed) desc limit 1
+  rows:
+    - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
+  databaseCalls: 1

@@ -235,11 +235,12 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
                 continue
         text = token.text
         # A quoted identifier (reserved word / non-simple name) tokenizes to an
-        # IDENTIFIER whose text has the quotes stripped; re-wrap it in the
-        # dialect's quote character so the canonical form preserves the quoting.
-        # IDENTIFIER is a value token, so its case is left intact below.
+        # IDENTIFIER whose text has the quotes stripped and any doubled quote
+        # character undoubled; re-wrap it in the dialect's quote character,
+        # doubling an embedded one again, so the canonical form preserves the
+        # quoting. IDENTIFIER is a value token, so its case is left intact below.
         if token.token_type is TokenType.IDENTIFIER:
-            text = f"{quote_char}{text}{quote_char}"
+            text = quote_char + text.replace(quote_char, quote_char * 2) + quote_char
         # A string literal tokenizes with its surrounding quotes stripped; re-wrap
         # it in single quotes (doubling any embedded quote) so the canonical form
         # keeps the literal. STRING is a value token, so its case is left intact.
@@ -255,6 +256,9 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         is_function_name = following_is_paren and (
             token.token_type is TokenType.VAR or text.upper() in _TIGHT_PAREN_KEYWORDS
         )
+        # A quoted table name before its insert column list binds tight to it,
+        # exactly as an unquoted one does (m-sql: no space before the column list).
+        is_quoted_before_paren = following_is_paren and token.token_type is TokenType.IDENTIFIER
         # A parametrized type name (``decimal(18, 2)``) inside a NULL-placeholder
         # cast binds its length list tight to the type, exactly like a function
         # name; it is not a value token, so it is already lowercased below.
@@ -265,7 +269,9 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
         token_type: _RenderTokenType = (
-            _FUNCTION_NAME if (is_function_name or is_paren_type) else token.token_type
+            _FUNCTION_NAME
+            if (is_function_name or is_paren_type or is_quoted_before_paren)
+            else token.token_type
         )
         if _array_type_suffix(tokens, index):
             token_type = _ARRAY_TYPE_SUFFIX

@@ -335,6 +335,180 @@
       "table": "balance"
     }
   },
+  "models/binding-fleet.yaml": {
+    "parallax.compatibility.Car": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "doors",
+          "contributor": "attribute:parallax.compatibility.Car.doors",
+          "declaringOwner": "parallax.compatibility.Car",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "car"
+    },
+    "parallax.compatibility.Depot": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Depot.id",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Depot.label",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "depot"
+    },
+    "parallax.compatibility.Truck": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "axles",
+          "contributor": "attribute:parallax.compatibility.Truck.axles",
+          "declaringOwner": "parallax.compatibility.Truck",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "truck"
+    }
+  },
+  "models/binding-identifiers.yaml": {
+    "parallax.compatibility.Entry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Entry"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Entry.id",
+          "declaringOwner": "parallax.compatibility.Entry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Entry"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Entry.label",
+          "declaringOwner": "parallax.compatibility.Entry",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "entry"
+    },
+    "parallax.compatibility.Tick": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tick"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Tick.id",
+          "declaringOwner": "parallax.compatibility.Tick",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tick"
+          ],
+          "column": "entry_id",
+          "contributor": "attribute:parallax.compatibility.Tick.entryId",
+          "declaringOwner": "parallax.compatibility.Tick",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tick"
+          ],
+          "column": "note",
+          "contributor": "attribute:parallax.compatibility.Tick.note",
+          "declaringOwner": "parallax.compatibility.Tick",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "tick"
+    }
+  },
   "models/binding-ledgers.yaml": {
     "parallax.compatibility.AuditLedger": {
       "columns": [
@@ -391,6 +565,106 @@
         0
       ],
       "table": "ledger"
+    }
+  },
+  "models/binding-temporal-ledgers.yaml": {
+    "parallax.compatibility.AuditHandle": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.AuditHandle"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.AuditHandle.id",
+          "declaringOwner": "parallax.compatibility.AuditHandle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.AuditHandle"
+          ],
+          "column": "code",
+          "contributor": "attribute:parallax.compatibility.AuditHandle.code",
+          "declaringOwner": "parallax.compatibility.AuditHandle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.AuditHandle"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.AuditHandle.txStart",
+          "declaringOwner": "parallax.compatibility.AuditHandle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.AuditHandle"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.AuditHandle.txEnd",
+          "declaringOwner": "parallax.compatibility.AuditHandle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3
+      ],
+      "table": "handle"
+    },
+    "parallax.compatibility.SalesHandle": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SalesHandle"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.SalesHandle.id",
+          "declaringOwner": "parallax.compatibility.SalesHandle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SalesHandle"
+          ],
+          "column": "code",
+          "contributor": "attribute:parallax.compatibility.SalesHandle.code",
+          "declaringOwner": "parallax.compatibility.SalesHandle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SalesHandle"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.SalesHandle.txStart",
+          "declaringOwner": "parallax.compatibility.SalesHandle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.SalesHandle"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.SalesHandle.txEnd",
+          "declaringOwner": "parallax.compatibility.SalesHandle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3
+      ],
+      "table": "handle"
     }
   },
   "models/branch.yaml": {

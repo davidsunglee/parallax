@@ -499,6 +499,7 @@ _GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
 _STORED_STATE_WRITES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         *(f"m-concurrency-{n:03d}" for n in (29, 40)),
+        "m-database-binding-027",
         "m-execution-lifecycle-015",
         *(f"m-inheritance-{n:03d}" for n in (90, 91, 94, 95, 96, 97)),
         "m-storage-layout-011",

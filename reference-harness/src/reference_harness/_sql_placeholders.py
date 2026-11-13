@@ -67,7 +67,7 @@ def parse_indexed_statement(statement: str, dialect: str) -> Expr | None:
             _indexed_placeholders(statement),
             read="mysql" if dialect == "mariadb" else dialect,
         )
-    except sqlglot.ParseError:
+    except sqlglot.ParseError, sqlglot.TokenError:
         return None
 
 

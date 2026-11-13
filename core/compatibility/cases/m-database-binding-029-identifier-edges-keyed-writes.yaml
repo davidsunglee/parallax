@@ -1,0 +1,69 @@
+# Keyed writes to physical identifiers that need component-wise quoting: the
+# binding places Entry in the schema `Px.Edge"q` (mixed case, a raw dot, and
+# PostgreSQL's quote character) under the reserved word `order`, and Tick in
+# `px` under `Tick`Mark` (mixed case and MariaDB's quote character). Each
+# component is quoted on its own, the embedded quote character doubled, and
+# the dot never read as qualification.
+model: models/binding-identifiers.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Entry: { schema: 'Px.Edge"q', table: order }
+      parallax.compatibility.Tick: { table: "Tick`Mark" }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Entry: { database: 'Px.Edge"q', table: order }
+      parallax.compatibility.Tick: { table: "Tick`Mark" }
+tags: [m-database-binding, m-dialect, m-sql, write-sequence, update, quoting, binding, slice-snapshot-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Entry
+      statements: 1
+      rows:
+        - { id: 3, label: c }
+    - mutation: insert
+      entity: parallax.compatibility.Tick
+      statements: 1
+      rows:
+        - { id: 31, entryId: 3, note: n }
+    - mutation: amend
+      entity: parallax.compatibility.Entry
+      statements: 1
+      rows:
+        - { id: 1, label: A2 }
+then:
+  statements:
+    - sql:
+        postgres: insert into "Px.Edge""q"."order"(id, label) values (?, ?)
+        mariadb: insert into `Px.Edge"q`.`order`(id, label) values (?, ?)
+      binds: [3, c]
+    - sql:
+        postgres: insert into px."Tick`Mark"(id, entry_id, note) values (?, ?, ?)
+        mariadb: insert into px.`Tick``Mark`(id, entry_id, note) values (?, ?, ?)
+      binds: [31, 3, n]
+    - sql:
+        postgres: update "Px.Edge""q"."order" set label = ? where id = ?
+        mariadb: update `Px.Edge"q`.`order` set label = ? where id = ?
+      binds: [A2, 1]
+  tableState:
+    'Px.Edge"q':
+      order:
+        - { id: 1, label: A2 }
+        - { id: 2, label: b }
+        - { id: 3, label: c }
+    px:
+      "Tick`Mark":
+        - { id: 11, entry_id: 1, note: x }
+        - { id: 12, entry_id: 1, note: "y" }
+        - { id: 31, entry_id: 3, note: n }
+  databaseCalls: 4

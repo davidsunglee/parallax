@@ -1,0 +1,54 @@
+# Table-per-concrete-subtype leaves RELOCATED by the binding alone
+# (m-model-evolution, m-database-binding, m-pk-gen): the later binding moves
+# each leaf to a schema of its own. Both leaves coordinate as table relocations,
+# but the `fleetIds` allocator the tableless root declares for the family, and
+# the depot shares, follows neither table: with no sequence entry it resolves
+# to the binding default in both endpoints, so nothing relocates it.
+tags: [m-model-evolution, m-database-binding, m-pk-gen, m-inheritance, evolution, table-per-concrete-subtype, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/binding-fleet.yaml
+    later: models/binding-fleet.yaml
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        entities:
+          parallax.compatibility.Car: { schema: px_eu }
+          parallax.compatibility.Truck: { schema: px_us }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        entities:
+          parallax.compatibility.Car: { database: px_eu }
+          parallax.compatibility.Truck: { database: px_us }
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: TableRelocated
+        entity: parallax.compatibility.Car
+        earlier: { qualifier: [px], name: car }
+        later: { qualifier: [px_eu], name: car }
+      - kind: TableRelocated
+        entity: parallax.compatibility.Truck
+        earlier: { qualifier: [px], name: truck }
+        later: { qualifier: [px_us], name: truck }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: TableRelocated
+          entity: parallax.compatibility.Car
+          earlier: { qualifier: [px], name: car }
+          later: { qualifier: [px_eu], name: car }
+        reasons: [DatabaseMigrationRequired]
+      - operation:
+          kind: TableRelocated
+          entity: parallax.compatibility.Truck
+          earlier: { qualifier: [px], name: truck }
+          later: { qualifier: [px_us], name: truck }
+        reasons: [DatabaseMigrationRequired]

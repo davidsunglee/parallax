@@ -1,0 +1,55 @@
+# Provisioning a Transaction-Time owner under a binding that overrides its
+# physical local name and places it in another schema (m-model-evolution,
+# m-schema-delta, m-database-binding): the temporal key, check, and exclusion
+# names and the authored index's Physical Index Name all hash the resolved
+# local name `escrow_live`, never the declared `evolution_escrow` and never the
+# `px_vault` qualifier.
+tags: [m-model-evolution, m-schema-delta, m-database-binding, m-storage-layout, evolution, provisioning, index, temporal, unique-index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null
+    later: models/evolution-temporal-container-v1.yaml
+    laterBinding:
+      postgres:
+        format_version: 1
+        backend: postgres
+        default: { schema: px }
+        entities:
+          parallax.compatibility.Escrow: { schema: px_vault, table: escrow_live }
+      mariadb:
+        format_version: 1
+        backend: mariadb
+        default: { database: px }
+        entities:
+          parallax.compatibility.Escrow: { database: px_vault, table: escrow_live }
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Escrow }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create extension if not exists btree_gist
+          - create table px_vault.escrow_live (id bigint not null, reference varchar(32) not null, in_z timestamptz not null, out_z timestamptz not null, constraint pxc_pk_escrow_live_523d223afde8d6e08cce7dd03f502806 primary key (id, out_z), constraint pxc_tx_escrow_live_1b35a5fa939e2902a6402475e6f1b849 check (in_z < out_z), constraint pxc_excl_escrow_live_e77740c438f51036d2967b07ad6e5ebd exclude using gist (id with =, tstzrange(in_z, out_z) with &&))
+          - create unique index pxi_escrow_live_parallax_compa_01bc53b2c8026474f83f810a494f3668 on px_vault.escrow_live (reference, out_z)
+        createdIndices:
+          - physicalIndexName: pxi_escrow_live_parallax_compa_01bc53b2c8026474f83f810a494f3668
+            physicalTable: { qualifier: [px_vault], name: escrow_live }
+            logicalIndexIdentity: parallax.compatibility.Escrow.escrow_reference
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create table px_vault.escrow_live (id bigint not null, reference varchar(32) not null, in_z datetime(6) not null, out_z datetime(6) not null, primary key (id, out_z))
+          - create unique index pxi_escrow_live_parallax_compat_01bc53b2c8026474f83f810a494f3668 on px_vault.escrow_live (reference, out_z)
+        createdIndices:
+          - physicalIndexName: pxi_escrow_live_parallax_compat_01bc53b2c8026474f83f810a494f3668
+            physicalTable: { qualifier: [px_vault], name: escrow_live }
+            logicalIndexIdentity: parallax.compatibility.Escrow.escrow_reference
+            unique: true

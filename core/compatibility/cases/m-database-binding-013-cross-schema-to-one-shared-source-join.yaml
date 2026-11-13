@@ -1,0 +1,41 @@
+# A to-one predicate across qualifiers: each line item, bound in `px_crm`,
+# reaches its parent order in `px` through one shared-source left join. Presence
+# keeps the filter two-valued; only order 1 is named Ada.
+model: models/orders.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.OrderItem: { schema: px_crm }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.OrderItem: { database: px_crm }
+tags: [m-database-binding, m-navigate, m-sql, navigate, relationship, to-one, binding, slice-snapshot-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      and:
+        operands:
+          - exists:
+              path: parallax.compatibility.OrderItem.order
+          - eq:
+              path: parallax.compatibility.OrderItem.order.name
+              value: Ada
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px_crm.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not t1.id is null and t1.name = ?
+        mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px_crm.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not t1.id is null and t1.name = ?
+      binds: [Ada]
+  referenceSql: select id, order_id, sku, quantity, shipped_on from px_crm.order_item where order_id in (select id from px.orders where name = 'Ada')
+  rows:
+    - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
+    - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
+  databaseCalls: 1

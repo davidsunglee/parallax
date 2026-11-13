@@ -28,11 +28,11 @@ then:
   statements:
     - sql:
         postgres: insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into px.`position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.`position`(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, "100.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
         postgres: insert into px.position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-        mariadb: insert into px.`position` (pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into px.`position`(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
       binds: [1, A, "150.00", "2024-09-01T00:00:00.000000Z", "2024-12-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", infinity]
   tableState:
     px:
