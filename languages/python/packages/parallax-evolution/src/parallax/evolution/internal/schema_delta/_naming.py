@@ -4,7 +4,11 @@ import hashlib
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
-from parallax.core.internal.database_binding import PhysicalTable
+from parallax.core.internal.database_binding import (
+    PhysicalSequence,
+    PhysicalTable,
+    ResolvedBinding,
+)
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
@@ -24,6 +28,7 @@ from parallax.evolution.internal.schema_delta._physical import (
 )
 from parallax.evolution.internal.schema_delta._values import (
     CollidingIndex,
+    CollidingRelation,
     CollidingTemporalConstraint,
     CollisionGroup,
     IndexPresence,
@@ -33,6 +38,7 @@ __all__ = [
     "census",
     "collision_groups",
     "physical_index_name",
+    "relation_census",
 ]
 
 _NAMESPACE = "pxi"
@@ -200,6 +206,33 @@ def census(
     return tuple(entries.values())
 
 
+def relation_census(
+    earlier: ResolvedBinding | None, later: ResolvedBinding, dialect: Dialect
+) -> tuple[CollidingRelation, ...]:
+    """Every table and sequence either endpoint places, where ``dialect`` scopes
+    index names to the relation namespace of a qualifier; none where it scopes
+    them to one table.
+
+    A relation both endpoints place is one entry present at both.
+    """
+    if dialect.index_name_scope != "qualifier":
+        return ()
+    entries: dict[PhysicalTable | PhysicalSequence, IndexPresence] = {}
+    for resolved, presence in ((earlier, IndexPresence.EARLIER), (later, IndexPresence.LATER)):
+        if resolved is None:
+            continue
+        relations = (
+            *(table.physical for table in resolved.tables),
+            *resolved.sequences.values(),
+        )
+        for relation in relations:
+            entries[relation] = IndexPresence.BOTH if relation in entries else presence
+    return tuple(
+        CollidingRelation(relation=relation, presence=presence)
+        for relation, presence in entries.items()
+    )
+
+
 type _Identity = (
     tuple[PhysicalTable, EntityIdentity, IndexIdentity, tuple[AttributeIdentity, ...], bool]
     | tuple[PhysicalTable, EntityIdentity, str, tuple[Column, ...]]
@@ -231,9 +264,12 @@ def _identity(definition: IndexDefinition | TemporalBackingIndex) -> _Identity:
 
 
 def collision_groups(
-    census: Sequence[NamedIndex], surviving: Collection[EntityIdentity]
+    census: Sequence[NamedIndex],
+    surviving: Collection[EntityIdentity],
+    relations: Sequence[CollidingRelation] = (),
 ) -> tuple[CollisionGroup, ...]:
-    """Every Physical Index Name two coexisting distinct definitions derived.
+    """Every Physical Index Name two coexisting distinct definitions derived, or
+    one a table or sequence of ``relations`` holds in the Index's scope.
 
     A shared name is a clash only where the database would hold both definitions
     at once during some prefix of the delta. That question is asked of the
@@ -245,6 +281,9 @@ def collision_groups(
     forward for is never dropped and so is present throughout; each surviving
     Table is named by its mapping owner.
 
+    No delta drops a table or touches a sequence, so a relation holding a name
+    is reported whatever the lifetime of the Index deriving it.
+
     Ordered by name; each group's authored definitions in canonical
     logical-identity order and its temporal constraints by Table and kind,
     each naming the endpoints it occurs in, so a report reads as a complete
@@ -253,11 +292,22 @@ def collision_groups(
     grouped: dict[tuple[PhysicalIndexName, NameScope], list[NamedIndex]] = {}
     for entry in census:
         grouped.setdefault((entry.name, entry.scope), []).append(entry)
+    holding: dict[NameScope, list[CollidingRelation]] = {}
+    for relation in relations:
+        holding.setdefault(relation.relation.qualifier, []).append(relation)
     return tuple(
-        CollisionGroup(name, *_reported(entries))
-        for (name, _), entries in sorted(grouped.items(), key=lambda entry: _group_key(*entry[0]))
-        if _coexist(entries, surviving)
+        CollisionGroup(name, *_reported(entries), relations=held)
+        for (name, scope), entries in sorted(
+            grouped.items(), key=lambda entry: _group_key(*entry[0])
+        )
+        if (held := _holding(holding.get(scope, ()), name)) or _coexist(entries, surviving)
     )
+
+
+def _holding(
+    relations: Sequence[CollidingRelation], name: PhysicalIndexName
+) -> tuple[CollidingRelation, ...]:
+    return tuple(held for held in relations if held.relation.name == name.value)
 
 
 def _group_key(name: PhysicalIndexName, scope: NameScope) -> tuple[str, tuple[str, ...]]:

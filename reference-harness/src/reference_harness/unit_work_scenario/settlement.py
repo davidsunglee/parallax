@@ -265,7 +265,7 @@ def _group(group_of: Mapping[int, str | None], submission: Submission) -> str:
 
 
 def _placed(case: Case, entity: Entity) -> PhysicalTable:
-    return case.entity_table(entity.canonical_name)
+    return case.entity_table(entity.canonical_name, None)
 
 
 def _table_entity(case: Case, table: PhysicalTable) -> Entity:

@@ -52,6 +52,7 @@ from parallax.evolution.internal.schema_delta._naming import (
     census,
     collision_groups,
     physical_index_name,
+    relation_census,
 )
 from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
@@ -87,7 +88,8 @@ class Plan:
     """What the database is asked to do, and every name clash that would outlive it.
 
     The census the clashes are read from spans both endpoints' complete Index
-    sets rather than the operations below it. An Index the delta never mentions
+    sets, and the tables and sequences sharing their names' scope, rather than
+    the operations below it. An Index the delta never mentions
     is still an object in the database while a new one is created beside it — and
     the operations could not answer the question anyway, because they are built
     by telling definitions apart BY their derived names, so under a collision the
@@ -127,6 +129,9 @@ def plan(evolution: UnilateralEvolution) -> Plan:
                 later_temporal=temporal_backing_indices(later.resolved),
             ),
             surviving=frozenset(layout.mapping_owner for layout in later.facet.tables),
+            relations=relation_census(
+                None if earlier is None else earlier.resolved, later.resolved, dialect
+            ),
         ),
     )
 

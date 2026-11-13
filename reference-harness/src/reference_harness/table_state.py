@@ -19,15 +19,15 @@ from .database_binding import PhysicalTable
 from .ddl_builder import declared_contributors, qualified_table, quote_identifier
 from .document_codec import decode_stored
 from .providers import DatabaseProvider
-from .storage_layout import ColumnContributor, ColumnTier, TableLayout, observed_table
+from .storage_layout import ColumnContributor, ColumnTier, TableLayout
 
 __all__ = ["assert_table_state", "read_entity_table", "read_table", "read_tables", "table_layout"]
 
 
-def table_layout(case: Case, table: PhysicalTable) -> TableLayout:
-    """The compiled layout of the mapping owner the case binding places at the
-    physical *table* an observation reads back."""
-    layout = observed_table(case.model.storage_layout, case.state_placement, table)
+def table_layout(case: Case, table: PhysicalTable, dialect: str) -> TableLayout:
+    """The compiled layout of the mapping owner *dialect*'s case binding places
+    at the physical *table* an observation reads back."""
+    layout = case.placed_layout(table, dialect)
     if layout is None:
         raise CaseFailure(
             f"{case.path.name}: an observation names table {str(table)!r} "
@@ -92,7 +92,8 @@ def read_tables(
     """Every row of each of the physical *tables*."""
     declarations = declared_contributors(case.model)
     return {
-        table: read_table(db, table_layout(case, table), table, declarations) for table in tables
+        table: read_table(db, table_layout(case, table, db.dialect), table, declarations)
+        for table in tables
     }
 
 

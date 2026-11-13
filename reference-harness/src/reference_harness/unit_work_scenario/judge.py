@@ -361,7 +361,9 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
             case, entity, row, mutation=entry["mutation"], opening=temporal
         )
         if not temporal:
-            statement, binds = _settled_statement(case, index, entity, pk, settling, aligned)
+            statement, binds = _settled_statement(
+                case, index, entity, pk, settling, aligned, dialect
+            )
             assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
             _assert_settled_version_binds(
                 case, entity, index, origin, pk, binds, statement, dialect
@@ -375,7 +377,9 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
         ]
         if case.concurrency_mode == "optimistic":
             expected.append(observed.tx_start)
-        statement, binds = _settled_close(case, index, entity, pk, settling, aligned, expected)
+        statement, binds = _settled_close(
+            case, index, entity, pk, settling, aligned, expected, dialect
+        )
         assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
     if every_entry_settles and len(aligned) != len(settling):
         raise CaseFailure(
@@ -432,6 +436,7 @@ def _settled_close(
     settling: list[tuple[ObjectAddress, str, list[Any]]],
     aligned: set[int],
     expected: list[Any],
+    dialect: str,
 ) -> tuple[str, list[Any]]:
     """The golden close one settled temporal entry's OBSERVED rectangle survives
     as, beside any closes of rectangles its flush read for the requested range.
@@ -444,7 +449,7 @@ def _settled_close(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(case.entity_table(entity.canonical_name))
+        if address.names_table(case.entity_table(entity.canonical_name, dialect))
         and address.names_key_column(entity.identity_column)
         and write_value_equal(address.key, pk)
     ]
@@ -474,6 +479,7 @@ def _settled_statement(
     pk: Any,
     settling: list[tuple[ObjectAddress, str, list[Any]]],
     aligned: set[int],
+    dialect: str,
 ) -> tuple[str, list[Any]]:
     """The golden statement one settled entry's OBJECT survives as, with the binds
     authored on it.
@@ -492,7 +498,7 @@ def _settled_statement(
     matches = [
         position
         for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(case.entity_table(entity.canonical_name))
+        if address.names_table(case.entity_table(entity.canonical_name, dialect))
         and address.names_key_column(entity.identity_column)
         and write_value_equal(address.key, pk)
     ]

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from sqlglot import exp
 
 from .database_binding import PhysicalTable
-from .storage_layout import observed_table
 
 if TYPE_CHECKING:
     from .case import Case
@@ -37,11 +36,7 @@ def physical_table_of(table: exp.Table) -> PhysicalTable:
     return PhysicalTable(qualifier, _component(table.this))
 
 
-def referenced_layout(case: Case, table: exp.Table) -> TableLayout | None:
-    """The layout of the mapping owner the case binding places where *table*
-    points, or absent where it names no table of the case's model.
-
-    Read through :attr:`~.case.Case.state_placement`, the placement every
-    dialect of the case shares.
-    """
-    return observed_table(case.model.storage_layout, case.state_placement, physical_table_of(table))
+def referenced_layout(case: Case, table: exp.Table, dialect: str) -> TableLayout | None:
+    """The layout of the mapping owner *dialect*'s case binding places where
+    *table* points, or absent where it names no table of the case's model."""
+    return case.placed_layout(physical_table_of(table), dialect)

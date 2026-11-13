@@ -102,11 +102,11 @@ def infer_statement_bind_targets(
     tree = parse_indexed_statement(statement, dialect)
     if tree is None:
         return {}
-    targets = _insert_targets(case, tree, binds)
-    targets.update(_update_targets(case, tree, binds))
+    targets = _insert_targets(case, tree, binds, dialect)
+    targets.update(_update_targets(case, tree, binds, dialect))
     targets.update(
         (index, target)
-        for argument, target, _column in _grouped_sources(case, tree, binds)
+        for argument, target, _column in _grouped_sources(case, tree, binds, dialect)
         if (index := bound_placeholder_index(argument)) is not None
     )
     for placeholder in tree.find_all(exp.Placeholder):
@@ -115,16 +115,16 @@ def infer_statement_bind_targets(
             continue
         operand = _compared_operand(placeholder)
         if operand is not None:
-            target = _expression_target(case, operand, binds)
+            target = _expression_target(case, operand, binds, dialect)
             if target is not None:
                 targets[index] = target
     return targets
 
 
 def _insert_targets(
-    case: Case, tree: Expr, binds: Sequence[object]
+    case: Case, tree: Expr, binds: Sequence[object], dialect: str
 ) -> dict[int, CanonicalBindTarget]:
-    layout = _insert_layout(case, tree)
+    layout = _insert_layout(case, tree, dialect)
     if not isinstance(tree, exp.Insert) or layout is None:
         return {}
     if isinstance(tree.expression, exp.Values):
@@ -195,11 +195,11 @@ def _array_row(arrays: Mapping[str, object], row: int) -> dict[str, object]:
     }
 
 
-def _insert_layout(case: Case, tree: Expr) -> TableLayout | None:
+def _insert_layout(case: Case, tree: Expr, dialect: str) -> TableLayout | None:
     if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
         return None
     table = tree.this.this
-    return referenced_layout(case, table) if isinstance(table, exp.Table) else None
+    return referenced_layout(case, table, dialect) if isinstance(table, exp.Table) else None
 
 
 def _insert_columns(tree: exp.Insert) -> tuple[str, ...]:
@@ -233,7 +233,7 @@ def _column_arrays(tree: Expr) -> tuple[tuple[str, ...], tuple[Expr, ...]] | Non
 
 
 def _update_targets(
-    case: Case, tree: Expr, binds: Sequence[object]
+    case: Case, tree: Expr, binds: Sequence[object], dialect: str
 ) -> dict[int, CanonicalBindTarget]:
     if not isinstance(tree, exp.Update):
         return {}
@@ -241,7 +241,7 @@ def _update_targets(
     for assignment in tree.expressions:
         if not isinstance(assignment, exp.EQ) or not isinstance(assignment.this, exp.Column):
             continue
-        slot, guarded = _column_slot(case, assignment.this, binds)
+        slot, guarded = _column_slot(case, assignment.this, binds, dialect)
         placeholders = tuple(assignment.expression.find_all(exp.Placeholder))
         if isinstance(assignment.expression, exp.Placeholder):
             placeholders = (assignment.expression,)
@@ -273,7 +273,7 @@ class _GroupedSource:
         return None
 
 
-def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
+def _grouped_source(case: Case, tree: Expr, dialect: str) -> _GroupedSource | None:
     if not isinstance(tree, exp.Update | exp.Delete) or not isinstance(tree.this, exp.Table):
         return None
     if isinstance(tree, exp.Update):
@@ -285,7 +285,7 @@ def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
     if not isinstance(unnest, exp.Unnest):
         return None
     alias = unnest.args.get("alias")
-    layout = referenced_layout(case, tree.this)
+    layout = referenced_layout(case, tree.this, dialect)
     if not isinstance(alias, exp.TableAlias) or layout is None:
         return None
     arguments = dict(
@@ -295,14 +295,14 @@ def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
 
 
 def _grouped_sources(
-    case: Case, tree: Expr, binds: Sequence[object]
+    case: Case, tree: Expr, binds: Sequence[object], dialect: str
 ) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
     """Each source array of a grouped effect (``update t set … from unnest(…) with
     ordinality v(…) … returning v.ord``, or ``delete from t using unnest(…) …``)
     beside what types its elements: the slot of the column a source column is
     assigned to or compared with, or the document member a path assignment writes
     it to, and that column's name."""
-    grouped = _grouped_source(case, tree)
+    grouped = _grouped_source(case, tree, dialect)
     if grouped is None:
         return
     for assignment in tree.expressions:
@@ -568,20 +568,20 @@ def array_cast_mismatches(
         if not isinstance(comparison, exp.EQ):
             continue
         operand = comparison.this if array is comparison.expression else comparison.expression
-        expected = _compared_type(case, operand, binds)
+        expected = _compared_type(case, operand, binds, "postgres")
         mismatch = None if expected is None else _array_cast_mismatch(array.this, expected)
         if mismatch is not None:
             mismatches.append(mismatch)
-    mismatches.extend(_column_array_cast_mismatches(case, tree))
-    mismatches.extend(_grouped_source_cast_mismatches(case, tree, binds))
+    mismatches.extend(_column_array_cast_mismatches(case, tree, "postgres"))
+    mismatches.extend(_grouped_source_cast_mismatches(case, tree, binds, "postgres"))
     return tuple(sorted(mismatches, key=lambda mismatch: mismatch.index))
 
 
 def _grouped_source_cast_mismatches(
-    case: Case, tree: Expr, binds: Sequence[object]
+    case: Case, tree: Expr, binds: Sequence[object], dialect: str
 ) -> Iterator[ArrayCastMismatch]:
     declarations = declared_contributors(case.model)
-    for argument, target, column in _grouped_sources(case, tree, binds):
+    for argument, target, column in _grouped_sources(case, tree, binds, dialect):
         element = (
             "jsonb"
             if isinstance(target, DocumentMember)
@@ -592,8 +592,10 @@ def _grouped_source_cast_mismatches(
             yield ArrayCastMismatch(mismatch.index, mismatch.cast, mismatch.expected, column)
 
 
-def _column_array_cast_mismatches(case: Case, tree: Expr) -> Iterator[ArrayCastMismatch]:
-    layout = _insert_layout(case, tree)
+def _column_array_cast_mismatches(
+    case: Case, tree: Expr, dialect: str
+) -> Iterator[ArrayCastMismatch]:
+    layout = _insert_layout(case, tree, dialect)
     found = _column_arrays(tree)
     if layout is None or found is None:
         return
@@ -635,20 +637,22 @@ def _array_element(data_type: exp.DataType) -> exp.DataType | None:
     return element if isinstance(element, exp.DataType) else None
 
 
-def _compared_type(case: Case, operand: Expr, binds: Sequence[object]) -> exp.DataType | None:
+def _compared_type(
+    case: Case, operand: Expr, binds: Sequence[object], dialect: str
+) -> exp.DataType | None:
     """The unmodified type ``operand`` compares in, where it is a column, a cast,
     a text extraction, or a guarded or scalar-subquery reading of one."""
     while isinstance(operand, exp.Paren):
         operand = operand.this
     if isinstance(operand, exp.Case) and len(operand.args.get("ifs") or ()) == 1:
-        return _compared_type(case, operand.args["ifs"][0].args["true"], binds)
+        return _compared_type(case, operand.args["ifs"][0].args["true"], binds, dialect)
     if isinstance(operand, exp.Subquery) and isinstance(operand.this, exp.Select):
         selected = operand.this.expressions
-        return _compared_type(case, selected[0], binds) if len(selected) == 1 else None
+        return _compared_type(case, selected[0], binds, dialect) if len(selected) == 1 else None
     if isinstance(operand, exp.Cast):
         return exp.DataType(this=operand.to.this)
     if isinstance(operand, exp.Column):
-        slot, _guarded = _column_slot(case, operand, binds)
+        slot, _guarded = _column_slot(case, operand, binds, dialect)
         contributor = None if slot is None else slot.contributor
         if not isinstance(contributor, AttributeContributor):
             return None
@@ -661,17 +665,17 @@ def _compared_type(case: Case, operand: Expr, binds: Sequence[object]) -> exp.Da
 
 
 def _expression_target(
-    case: Case, expression: Expr, binds: Sequence[object]
+    case: Case, expression: Expr, binds: Sequence[object], dialect: str
 ) -> CanonicalBindTarget | None:
     if isinstance(expression, exp.Column):
-        compared, guarded = _column_slot(case, expression, binds)
+        compared, guarded = _column_slot(case, expression, binds, dialect)
         return None if compared is None else _slot_target(case, compared, guarded)
     if _counts_elements(expression):
         return None
     columns = tuple(expression.find_all(exp.Column))
     if len(columns) != 1:
         return None
-    slot, guarded = _column_slot(case, columns[0], binds)
+    slot, guarded = _column_slot(case, columns[0], binds, dialect)
     path = _extraction_path(expression, binds)
     if slot is None or not path:
         return None
@@ -767,7 +771,7 @@ def _extraction_path(expression: Expr, binds: Sequence[object]) -> tuple[str, ..
 
 
 def _column_slot(
-    case: Case, column: exp.Column, binds: Sequence[object]
+    case: Case, column: exp.Column, binds: Sequence[object], dialect: str
 ) -> tuple[ColumnSlot | None, dict[str, object]]:
     """The slot ``column`` reads and the column values its row is guarded to.
 
@@ -784,7 +788,7 @@ def _column_slot(
         )
         return (matches[0] if len(matches) == 1 else None), {}
     table, scopes = source
-    layout = None if table is None else referenced_layout(case, table)
+    layout = None if table is None else referenced_layout(case, table, dialect)
     if table is None or layout is None:
         return None, {}
     return layout.column(column.name), _guarded_values(table, scopes, binds)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NoReturn, overload
+from typing import overload
 
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
 from parallax.core._execution._unit_work.preparation import WritePreparation
@@ -38,13 +38,9 @@ __all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "w
 
 
 @overload
-def prepare_model(
+def prepare_model(  # pyright: ignore[reportInconsistentOverload] - the one overload hides the sentinel default, so omitting binding is a type error
     model: DomainModel, *, binding: DatabaseBinding, edition: str
 ) -> ModelSelection: ...
-
-
-@overload
-def prepare_model(model: DomainModel, *, edition: str) -> NoReturn: ...
 
 
 def prepare_model(

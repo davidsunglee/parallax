@@ -619,11 +619,13 @@ def _assert_state_graded_document(
         if submission.empty:
             continue
         if submission.entity is not None:
-            written.add(case.entity_table(submission.entity.canonical_name))
+            written.add(case.entity_table(submission.entity.canonical_name, None))
         else:
             target = submission.entry.get("target") or {}
             written.add(
-                case.entity_table(case.model.entity(str(target.get("entity", ""))).canonical_name)
+                case.entity_table(
+                    case.model.entity(str(target.get("entity", ""))).canonical_name, None
+                )
             )
     unstated = [str(table) for table in sorted(written - set(case.expected_table_state))]
     if unstated:
