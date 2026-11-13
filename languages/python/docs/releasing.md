@@ -14,7 +14,7 @@ Applications install the distributions they need and their dependencies; they
 need not install every production distribution. Mixed first-party release
 versions are unsupported. Conformance remains development-only and unpublished.
 
-`0.1.0` is a normal production install candidate, with no alpha or beta packaging
+Each release is a normal production install candidate, with no alpha or beta packaging
 suffix. Patch releases within a minor line remain backward-compatible.
 Subsequent pre-1.0 minor releases may introduce explicitly documented breaking
 changes, accompanied by migration guidance. Before 1.0, only the newest minor

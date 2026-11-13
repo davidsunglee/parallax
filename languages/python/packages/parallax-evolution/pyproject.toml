@@ -1,6 +1,6 @@
 [project]
 name = "parallax-evolution"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parallax model evolution and schema deltas: the model-altitude difference between two accepted Metamodels, and the dialect statements that carry a database to the later one."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core==0.1.0",
+    "parallax-core==0.2.0",
 ]
 
 [project.urls]

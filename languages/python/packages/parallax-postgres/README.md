@@ -1,7 +1,7 @@
 # parallax-postgres
 
 Parallax's Postgres database adapter over `psycopg` and its companion
-`psycopg-pool`. Install `parallax-postgres==0.1.0` with the application packages
+`psycopg-pool`. Install `parallax-postgres==0.2.0` with the application packages
 shown in the [getting-started guide](https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/guide/01-getting-started.md#install).
 That guide links the authoritative Python, platform and PostgreSQL support
 declarations and the C-driver and source-build installation paths. The normal

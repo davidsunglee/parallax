@@ -52,7 +52,7 @@ production release is prepared for
 The production installation command is:
 
 ```bash
-python -m pip install parallax-snapshot==0.1.0 parallax-postgres==0.1.0
+python -m pip install parallax-snapshot==0.2.0 parallax-postgres==0.2.0
 ```
 
 [Getting started](languages/python/docs/guide/01-getting-started.md#install) adds

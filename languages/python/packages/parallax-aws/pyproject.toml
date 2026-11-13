@@ -1,6 +1,6 @@
 [project]
 name = "parallax-aws"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parallax AWS credential providers: RDS IAM database authentication as a Credential Source (the sole botocore declarer)."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core==0.1.0",
+    "parallax-core==0.2.0",
     # Declared for the AWS credential chain rather than for the token: the
     # presign is local, but finding the credentials to sign with — environment,
     # profiles, IMDSv2, ECS task roles, IRSA, SSO, and the automatic refresh of
@@ -25,7 +25,7 @@ dependencies = [
 # directly, so the extra declares the driver beside the adapter that brings its
 # binary build.
 [project.optional-dependencies]
-postgres = ["parallax-postgres==0.1.0", "psycopg>=3.3.6,<3.4"]
+postgres = ["parallax-postgres==0.2.0", "psycopg>=3.3.6,<3.4"]
 
 [project.urls]
 Documentation = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/guide/README.md"

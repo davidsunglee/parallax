@@ -426,7 +426,7 @@ def test_describe_matches_canonical_claim_except_adapter(
     assert envelope["adapter"] == {
         "language": "python",
         "name": "parallax-core",
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
     assert envelope["adapter"] != canonical["adapter"]
 
