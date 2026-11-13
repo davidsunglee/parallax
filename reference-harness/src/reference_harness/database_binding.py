@@ -57,7 +57,9 @@ def parse_binding_text(text: str, fmt: str) -> Any:
     """Decode binding text; a malformed document is a ``binding-syntax-invalid`` rejection."""
     try:
         return json.loads(text) if fmt == "json" else load_corpus_yaml(text)
-    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+    # PyYAML's scalar constructors raise these, not a YAMLError, for a scalar its
+    # tag cannot convert, such as `!!int invalid`.
+    except (ValueError, LookupError, AttributeError, yaml.YAMLError) as exc:
         raise BindingRejection({BindingIssue((), "binding-syntax-invalid")}) from exc
 
 

@@ -50,6 +50,16 @@ def test_typed_json_and_yaml_bindings_round_trip_to_one_value() -> None:
     assert binding.dialect.name == "postgres"
 
 
+def test_yaml_round_trips_a_next_line_character_in_every_name() -> None:
+    nel = "a\u0085b"
+    binding = PostgresBinding(
+        default=PostgresLocation(schema=nel),
+        entities={"commerce.Customer": PostgresTable(name=nel)},
+        sequences={nel: PostgresSequence(name=nel)},
+    )
+    assert PostgresBinding.from_yaml(binding.to_yaml()) == binding
+
+
 def test_serialization_is_canonical_whatever_the_authoring_order() -> None:
     reordered = PostgresBinding(
         sequences={"documentNumbers": PostgresSequence(schema="shared", name="document_numbers")},
@@ -177,8 +187,14 @@ def test_an_omitted_part_is_not_an_invalid_one() -> None:
 
 @pytest.mark.parametrize(
     ("door", "text"),
-    [(PostgresBinding.from_json, '{"format_version": 1,'), (PostgresBinding.from_yaml, "a: [")],
-    ids=["json", "yaml"],
+    [
+        (PostgresBinding.from_json, '{"format_version": 1,'),
+        (PostgresBinding.from_yaml, "a: ["),
+        (PostgresBinding.from_yaml, "default: { schema: 2026-02-30 }"),
+        (PostgresBinding.from_yaml, "default: { schema: !!bool maybe }"),
+        (PostgresBinding.from_yaml, "default: { schema: !!timestamp later }"),
+    ],
+    ids=["json", "yaml", "yaml-impossible-date", "yaml-tagged-bool", "yaml-tagged-timestamp"],
 )
 def test_malformed_text_is_a_definition_refusal(
     door: Callable[[str], PostgresBinding], text: str

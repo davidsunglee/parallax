@@ -1,0 +1,5 @@
+# A scalar its explicit tag cannot convert is malformed YAML, not a value of
+# the wrong shape.
+reader: postgres
+issues:
+  - { code: binding-syntax-invalid, path: [] }

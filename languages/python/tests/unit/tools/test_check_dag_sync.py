@@ -868,10 +868,12 @@ def test_runtime_scopes_reach_primary_key_generation_only_through_formation() ->
     # extension reach it only through the Entity frontend that forms models.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     pk_gen = "parallax.core.internal.pk_gen"
-    assert pk_gen in adjacency["parallax.core._formation_profile"]
+    formation = "parallax.core._formation_profile"
+    assert pk_gen in adjacency[formation]
+    without_formation_grant = {**adjacency, formation: adjacency[formation] - {pk_gen}}
     for scope in ("parallax.core._execution", "parallax.snapshot"):
-        assert pk_gen not in adjacency[scope], scope
-        assert "parallax.core._formation_profile" not in adjacency[scope], scope
+        assert pk_gen in dag.transitive_closure(adjacency, scope), scope
+        assert pk_gen not in dag.transitive_closure(without_formation_grant, scope), scope
 
 
 def test_readless_policy_is_below_unit_work_and_reaches_no_planner() -> None:
