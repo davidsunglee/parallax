@@ -783,18 +783,37 @@ class Case:
     def placed_layout(self, table: PhysicalTable, dialect: str | None) -> TableLayout | None:
         """The layout of the mapping owner the case binding places at *table*.
 
-        Read through *dialect*'s placement; ``None`` reads the first dialect's
-        placement that places a table there, for an observation checked before
-        any dialect executes.
+        Read through *dialect*'s placement; ``None`` reads the first placement
+        that places a table there among the dialects the case's golden SQL names,
+        or among every dialect for a case naming none, for an observation checked
+        before any dialect executes. A dialect the case is not graded under is
+        never resolved, so its corpus default need not place the model.
         """
         from .storage_layout import observed_table
 
-        dialects = _STATE_DIALECTS if dialect is None else (dialect,)
+        if dialect is not None:
+            dialects: tuple[str, ...] = (dialect,)
+        else:
+            dialects = self._golden_sql_dialects() or _STATE_DIALECTS
         for candidate in dialects:
             layout = observed_table(self.model.storage_layout, self.placement(candidate), table)
             if layout is not None:
                 return layout
         return None
+
+    def _golden_sql_dialects(self) -> tuple[str, ...]:
+        named: set[str] = set()
+        pending: list[object] = [self.when, self.then]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, Mapping):
+                sql = value.get("sql")
+                if isinstance(sql, Mapping):
+                    named.update(sql)
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return tuple(candidate for candidate in _STATE_DIALECTS if candidate in named)
 
     @property
     def state_placement(self) -> Placement:

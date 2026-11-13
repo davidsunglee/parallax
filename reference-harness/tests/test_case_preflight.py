@@ -1256,3 +1256,24 @@ def test_a_single_dialect_case_types_its_binds_where_that_dialect_places_the_tab
     case.then["statements"][0]["binds"][2] = ["100.00", "twenty", "30.00"]
     with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[2\]\[1\]"):
         preflight_case_literals(case)
+
+
+def _bound_for_mariadb_alone() -> Case:
+    """m-database-binding-010 graded under MariaDB alone: PostgreSQL falls back to
+    the corpus default, which places both ledgers at ``px.ledger``."""
+    case = _damaged("m-database-binding-010-equal-table-names-in-two-schemas-write")
+    del case.raw["binding"]["postgres"]
+    for statement in case.then["statements"]:
+        del statement["sql"]["postgres"]
+    return case
+
+
+def test_a_dialect_the_case_does_not_grade_need_not_resolve_its_model() -> None:
+    preflight_case_literals(_bound_for_mariadb_alone())
+
+
+def test_a_case_graded_under_one_dialect_checks_its_table_state_there() -> None:
+    case = _bound_for_mariadb_alone()
+    case.then["tableState"]["px_audit"]["ledger"][0]["id"] = "one"
+    with pytest.raises(CaseFailure, match=r"then\.tableState\.px_audit\.ledger\[0\]"):
+        preflight_case_literals(case)
