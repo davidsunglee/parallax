@@ -1734,7 +1734,6 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         "ValueObjectContributor",
         "is_scalar_collection",
         "member_address",
-        "observed_table",
         "position_projection",
         "position_view",
         "validate_storage_layout",

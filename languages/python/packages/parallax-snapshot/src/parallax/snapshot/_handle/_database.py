@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Final, NoReturn, cast, overload
+from typing import Any, Final, cast, overload
 from uuid import uuid4
 
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
@@ -276,20 +276,6 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database[Auth]: ...
-
-    @overload
-    @classmethod
-    def connect[Auth](
-        cls,
-        adapter: DatabaseAdapter[Auth],
-        model: DomainModel,
-        *,
-        options: TxnOptions | None = None,
-        read_policy: RoutePolicy | None = None,
-        read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
-        clock: Clock | None = None,
-        lifecycle_provider: ExecutionLifecycleProvider | None = None,
-    ) -> NoReturn: ...
 
     @classmethod
     def connect[Auth](

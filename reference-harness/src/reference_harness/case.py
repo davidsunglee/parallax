@@ -32,7 +32,7 @@ from .references import resolve_definition as _resolve_definition
 from .temporality import derive_temporal_structure, temporal_axes
 
 if TYPE_CHECKING:
-    from .storage_layout import StorageLayout
+    from .storage_layout import StorageLayout, TableLayout
 
 _DEFAULT_BINDINGS: Final = Path("bindings") / "default.yaml"
 _STATE_DIALECTS: Final = ("postgres", "mariadb")
@@ -769,10 +769,10 @@ class Case:
         """:attr:`setup_model` resolved under the case binding."""
         return self.placement(dialect, self.setup_model)
 
-    def entity_table(self, entity: str, dialect: str | None = None) -> PhysicalTable:
+    def entity_table(self, entity: str, dialect: str | None) -> PhysicalTable:
         """The physical table the case binding places *entity*'s rows in.
 
-        Read through *dialect*'s placement, else :attr:`state_placement`.
+        Read through *dialect*'s placement; ``None`` reads :attr:`state_placement`.
         """
         view = self.model.storage_layout.entity(entity)
         if view is None:
@@ -780,14 +780,29 @@ class Case:
         placement = self.state_placement if dialect is None else self.placement(dialect)
         return placement.table(view.layout.mapping_owner)
 
+    def placed_layout(self, table: PhysicalTable, dialect: str | None) -> TableLayout | None:
+        """The layout of the mapping owner the case binding places at *table*.
+
+        Read through *dialect*'s placement; ``None`` reads the first dialect's
+        placement that places a table there, for an observation checked before
+        any dialect executes.
+        """
+        from .storage_layout import observed_table
+
+        dialects = _STATE_DIALECTS if dialect is None else (dialect,)
+        for candidate in dialects:
+            layout = observed_table(self.model.storage_layout, self.placement(candidate), table)
+            if layout is not None:
+                return layout
+        return None
+
     @property
     def state_placement(self) -> Placement:
-        """The one placement :attr:`model`'s dialect-neutral observations name.
+        """The one placement a state-graded Scenario's observations name.
 
-        ``then.tableState`` and the other physical observations no dialect key
-        selects name tables one way for every dialect, so the case binding must
-        place every table identically under each; a binding that does not is a
-        corpus defect.
+        Such a Scenario is graded under every dialect against one
+        ``then.tableState``, so the case binding must place every table
+        identically under each; a binding that does not is a corpus defect.
         """
         placements = [self.placement(dialect) for dialect in _STATE_DIALECTS]
         first = placements[0]
@@ -797,7 +812,7 @@ class Case:
         ):
             raise ValueError(
                 f"{self.path.name}: the case binding places tables differently per dialect, "
-                "which a dialect-neutral observation cannot name"
+                "which a state-graded Scenario graded under each cannot name"
             )
         return first
 

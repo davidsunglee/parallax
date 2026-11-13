@@ -295,7 +295,10 @@ A name is unique within the scope the dialect gives index names
 (`m-dialect` *Object-name scopes*): every relation of one qualifier on Postgres,
 one table on MariaDB. The census groups names by that scope, so equal names in
 different scopes never collide, and identifies each definition by its physical
-table and mapping owner.
+table and mapping owner. Where that scope is a qualifier's relation namespace,
+the census also holds every table and sequence either endpoint's binding places
+in it. No delta drops a table or touches a sequence, so one sharing an Index's
+name in its scope coexists with that Index whatever the Index's lifetime.
 
 ## Errors
 
@@ -313,13 +316,14 @@ the dialect-independent Unilateral Evolution as coordinated: renderer support is
 deployment capability, not a model-semantic fact.
 
 **Physical Index Name collision.** If two distinct physical Index definitions the
-database would hold at once derive one name, generation refuses rather than
-silently renaming either. The census spans every Index of both endpoints, not only
-the ones this delta creates or drops. The error carries the Dialect Identity and
-every collision group in Physical Index Name order, each naming the shared name and
-its colliding definitions. This is a defensive backstop for an unexpected 128-bit
-fingerprint collision, not an ordinary control path and not a dialect-capability
-error.
+database would hold at once derive one name, or a table or sequence holds an
+Index's name in its scope, generation refuses rather than silently renaming
+anything. The census spans every Index of both endpoints, not only the ones this
+delta creates or drops. The error carries the Dialect Identity and every collision
+group in Physical Index Name order, each naming the shared name, its colliding
+definitions, and the relations holding it. This is a defensive backstop for an
+unexpected 128-bit fingerprint collision or a binding naming a relation like a
+derived name, not an ordinary control path and not a dialect-capability error.
 
 ## Rule Set boundary
 

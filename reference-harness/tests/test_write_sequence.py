@@ -601,7 +601,7 @@ def test_table_observation_reads_a_shared_table_once_over_every_slot() -> None:
     provider = _RecordingReadProvider()
     rows = read_table(
         cast("Any", provider),
-        table_layout(case, PhysicalTable(("px",), "payment")),
+        table_layout(case, PhysicalTable(("px",), "payment"), "postgres"),
         PhysicalTable(("px",), "payment"),
         declared_contributors(case.model),
     )
@@ -620,7 +620,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     documents = _RecordingReadProvider([{"id": 1, "name": "Ada", "address": '{"city": "Rome"}'}])
     (document_row,) = read_table(
         cast("Any", documents),
-        table_layout(customer_case, PhysicalTable(("px",), "customer")),
+        table_layout(customer_case, PhysicalTable(("px",), "customer"), "postgres"),
         PhysicalTable(("px",), "customer"),
         declared_contributors(customer),
     )
@@ -631,7 +631,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     binaries = _RecordingReadProvider([{"id": 1, "payload": b"\xde\xad\xbe\xef"}])
     (binary_row,) = read_table(
         cast("Any", binaries),
-        table_layout(scalars_case, PhysicalTable(("px",), "scalar_thing")),
+        table_layout(scalars_case, PhysicalTable(("px",), "scalar_thing"), "postgres"),
         PhysicalTable(("px",), "scalar_thing"),
         declared_contributors(scalars),
     )
@@ -641,7 +641,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
 def test_table_observation_refuses_a_table_the_model_does_not_map() -> None:
     case = _write_case_by_id("m-inheritance-007")
     with pytest.raises(CaseFailure):
-        table_layout(case, PhysicalTable(("px",), "not_a_table"))
+        table_layout(case, PhysicalTable(("px",), "not_a_table"), "postgres")
 
 
 def test_multi_attribute_audit_update_chains_all_new_values() -> None:

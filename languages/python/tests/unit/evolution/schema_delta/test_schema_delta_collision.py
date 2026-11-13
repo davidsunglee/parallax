@@ -1,10 +1,11 @@
-"""A derived Physical Index Name two definitions share (m-schema-delta), Docker-free.
+"""A derived Physical Index Name two objects claim (m-schema-delta), Docker-free.
 
 A 128-bit fingerprint collision is a defensive backstop, not a control path: no
 accepted model reaches it, and the fingerprint is stubbed here because that is
-the only way to reach the branch at all. What the tests pin is the REPORT — that
-a clash is refused rather than silently renamed, and that the refusal names every
-group, every definition in it, and where each definition occurs.
+the only way to reach the branch at all. A table or sequence a binding names
+like a derived name reaches it without a stub. What the tests pin is the REPORT
+— that a clash is refused rather than silently renamed, and that the refusal
+names every group, every object in it, and where each occurs.
 """
 
 from __future__ import annotations
@@ -17,8 +18,9 @@ import pytest
 
 from parallax.core import InternalError
 from parallax.core.internal.base import STRING
-from parallax.core.internal.database_binding import ResolvedBinding
+from parallax.core.internal.database_binding import PhysicalSequence, ResolvedBinding
 from parallax.core.internal.dialect import POSTGRES, Dialect, PhysicalIndexName
+from parallax.core.internal.entity import model_of
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     Column,
@@ -27,15 +29,25 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.storage_layout import _temporal as temporal_naming
+from parallax.descriptor import domain_model_from_yaml
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.internal.model_evolution import (
     ABSENT,
     UnilateralEvolution,
     evolve_resolved,
 )
-from parallax.evolution.internal.schema_delta import PHYSICAL_INDEX_NAME_COLLISION, schema_delta
+from parallax.evolution.internal.schema_delta import (
+    PHYSICAL_INDEX_NAME_COLLISION,
+    CreatedIndex,
+    schema_delta,
+)
 from parallax.evolution.internal.schema_delta import _naming as naming
-from parallax.evolution.internal.schema_delta._naming import NamedIndex, census, collision_groups
+from parallax.evolution.internal.schema_delta._naming import (
+    NamedIndex,
+    census,
+    collision_groups,
+    relation_census,
+)
 from parallax.evolution.internal.schema_delta._physical import (
     IndexDefinition,
     PhysicalColumn,
@@ -43,11 +55,19 @@ from parallax.evolution.internal.schema_delta._physical import (
 )
 from parallax.evolution.internal.schema_delta._plan import temporal_backing_indices
 from parallax.evolution.internal.schema_delta._values import (
+    CollidingRelation,
     CollidingTemporalConstraint,
     CollisionGroup,
     IndexPresence,
 )
-from tests._support.bindings import binding_for, bound_model, physical_table, resolved_table
+from parallax.postgres import PostgresBinding, PostgresLocation, PostgresSequence, PostgresTable
+from tests._support.bindings import (
+    TEST_BINDING,
+    binding_for,
+    bound_model,
+    physical_table,
+    resolved_table,
+)
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
@@ -470,3 +490,94 @@ def test_a_generated_delta_counts_temporal_constraints_in_the_census(
         "temporal exclusion on px.balance (bal_id, in_z, out_z) [later], "
         "temporal primaryKey on px.balance (bal_id, out_z) [later]"
     )
+
+
+_PLACED_YAML = """
+entities:
+  - name: Anvil
+    table: anvil
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: sequence, name: anvilIds }
+      - { name: code, type: string, maxLength: 8 }
+    indices:
+      - { name: code_ix, attributes: [code] }
+  - name: Zither
+    table: zither
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+"""
+_PLACED: AcceptedMetamodel = model_of(domain_model_from_yaml(_PLACED_YAML))
+
+
+def _derived() -> CreatedIndex:
+    """The one authored Index of ``_PLACED``, as the default binding derives it."""
+    (created,) = schema_delta(evolve_resolved(ABSENT, bound_model(_PLACED))).created_indices
+    return created
+
+
+def _placed_under(binding: PostgresBinding) -> UnilateralEvolution:
+    return evolve_resolved(ABSENT, ResolvedBinding(_PLACED, binding))
+
+
+def test_a_table_bound_under_a_derived_index_name_is_refused() -> None:
+    name = _derived().physical_index_name.value
+    binding = PostgresBinding(
+        default=PostgresLocation(schema="px"), entities={"Zither": PostgresTable(name=name)}
+    )
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
+        schema_delta(_placed_under(binding))
+    assert raised.value.args[1] == (
+        f"postgres derived colliding Physical Index Names: {name} is derived by "
+        f"Index Anvil.code_ix on px.anvil (code) [later] and held by table px.{name} [later]"
+    )
+
+
+def test_a_sequence_bound_under_a_derived_index_name_is_refused() -> None:
+    name = _derived().physical_index_name.value
+    binding = PostgresBinding(
+        default=PostgresLocation(schema="px"),
+        sequences={"anvilIds": PostgresSequence(name=name)},
+    )
+    with raises_code(InternalError, PHYSICAL_INDEX_NAME_COLLISION) as raised:
+        schema_delta(_placed_under(binding))
+    assert raised.value.args[1].endswith(f"and held by sequence px.{name} [later]")
+
+
+def test_a_relation_holding_the_name_in_another_schema_is_no_collision() -> None:
+    name = _derived().physical_index_name.value
+    binding = PostgresBinding(
+        default=PostgresLocation(schema="px"),
+        entities={"Zither": PostgresTable(schema="other", name=name)},
+    )
+    assert schema_delta(_placed_under(binding)).created_indices == (_derived(),)
+
+
+def test_a_temporal_constraint_name_held_by_a_table_is_refused() -> None:
+    model = formed(_RECORDS_BALANCE)
+    (constraints,) = (
+        table.temporal_constraints
+        for table in bound_model(model).tables
+        if table.temporal_constraints is not None
+    )
+    groups = collision_groups(
+        census((), (), POSTGRES, later_temporal=_backing_indices(model)),
+        set(),
+        (CollidingRelation(physical_table(constraints.exclusion_name), IndexPresence.EARLIER),),
+    )
+    (group,) = groups
+    assert group.name.value == constraints.exclusion_name
+    assert [constraint.kind for constraint in group.temporal_constraints] == ["exclusion"]
+
+
+def test_only_a_qualifier_scoped_dialect_counts_relations() -> None:
+    later = ResolvedBinding(_PLACED, TEST_BINDING)
+    assert relation_census(later, later, POSTGRES) == (
+        CollidingRelation(physical_table("anvil"), IndexPresence.BOTH),
+        CollidingRelation(physical_table("zither"), IndexPresence.BOTH),
+        CollidingRelation(PhysicalSequence(("px",), "anvilIds"), IndexPresence.BOTH),
+    )
+    per_table = dataclasses.replace(POSTGRES, index_name_scope="table")
+    assert relation_census(later, later, per_table) == ()

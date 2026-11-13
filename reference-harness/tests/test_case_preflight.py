@@ -1225,3 +1225,34 @@ def test_preflight_refuses_an_insert_reading_unnest_outside_the_column_array_for
     )
     with pytest.raises(CaseFailure, match="outside the column-array form"):
         preflight_case_literals(case)
+
+
+def _bound_under_other_for_postgres_alone() -> Case:
+    """m-batch-write-001, a PostgreSQL-only case, with its table bound under
+    ``other`` for PostgreSQL; MariaDB keeps the corpus default ``px``."""
+    case = _damaged("m-batch-write-001-set-based-flush")
+    case.raw["binding"] = {
+        "postgres": {"format_version": 1, "backend": "postgres", "default": {"schema": "other"}}
+    }
+    for statement in case.then["statements"]:
+        statement["sql"]["postgres"] = statement["sql"]["postgres"].replace("px.", "other.")
+    case.then["tableState"] = {"other": case.then["tableState"]["px"]}
+    return case
+
+
+def test_a_single_dialect_case_names_tables_as_that_dialect_places_them() -> None:
+    preflight_case_literals(_bound_under_other_for_postgres_alone())
+
+
+def test_a_single_dialect_case_checks_its_table_state_where_that_dialect_places_it() -> None:
+    case = _bound_under_other_for_postgres_alone()
+    case.then["tableState"]["other"]["wallet"][0]["balance"] = "five hundred"
+    with pytest.raises(CaseFailure, match=r"then\.tableState\.other\.wallet\[0\]"):
+        preflight_case_literals(case)
+
+
+def test_a_single_dialect_case_types_its_binds_where_that_dialect_places_the_table() -> None:
+    case = _bound_under_other_for_postgres_alone()
+    case.then["statements"][0]["binds"][2] = ["100.00", "twenty", "30.00"]
+    with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[2\]\[1\]"):
+        preflight_case_literals(case)

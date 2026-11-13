@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.internal.base import UnsupportedError
-from parallax.core.internal.database_binding import PhysicalTable
+from parallax.core.internal.database_binding import PhysicalSequence, PhysicalTable
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import AttributeIdentity, Column, IndexIdentity
 from parallax.evolution.internal.model_evolution import EvolutionOperation
 
 __all__ = [
     "CollidingIndex",
+    "CollidingRelation",
     "CollidingTemporalConstraint",
     "CollisionGroup",
     "CreatedIndex",
@@ -135,13 +136,28 @@ class CollidingTemporalConstraint:
 
 
 @dataclass(frozen=True, slots=True)
-class CollisionGroup:
-    """Two or more distinct definitions that derived one Physical Index Name.
+class CollidingRelation:
+    """A table or sequence an endpoint places under a collision group's name.
 
-    ``definitions`` holds the authored Indices and ``temporal_constraints`` the
-    temporal primary keys and exclusions; together they hold at least two.
+    Where index names share their qualifier's relation namespace, such a
+    relation holds the name an Index derived.
+    """
+
+    relation: PhysicalTable | PhysicalSequence
+    presence: IndexPresence
+
+
+@dataclass(frozen=True, slots=True)
+class CollisionGroup:
+    """Two or more distinct objects claiming one Physical Index Name.
+
+    ``definitions`` holds the authored Indices, ``temporal_constraints`` the
+    temporal primary keys and exclusions, and ``relations`` the tables and
+    sequences holding the name; together they hold at least two, at least one
+    of them an Index.
     """
 
     name: PhysicalIndexName
     definitions: tuple[CollidingIndex, ...]
     temporal_constraints: tuple[CollidingTemporalConstraint, ...] = ()
+    relations: tuple[CollidingRelation, ...] = ()

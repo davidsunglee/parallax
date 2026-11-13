@@ -99,18 +99,46 @@ def test_each_owner_takes_its_entry_then_its_exact_namespace_then_the_default() 
     assert resolved.table(_PAYMENT).physical == PhysicalTable(("app",), "payment")
 
 
+_NESTED_NAMESPACES: Final[Metamodel] = model_of(
+    domain_model_from_yaml(
+        """
+entities:
+  - name: Store
+    namespace: commerce
+    table: store
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: Shelf
+    namespace: commerce.retail
+    table: shelf
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+"""
+    )
+)
+
+
 def test_a_namespace_default_never_covers_a_longer_namespace() -> None:
+    binding = PostgresBinding(namespaces={"commerce": PostgresLocation(schema="shop")})
+    with pytest.raises(BindingError) as raised:
+        ResolvedBinding(_NESTED_NAMESPACES, binding)
+    assert [(issue.code, issue.path) for issue in raised.value.issues] == [
+        ("binding-table-unresolved", ("entities", "commerce.retail.Shelf")),
+    ]
+
+
+def test_an_allocator_placed_by_no_entry_or_default_is_unresolved_whatever_its_tables() -> None:
     issues = _refused(
         PostgresBinding(
             namespaces={
                 "commerce": PostgresLocation(schema="shop"),
                 "audit": PostgresLocation(schema="audit"),
                 "billing": PostgresLocation(schema="billing"),
-            }
+            },
+            entities={"Note": PostgresTable(schema="app")},
         )
     )
     assert [(issue.code, issue.path) for issue in issues] == [
-        ("binding-table-unresolved", ("entities", "Note")),
         ("binding-sequence-unresolved", ("sequences", "customerIds")),
         ("binding-sequence-unresolved", ("sequences", "orderIds")),
     ]
