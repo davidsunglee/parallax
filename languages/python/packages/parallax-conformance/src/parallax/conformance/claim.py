@@ -75,7 +75,7 @@ class Claim:
         return capabilities
 
 
-ADAPTER: Final[Adapter] = Adapter(language="python", name="parallax-core", version="0.1.0")
+ADAPTER: Final[Adapter] = Adapter(language="python", name="parallax-core", version="0.2.0")
 
 # The canonical slice-snapshot-1 claim (core/spec/slices.md, adapter aside).
 SNAPSHOT_CLAIM: Final[Claim] = Claim(

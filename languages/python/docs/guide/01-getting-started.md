@@ -9,7 +9,7 @@ read. Along the way you meet the three objects every Parallax program uses: a mo
 Install the coordinated production distributions in your application's environment:
 
 ```bash
-python -m pip install parallax-snapshot==0.1.0 parallax-postgres==0.1.0 parallax-evolution==0.1.0 parallax-descriptor==0.1.0
+python -m pip install parallax-snapshot==0.2.0 parallax-postgres==0.2.0 parallax-evolution==0.2.0 parallax-descriptor==0.2.0
 ```
 
 These are the distributions this guide imports: Snapshot supplies the application
@@ -33,7 +33,7 @@ Linux environment. Building from source on a removed platform does not make it s
 `parallax-postgres` installs psycopg's binary build, including libpq. For a build
 against your own libpq, follow the lifecycle guide's
 [C-driver installation](../postgresql-lifecycle.md#driver-build). Add
-`"parallax-aws[postgres]==0.1.0"` for Amazon RDS IAM authentication; it is optional
+`"parallax-aws[postgres]==0.2.0"` for Amazon RDS IAM authentication; it is optional
 and does not arrive with the other distributions.
 
 The distributions share the `parallax` import namespace. Do not co-install the

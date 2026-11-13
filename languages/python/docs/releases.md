@@ -1,8 +1,6 @@
 # Release notes
 
-## Unreleased
-
-These changes are not part of any published release.
+## 0.2.0
 
 You now have to tell Parallax where your tables live. `connect(adapter, model)`,
 `prepare_model(model, edition=...)` and `evolve(...)` each take a database binding, and

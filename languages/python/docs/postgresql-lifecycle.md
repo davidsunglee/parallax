@@ -875,7 +875,7 @@ Install the supported C implementation against your system libpq with a C compil
 Python development headers, and `pg_config` on `PATH`:
 
 ```bash
-python -m pip install --no-binary psycopg-c "psycopg[c]" parallax-postgres==0.1.0 parallax-snapshot==0.1.0
+python -m pip install --no-binary psycopg-c "psycopg[c]" parallax-postgres==0.2.0 parallax-snapshot==0.2.0
 ```
 
 Set `PSYCOPG_IMPL=c` in the application's environment before Python starts. The
@@ -888,7 +888,7 @@ selection; set `PSYCOPG_IMPL=binary` when that is the intended deployment.
 For a Parallax source installation, select its sdist explicitly:
 
 ```bash
-python -m pip install --no-binary parallax-postgres parallax-postgres==0.1.0 parallax-snapshot==0.1.0
+python -m pip install --no-binary parallax-postgres parallax-postgres==0.2.0 parallax-snapshot==0.2.0
 ```
 
 The adapter sdist carries its Cython sources and requires a C compiler and the

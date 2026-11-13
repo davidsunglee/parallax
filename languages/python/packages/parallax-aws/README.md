@@ -8,7 +8,7 @@ for publication status.
 
 ## Authenticating an RDS Postgres login with IAM
 
-Install the `postgres` extra — `python -m pip install "parallax-aws[postgres]==0.1.0"` — and each
+Install the `postgres` extra — `python -m pip install "parallax-aws[postgres]==0.2.0"` — and each
 endpoint is one call:
 
 ```python

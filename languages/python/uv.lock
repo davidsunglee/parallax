@@ -942,7 +942,7 @@ wheels = [
 
 [[package]]
 name = "parallax-aws"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-aws" }
 dependencies = [
     { name = "botocore" },
@@ -966,7 +966,7 @@ provides-extras = ["postgres"]
 
 [[package]]
 name = "parallax-conformance"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-conformance" }
 dependencies = [
     { name = "jsonschema" },
@@ -997,7 +997,7 @@ requires-dist = [
 
 [[package]]
 name = "parallax-core"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-core" }
 dependencies = [
     { name = "pydantic" },
@@ -1012,7 +1012,7 @@ requires-dist = [
 
 [[package]]
 name = "parallax-descriptor"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-descriptor" }
 dependencies = [
     { name = "jsonschema" },
@@ -1029,7 +1029,7 @@ requires-dist = [
 
 [[package]]
 name = "parallax-evolution"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-evolution" }
 dependencies = [
     { name = "parallax-core" },
@@ -1040,7 +1040,7 @@ requires-dist = [{ name = "parallax-core", editable = "packages/parallax-core" }
 
 [[package]]
 name = "parallax-postgres"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-postgres" }
 dependencies = [
     { name = "parallax-core" },
@@ -1130,7 +1130,7 @@ dev = [
 
 [[package]]
 name = "parallax-snapshot"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/parallax-snapshot" }
 dependencies = [
     { name = "parallax-core" },

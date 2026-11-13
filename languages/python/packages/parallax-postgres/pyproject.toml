@@ -1,6 +1,6 @@
 [project]
 name = "parallax-postgres"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parallax Postgres database adapter: the concrete database runtime over psycopg and its companion pool."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core==0.1.0",
+    "parallax-core==0.2.0",
     # The binary extra bundles libpq so the adapter installs self-contained (no
     # system libpq required); the adapter owns that capability, so a sibling
     # that imports psycopg declares it without the extra. The compiled loaders

@@ -1,6 +1,6 @@
 [project]
 name = "parallax-snapshot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parallax snapshot lifecycle extension: Snapshot[T] materialization and the developer handle over the parallax-core spine."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Parallax" }]
 dependencies = [
-    "parallax-core==0.1.0",
+    "parallax-core==0.2.0",
 ]
 
 [project.urls]
