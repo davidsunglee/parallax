@@ -297,8 +297,10 @@ one table on MariaDB. The census groups names by that scope, so equal names in
 different scopes never collide, and identifies each definition by its physical
 table and mapping owner. Where that scope is a qualifier's relation namespace,
 the census also holds every table and sequence either endpoint's binding places
-in it. No delta drops a table or touches a sequence, so one sharing an Index's
-name in its scope coexists with that Index whatever the Index's lifetime.
+in it. One holding an Index's name in its scope is a collision whatever either
+lifetime: no delta drops a table or touches a sequence, so the one disjoint
+pairing is a table the delta creates after dropping that Index, and the census
+does not tell that reuse of a derived name apart from a clash.
 
 ## Errors
 

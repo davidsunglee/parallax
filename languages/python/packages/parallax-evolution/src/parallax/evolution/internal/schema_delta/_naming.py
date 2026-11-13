@@ -281,8 +281,10 @@ def collision_groups(
     forward for is never dropped and so is present throughout; each surviving
     Table is named by its mapping owner.
 
-    No delta drops a table or touches a sequence, so a relation holding a name
-    is reported whatever the lifetime of the Index deriving it.
+    A relation holding a name is reported whatever either lifetime. No delta
+    drops a table or touches a sequence, so the one disjoint pairing is a table
+    the delta creates after dropping the Index, a reuse of a derived name this
+    backstop deliberately does not tell apart from a clash.
 
     Ordered by name; each group's authored definitions in canonical
     logical-identity order and its temporal constraints by Table and kind,
