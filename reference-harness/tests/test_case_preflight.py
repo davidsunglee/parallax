@@ -809,9 +809,11 @@ def _assigned_value_at(dialect: str, member: str) -> str:
     return rf"\[0\]\.{member}" if dialect == "postgres" else r"\[1\]"
 
 
-def _node_path_update(dialect: str, member: str, value: object) -> Case:
+def _node_path_update(
+    dialect: str, member: str, value: object, mutation: str | None = None
+) -> Case:
     model = load_model(_COMPATIBILITY_ROOT, "models/materialization-stress-document.yaml")
-    mutation = _DOCUMENT_MUTATIONS[dialect]
+    mutation = _DOCUMENT_MUTATIONS[dialect] if mutation is None else mutation
     statement = {
         "sql": {dialect: f"update px.materialization_node set payload = {mutation} where id = ?"},
         "binds": {dialect: [*_document_mutation_binds(dialect, member, value), 1]},
@@ -849,6 +851,22 @@ def test_preflight_refuses_a_negative_float_zero_at_a_document_path_leaf(
         r".* not canonical",
     ):
         preflight_case_literals(_node_path_update(dialect, member, value))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param("(payload) || (?)", id="parenthesized"),
+        pytest.param("cast(payload as jsonb) || cast(? as jsonb)", id="a-cast-target"),
+        pytest.param("cast(payload || cast(? as jsonb) as jsonb)", id="a-cast-merge"),
+    ],
+)
+def test_preflight_refuses_a_negative_float_zero_through_a_wrapped_document_merge(
+    mutation: str,
+) -> None:
+    preflight_case_literals(_node_path_update("postgres", "ratio", 0.0, mutation))
+    with pytest.raises(CaseFailure, match=r"binds\.postgres\[0\]\.ratio: .* not canonical"):
+        preflight_case_literals(_node_path_update("postgres", "ratio", -0.0, mutation))
 
 
 @pytest.mark.parametrize("dialect", _DIALECTS)

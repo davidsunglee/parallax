@@ -621,8 +621,8 @@ def entry_bind_values(entry: Mapping[str, Any], dialect: str) -> list[Any]:
     A flat array is dialect-agnostic and answers for every dialect; a map is keyed
     by dialect, covering exactly the dialects its own ``sql`` map declares. Both
     forms are authorable wherever a golden statement is, because a document
-    mutation's path bind differs between the two dialects while the value bind
-    beside it does not (m-dialect).
+    mutation binds one object of assigned members on Postgres but a path and
+    value pair per member on MariaDB (m-dialect).
     """
     binds = entry.get("binds", [])
     return list(binds[dialect]) if isinstance(binds, dict) else list(binds)

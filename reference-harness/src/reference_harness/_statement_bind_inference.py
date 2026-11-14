@@ -265,16 +265,14 @@ def _update_targets(
 def _merged_operand(assignment: exp.EQ) -> Expr | None:
     """The operand ``m-dialect``'s Postgres document merge ``col || <operand>``
     joins to the assigned column itself, whose keys are the members it assigns."""
-    merge = _unparenthesized(assignment.expression)
-    if isinstance(merge, exp.DPipe) and _names_column(
-        _unparenthesized(merge.this), assignment.this
-    ):
+    merge = _transparent(assignment.expression)
+    if isinstance(merge, exp.DPipe) and _names_column(_transparent(merge.this), assignment.this):
         return merge.expression
     return None
 
 
-def _unparenthesized(expression: Expr) -> Expr:
-    while isinstance(expression, exp.Paren):
+def _transparent(expression: Expr) -> Expr:
+    while isinstance(expression, (exp.Cast, exp.Paren)):
         expression = expression.this
     return expression
 
@@ -299,6 +297,7 @@ class _GroupedSource:
     arguments: Mapping[str, Expr]
 
     def argument(self, expression: Expr | None) -> Expr | None:
+        expression = None if expression is None else _transparent(expression)
         if isinstance(expression, exp.Column) and expression.table == self.alias:
             return self.arguments.get(expression.name)
         return None

@@ -403,9 +403,9 @@ def _entry_binds(entry: dict[str, Any]) -> list[object]:
 
     A bind list follows the same flat-or-dialect-keyed polymorphism ``sql`` does
     (`m-case-format`): flat where the hole structure is shared across dialects, and
-    keyed per dialect where it diverges — a document mutation's path bind is one
-    Postgres text-array path and one MariaDB JSON-path string, so those two cannot
-    be one authored list.
+    keyed per dialect where it diverges — a document mutation binds one object of
+    assigned members on Postgres but a path and value pair per member on MariaDB,
+    so those two cannot be one authored list.
     """
     binds: Any = entry.get("binds", [])
     if isinstance(binds, dict):
