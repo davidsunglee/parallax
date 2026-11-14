@@ -1068,6 +1068,32 @@ PostgreSQL refuses `NOT VALID` on one, so adding it scans and indexes every row 
 `ACCESS EXCLUSIVE`. Plan that lock's duration on a large table, and add the exclusion
 only after the queries above find nothing, or it fails with `23P01` and adds nothing.
 
+## Document root constraint
+
+A `layout=Document()` table that `schema_delta` creates carries one more check,
+`pxc_doc_<table>_<fingerprint>`, requiring its shared document column to hold a JSON
+object: `check (jsonb_typeof(payload) = 'object')`. PostgreSQL then refuses a JSON
+`null`, scalar, or array document from any writer with a `DatabaseError` whose
+`category` is `"constraintViolation"`, `native_code` `23514`, and the check's name. It
+checks only the document's top level, never the members inside it, and a table with
+`layout=Columns()` has no such check on its own document columns. Take the name from
+the `create table` statement, as for the temporal constraints.
+
+A table that already existed doesn't get the check from a later delta. To adopt it,
+find the rows it would refuse, correct or remove them, then add it. On a large table,
+add it `NOT VALID`, which checks new writes at once, and validate the stored rows
+afterwards:
+
+```sql
+select id from person where jsonb_typeof(payload) <> 'object';
+alter table person add constraint pxc_doc_person_2db8f1ac90f4b53660fcb7da91fc003c
+  check (jsonb_typeof(payload) = 'object') not valid;
+alter table person validate constraint pxc_doc_person_2db8f1ac90f4b53660fcb7da91fc003c;
+```
+
+`validate constraint` fails while any stored row breaks the check, and leaves it
+`NOT VALID`; correct the row and validate again.
+
 ## Authored indices on temporal tables
 
 Every index you declare on a temporal Entity, unique or not, is created over its

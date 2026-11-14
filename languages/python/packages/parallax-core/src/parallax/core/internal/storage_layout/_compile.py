@@ -43,6 +43,7 @@ from parallax.core.internal.storage_layout._facet import (
     DiscriminatorAssignment,
     DocumentPath,
     DocumentResidentSelection,
+    DocumentRootConstraint,
     InheritanceDiscriminator,
     MemberPlacement,
     PhysicalIndex,
@@ -468,13 +469,15 @@ def _layout(
     audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
-    """``group``'s Table with its slots, every Index, and its temporal constraints.
+    """``group``'s Table with its slots, every Index, and its constraints.
 
     The family root declares both the key and the axes, so the Index it derives
     is the whole physical key of every Table the family maps — a shared
     table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
     alike — and its axes are every such Table's temporal constraints. Every other
-    Index the Table carries ends with those constraints' axis ends.
+    Index the Table carries ends with those constraints' axis ends. Every Table
+    of a ``Document`` family carries the root-object constraint over its own
+    shared Structured Column.
     """
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
@@ -572,6 +575,11 @@ def _layout(
         _physical_index(group.table, declaration, by_contributor, axis_ends)
         for declaration in index.family_indices.get(group.root, ())
     )
+    document_root = (
+        None
+        if group.document is None
+        else DocumentRootConstraint(by_contributor[RelationalDocument(group.root)])
+    )
     return table_layout(
         group.mapping_owner,
         group.table,
@@ -580,6 +588,7 @@ def _layout(
         tuple(mapped for mapped in secondary if mapped is not None),
         _placements(group, roles, by_contributor),
         constraints,
+        document_root,
     )
 
 

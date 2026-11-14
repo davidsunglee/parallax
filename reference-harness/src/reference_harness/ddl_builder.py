@@ -12,7 +12,8 @@ read after an authored Schema Delta be compared against a catalog read after thi
 builder ran. The naming rule is re-derived here from the normative statement
 rather than shared with any implementation: it is the second oracle a delta cell
 is graded against, so a shared derivation would grade the implementation twice.
-The interval checks a PostgreSQL temporal table carries inline are named by
+The interval checks a PostgreSQL temporal table carries inline, and the
+root-object check every dialect's Document table carries, are named by
 m-storage-layout's rule, re-derived here on the same terms.
 """
 
@@ -287,7 +288,7 @@ def physical_index_name(index: PhysicalIndex, table: str, dialect: str) -> str:
     return f"{_NAME_NAMESPACE}_{kept}_{fingerprint}"
 
 
-# The temporal constraint name grammar (m-storage-layout):
+# The table constraint name grammar (m-storage-layout):
 # `pxc_<kind>_<readable-table>_<fingerprint>`, 63 bytes on every dialect.
 _CONSTRAINT_NAMESPACE = "pxc"
 _CONSTRAINT_VERSION = "pxc-1"
@@ -301,7 +302,7 @@ _EXCLUSION_PREREQUISITE = "create extension if not exists btree_gist"
 def temporal_constraint_name(
     table: str, kind: str, groups: Sequence[tuple[str, Sequence[str]]]
 ) -> str:
-    """A temporal constraint's derived name on ``table``.
+    """A table constraint's derived name on ``table``.
 
     The fingerprint hashes the table, the kind, and each operand group — its
     semantics and its ordered columns, each group behind its count.
@@ -319,6 +320,12 @@ def temporal_constraint_name(
 def interval_check_name(table: str, kind: str, start: str, end: str) -> str:
     """The interval check ``start < end``'s derived name on ``table``."""
     return temporal_constraint_name(table, kind, [("lt", [start, end])])
+
+
+def document_root_check_name(table: str, column: str) -> str:
+    """The root-object check over the shared Structured Column ``column``'s
+    derived name on ``table``."""
+    return temporal_constraint_name(table, "doc", [("object", [column])])
 
 
 def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredContributor]:
@@ -404,6 +411,30 @@ def _interval_checks(layout: TableLayout, local_name: str, dialect: str) -> list
     return clauses
 
 
+_DOCUMENT_ROOT_OBJECT = {
+    "postgres": "jsonb_typeof({column}) = 'object'",
+    "mariadb": "json_type({column}) = 'OBJECT'",
+}
+
+
+def _document_root_checks(layout: TableLayout, local_name: str, dialect: str) -> list[str]:
+    """The root-object check over ``layout``'s shared Structured Column, if any.
+
+    Only the Relational Document Layout's shared column is checked: a Value
+    Object occurrence's or scalar collection's own Structured Column may hold
+    SQL NULL or an array.
+    """
+    clauses = []
+    for slot in layout.columns:
+        if isinstance(slot.contributor, RelationalDocument):
+            name = quote_identifier(document_root_check_name(local_name, slot.column), dialect)
+            condition = _DOCUMENT_ROOT_OBJECT[dialect].format(
+                column=quote_identifier(slot.column, dialect)
+            )
+            clauses.append(f"constraint {name} check ({condition})")
+    return clauses
+
+
 def _exclusion(layout: TableLayout, local_name: str, dialect: str) -> str:
     """The PostgreSQL non-overlap exclusion over ``layout``'s logical key.
 
@@ -444,8 +475,10 @@ def _create_table(
     nullability (m-storage-layout); this only renders selected values per
     dialect. Only PostgreSQL names a temporal table's primary key and carries its
     interval checks and non-overlap exclusion: MariaDB's generated tables enforce
-    no temporal constraint natively. Every derived constraint name is taken
-    from the raw physical local name the binding resolves, never its qualifier.
+    no temporal constraint natively. Both dialects check a Document table's root
+    after any interval check and before the exclusion. Every derived constraint
+    name is taken from the raw physical local name the binding resolves, never
+    its qualifier.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
     constrained = dialect == "postgres" and bool(layout.temporal_axes)
@@ -460,6 +493,8 @@ def _create_table(
         columns.append(f"{named}primary key ({_columns(key, dialect)})")
     if constrained:
         columns.extend(_interval_checks(layout, table.name, dialect))
+    columns.extend(_document_root_checks(layout, table.name, dialect))
+    if constrained:
         columns.append(_exclusion(layout, table.name, dialect))
 
     column_clause = ",\n  ".join(columns)

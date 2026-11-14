@@ -902,9 +902,13 @@ construction, and relaxing the authoring oracle — which protects every fixture
 is never traded for the few deliberately broken rows.
 
 **An addressed member MUST be stored in a Structured Column** — document-resident,
-or a top-level scalar collection's own structured Column. A Structured Column
-holds any JSON value, so every corruption a case can state is storable on both
-dialects without touching DDL. A typed, constrained Column can be made to hold a
+or a top-level scalar collection's own structured Column. A member value inside a
+Structured Column, and a `Columns` occurrence's or scalar collection's own
+Structured Column, hold any JSON value. A generated `Document` Table's shared
+Structured Column constrains only its root to an object (`m-storage-layout`
+*Document root constraint*), and every address names a member beneath that root,
+never the root itself. Every corruption a case can state is therefore storable on
+both dialects without touching DDL. A typed, constrained Column can be made to hold a
 non-conforming value only by first removing the constraint that forbids it, and a
 case that altered its schema would no longer be reading the model it declares. Two
 consequences are deliberate and permanent: `stored-data-primary-key-null` and

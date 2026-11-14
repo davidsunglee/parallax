@@ -53,6 +53,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateTable,
+    DocumentRootCheck,
     IntervalCheck,
     PhysicalColumn,
     location_of,
@@ -134,7 +135,8 @@ def test_provisioning_maps_each_scalar_collection_to_its_own_jsonb_column() -> N
     )
     assert document == (
         "create table px.collection_twin (id bigint not null, payload jsonb not null, "
-        "primary key (id))"
+        "primary key (id), constraint pxc_doc_collection_twin_649e3cb5a78016fb6c80c47eb0d94d66 "
+        "check (jsonb_typeof(payload) = 'object'))"
     )
 
 
@@ -226,17 +228,87 @@ def test_provisioning_checks_every_table_a_temporal_family_maps() -> None:
     assert " check (" not in _tables(_MODELS["payment"])["payment"]
 
 
-def test_provisioning_checks_the_document_twin_like_its_columns_twin() -> None:
-    def checks(stem: str) -> list[str]:
-        return [
-            ddl[ddl.index("constraint ") :]
-            for ddl in _statements(_MODELS[stem])
-            if ddl.startswith("create table ")
-        ]
+def _constraints(stem: str) -> dict[str, list[str]]:
+    """Each created Table's inline constraint clauses, in rendered order."""
+    return {
+        table: ddl[ddl.index("constraint ") : -1].split(", constraint ")
+        for table, ddl in _tables(_MODELS[stem]).items()
+        if "constraint " in ddl
+    }
 
-    assert checks("shared-coverage-layout-twin-document") == checks(
-        "shared-coverage-layout-twin-columns"
+
+def test_provisioning_checks_the_document_twin_like_its_columns_twin_and_its_root() -> None:
+    columns = _constraints("shared-coverage-layout-twin-columns")
+    document = _constraints("shared-coverage-layout-twin-document")
+    assert document.keys() == columns.keys() == {"coverage_ledger", "coverage_span"}
+    roots = {
+        table: [clause for clause in clauses if clause.startswith("pxc_doc_")]
+        for table, clauses in document.items()
+    }
+    assert roots == {
+        "coverage_ledger": [
+            "pxc_doc_coverage_ledger_eeab2c6ca59f472aa14e571b023b99db "
+            "check (jsonb_typeof(payload) = 'object')"
+        ],
+        "coverage_span": [
+            "pxc_doc_coverage_span_3279ae0270cba44b0ee80f7676d18eb2 "
+            "check (jsonb_typeof(payload) = 'object')"
+        ],
+    }
+    for table, clauses in document.items():
+        (root,) = roots[table]
+        assert [clause for clause in clauses if clause != root] == columns[table]
+        kinds = [clause.split("_", 2)[1] for clause in clauses]
+        assert kinds == ["pk", "valid", "tx", "doc", "excl"]
+
+
+def test_provisioning_checks_a_document_tables_root_under_quoted_identifiers() -> None:
+    model = formed(
+        ingest_document(
+            {
+                "entities": [
+                    {
+                        "name": "Ledger",
+                        "namespace": "parallax.test",
+                        "table": "Ledger",
+                        "layout": {"document": {"column": "order"}},
+                        "attributes": [
+                            {"name": "id", "type": "int64", "primaryKey": True},
+                            {"name": "note", "type": "string", "maxLength": 8},
+                        ],
+                    }
+                ]
+            }
+        )
     )
+    assert _statements(model) == [
+        'create table px."Ledger" (id bigint not null, "order" jsonb not null, '
+        "primary key (id), constraint pxc_doc_ledger_1fd5f28227d8fa8752a0ae6ee79e8613 "
+        """check (jsonb_typeof("order") = 'object'))"""
+    ]
+
+
+def test_provisioning_checks_no_columns_layout_structured_column() -> None:
+    assert all(
+        "pxc_doc_" not in ddl and "jsonb_typeof" not in ddl
+        for stem in ("scalar-collection-layout-twin-columns", "customer", "storage-layout")
+        for ddl in _statements(_MODELS[stem])
+    )
+
+
+def test_a_surviving_document_table_gains_no_check() -> None:
+    container = _RECORDS["evolution-document-members-v1"]
+    collection = _RECORDS["scalar-collection-layout-twin-document"]
+    earlier = formed(container)
+    grown = formed(_RECORDS["evolution-document-members-v2"])
+    joined = formed(
+        dataclasses.replace(container, entities=(*container.entities, *collection.entities))
+    )
+    for later, created in ((grown, []), (joined, ["px.collection_twin"])):
+        evolution = evolve_resolved(bound_model(earlier), bound_model(later))
+        assert isinstance(evolution, UnilateralEvolution)
+        statements = schema_delta(evolution).statements
+        assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == created
 
 
 def test_a_surviving_temporal_table_gains_no_check() -> None:
@@ -297,13 +369,15 @@ def test_creating_a_table_delegates_its_check_spelling_to_the_dialect() -> None:
         table=resolved_table(EntityIdentity("parallax.test", "Span"), "Span"),
         columns=(),
         primary_key=(),
-        interval_checks=(
+        checks=(
             IntervalCheck(name="pxc_tx_span_0", start=Column("Begins"), end=Column("order")),
+            DocumentRootCheck(name="pxc_doc_Span_1", column=Column("Doc")),
         ),
         caused_by=(),
     )
     assert render(operation, POSTGRES) == (
-        'create table px."Span" (constraint pxc_tx_span_0 check ("Begins" < "order"))'
+        'create table px."Span" (constraint pxc_tx_span_0 check ("Begins" < "order"), '
+        """constraint "pxc_doc_Span_1" check (jsonb_typeof("Doc") = 'object'))"""
     )
 
 
@@ -385,12 +459,17 @@ def test_provisioning_tph_temporal_pk_includes_the_root_declared_axes() -> None:
 def test_provisioning_render_the_structured_column_last_and_not_null() -> None:
     marker, person = _statements(_DOCUMENT)
     assert person == (
-        "create table px.person (id bigint not null, payload jsonb not null, primary key (id))"
+        "create table px.person (id bigint not null, payload jsonb not null, primary key (id), "
+        "constraint pxc_doc_person_2db8f1ac90f4b53660fcb7da91fc003c "
+        "check (jsonb_typeof(payload) = 'object'))"
     )
-    # An Entity with no document-resident member still gets the column: the
-    # layout is root-owned and every governed row carries a document.
+    # An Entity with no document-resident member still gets the column and its
+    # root check: the layout is root-owned and every governed row carries a
+    # document.
     assert marker == (
-        "create table px.marker (id bigint not null, payload jsonb not null, primary key (id))"
+        "create table px.marker (id bigint not null, payload jsonb not null, primary key (id), "
+        "constraint pxc_doc_marker_6314d7742e9254216c3b24842b5730da "
+        "check (jsonb_typeof(payload) = 'object'))"
     )
     assert "default" not in person
 
@@ -803,7 +882,7 @@ def test_creating_a_table_addresses_no_member() -> None:
         table=_TABLE,
         columns=(_LABEL,),
         primary_key=(Column(name="label"),),
-        interval_checks=(),
+        checks=(),
         caused_by=(),
     )
     assert member_key(operation) == ""

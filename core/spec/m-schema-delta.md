@@ -15,7 +15,7 @@ It depends on `m-model-evolution` for the description it lowers, on `m-metamodel
 for the declarations an operation names, on `m-inheritance` for the position each
 Table materializes, on `m-storage-layout` for every logical layout fact, on
 `m-database-binding` for each endpoint's resolved physical tables and their
-temporal constraint names, and on `m-dialect` for every spelling. It composes no
+constraint names, and on `m-dialect` for every spelling. It composes no
 key, no Column order, and no nullability of its own, and it branches on no
 Dialect Identity: the later endpoint's binding names the backend, and its
 dialect determines the whole output. Every created or altered table is named as
@@ -81,9 +81,9 @@ private algebra. It is the closed choice below and, except for the refusal recor
 ```text
 CreateExtension      one database-wide prerequisite, named by the provider
 CreateTable          the complete target Table Layout: every target Column, the
-                     derived primary key, and a temporal Table's named key,
-                     interval checks, and exclusion inline, EXCLUDING authored
-                     secondary Indices
+                     derived primary key, a temporal Table's named key,
+                     interval checks, and exclusion, and a Document Table's
+                     root check inline, EXCLUDING authored secondary Indices
 AddColumn            one target Column Slot
 RestateColumnDomain  the earlier and later physical Column facts, restating a
                      surviving Column's value domain as the later edition's
@@ -94,7 +94,8 @@ DropIndex            one earlier physical Index definition
 Drop-table, drop-column, rename, primary-key-alteration, and arbitrary-SQL
 variants are deliberately absent, because no Unilateral Evolution can produce
 one. So is adding a constraint to a Table the earlier edition already held, and so are
-an extension's upgrade and removal: see *Temporal constraints* below.
+an extension's upgrade and removal: see *Temporal constraints* and *Document root
+check* below.
 
 `RestateColumnDomain` is not a generic column alteration either. It is legal in
 exactly two shapes, and both leave every stored value where it is:
@@ -226,12 +227,27 @@ satisfy a constraint, so adopting them on an existing Table is a manual migratio
 that validates its data first. No delta upgrades or removes a prerequisite, or
 drops a temporal constraint. Equal models still give an empty Schema Delta.
 
+## Document root check
+
+A created `Document` Table carries, inline in its `create table`, the check that its
+shared Structured Column holds a JSON object, read from the Table Layout's
+`documentRootConstraint` (`m-storage-layout`) under the name its resolved table
+derived. It follows any interval check and precedes any exclusion, so a created
+Table's inline constraints are ordered primary key, Valid-Time check,
+Transaction-Time check, document root check, exclusion. A `Columns` Table carries
+none, whatever Structured Columns it has.
+
+Like an interval check it is local to its Table and enters no Physical Index Name
+census, and a Table the earlier edition already held gains it only by the same manual
+migration, which validates the stored roots first: a delta never adds it to a
+surviving Table.
+
 ## Physical Index Names
 
 Fresh provisioning installs the prerequisite its temporal Tables require, creates
-each Table with all of its target Columns, its derived primary key, and its
-temporal constraints, then creates **every** authored secondary Index — unique
-and non-unique alike — as a separate, explicitly named statement. An incremental
+each Table with all of its target Columns, its derived primary key, its temporal
+constraints, and its document root check, then creates **every** authored secondary
+Index — unique and non-unique alike — as a separate, explicitly named statement. An incremental
 delta uses the same Index form. The derived primary-key Index is never a separate
 statement: it is the Table's key.
 

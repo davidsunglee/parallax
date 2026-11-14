@@ -479,3 +479,51 @@ def test_temporal_constraint_names_follow_the_resolved_local_name_alone() -> Non
     assert renamed != declared
     assert renamed == _escrow_names("vault", PostgresBinding(default=_APP))
     assert all("escrow" in name for name in declared)
+
+
+_FOLIO_YAML: Final = """
+entity:
+  name: Folio
+  namespace: vault
+  table: {table}
+  layout: {{ document: {{ column: body }} }}
+  attributes:
+    - {{ name: id, type: int64, primaryKey: true }}
+    - {{ name: note, type: string }}
+"""
+_FOLIO: Final = EntityIdentity("vault", "Folio")
+
+
+def _folio_check(declared: str, binding: PostgresBinding) -> str:
+    model = model_of(domain_model_from_yaml(_FOLIO_YAML.format(table=declared)))
+    table = ResolvedBinding(model, binding).table(_FOLIO)
+    root = table.document_root_constraint
+    assert root is not None
+    assert root.definition is table.layout.document_root_constraint
+    assert table.temporal_constraints is None
+    return root.check_name
+
+
+def test_the_document_root_check_name_follows_the_resolved_local_name_alone() -> None:
+    declared = _folio_check("folio", PostgresBinding(default=_APP))
+    moved = _folio_check("folio", PostgresBinding(default=PostgresLocation(schema="elsewhere")))
+    renamed = _folio_check(
+        "folio",
+        PostgresBinding(default=_APP, entities={"vault.Folio": PostgresTable(name="leaf")}),
+    )
+    masked = _folio_check(
+        "folio_archive",
+        PostgresBinding(default=_APP, entities={"vault.Folio": PostgresTable(name="folio")}),
+    )
+    assert declared.startswith("pxc_doc_folio_")
+    assert moved == declared
+    assert masked == declared
+    assert renamed != declared
+    assert renamed == _folio_check("leaf", PostgresBinding(default=_APP))
+
+
+def test_a_columns_table_resolves_no_document_root_check() -> None:
+    assert (
+        ResolvedBinding(_MODEL, PostgresBinding(default=_APP)).table(_NOTE).document_root_constraint
+        is None
+    )

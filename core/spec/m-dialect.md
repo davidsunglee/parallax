@@ -71,7 +71,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | row-limit clause | `limit ?` | `limit ?` |
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-sql` *Read-lock suffix*) | an object find that must take the shared row lock: `for share of t0` | an object find that must take the shared row lock: **`lock in share mode`** (no `for share`; MDEV-17514) |
-| **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion (see below) |
+| **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite; a created Document table carries its named root-object check `jsonb_typeof(<col>) = 'object'` inline | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion; a created Document table carries its named root-object check `json_type(<col>) = 'OBJECT'` inline (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | **bind parameter limit** | 65535 | 65535 |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
@@ -596,7 +596,8 @@ A Relational Document Layout Structured Column renders as `jsonb not null` on
 Postgres and `json not null` on MariaDB. It carries no database default, because
 every write this contract admits binds a complete object explicitly, including
 the empty object. The non-null spelling is not a dialect choice — it is the
-slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
+slot's `effectiveNullable` answer (`m-storage-layout`), rendered here. Its Table's
+root-object check is spelled with the other checks (*Schema DDL primitives*).
 
 A conventional Value Object Structured Column keeps its existing derivation: the
 `json` neutral type through the mapping table above, with the occurrence's own
@@ -614,8 +615,10 @@ true arm is JSON null, even when the same sentinel in the false arm denotes SQL
 decoding. The adapter boundary does not pre-classify JSON null, an object, a
 scalar, an array, or an array containing a non-object element.
 
-The initial contract adds no generated deep `CHECK` constraint over document
-contents on either dialect. The structured-document type therefore admits JSON
+No generated `CHECK` constrains document contents below the root on either
+dialect, and only a generated Document Table's shared column constrains its root.
+A conventional Value Object or scalar collection Structured Column, and the shared
+column of a Table created without the root-object check, therefore admit JSON
 null, arrays, and scalars as well as objects. If external state contains one of
 those non-object Entity carriers, each requested member of it reads as absent
 (`m-document-codec`); the adapter boundary neither rejects the row nor invents a
@@ -647,12 +650,23 @@ seam — `m-schema-delta` asks for a domain restatement in exactly two shapes, a
 neither can tighten one — so a dropped `not null` is the only nullability action a
 caller can request.
 
-Creating a Table depends on each temporal axis's interval check, in the caller's
-order. Postgres spells each one inline after the key clause as
+Creating a Table depends on each of its checks, in the caller's order: each
+temporal axis's interval check, then a Document Table's root-object check. Postgres
+spells each interval check inline after the key clause as
 `constraint <name> check (<start> < <end>)`, so every row the Table stores —
 whoever writes it — has a nonempty, non-inverted interval on that axis, and a
 violating row fails with the check's own name. MariaDB spells none: its generated
 temporal tables carry no native temporal constraint.
+
+Both dialects spell the root-object check over the shared Structured Column, as
+`constraint <name> check (jsonb_typeof(<column>) = 'object')` on Postgres and
+`constraint <name> check (json_type(<column>) = 'OBJECT')` on MariaDB. Every
+writer of a created Document Table — an insert, an update, or an external
+statement — that would store a JSON-null, scalar, or array root fails with the
+check's own name, which Postgres reports as `23514` (`constraintViolation`). A
+SQL NULL root passes the check and is refused by the column's `not null`
+instead. The check is independent of the temporal checks, so a MariaDB Document
+Table carries it although its temporal tables carry none.
 
 A temporal Table's key carries its compiled name, which Postgres spells as
 `constraint <name> primary key (…)`; a key without one is left for the database
@@ -716,7 +730,7 @@ lowering step substitutes another proof for the count.
 
 `maxIdentifierBytes` is how many bytes of an identifier the database stores
 without truncating it: **63** on Postgres and **64** on MariaDB. A Physical
-Index Name is shortened to this limit by `m-schema-delta`'s rule, and a temporal
+Index Name is shortened to this limit by `m-schema-delta`'s rule, and a table
 constraint name is fitted to a fixed 63 bytes, within both limits, by
 `m-storage-layout`'s rule. A resolved table or sequence component is never
 shortened: the dialect's **identifier validity** refuses an empty component, one

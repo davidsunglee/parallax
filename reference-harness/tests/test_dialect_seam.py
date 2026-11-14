@@ -27,6 +27,7 @@ from reference_harness.ddl_builder import (
     _RESERVED_WORDS,
     _column_type,
     ddl_for,
+    document_root_check_name,
     interval_check_name,
     placeholder_cast_type,
     quote_identifier,
@@ -234,6 +235,57 @@ def test_a_shared_table_excludes_by_the_root_key_and_each_concrete_table_by_its_
     payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     assert all(
         "exclude" not in ddl and "extension" not in ddl for ddl in px_ddl(payment, "postgres")
+    )
+
+
+def test_every_dialect_checks_a_document_tables_root_is_an_object() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/evolution-collection-tables-v2.yaml")
+    name = "pxc_doc_evolution_bundle_1d9a82b1ce1a8f7d241b364a680a040d"
+    spellings = {
+        "postgres": f"constraint {name} check (jsonb_typeof(payload) = 'object')",
+        "mariadb": f"constraint {name} check (json_type(payload) = 'OBJECT')",
+    }
+    for dialect, spelling in spellings.items():
+        created = {
+            ddl.split()[2]: ddl for ddl in px_ddl(model, dialect) if ddl.startswith("create table")
+        }
+        assert spelling in created["px.evolution_bundle"]
+        # Value Object, scalar collection, and inherited Structured Columns keep no check.
+        assert [table for table, ddl in created.items() if " check (" in ddl] == [
+            "px.evolution_bundle"
+        ]
+
+
+def test_a_document_root_check_follows_interval_checks_and_precedes_the_exclusion() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/shared-coverage-layout-twin-document.yaml")
+    for dialect, kinds in (
+        ("postgres", ["pk", "valid", "tx", "doc", "excl"]),
+        ("mariadb", ["doc"]),
+    ):
+        for ddl in px_ddl(model, dialect):
+            if ddl.startswith("create table"):
+                named = [
+                    line.split()[1].split("_")[1]
+                    for line in ddl.splitlines()
+                    if line.strip().startswith("constraint ")
+                ]
+                assert named == kinds
+
+
+def test_a_document_root_check_name_follows_the_local_table_and_column() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/evolution-collection-tables-v2.yaml")
+    elsewhere = ddl_for(
+        model, resolve_binding(model, {"default": {LOCATION_KEYS["postgres"]: "app"}}, "postgres")
+    )
+    assert any(document_root_check_name("evolution_bundle", "payload") in ddl for ddl in elsewhere)
+    assert document_root_check_name("evolution_bundle", "payload") == (
+        "pxc_doc_evolution_bundle_1d9a82b1ce1a8f7d241b364a680a040d"
+    )
+    assert document_root_check_name("bundle", "payload") != document_root_check_name(
+        "evolution_bundle", "payload"
+    )
+    assert document_root_check_name("evolution_bundle", "doc") != document_root_check_name(
+        "evolution_bundle", "payload"
     )
 
 

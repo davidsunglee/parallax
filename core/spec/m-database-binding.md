@@ -163,9 +163,10 @@ outside what offline resolution can establish.
 Each resolved table carries its mapping owner, its physical table, its SQL
 reference — every component quoted alone by the backend's dialect
 (`m-dialect`), rendered once at resolution — and, for a temporal table, the
-names of its temporal constraints. Those names are derived once from the raw
-physical local name and the logical definitions `m-storage-layout` compiles,
-following that module's `pxc_` convention. A binding that pins a local name
+names of its temporal constraints and, for a `Document` table, the name of its
+document root check. Those names are derived once from the raw physical local
+name and the logical definitions `m-storage-layout` compiles, following that
+module's `pxc_` convention. A binding that pins a local name
 therefore fixes every derived name however the declared name changes; one that
 moves a table between qualifiers changes no derived name. Every statement and
 DDL naming the table reads this one reference.

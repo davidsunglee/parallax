@@ -83,6 +83,7 @@ def resolved_table(
         sql=POSTGRES.render_table(physical),
         layout=cast("TableLayout", layout),
         temporal_constraints=None,
+        document_root_constraint=None,
     )
 
 

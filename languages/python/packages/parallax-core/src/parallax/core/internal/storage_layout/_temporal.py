@@ -10,6 +10,7 @@ from parallax.core.internal.metamodel import AsOfAxisMetadata, Column, Table, Te
 from parallax.core.internal.storage_layout._facet import (
     ColumnContributor,
     ColumnSlot,
+    DocumentRootConstraint,
     PhysicalIndex,
     PhysicalTemporalAxis,
     TemporalHistoryConstraints,
@@ -18,6 +19,7 @@ from parallax.core.internal.storage_layout._facet import (
 __all__ = [
     "TemporalConstraintNames",
     "constraint_name",
+    "document_root_check_name",
     "temporal_constraint_names",
     "temporal_history_constraints",
 ]
@@ -39,6 +41,8 @@ _UNIQUE: Final = "unique"
 _EXCLUSION: Final = "excl"
 _EQUAL: Final = "eq"
 _OVERLAP: Final = "overlap"
+_DOCUMENT_ROOT: Final = "doc"
+_OBJECT: Final = "object"
 
 _UNREADABLE: Final = re.compile(r"[^0-9A-Za-z]+")
 
@@ -174,3 +178,12 @@ def _interval_check_name(table: str, axis: PhysicalTemporalAxis) -> str:
         _INTERVAL_CHECK_KINDS[axis.declaration.dimension],
         ((_LESS_THAN, (axis.start.column, axis.end.column)),),
     )
+
+
+def document_root_check_name(table: str, constraint: DocumentRootConstraint) -> str:
+    """The name ``constraint`` takes on the physical table named ``table``.
+
+    ``table`` is the raw resolved local table name, so a qualifier-only move
+    preserves the name.
+    """
+    return constraint_name(table, _DOCUMENT_ROOT, ((_OBJECT, (constraint.slot.column,)),))

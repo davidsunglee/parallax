@@ -46,6 +46,7 @@ from parallax.core.internal.dialect import (
     ColumnDdl,
     Dialect,
     DocumentLeafAssignment,
+    DocumentRootCheckDdl,
     DocumentValueAssignment,
     ExclusionDdl,
     IndexColumnDdl,
@@ -462,12 +463,52 @@ def test_create_table_names_each_interval_check_after_the_key(dialect: Dialect) 
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_checks_a_document_root_is_an_object(dialect: Dialect) -> None:
+    statement = dialect.create_table(
+        '"Person"',
+        [ColumnDdl("id", "bigint", False), ColumnDdl('"order"', "jsonb", False)],
+        ["id"],
+        [DocumentRootCheckDdl("pxc_doc_person_1", '"order"')],
+    )
+    assert statement == (
+        'create table "Person" (id bigint not null, "order" jsonb not null, primary key (id), '
+        """constraint pxc_doc_person_1 check (jsonb_typeof("order") = 'object'))"""
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_spells_each_check_by_its_kind_in_the_callers_order(
+    dialect: Dialect,
+) -> None:
+    checks = [
+        IntervalCheckDdl("pxc_valid_span_1", "from_z", "thru_z"),
+        IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z"),
+        DocumentRootCheckDdl("pxc_doc_span_3", "payload"),
+    ]
+    clauses = {
+        "pxc_valid_span_1": "constraint pxc_valid_span_1 check (from_z < thru_z)",
+        "pxc_tx_span_2": "constraint pxc_tx_span_2 check (in_z < out_z)",
+        "pxc_doc_span_3": "constraint pxc_doc_span_3 check (jsonb_typeof(payload) = 'object')",
+    }
+    for ordered in (checks, checks[::-1]):
+        statement = dialect.create_table("span", [ColumnDdl("id", "bigint", False)], [], ordered)
+        assert statement == (
+            "create table span (id bigint not null, "
+            + ", ".join(clauses[check.name] for check in ordered)
+            + ")"
+        )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_create_table_names_a_temporal_key_and_excludes_overlap_last(dialect: Dialect) -> None:
     statement = dialect.create_table(
         "span",
         [ColumnDdl("id", "bigint", False)],
         ["id", "thru_z", "out_z"],
-        [IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z")],
+        [
+            IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z"),
+            DocumentRootCheckDdl("pxc_doc_span_5", "payload"),
+        ],
         primary_key_name="pxc_pk_span_3",
         exclusion=ExclusionDdl(
             "pxc_excl_span_4", ("id",), (("from_z", "thru_z"), ("in_z", "out_z"))
@@ -477,6 +518,7 @@ def test_create_table_names_a_temporal_key_and_excludes_overlap_last(dialect: Di
         "create table span (id bigint not null, "
         "constraint pxc_pk_span_3 primary key (id, thru_z, out_z), "
         "constraint pxc_tx_span_2 check (in_z < out_z), "
+        "constraint pxc_doc_span_5 check (jsonb_typeof(payload) = 'object'), "
         "constraint pxc_excl_span_4 exclude using gist "
         "(id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&))"
     )
