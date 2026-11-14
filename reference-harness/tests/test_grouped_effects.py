@@ -216,6 +216,24 @@ def test_each_source_array_is_typed_by_the_column_or_document_it_reaches() -> No
 
 
 @pytest.mark.parametrize(
+    "merge",
+    [
+        pytest.param("(t.payload) || (v.c4)", id="parenthesized"),
+        pytest.param("cast(t.payload as jsonb) || cast(v.c4 as jsonb)", id="cast"),
+        pytest.param("cast(t.payload || v.c4 as jsonb)", id="a-cast-merge"),
+    ],
+)
+def test_a_wrapped_document_merge_source_keeps_its_document_target(merge: str) -> None:
+    case = _case("scalar-collection-lifecycle-layout-twin-document")
+    statement = _DOCUMENT.replace("t.payload || v.c4", merge)
+    targets = infer_statement_bind_targets(case, statement, _DOCUMENT_BINDS, "postgres")
+    assert isinstance(targets[3], DocumentArrayBindTarget)
+    as_json = statement.replace("cast(? as jsonb[])", "cast(? as json[])")
+    (mismatch,) = array_cast_mismatches(case, as_json, _DOCUMENT_BINDS)
+    assert (mismatch.index, mismatch.cast, mismatch.column) == (3, "json", "payload")
+
+
+@pytest.mark.parametrize(
     ("source", "cast"),
     [
         pytest.param("?", None, id="uncast"),

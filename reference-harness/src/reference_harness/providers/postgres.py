@@ -356,9 +356,7 @@ class PostgresProvider:
         # Golden DML stores `?` placeholders (m-sql); psycopg uses `%s`. Translate
         # positional placeholders for execution, mirroring `query`. A value-object
         # document bind (dict/list) is wrapped in `Jsonb` via `_adapt` so a
-        # whole-document write binds correctly (m-value-object). Canonical logical
-        # scalar values remain in the golden and render as JSON text only when the
-        # surrounding document-mutation expression requires that physical form.
+        # whole-document write binds correctly (m-value-object).
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(_trusted_query(sql.replace("?", "%s")), _statement_binds(sql, binds))

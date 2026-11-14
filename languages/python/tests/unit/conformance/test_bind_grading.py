@@ -16,7 +16,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, engine
-from parallax.core.internal.base import FLOAT32, FLOAT64, INT64, STRING, Numeric
+from parallax.core.internal.base import FLOAT32, FLOAT64, INT64, JSON, STRING, Numeric
 from parallax.core.internal.db_port import JSON_NULL, ArrayBind, StructuredDocument
 from tests._support.bind_positions import (
     Document,
@@ -129,6 +129,81 @@ def test_a_document_merge_refuses_a_negative_zero_member_beside_a_json_key() -> 
     member_negative[0]["ratio"] = -0.0
     with pytest.raises(AssertionError, match=r"^bind 0: "):
         _graded_merge(golden, member_negative)
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        pytest.param("payload = (payload) || (?)", id="parenthesized"),
+        pytest.param("payload = cast(payload as jsonb) || cast(? as jsonb)", id="a-cast-target"),
+        pytest.param("payload = cast(payload || cast(? as jsonb) as jsonb)", id="a-cast-merge"),
+    ],
+)
+def test_a_wrapped_document_merge_refuses_a_negative_zero_member(assignment: str) -> None:
+    model = corpus_model("materialization-stress-document")
+    sql = f"update px.materialization_node set {assignment} where id = ?"
+    golden: list[Any] = [{"ratio": 0.0}, 1]
+    with pytest.raises(AssertionError, match=r"^bind 0: "):
+        compare_binds(
+            [StructuredDocument({"ratio": -0.0}), 1],
+            golden,
+            statement_bind_positions(model, sql, golden),
+        )
+
+
+def _grouped_merge(source: str = "v.c2") -> str:
+    return (
+        f"update px.materialization_node t set payload = t.payload || {source} from "
+        "unnest(cast(? as bigint[]), cast(? as jsonb[])) with ordinality v(c1, c2, ord) "
+        "where t.id = v.c1 returning v.ord"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("v.c2", id="bare"),
+        pytest.param("(v.c2)", id="parenthesized"),
+        pytest.param("cast(v.c2 as jsonb)", id="cast"),
+    ],
+)
+def test_a_grouped_document_merge_refuses_a_negative_zero_member_in_any_row(source: str) -> None:
+    model = corpus_model("materialization-stress-document")
+    sql = _grouped_merge(source)
+    golden: list[Any] = [[1, 2], [{"ratio": 1.5}, {"ratio": 0.0, "extension": 0.0}]]
+    positions = statement_bind_positions(model, sql, golden)
+    assert isinstance(positions[1], Elements)
+
+    def documents(ratio: float, extension: float) -> list[object]:
+        return [{"ratio": 1.5}, {"ratio": ratio, "extension": extension}]
+
+    def emitted(ratio: float, extension: float) -> list[object]:
+        return [[1, 2], documents(ratio, extension)]
+
+    def carried(ratio: float, extension: float) -> list[object]:
+        return [ArrayBind(INT64, [1, 2]), ArrayBind(JSON, documents(ratio, extension))]
+
+    compare_binds(carried(0.0, -0.0), golden, positions)
+    assert_wire_binds(model, sql, golden, emitted(0.0, -0.0))
+    with pytest.raises(AssertionError, match=r"^bind 1: "):
+        compare_binds(carried(-0.0, 0.0), golden, positions)
+    with pytest.raises(AssertionError, match=r"^bind 1: "):
+        assert_wire_binds(model, sql, golden, emitted(-0.0, 0.0))
+
+
+@pytest.mark.parametrize(("kind", "declared"), [("card", STRING), ("cash", Numeric(18, 2))])
+def test_a_grouped_document_merge_is_typed_by_the_owner_its_rows_are_tagged(
+    kind: str, declared: object
+) -> None:
+    model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
+    sql = (
+        "update px.payment_document t set payload = t.payload || v.c2 from "
+        "unnest(cast(? as bigint[]), cast(? as jsonb[])) with ordinality v(c1, c2, ord) "
+        "where t.id = v.c1 and t.kind = ? returning v.ord"
+    )
+    documents = statement_bind_positions(model, sql, [[10], [{"detail": "25.00"}], kind])[1]
+    assert isinstance(documents, Elements)
+    assert cast("Document", documents.element).members["detail"] == declared
 
 
 @pytest.mark.parametrize(

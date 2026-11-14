@@ -10,8 +10,10 @@ the statement and the case's model: a Column an ``insert`` lists or an ``update`
 assigns, the members a document merge assigns, or the operand a bind is compared
 with. A multi-row insert's column array holds its Column's position at
 every element, and a shared Structured Column's array the document each row's
-own discriminator tag selects. A position this cannot resolve stays untyped and
-compares as JSON; a type is never guessed from a value.
+own discriminator tag selects. A grouped update's source array holds, at every
+element, the position of the Column its source column is assigned to, under the
+tag the statement guards every row by. A position this cannot resolve stays
+untyped and compares as JSON; a type is never guessed from a value.
 
 The same reading names the binds that write a whole document Column, where a
 golden ``null`` states SQL NULL (`m-value-object`).
@@ -306,11 +308,15 @@ def _unwrapped(expression: exp.Expr) -> exp.Expr:
     return expression
 
 
-def _bare_bind(expression: exp.Expr) -> int | None:
-    """The bind index of an operand that is one bind, however parenthesized or cast."""
+def _transparent(expression: exp.Expr) -> exp.Expr:
     while isinstance(expression, (exp.Paren, exp.Cast)):
         expression = expression.this
-    return _index(expression)
+    return expression
+
+
+def _bare_bind(expression: exp.Expr) -> int | None:
+    """The bind index of an operand that is one bind, however parenthesized or cast."""
+    return _index(_transparent(expression))
 
 
 class _Statement:
@@ -445,11 +451,13 @@ class _Statement:
             position = None if slot is None else self._slot_position(slot, known)
             if position is None:
                 continue
-            index = _bare_bind(assignment.expression)
-            if index is None:
-                index = _merged_bind(assignment)
+            merged = _merged_operand(assignment)
+            operand = assignment.expression if merged is None else merged
+            index = _bare_bind(operand)
             if index is not None:
                 positions[index] = position
+            elif (sourced := _sourced_bind(tree, operand)) is not None:
+                positions[sourced] = Elements(position)
         return positions
 
     def _slot_position(self, slot: ColumnSlot, known: Mapping[str, object]) -> BindPosition | None:
@@ -614,16 +622,32 @@ def _scope_tables(scope: exp.Expr) -> Iterator[exp.Table]:
             yield source
 
 
-def _merged_bind(assignment: exp.EQ) -> int | None:
-    """The bind index of the object a ``column || ?`` merge over the assigned
-    Column itself supplies: a partial document holding the members it assigns."""
-    merge = _unwrapped(assignment.expression)
+def _merged_operand(assignment: exp.EQ) -> exp.Expr | None:
+    """The operand a ``column || <operand>`` merge over the assigned Column itself
+    joins to it: a partial document holding the members it assigns."""
+    merge = _transparent(assignment.expression)
     if not isinstance(merge, exp.DPipe):
         return None
-    target = _unwrapped(merge.this)
+    target = _transparent(merge.this)
     if not isinstance(target, exp.Column) or target.name != assignment.this.name:
         return None
-    return _bare_bind(merge.expression)
+    return merge.expression
+
+
+def _sourced_bind(update: exp.Update, operand: exp.Expr) -> int | None:
+    """The bind index of the array a grouped update's ``unnest(…) … v(…)``
+    source column ``operand`` reads, one element per row."""
+    column = _transparent(operand)
+    origin = update.args.get("from_")
+    source = origin.this if isinstance(origin, exp.From) else None
+    if not isinstance(column, exp.Column) or not isinstance(source, exp.Unnest):
+        return None
+    alias = source.args.get("alias")
+    if not isinstance(alias, exp.TableAlias) or not column.table or column.table != alias.name:
+        return None
+    arguments = dict(zip((name.name for name in alias.columns), source.expressions, strict=False))
+    argument = arguments.get(column.name)
+    return None if argument is None else _bare_bind(argument)
 
 
 def _slot_named(layout: TableLayout, name: str) -> ColumnSlot | None:
