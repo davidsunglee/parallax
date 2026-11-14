@@ -22,14 +22,12 @@ from testcontainers.community.postgres import PostgresContainer
 
 from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
-from .._grouped_effects import sourced_path_value_indices
 from .._sql_placeholders import array_bind_indices
 from ..database_binding import PhysicalTable
 from ..ddl_builder import qualified_table, quote_identifier
 from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
 from . import Catalog, build_catalog, register
-from ._binds import adapt_document_scalar_binds
 
 # The provisioning seam pins a stable Postgres major (m-case-format/DQ15).
 POSTGRES_IMAGE = "postgres:18"
@@ -148,16 +146,10 @@ def _adapt_array(values: Any) -> Any:
 
 
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
-    physical = adapt_document_scalar_binds(sql, binds, "postgres")
     array_binds = array_bind_indices(sql)
-    path_values = sourced_path_value_indices(sql)
     return tuple(
-        [Jsonb(element) for element in value]
-        if index in path_values and isinstance(value, list)
-        else _adapt_array(value)
-        if index in array_binds
-        else _adapt(value)
-        for index, value in enumerate(physical)
+        _adapt_array(value) if index in array_binds else _adapt(value)
+        for index, value in enumerate(binds)
     )
 
 
@@ -364,9 +356,7 @@ class PostgresProvider:
         # Golden DML stores `?` placeholders (m-sql); psycopg uses `%s`. Translate
         # positional placeholders for execution, mirroring `query`. A value-object
         # document bind (dict/list) is wrapped in `Jsonb` via `_adapt` so a
-        # whole-document write binds correctly (m-value-object). Canonical logical
-        # scalar values remain in the golden and render as JSON text only when the
-        # surrounding document-mutation expression requires that physical form.
+        # whole-document write binds correctly (m-value-object).
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(_trusted_query(sql.replace("?", "%s")), _statement_binds(sql, binds))

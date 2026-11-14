@@ -308,18 +308,30 @@ mutation-expression form.
 
 The composition order is **canonical logical placement order** — the order the
 assigned members occupy in the Table's logical placement order — never caller
-mapping order and never a hash or set iteration order. Both dialects apply their
-composed assignments left to right, so this order is observable, and it is what
-makes a golden statement stable to author. Assignments are neither merged nor
-deduplicated: one assigned member is one path in the expression.
+mapping order and never a hash or set iteration order. It fixes the order of the
+assigned members inside the expression and its binds, which is what makes a
+golden statement stable to author. Assignments are not deduplicated: each
+executed resident member is exactly one key — one member of the object a
+Postgres merge binds, one path and value of a MariaDB `json_set` — and no key
+appears twice.
 
-A top-level Value Object assignment is one path in this order, at either
+A top-level Value Object assignment is one key in this order, at either
 cardinality: it carries that occurrence's complete encoded document — the object
 a `one` holds, the ordered array a `many` holds, or JSON null — and replaces the
 subtree stored there whole, so an omitted declared member and an undeclared key
-inside the occurrence are both gone afterwards. No ordinary update binds the
-whole Structured Column, and an accepted readless update does not read the row
-first to rewrite it.
+inside the occurrence are both gone afterwards. A merge binds the assigned
+members, never a replacement document for the stored column: every key it does
+not assign stands. No ordinary update binds the whole Structured Column, and an
+accepted readless update does not read the row first to rewrite it.
+
+```yaml
+- sql:
+    postgres: update traveler set payload = payload || cast(? as jsonb), version = ? where id = ? and version = ?
+    mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+  binds:
+    postgres: [{ displayName: Dagny, score: 21 }, <new-version>, <pk>, <observed>]
+    mariadb: ['$.displayName', Dagny, '$.score', 21, <new-version>, <pk>, <observed>]
+```
 
 An `INSERT` binds the Structured Column exactly once, as one complete encoded
 document, in its layout position — the same shape a conventional Value Object
@@ -1468,26 +1480,28 @@ The source columns are the key Columns in key order, then for a milestone each
 As-Of Axis end its effects bind per row, then the gate's observed value — a
 version gate's observed version or a temporal gate's observed Transaction-Time
 start — where the effects are gated, then one column per cell the assignments
-place, in Table Layout slot order; a path of the shared Structured Column the
-effects patch is one column per assigned path, in canonical logical placement
-order. Every value a lone effect binds per row — a key, a bounded or open
-Valid-Time end, an observed version or start, an already planned version
-advance, the Transaction-Time end a close assigns, an assigned value, a
-document path's encoded value — is a source column, never recomputed in SQL; a
+place, in Table Layout slot order; the shared Structured Column the effects
+patch is one column whose element for each effect is the object of that
+effect's assigned members, in canonical logical placement order. Every value a
+lone effect binds per row — a key, a bounded or open Valid-Time end, an observed
+version or start, an already planned version advance, the Transaction-Time end
+a close assigns, an assigned value, the assigned-members object — is a source
+column, never recomputed in SQL; a
 value every row shares by construction binds once as a scalar: the
 table-per-hierarchy tag and the open Transaction-Time end every current
 milestone's address names. The assignments render in the clause grammar a lone
 statement's do, each value read from its source column where the lone form
 binds `?`, with the version advance last: a Column takes `col = v.cN`, a guard
 assigns its Transaction-Time start to itself as `in_z = t.in_z`, and the shared
-Structured Column takes the dialect's document mutation expression over
-`t.<column>`, each path still one bind and each value its source column
-(`m-dialect` *Document mutation-expression form*):
+Structured Column takes the dialect's sourced document mutation expression over
+`t.<column>` and its source column, which binds nothing of its own (`m-dialect`
+*Document mutation-expression form*). An assigned member's null is JSON null
+inside its effect's object, so no element of that column is SQL NULL:
 
 ```yaml
 - sql:
-    postgres: update tag_ledger t set payload = jsonb_set(t.payload, ?, v.c4), version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
-  binds: ['{tags}', [<pk1>, <pk2>], [<observed1>, <observed2>], [<new-version1>, <new-version2>], [<tags1>, <tags2>]]
+    postgres: update tag_ledger t set payload = t.payload || v.c4, version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+  binds: [[<pk1>, <pk2>], [<observed1>, <observed2>], [<new-version1>, <new-version2>], [{ tags: <tags1> }, { tags: <tags2> }]]
 ```
 
 The predicate is the lone statement's, each conjunct qualified by `t` and each
@@ -1505,9 +1519,8 @@ form does (*Milestone-chaining write sequences*, *Bitemporal write sequences*):
   binds: [[<pk1>, <pk2>], [<observedTxStart1>, <observedTxStart2>], infinity]
 ```
 
-Binds follow the text: the paths the assignments bind, then the source arrays,
-then the tag and each shared open end. A dialect without array parameters has
-no grouped effect.
+Binds follow the text: the source arrays, then the tag and each shared open
+end. A dialect without array parameters has no grouped effect.
 
 The harness proves the batched forms against real data by **applying** the golden
 DML in order to a loaded table and asserting the resulting table state (the

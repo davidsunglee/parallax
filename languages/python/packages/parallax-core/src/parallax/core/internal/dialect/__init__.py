@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core.internal.base import (
     SQL_NULL,
@@ -14,9 +14,9 @@ from parallax.core.internal.base import (
     Bytes,
     Date,
     DocumentRead,
+    DocumentValue,
     Float32,
     Float64,
-    FrozenMap,
     Int32,
     Int64,
     Json,
@@ -36,9 +36,7 @@ __all__ = [
     "ArrayBind",
     "ColumnDdl",
     "Dialect",
-    "DocumentAssignment",
-    "DocumentLeafAssignment",
-    "DocumentValueAssignment",
+    "DocumentRootCheckDdl",
     "EncodedJsonKind",
     "ExclusionDdl",
     "IndexColumnDdl",
@@ -140,51 +138,8 @@ class RenderedScalarCell:
     scalar_result: ScalarResult
 
 
-@dataclass(frozen=True, slots=True)
-class DocumentLeafAssignment:
-    """One encoded leaf value assigned relative to a document expression."""
-
-    path: tuple[str, ...]
-    value: object
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentValueAssignment:
-    """One complete encoded occurrence document assigned relative to a document
-    expression — the object a ``one`` holds, the ordered array a ``many`` holds, or
-    ``None`` for JSON null."""
-
-    path: tuple[str, ...]
-    value: object
-
-
-type DocumentAssignment = DocumentLeafAssignment | DocumentValueAssignment
-"""One assigned path and the complete encoded value that lands there.
-
-The two nodes name the two kinds of position a Parallax assignment reaches — a
-leaf and a whole occurrence — and this seam renders them identically, because
-both hand it one already-encoded value for one absolute path. The list is flat:
-an occurrence carries no children here, since assigning one replaces its subtree
-whole rather than reaching inside it.
-"""
-
 # A "simple" identifier needs no quoting: lowercase, starts with a letter.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
-
-
-def _document_value_bind(value: object) -> object:
-    """One assigned document value as the mutation expression's hole takes it.
-
-    A composite crosses the seam as the portable document it is, so the adapter
-    hands it to the driver's structured-document wrapper; a JSON scalar, which no
-    structural authoring form distinguishes from an ordinary scalar bind, crosses
-    as the JSON text both dialects' value expressions parse (`m-case-format`).
-    Serializing it here is what keeps a key order and a separator convention out
-    of every golden — a scalar has neither.
-    """
-    if type(value) in (dict, list, FrozenMap, tuple):
-        return value
-    return json.dumps(value)
 
 
 class TableReference(Protocol):
@@ -264,6 +219,17 @@ class IntervalCheckDdl:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentRootCheckDdl:
+    """One named check that a row's ``column`` holds a JSON object.
+
+    Every identifier is already quoted for the dialect.
+    """
+
+    name: str
+    column: str
+
+
+@dataclass(frozen=True, slots=True)
 class ExclusionDdl:
     """One named constraint that no two rows equal on every ``equal`` Column
     overlap on every ``overlapping`` half-open interval at once.
@@ -275,6 +241,14 @@ class ExclusionDdl:
     name: str
     equal: tuple[str, ...]
     overlapping: tuple[tuple[str, str], ...]
+
+
+def _check_condition(check: IntervalCheckDdl | DocumentRootCheckDdl) -> str:
+    match check:
+        case IntervalCheckDdl(start=start, end=end):
+            return f"{start} < {end}"
+        case DocumentRootCheckDdl(column=column):
+            return f"jsonb_typeof({column}) = 'object'"
 
 
 def _column_clause(column: ColumnDdl) -> str:
@@ -576,71 +550,30 @@ class Dialect:
         return f"({envelope}) [ 1 ]"
 
     # -- structured documents (m-storage-layout) --------------------------- #
-    def document_path(self, segments: Sequence[str]) -> str:
-        """The bind value addressing ``segments`` inside a document, for a mutation.
-
-        A dialect decision of its own, and it diverges from the extraction path
-        binds above: Postgres `jsonb_set` takes ONE text-array path (`{a,b}`)
-        where `jsonb_extract_path_text` takes one bind per segment, and MariaDB
-        `json_set` takes the same `$.a.b` JSON-path string its `json_value`
-        extraction does.
-        """
-        return "{" + ",".join(segments) + "}"
-
     def document_mutation(
-        self, document: str, assignments: Sequence[DocumentAssignment]
+        self, document: str, members: Mapping[str, object]
     ) -> tuple[str, list[object]]:
-        """The `SET` expression assigning each path of ``assignments`` inside
-        ``document``, and its ordered binds (m-dialect *Document mutation-expression
-        form*).
+        """The `SET` expression assigning ``members`` inside ``document``, and its
+        ordered binds (m-dialect *Document mutation-expression form*).
 
         ``document`` is an ALREADY-RENDERED Structured Column reference, for the
-        same reason :meth:`nested_extract` takes one. Every node assigns one
-        complete encoded value at one absolute path — a leaf's spelling, an
-        occurrence's whole document, or JSON null — so the expression is one call
-        per assigned path and its binds read path, value, path, value. The
-        sequence is applied left to right in canonical logical placement order,
-        which `m-sql` fixes and this seam MUST NOT reorder, deduplicate, or
-        merge.
-
-        The value hole is a per-dialect **expression**, not a bare `?`: Postgres
-        resolves a bare parameter there to `jsonb_set`'s declared `jsonb` and
-        rejects every scalar bind, while MariaDB accepts a scalar but silently
-        escapes a composite into a string. `cast(? as jsonb)` and
-        `json_extract(?, '$')` are the two expressions that accept one authored
-        bind form on both engines. That form is the document itself for a
-        composite — the adapter hands it to the driver's structured-document
-        wrapper — and the value's JSON **text** for a scalar, which no structural
-        authoring form could distinguish from an ordinary scalar bind
-        (`m-case-format`).
+        same reason :meth:`nested_extract` takes one. ``members`` maps each
+        assigned top-level member to its complete encoded value in canonical
+        logical placement order. Postgres merges them as one object, so its
+        supplied keys replace the stored ones whole and every other key stands;
+        the object crosses as one structured document, which the adapter hands
+        to the driver's structured-document wrapper.
         """
-        expression = document
-        binds: list[object] = []
-        for assignment in assignments:
-            expression = f"jsonb_set({expression}, ?, cast(? as jsonb))"
-            binds.extend(
-                [self.document_path(assignment.path), _document_value_bind(assignment.value)]
-            )
-        return expression, binds
+        return f"{document} || cast(? as jsonb)", [
+            StructuredDocument(cast("DocumentValue", members))
+        ]
 
-    def sourced_document_mutation(
-        self, document: str, paths: Sequence[tuple[str, ...]], sources: Sequence[str]
-    ) -> tuple[str, list[object]]:
-        """The `SET` expression assigning each of ``paths`` inside ``document``
-        the value of its own already-rendered ``sources`` expression, and its
-        ordered path binds.
-
-        It is :meth:`document_mutation`'s form where each assigned value is a
-        per-row column of a grouped statement's source rather than a bind: the
-        source column already carries the document type, so it takes no value
-        expression of its own, and only the paths bind.
-        """
-        expression = document
-        binds: list[object] = []
-        for path, source in zip(paths, sources, strict=True):
-            expression = f"jsonb_set({expression}, ?, {source})"
-            binds.append(self.document_path(path))
-        return expression, binds
+    def sourced_document_mutation(self, document: str, source: str) -> str:
+        """The `SET` expression merging the assigned-members object of the
+        already-rendered ``source`` expression into ``document``: a grouped
+        statement's per-row source column, which already carries the document
+        type, so the term binds nothing of its own."""
+        return f"{document} || {source}"
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:
@@ -694,7 +627,7 @@ class Dialect:
         table: str,
         columns: Sequence[ColumnDdl],
         primary_key: Sequence[str],
-        interval_checks: Sequence[IntervalCheckDdl] = (),
+        checks: Sequence[IntervalCheckDdl | DocumentRootCheckDdl] = (),
         *,
         primary_key_name: str | None = None,
         exclusion: ExclusionDdl | None = None,
@@ -702,8 +635,8 @@ class Dialect:
         """``create table`` for one whole Table, keyed and constrained inline.
 
         The caller supplies the complete physical column sequence, the key
-        columns, the interval checks, and the exclusion in their own order; all
-        are already quoted. An empty ``primary_key`` emits no key clause, which
+        columns, the checks, and the exclusion in their own order; all are
+        already quoted. An empty ``primary_key`` emits no key clause, which
         is the keyless Table a model declaring no primary key produces, and a
         key without ``primary_key_name`` is left for the database to name. The
         exclusion is immediate and not deferrable: each statement is checked as
@@ -714,8 +647,7 @@ class Dialect:
             named = "" if primary_key_name is None else f"constraint {primary_key_name} "
             parts.append(f"{named}primary key ({', '.join(primary_key)})")
         parts.extend(
-            f"constraint {check.name} check ({check.start} < {check.end})"
-            for check in interval_checks
+            f"constraint {check.name} check ({_check_condition(check)})" for check in checks
         )
         if exclusion is not None:
             operands = [f"{column} with =" for column in exclusion.equal]

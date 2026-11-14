@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import cast
 
 from parallax.core.internal import inheritance, storage_layout
@@ -9,21 +8,13 @@ from parallax.core.internal.base import (
     INFINITY,
     INFINITY_LITERAL,
     DocumentValue,
-    FrozenMap,
     InternalError,
     NeutralType,
     StructuredDocument,
 )
 from parallax.core.internal.database_binding import ResolvedBinding
-from parallax.core.internal.dialect import (
-    JSON_NULL,
-    ArrayBind,
-    Dialect,
-    DocumentAssignment,
-    DocumentLeafAssignment,
-    DocumentValueAssignment,
-)
-from parallax.core.internal.document_codec import PreparedPatch
+from parallax.core.internal.dialect import ArrayBind, Dialect
+from parallax.core.internal.document_codec import assigned_members
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -39,12 +30,11 @@ from parallax.core.internal.sql_gen._context import (
     StatementBuilder,
 )
 from parallax.core.internal.storage_layout import EntityLayoutView
-from parallax.core.internal.wire import WireValue
 from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
+    DocumentPatches,
     EffectSlots,
     InsertPayload,
-    PatchedDocument,
     RowSlots,
 )
 from parallax.core.internal.write_plan.steps import (
@@ -85,22 +75,8 @@ in entry order, under their Row Slots, the Assignment Payload a revising step
 writes, or nothing for a step that stores no represented value."""
 
 
-@dataclass(frozen=True, slots=True)
-class _DocumentAssignments:
-    """The ordered path assignments for one revising statement's Structured Column.
-
-    A revising statement never rewrites the Column whole (`m-storage-layout`): it
-    assigns one complete encoded value per path the step names, and every other
-    key of the document stands. The sequence is canonical logical placement order,
-    which both dialects apply left to right (`m-dialect`).
-    """
-
-    assignments: tuple[DocumentAssignment, ...]
-    leaf_types: tuple[NeutralType | None, ...]
-
-
 # One rendered cell: the physical Column it occupies and the value that lands
-# there — a bind, the ordered path assignments a Structured Column takes, or the
+# there — a bind, the prepared patches a Structured Column merges, or the
 # generated-value expression the statement folds in.
 type _Cell = tuple[str, object, NeutralType | None]
 
@@ -186,10 +162,11 @@ def non_insert_parameter_ceiling(
     The address binds each key value and at most one table-per-hierarchy tag,
     and a milestone address each axis end too; a temporal or version gate binds
     once more. Each member a revising step assigns, a version advance or
-    registry increment included, binds at most twice: once in a Column of its
-    own, or a path and a value in the shared Structured Column's mutation
-    expression (`m-dialect`). A predicate-selected step's binds follow its
-    predicate rather than its shape, so it has no such bound.
+    registry increment included, binds at most once: in a Column of its own,
+    or, with every other member the shared Structured Column holds, as the one
+    object its mutation expression merges (`m-dialect`). A predicate-selected
+    step's binds follow its predicate rather than its shape, so it has no such
+    bound.
     """
     target = step.target
     if isinstance(target, ResolvedMutationSelection):
@@ -206,7 +183,7 @@ def non_insert_parameter_ceiling(
         ceiling += 1
     if isinstance(step, PlannedClose | PlannedTemporalRevision | PlannedUpdate):
         assignments = step.assignments
-        ceiling += 2 * (len(assignments.attributes) + len(assignments.value_objects))
+        ceiling += len(assignments.attributes) + len(assignments.value_objects)
     return ceiling
 
 
@@ -468,19 +445,11 @@ class GroupedEffectBuilder:
         assigned: AssignmentPayload | None = None
         if isinstance(step, PlannedUpdate | PlannedClose | PlannedTemporalRevision):
             assigned = _assignment_payload(step, payload)
-            if len(assigned.values) != len(slots.assignment_sources) or any(
-                isinstance(source, tuple)
-                and (
-                    not isinstance(value, PatchedDocument)
-                    or len(value.patches) != len(source)
-                    or any(patch.removes for patch in value.patches)
-                )
-                for value, source in zip(assigned.values, slots.assignment_sources, strict=True)
-            ):
+            if len(assigned.values) != len(slots.assignment_sources):
                 raise InternalError(
                     SQL_GENERATION_FAILED,
-                    f"{slots.entity.canonical}: a grouped effect's step assigns a cell or path "
-                    "its shape does not place",
+                    f"{slots.entity.canonical}: a grouped effect's step assigns a cell its shape "
+                    "does not place",
                 )
         else:
             _require_no_payload(step, payload)
@@ -499,16 +468,9 @@ class GroupedEffectBuilder:
         entity = _entity(meta, first.entity)
         view = _layout(meta, entity)
         ctx = _ctx(resolved, dialect)
-        terms = _sourced_terms(first, payload, slots, view, entity, dialect)
-        for _, binds in terms:
-            ctx.bind_structural_all(binds)
+        terms = _sourced_set_terms(first, payload, slots, view, entity, dialect)
         element_types = slots.element_types
-        columns = self._columns
-        for source in slots.assignment_sources:
-            if isinstance(source, tuple):
-                for column in source:
-                    _null_paths_as_json_null(columns[column])
-        for element_type, cells in zip(element_types, columns, strict=True):
+        for element_type, cells in zip(element_types, self._columns, strict=True):
             ctx.bind_array(ArrayBind(element_type, cells))
         arrays = ", ".join(
             [dialect.array_parameter(element_type) for element_type in element_types]
@@ -522,18 +484,9 @@ class GroupedEffectBuilder:
                 f"delete from {table} t using {source} where {where} returning {_SOURCE}.ord"
             )
         return ctx.finish(
-            f"update {table} t set {', '.join([sql for sql, _ in terms])} from {source} "
+            f"update {table} t set {', '.join(terms)} from {source} "
             f"where {where} returning {_SOURCE}.ord"
         )
-
-
-def _null_paths_as_json_null(cells: list[object]) -> None:
-    """An assigned path's null as the literal JSON null document, exactly as a
-    lone patch assigns it: a SQL NULL element would null the whole Structured
-    Column through `jsonb_set`."""
-    for index, cell in enumerate(cells):
-        if cell is None:
-            cells[index] = JSON_NULL
 
 
 def _shaped_address(step: _Effect, slots: EffectSlots) -> bool:
@@ -550,40 +503,37 @@ def _shaped_address(step: _Effect, slots: EffectSlots) -> bool:
     return isinstance(target, KeyTarget) and len(target.key_values) == 1 and not slots.end_sources
 
 
-def _sourced_terms(
+def _sourced_set_terms(
     first: _Effect,
     payload: AssignmentPayload | None,
     slots: EffectSlots,
     view: EntityLayoutView,
     entity: CompiledEntity,
     dialect: Dialect,
-) -> list[tuple[str, list[object]]]:
-    """Each `set` term of a grouped effect, and its path binds, in the order a
-    lone statement of ``first``'s kind renders them; none for a deletion."""
+) -> list[str]:
+    """Each `set` term of a grouped effect in the order a lone statement of
+    ``first``'s kind renders them, every value drawn from the source; none for
+    a deletion."""
     if isinstance(first, PlannedTemporalGuard):
         column = dialect.quote(_column(view, first.concurrency.start_attribute, entity))
-        return [(f"{column} = t.{column}", [])]
+        return [f"{column} = t.{column}"]
     if payload is None:
         return []
     concurrency = first.concurrency
     version_column = (
         _column(view, concurrency.attribute, entity) if isinstance(concurrency, Versioned) else None
     )
-    terms: list[tuple[str, list[object]]] = []
-    advance: tuple[str, list[object]] | None = None
+    terms: list[str] = []
+    advance: str | None = None
     for column, value, source in zip(
         payload.placement.columns, payload.values, slots.assignment_sources, strict=True
     ):
         quoted = dialect.quote(column)
-        if isinstance(source, tuple):
-            expression, binds = dialect.sourced_document_mutation(
-                f"t.{quoted}",
-                [patch.path for patch in cast("PatchedDocument", value).patches],
-                [_source_column(index) for index in source],
-            )
-            term = (f"{quoted} = {expression}", binds)
+        if isinstance(value, DocumentPatches):
+            expression = dialect.sourced_document_mutation(f"t.{quoted}", _source_column(source))
         else:
-            term = (f"{quoted} = {_source_column(source)}", list[object]())
+            expression = _source_column(source)
+        term = f"{quoted} = {expression}"
         if column == version_column:
             advance = term
         else:
@@ -654,7 +604,7 @@ def _lower_update(
     view = _layout(meta, entity)
     ctx = _ctx(resolved, dialect)
     version = step.concurrency.attribute if isinstance(step.concurrency, Versioned) else None
-    assignment_sql = _assignment_clause(ctx, view, meta, payload, version, entity, dialect)
+    assignment_sql = _set_clause(ctx, view, payload, version, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
     return ctx.finish(
@@ -682,7 +632,7 @@ def _lower_milestone_update(
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     ctx = _ctx(resolved, dialect)
-    assignment_sql = _assignment_clause(ctx, view, meta, payload, None, entity, dialect)
+    assignment_sql = _set_clause(ctx, view, payload, None, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
@@ -744,10 +694,9 @@ def _where(*conditions: str) -> str:
     return f" where {' and '.join(rendered)}" if rendered else ""
 
 
-def _assignment_clause(
+def _set_clause(
     ctx: StatementBuilder,
     view: EntityLayoutView,
-    meta: Metamodel,
     payload: AssignmentPayload,
     version: AttributeIdentity | None,
     entity: CompiledEntity,
@@ -761,20 +710,18 @@ def _assignment_clause(
     for column, value, neutral_type, document in zip(
         columns, payload.values, types, documents, strict=True
     ):
-        if isinstance(value, PatchedDocument):
-            value = _document_assignments(value.patches, entity)
-        elif document and value is not None:
+        if document and value is not None and not isinstance(value, DocumentPatches):
             value = StructuredDocument(cast("DocumentValue", value))
         if column == version_column:
             advance = (column, value, neutral_type)
         else:
-            parts.append(_assignment(ctx, column, value, neutral_type, dialect))
+            parts.append(_set_term(ctx, column, value, neutral_type, dialect))
     if advance is not None:
-        parts.append(_assignment(ctx, *advance, dialect))
+        parts.append(_set_term(ctx, *advance, dialect))
     return ", ".join(parts)
 
 
-def _assignment(
+def _set_term(
     ctx: StatementBuilder,
     column: str,
     value: object,
@@ -786,43 +733,19 @@ def _assignment(
     Three forms, each decided by what the planner settled rather than by the
     value's shape: the registry advance self-references its own Column, a
     Structured Column takes the dialect's document mutation expression over the
-    paths this step assigns, and every other Column takes one bind.
+    members this step assigns, and every other Column takes one bind.
     """
     quoted = dialect.quote(column)
     if isinstance(value, SelfIncrement):
         ctx.bind_framework(value.amount)
         return f"{quoted} = {quoted} + ?"
-    if isinstance(value, _DocumentAssignments):
-        expression, mutation_binds = dialect.document_mutation(quoted, value.assignments)
-        for index, bind in enumerate(_document_binds(mutation_binds)):
-            assignment_index, offset = divmod(index, 2)
-            assigned = value.assignments[assignment_index].value
-            # A scalar leaf and JSON null both cross as JSON text, and each
-            # projects as the value it encodes.
-            if offset == 1 and (value.leaf_types[assignment_index] is not None or assigned is None):
-                ctx.bind_framework(bind, wire_value=cast("WireValue", assigned))
-            else:
-                _bind(ctx, bind)
+    if isinstance(value, DocumentPatches):
+        expression, binds = dialect.document_mutation(quoted, assigned_members(value.patches))
+        for bind in binds:
+            _bind(ctx, bind)
         return f"{quoted} = {expression}"
     _bind(ctx, value, neutral_type)
     return f"{quoted} = ?"
-
-
-def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
-    """The document mutation expression's binds as managed carriers.
-
-    The dialect decides each assigned value's SQL-level form — the document
-    itself for a composite, its JSON text for a scalar (`m-dialect`) — so wrapping
-    a composite in the `m-core` document value the adapter hands to its driver's
-    structured-document bind happens here, exactly as it does for a whole-document
-    cell one clause family over.
-    """
-    return tuple(
-        StructuredDocument(cast("DocumentValue", bind))
-        if type(bind) in (dict, list, FrozenMap, tuple)
-        else bind
-        for bind in binds
-    )
 
 
 def _target_predicate(
@@ -1012,25 +935,6 @@ def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[ob
         else value
         for value, document in zip(values, documents, strict=True)
     ]
-
-
-def _document_assignments(
-    patches: Sequence[PreparedPatch], entity: CompiledEntity
-) -> _DocumentAssignments:
-    assignments: list[DocumentAssignment] = []
-    for patch in patches:
-        if patch.removes:
-            raise InternalError(
-                SQL_GENERATION_FAILED,
-                f"{entity.identity.name!r}: a revising statement assigns values and removes no "
-                "document key",
-            )
-        assignments.append(
-            DocumentValueAssignment(patch.path, patch.value)
-            if patch.leaf is None
-            else DocumentLeafAssignment(patch.path, patch.value)
-        )
-    return _DocumentAssignments(tuple(assignments), tuple(patch.leaf for patch in patches))
 
 
 def _column(view: EntityLayoutView, attribute: AttributeIdentity, entity: CompiledEntity) -> str:

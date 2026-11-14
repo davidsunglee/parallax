@@ -214,7 +214,7 @@ def _to_db_bind(value: Any) -> Any:
 
 
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
-    physical = adapt_document_scalar_binds(sql, binds, "mariadb")
+    physical = adapt_document_scalar_binds(sql, binds)
     return tuple(_to_db_bind(value) for value in physical)
 
 

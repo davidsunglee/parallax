@@ -25,16 +25,16 @@ when:
 then:
   statements:
     - sql:
-        postgres: update px.tag_ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        postgres: update px.tag_ledger set payload = payload || cast(? as jsonb), version = ? where id = ? and version = ?
         mariadb: update px.tag_ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
       binds:
-        postgres: ['{tags}', [c, c], 2, 1, 1]
+        postgres: [{ tags: [c, c] }, 2, 1, 1]
         mariadb: ['$.tags', [c, c], 2, 1, 1]
     - sql:
-        postgres: update px.tag_ledger set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        postgres: update px.tag_ledger set payload = payload || cast(? as jsonb), version = ? where id = ? and version = ?
         mariadb: update px.tag_ledger set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')), version = ? where id = ? and version = ?
       binds:
-        postgres: ['{label}', whole, '{tags}', [], '{route}', null, 5, 2, 4]
+        postgres: [{ label: whole, tags: [], route: null }, 5, 2, 4]
         mariadb: ['$.label', whole, '$.tags', [], '$.route', null, 5, 2, 4]
   tableState:
     px:

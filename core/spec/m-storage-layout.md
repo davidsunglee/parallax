@@ -110,8 +110,10 @@ Placement determines only how materialization reaches a requested position; the
 verdict belongs to the logical member. An absent or JSON-null non-nullable top-level
 Entity Attribute under `Document` and an SQL-null value for that Attribute under
 `Columns` both produce `stored-data-attribute-null` with unavailable hydration. The
-shared Structured Column's database type guarantees a non-SQL-null document, not an
-object-shaped one: when its raw value is JSON null, an array, or a scalar, every
+shared Structured Column's database type guarantees a non-SQL-null document, and a
+generated Table's root-object constraint (*Document root constraint*) an
+object-shaped one, but a Table created before that constraint can still hold another
+root: when its raw value is JSON null, an array, or a scalar, every
 requested document-resident member of that row reads as absent and takes that
 member's existing verdict and hydration, and the raw carrier creates no stored-data
 issue or recursive validation work. A top-level occurrence and a top-level scalar
@@ -278,8 +280,8 @@ sequence of `MemberName`.
 
 A **Table Layout** (`TableLayout`) is the composed physical shape of one Table: its
 `mappingOwner`, its declared `table`, its `columns`, its `physicalPrimaryKey`, its
-`indices` with their `primaryKeyIndex` and `uniqueKeys`, and its
-`temporalConstraints`. It answers a Column's slot and position, a contributor's
+`indices` with their `primaryKeyIndex` and `uniqueKeys`, its
+`temporalConstraints`, and its `documentRootConstraint`. It answers a Column's slot and position, a contributor's
 slot, and a member's Member Placement. The mapping owner is the Table's identity;
 the declared `table` is that owner's storage name, carried as data.
 
@@ -433,10 +435,10 @@ The rule is therefore identical to conventional Value Object storage, where a
 top-level occurrence's own Structured Column is bound atomically and every update
 rewrites it whole (`m-value-object`). The two layouts differ only in whether the
 row as stored is one document or several columns; assigning an occurrence
-replaces its value under both, and neither layout carries a merge. What still
-distinguishes this layout is that an update leaves every key it does not assign
-standing, which is what makes a key written by a newer application version
-survive an unrelated write.
+replaces its value under both, and neither layout merges an assigned occurrence
+into the stored one. What still distinguishes this layout is that an update
+leaves every key it does not assign standing, which is what makes a key written
+by a newer application version survive an unrelated write.
 
 ## Tier classification and ordering
 
@@ -495,10 +497,12 @@ and no consumer distinguishes "no document" from "an empty document". It also
 takes no database default: every write this contract admits binds the complete
 object explicitly.
 
-This physical non-null guarantee does not assert that externally written stored
-JSON is object-shaped. The DDL deliberately has no deep shape constraint. Read
-materialization treats a JSON-null, array, or scalar carrier by the member-local
-missing projection, and creates no cursor for it.
+This physical non-null guarantee does not assert that stored JSON is object-shaped;
+the separate root-object constraint does, for a Table created with it (*Document root
+constraint*). Neither is a deep shape constraint: no member inside the root is
+validated by the DDL. Read materialization treats a JSON-null, array, or scalar
+carrier, which a Table without the constraint can hold, by the member-local missing
+projection, and creates no cursor for it.
 
 The fourth rule makes a required subtype-only member nullable in a shared
 table-per-hierarchy Table, because rows of a sibling subtype have no value for
@@ -633,12 +637,30 @@ resolution from the definitions here (`m-database-binding`).
 Rendering the checks, the key name, and the exclusion is `m-schema-delta`'s and
 `m-dialect`'s.
 
-Each constraint's name — the primary key's, the exclusion's, and each axis's
-interval check's — is:
+## Document root constraint
+
+`documentRootConstraint` is a `Document` Table's requirement that every row's shared
+Structured Column hold a JSON object. It selects the Table's `RelationalDocument`
+slot and is present exactly when the Table has one, so a table-per-hierarchy family's
+shared Table carries one and each table-per-concrete-subtype concrete Table carries
+its own over its own slot. No consumer infers it from a Column tier or spelling. A
+`Columns` Table has none: a top-level Value Object occurrence's or scalar
+collection's own Structured Column legitimately holds SQL NULL or an array.
+
+The constraint is shallow. It governs the root's kind alone, never a member's
+presence, kind, or value inside it, so member-local stored-data verdicts are
+unchanged. Like the temporal constraints it carries no name; its name is derived at
+binding resolution (`m-database-binding`), and rendering it is `m-schema-delta`'s and
+`m-dialect`'s.
+
+## Constraint names
+
+Each constraint's name — the primary key's, the exclusion's, each axis's
+interval check's, and the document root check's — is:
 
 ```text
 pxc_<kind>_<readable-table-prefix>_<fingerprint>
-kind: pk | tx | valid | excl
+kind: pk | tx | valid | excl | doc
 ```
 
 The **fingerprint** is the first 128 bits of SHA-256, as 32 lowercase
@@ -655,7 +677,8 @@ start Column then the end Column. A primary key has one group, semantics
 `unique`, whose operands are its Columns in key order. An exclusion has a group
 of semantics `eq` over the `logicalKey` Columns, then one group of semantics
 `overlap` per axis — its start then its end Column — Valid Time before
-Transaction Time. Prefixing each group with its semantics and
+Transaction Time. A document root check has one group, semantics `object`, whose
+operand is the shared Structured Column. Prefixing each group with its semantics and
 operand count keeps group boundaries in the digest, and the version field makes
 a later change to what is hashed produce different names by construction. The
 Table name is the resolved physical table's raw local name, never its qualifier

@@ -7,11 +7,13 @@ Value Object leaf inside a document bind — distinguishes ``-0.0`` from ``0.0``
 while a Json position and a document key no declaration names keep JSON-value
 equality. Nothing in a bind value says which it is, so the position is read off
 the statement and the case's model: a Column an ``insert`` lists or an ``update``
-assigns, a document path a mutation expression assigns, or the operand a bind is
-compared with. A multi-row insert's column array holds its Column's position at
+assigns, the members a document merge assigns, or the operand a bind is compared
+with. A multi-row insert's column array holds its Column's position at
 every element, and a shared Structured Column's array the document each row's
-own discriminator tag selects. A position this cannot resolve stays untyped and
-compares as JSON; a type is never guessed from a value.
+own discriminator tag selects. A grouped update's source array holds, at every
+element, the position of the Column its source column is assigned to, under the
+tag the statement guards every row by. A position this cannot resolve stays
+untyped and compares as JSON; a type is never guessed from a value.
 
 The same reading names the binds that write a whole document Column, where a
 golden ``null`` states SQL NULL (`m-value-object`).
@@ -120,8 +122,8 @@ def whole_document_binds(
 ) -> dict[int, bool]:
     """Each bind index of the canonical ``sql`` that writes one whole document
     Column, mapped to whether it binds a column array: an ``insert`` cell or
-    column array, or an ``update``'s bare ``column = ?``. A document path a
-    mutation expression assigns writes inside the Column, not the Column."""
+    column array, or an ``update``'s bare ``column = ?``. A merge into the
+    Column assigns some of its members, not the Column."""
     try:
         tree = sqlglot.parse_one(_indexed(sql), read=dialect)
     except sqlglot.ParseError:
@@ -306,11 +308,15 @@ def _unwrapped(expression: exp.Expr) -> exp.Expr:
     return expression
 
 
-def _bare_bind(expression: exp.Expr) -> int | None:
-    """The bind index of an operand that is one bind, however parenthesized or cast."""
+def _transparent(expression: exp.Expr) -> exp.Expr:
     while isinstance(expression, (exp.Paren, exp.Cast)):
         expression = expression.this
-    return _index(expression)
+    return expression
+
+
+def _bare_bind(expression: exp.Expr) -> int | None:
+    """The bind index of an operand that is one bind, however parenthesized or cast."""
+    return _index(_transparent(expression))
 
 
 class _Statement:
@@ -445,15 +451,13 @@ class _Statement:
             position = None if slot is None else self._slot_position(slot, known)
             if position is None:
                 continue
-            index = _bare_bind(assignment.expression)
+            merged = _merged_operand(assignment)
+            operand = assignment.expression if merged is None else merged
+            index = _bare_bind(operand)
             if index is not None:
                 positions[index] = position
-                continue
-            for path_index, value_index in _path_assignments(assignment):
-                path = _text_array_path(self._bound(path_index))
-                member = None if path is None else _at_path(position, path)
-                if member is not None:
-                    positions[value_index] = member
+            elif (sourced := _sourced_bind(tree, operand)) is not None:
+                positions[sourced] = Elements(position)
         return positions
 
     def _slot_position(self, slot: ColumnSlot, known: Mapping[str, object]) -> BindPosition | None:
@@ -618,27 +622,32 @@ def _scope_tables(scope: exp.Expr) -> Iterator[exp.Table]:
             yield source
 
 
-def _path_assignments(assignment: exp.EQ) -> Iterator[tuple[int, int]]:
-    """The (path, value) bind pairs of a nested ``jsonb_set`` over the assigned
-    Column itself, innermost first."""
-    pairs: list[tuple[int, int]] = []
-    current = assignment.expression
-    while isinstance(current, exp.Anonymous) and current.name.lower() == "jsonb_set":
-        if len(current.expressions) != 3:
-            return
-        current, path, value = current.expressions
-        path_index, value_index = _index(path), _bare_bind(value)
-        if path_index is None or value_index is None:
-            return
-        pairs.append((path_index, value_index))
-    if isinstance(current, exp.Column) and current.name == assignment.this.name:
-        yield from reversed(pairs)
+def _merged_operand(assignment: exp.EQ) -> exp.Expr | None:
+    """The operand a ``column || <operand>`` merge over the assigned Column itself
+    joins to it: a partial document holding the members it assigns."""
+    merge = _transparent(assignment.expression)
+    if not isinstance(merge, exp.DPipe):
+        return None
+    target = _transparent(merge.this)
+    if not isinstance(target, exp.Column) or target.name != assignment.this.name:
+        return None
+    return merge.expression
 
 
-def _text_array_path(value: object) -> list[str] | None:
-    if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
-        return value[1:-1].split(",")
-    return None
+def _sourced_bind(update: exp.Update, operand: exp.Expr) -> int | None:
+    """The bind index of the array a grouped update's ``unnest(…) … v(…)``
+    source column ``operand`` reads, one element per row."""
+    column = _transparent(operand)
+    origin = update.args.get("from_")
+    source = origin.this if isinstance(origin, exp.From) else None
+    if not isinstance(column, exp.Column) or not isinstance(source, exp.Unnest):
+        return None
+    alias = source.args.get("alias")
+    if not isinstance(alias, exp.TableAlias) or not column.table or column.table != alias.name:
+        return None
+    arguments = dict(zip((name.name for name in alias.columns), source.expressions, strict=False))
+    argument = arguments.get(column.name)
+    return None if argument is None else _bare_bind(argument)
 
 
 def _slot_named(layout: TableLayout, name: str) -> ColumnSlot | None:

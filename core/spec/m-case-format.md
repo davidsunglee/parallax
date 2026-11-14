@@ -320,25 +320,26 @@ in the order that reads best and get the same verdict on both dialects.
 **A document-valued bind is authored as the document, never as its rendered text.**
 Wherever a `?` carries a **composite** structured document — an object or an array:
 the atomic value-object write bind, a Relational Document Layout `INSERT`'s complete
-document, a complete `many`-occurrence array replacement, and the MariaDB `json_contains`
-candidate an element predicate binds (`m-sql`) — the `binds` entry is the document
+document, the object of assigned members a Postgres document merge binds, a complete
+`many`-occurrence array replacement, and the MariaDB `json_contains` candidate an
+element predicate binds (`m-sql`) — the `binds` entry is the document
 itself, in the same style as a document cell, and the provider adapts it at bind time
 (Postgres wraps it as `jsonb`, MariaDB serializes it to `json` text). A text spelling
 would put a key order and a separator convention into the golden that no contract
 fixes, and would compare two documents `m-document-codec` says are one value as two
 different binds.
 
-**A document-valued bind that is a JSON scalar is authored as its JSON text.** A
-leaf assignment inside the document mutation expression (`m-dialect`) binds a JSON
-string, number, boolean, or null, and no structural authoring form distinguishes one
-from an ordinary scalar bind, so the two coexist under the same `?`: the dialect's
-value expression — `cast(? as jsonb)` on Postgres, `json_extract(?, '$')` on MariaDB
-— parses either form, and a scalar rides as the JSON text (`"Solveig"`, `42`,
-`true`, `null`) that both parse. This costs the rule above nothing, because what it
-protects is a composite's key order and separator convention and a JSON scalar has
-neither. It is the same boundary the array guard's `cast(? as jsonb)` already draws:
-that `?` takes the two characters `[]` because it is a text argument the dialect
-spells (`m-dialect`), not a document the codec built.
+**A document-valued bind that is a JSON scalar is authored as its plain value.** A
+leaf assignment inside the MariaDB document mutation expression (`m-dialect`) binds
+a JSON string, number, boolean, or null through `json_extract(?, '$')`, which parses
+JSON text. The case authors that value as it authors any scalar (`Solveig`, `42`,
+`true`, `null`), and the provider adapts it to the JSON text (`"Solveig"`, `42`,
+`true`, `null`) at bind time, exactly as it adapts a composite. No authored form
+distinguishes the two adaptations; the statement's own value expression decides
+which a bind receives. A JSON scalar has no key order or separator convention, so
+the rule above loses nothing here. The array guard's `cast(? as jsonb)` draws a
+different boundary: that `?` takes the two characters `[]` because it is a text
+argument the dialect spells (`m-dialect`), not a document the codec built.
 
 The complementary rule is on the construction side, not here: binds are built in
 canonical logical placement order so a golden document is deterministic to
@@ -361,9 +362,9 @@ Canonical checking is recursive through declared Value Object documents. Opaque
 Json values are checked as one recursive JSON value and never treated as inferred
 neutral leaves. Null is checked by the enclosing position's presence/nullability
 contract, never by the Neutral Wire Codec. Golden SQL text and dialect-native
-control binds such as `infinity`, path segments, and JSON mutation text are not
-typed literal positions unless the statement metadata identifies them as modeled
-values.
+control binds such as `infinity`, path segments, and document mutation paths are
+not typed literal positions unless the statement metadata identifies them as
+modeled values.
 
 A bind or write value graded against a canonical expectation — a statement
 bind, a document-valued bind, or a value derived from a case's neutral write
@@ -902,9 +903,13 @@ construction, and relaxing the authoring oracle — which protects every fixture
 is never traded for the few deliberately broken rows.
 
 **An addressed member MUST be stored in a Structured Column** — document-resident,
-or a top-level scalar collection's own structured Column. A Structured Column
-holds any JSON value, so every corruption a case can state is storable on both
-dialects without touching DDL. A typed, constrained Column can be made to hold a
+or a top-level scalar collection's own structured Column. A member value inside a
+Structured Column, and a `Columns` occurrence's or scalar collection's own
+Structured Column, hold any JSON value. A generated `Document` Table's shared
+Structured Column constrains only its root to an object (`m-storage-layout`
+*Document root constraint*), and every address names a member beneath that root,
+never the root itself. Every corruption a case can state is therefore storable on
+both dialects without touching DDL. A typed, constrained Column can be made to hold a
 non-conforming value only by first removing the constraint that forbids it, and a
 case that altered its schema would no longer be reading the model it declares. Two
 consequences are deliberate and permanent: `stored-data-primary-key-null` and

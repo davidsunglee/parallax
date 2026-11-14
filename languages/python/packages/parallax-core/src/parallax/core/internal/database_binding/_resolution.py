@@ -14,6 +14,7 @@ from parallax.core.internal.database_binding._errors import (
 from parallax.core.internal.database_binding._physical import (
     PhysicalSequence,
     PhysicalTable,
+    ResolvedDocumentRootConstraint,
     ResolvedTable,
     ResolvedTemporalConstraints,
 )
@@ -21,6 +22,7 @@ from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel, PrimaryKey, Sequence
 from parallax.core.internal.storage_layout import (
     TableLayout,
+    document_root_check_name,
     storage_layout_facet_of,
     temporal_constraint_names,
 )
@@ -232,12 +234,21 @@ class _Resolver:
                 valid_check_name=names.valid_check,
                 exclusion_name=names.exclusion,
             )
+        root = layout.document_root_constraint
+        document_root = (
+            None
+            if root is None
+            else ResolvedDocumentRootConstraint(
+                definition=root, check_name=document_root_check_name(name, root)
+            )
+        )
         return ResolvedTable(
             mapping_owner=owner,
             physical=physical,
             sql=self.dialect.render_table(physical),
             layout=layout,
             temporal_constraints=constraints,
+            document_root_constraint=document_root,
         )
 
     def sequence(self, allocator: str) -> PhysicalSequence | None:

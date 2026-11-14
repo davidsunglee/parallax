@@ -6,7 +6,11 @@ from typing import Final
 
 from parallax.core.internal import storage_layout
 from parallax.core.internal.base import JSON, STRING, NeutralType
-from parallax.core.internal.database_binding import ResolvedBinding, ResolvedTemporalConstraints
+from parallax.core.internal.database_binding import (
+    ResolvedBinding,
+    ResolvedTable,
+    ResolvedTemporalConstraints,
+)
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.inheritance import (
     InheritanceEntityView,
@@ -59,6 +63,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     CreateExtension,
     CreateIndex,
     CreateTable,
+    DocumentRootCheck,
     DropIndex,
     Exclusion,
     IndexDefinition,
@@ -333,13 +338,13 @@ def _create(
 ) -> Iterator[PhysicalOperation]:
     """One new Table, then each authored Index it holds as its own statement.
 
-    A Table the earlier edition did not have is created whole, a temporal
-    Table's named primary key, interval checks, and exclusion inline. A Table
-    that survives gains none of them: its stored rows are the operator's to
-    validate before any constraint governs them. An Index created
-    as part of creating its Table is caused by everything that caused the Table:
-    it arrives because the declarations the Table materializes arrived, and no
-    Index operation of its own describes it.
+    A Table the earlier edition did not have is created whole, with a temporal
+    Table's named primary key, interval checks, and exclusion, and a Document
+    Table's root-object check, inline. A Table that survives gains none of them:
+    its stored rows are the operator's to validate before any constraint governs
+    them. An Index created as part of creating its Table is caused by everything
+    that caused the Table: it arrives because the declarations the Table
+    materializes arrived, and no Index operation of its own describes it.
     """
     table = later.resolved.table(layout.mapping_owner)
     constraints = table.temporal_constraints
@@ -347,7 +352,7 @@ def _create(
         table=table,
         columns=tuple(_physical_column(later.model, slot) for slot in layout.columns),
         primary_key=tuple(slot.column for slot in layout.physical_primary_key),
-        interval_checks=_interval_checks(constraints),
+        checks=_checks(table),
         caused_by=causes,
         primary_key_name=None if constraints is None else constraints.primary_key_name,
         exclusion=None if constraints is None else _exclusion(constraints),
@@ -373,20 +378,26 @@ def _exclusion(constraints: ResolvedTemporalConstraints) -> Exclusion:
     )
 
 
-def _interval_checks(constraints: ResolvedTemporalConstraints | None) -> tuple[IntervalCheck, ...]:
-    """Each temporal axis's interval check, in canonical axis order."""
-    if constraints is None:
-        return ()
-    definition = constraints.definition
-    checks = (
-        (definition.valid_axis, constraints.valid_check_name),
-        (definition.transaction_axis, constraints.transaction_check_name),
-    )
-    return tuple(
-        IntervalCheck(name=name, start=axis.start.column, end=axis.end.column)
-        for axis, name in checks
-        if axis is not None and name is not None
-    )
+def _checks(table: ResolvedTable) -> tuple[IntervalCheck | DocumentRootCheck, ...]:
+    """Each temporal axis's interval check in canonical axis order, then the
+    document root check."""
+    checks: list[IntervalCheck | DocumentRootCheck] = []
+    constraints = table.temporal_constraints
+    if constraints is not None:
+        definition = constraints.definition
+        axes = (
+            (definition.valid_axis, constraints.valid_check_name),
+            (definition.transaction_axis, constraints.transaction_check_name),
+        )
+        checks.extend(
+            IntervalCheck(name=name, start=axis.start.column, end=axis.end.column)
+            for axis, name in axes
+            if axis is not None and name is not None
+        )
+    root = table.document_root_constraint
+    if root is not None:
+        checks.append(DocumentRootCheck(name=root.check_name, column=root.definition.slot.column))
+    return tuple(checks)
 
 
 def _columns(

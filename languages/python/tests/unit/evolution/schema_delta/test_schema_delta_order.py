@@ -148,7 +148,7 @@ def _create_table() -> CreateTable:
         table=_TABLE,
         columns=(_CODE, _COUNT),
         primary_key=(Column(name="code"),),
-        interval_checks=(),
+        checks=(),
         caused_by=_CAUSE,
     )
 
@@ -179,7 +179,7 @@ def test_the_key_leads_with_the_physical_table() -> None:
         table=resolved_table(EntityIdentity("parallax.test", "Aardvark"), "aardvark"),
         columns=(),
         primary_key=(),
-        interval_checks=(),
+        checks=(),
         caused_by=_CAUSE,
     )
     assert order_key(other) < order_key(_create_table())
@@ -358,7 +358,7 @@ def test_a_prerequisite_precedes_every_table_operation_whatever_their_names() ->
         table=resolved_table(EntityIdentity("parallax.test", "Aardvark"), "aardvark"),
         columns=(_CODE,),
         primary_key=(),
-        interval_checks=(),
+        checks=(),
         caused_by=_CAUSE,
     )
     ordered = order([_create_index("alpha"), _create_table(), extension, other])
@@ -372,7 +372,7 @@ def test_a_constrained_table_created_before_its_prerequisite_breaks_a_rule() -> 
         table=_TABLE,
         columns=(_CODE,),
         primary_key=(Column(name="code"),),
-        interval_checks=(),
+        checks=(),
         caused_by=_CAUSE,
         exclusion=Exclusion(name="pxc_excl_widget", equal=(Column(name="code"),), overlapping=()),
     )

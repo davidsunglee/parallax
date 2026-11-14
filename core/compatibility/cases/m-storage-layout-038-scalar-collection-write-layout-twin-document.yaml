@@ -60,16 +60,13 @@ when:
       note: clear one collection, replace another, and replace the `many` occurrence holding nested collections
       statements:
         - sql:
-            postgres: update px.collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            postgres: update px.collection_twin set payload = payload || cast(? as jsonb) where id = ?
             mariadb: update px.collection_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
-              - '{counts}'
-              - [5, 5]
-              - '{tags}'
-              - []
-              - '{parts}'
-              - [{ sku: d, marks: [] }]
+              - counts: [5, 5]
+                tags: []
+                parts: [{ sku: d, marks: [] }]
               - 1
             mariadb:
               - '$.counts'

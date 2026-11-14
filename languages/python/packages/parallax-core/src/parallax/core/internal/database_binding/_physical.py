@@ -3,11 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.storage_layout import TableLayout, TemporalHistoryConstraints
+from parallax.core.internal.storage_layout import (
+    DocumentRootConstraint,
+    TableLayout,
+    TemporalHistoryConstraints,
+)
 
 __all__ = [
     "PhysicalSequence",
     "PhysicalTable",
+    "ResolvedDocumentRootConstraint",
     "ResolvedTable",
     "ResolvedTemporalConstraints",
 ]
@@ -49,13 +54,25 @@ class ResolvedTemporalConstraints:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedDocumentRootConstraint:
+    """A Document table's root-object constraint and the name it takes there.
+
+    ``definition`` is the Storage Layout's own definition, referenced rather
+    than copied; ``check_name`` derives from the resolved physical local name.
+    """
+
+    definition: DocumentRootConstraint
+    check_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedTable:
     """One mapping owner's table under one binding.
 
     ``sql`` is the dialect's rendering of ``physical``, made once at resolution
-    and read by every statement naming the table. ``layout`` and
-    ``temporal_constraints`` are functions of the owner, the model, and
-    ``physical``, so they stay out of comparison.
+    and read by every statement naming the table. ``layout`` and the resolved
+    constraints are functions of the owner, the model, and ``physical``, so
+    they stay out of comparison.
     """
 
     mapping_owner: EntityIdentity
@@ -63,3 +80,6 @@ class ResolvedTable:
     sql: str
     layout: TableLayout = field(compare=False, repr=False)
     temporal_constraints: ResolvedTemporalConstraints | None = field(compare=False, repr=False)
+    document_root_constraint: ResolvedDocumentRootConstraint | None = field(
+        compare=False, repr=False
+    )

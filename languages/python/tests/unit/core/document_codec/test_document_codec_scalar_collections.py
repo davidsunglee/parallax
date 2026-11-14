@@ -52,6 +52,7 @@ from parallax.core.internal.document_codec import (
     ScalarDefinition,
     SetScalar,
     apply_prepared_patches,
+    assigned_members,
     classify_effective_change,
     encode_occurrence,
     encode_scalar_many,
@@ -303,10 +304,7 @@ def test_a_scalar_patch_replaces_a_whole_collection_and_keeps_unknown_keys() -> 
         [SetScalar(("tags",), Present(("z", "z"))), SetScalar(("amounts",), NULL)],
     )
 
-    assert [(patch.path, patch.value, patch.leaf) for patch in prepared] == [
-        (("tags",), ("z", "z"), None),
-        (("amounts",), (), None),
-    ]
+    assert assigned_members(prepared) == {"tags": ("z", "z"), "amounts": ()}
     assert apply_prepared_patches(
         {"tags": ["a"], "amounts": ["1.00"], "future": [1, "x"]}, prepared
     ) == {"tags": ("z", "z"), "amounts": (), "future": (1, "x")}

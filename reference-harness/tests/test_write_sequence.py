@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from reference_harness import case_runner
 from reference_harness.case import Case, Model, discover_cases, load_model
@@ -1145,34 +1146,30 @@ def test_balance_entity_is_unitemporal_transaction_time() -> None:
 # supersedes. These pin what that admits and what it still refuses.
 
 
-@pytest.mark.parametrize(
-    ("dialect", "adapt", "logical", "physical"),
-    [
-        (
-            "postgres",
-            postgres_statement_binds,
-            ["{displayName}", "Dagny", "{score}", 21, 6],
-            ("{displayName}", '"Dagny"', "{score}", "21", 6),
-        ),
-        (
-            "mariadb",
-            mariadb_statement_binds,
-            ["$.displayName", "Dagny", "$.score", 21, 6],
-            ("$.displayName", '"Dagny"', "$.score", "21", 6),
-        ),
-    ],
-)
-def test_document_scalar_mutation_binds_render_only_at_the_provider_boundary(
-    dialect: str,
-    adapt: Callable[[str, Sequence[Any]], tuple[Any, ...]],
-    logical: list[object],
-    physical: tuple[object, ...],
-) -> None:
+def test_document_scalar_mutation_binds_render_only_at_the_mariadb_provider_boundary() -> None:
     case = _write_case_by_id("m-storage-layout-023")
-    statement = case.golden_statements(dialect)[1]
+    statement = case.golden_statements("mariadb")[1]
+    logical = ["$.displayName", "Dagny", "$.score", 21, 6]
 
-    assert case.statement_binds(1, dialect) == logical
-    assert adapt(statement, logical) == physical
+    assert case.statement_binds(1, "mariadb") == logical
+    assert mariadb_statement_binds(statement, logical) == (
+        "$.displayName",
+        '"Dagny"',
+        "$.score",
+        "21",
+        6,
+    )
+
+
+def test_a_postgres_document_merge_binds_its_members_as_one_jsonb_object() -> None:
+    case = _write_case_by_id("m-storage-layout-023")
+    statement = case.golden_statements("postgres")[1]
+    logical = [{"displayName": "Dagny", "score": 21}, 6]
+
+    assert case.statement_binds(1, "postgres") == logical
+    merged, key = postgres_statement_binds(statement, logical)
+    assert isinstance(merged, Jsonb)
+    assert (merged.obj, key) == (logical[0], 6)
 
 
 def test_json_casts_outside_document_mutation_do_not_reinterpret_logical_binds() -> None:
@@ -1181,10 +1178,12 @@ def test_json_casts_outside_document_mutation_do_not_reinterpret_logical_binds()
 
 
 def test_document_null_mutation_renders_from_the_neutral_null() -> None:
-    postgres = "update t set payload = jsonb_set(payload, ?, cast(? as jsonb))"
+    postgres = "update t set payload = payload || cast(? as jsonb)"
     mariadb = "update t set payload = json_set(payload, ?, json_extract(?, '$'))"
 
-    assert postgres_statement_binds(postgres, ["{label}", None]) == ("{label}", "null")
+    (merged,) = postgres_statement_binds(postgres, [{"label": None}])
+    assert isinstance(merged, Jsonb)
+    assert merged.obj == {"label": None}
     assert mariadb_statement_binds(mariadb, ["$.label", None]) == ("$.label", "null")
 
 

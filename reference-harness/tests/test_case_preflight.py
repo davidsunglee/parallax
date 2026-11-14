@@ -774,7 +774,7 @@ def test_preflight_leaves_physical_sql_only_concurrency_values_untyped() -> None
     preflight_case_literals(case)
 
 
-_PATH_UPDATE_CASES = (
+_DOCUMENT_MUTATION_CASES = (
     "m-concurrency-018-document-layout-version-advance",
     "m-storage-layout-023-document-layout-patch-update",
     "m-storage-layout-024-document-layout-occurrence-parent-states",
@@ -792,19 +792,31 @@ def _damaged(stem: str) -> Case:
     return copy.deepcopy(_corpus_case(stem))
 
 
-def _document_path(dialect: str, member: str) -> str:
-    return "{" + member + "}" if dialect == "postgres" else f"$.{member}"
+_DOCUMENT_MUTATIONS = {
+    "postgres": "payload || cast(? as jsonb)",
+    "mariadb": "json_set(payload, ?, json_extract(?, '$'))",
+}
 
 
-def _node_path_update(dialect: str, member: str, value: object) -> Case:
+def _document_mutation_binds(dialect: str, member: str, value: object) -> list[object]:
+    """One assigned member as a document mutation binds it: a key of the merged
+    object on Postgres, a path and value pair on MariaDB."""
+    return [{member: value}] if dialect == "postgres" else [f"$.{member}", value]
+
+
+def _assigned_value_at(dialect: str, member: str) -> str:
+    """Where the value of one assigned member sits among a mutation's binds."""
+    return rf"\[0\]\.{member}" if dialect == "postgres" else r"\[1\]"
+
+
+def _node_path_update(
+    dialect: str, member: str, value: object, mutation: str | None = None
+) -> Case:
     model = load_model(_COMPATIBILITY_ROOT, "models/materialization-stress-document.yaml")
-    mutation = {
-        "postgres": "jsonb_set(payload, ?, cast(? as jsonb))",
-        "mariadb": "json_set(payload, ?, json_extract(?, '$'))",
-    }[dialect]
+    mutation = _DOCUMENT_MUTATIONS[dialect] if mutation is None else mutation
     statement = {
         "sql": {dialect: f"update px.materialization_node set payload = {mutation} where id = ?"},
-        "binds": {dialect: [_document_path(dialect, member), value, 1]},
+        "binds": {dialect: [*_document_mutation_binds(dialect, member, value), 1]},
     }
     return Case(
         Path("synthetic-node-path-update.yaml"),
@@ -813,8 +825,8 @@ def _node_path_update(dialect: str, member: str, value: object) -> Case:
     )
 
 
-@pytest.mark.parametrize("stem", _PATH_UPDATE_CASES)
-def test_preflight_accepts_every_corpus_document_path_update(stem: str) -> None:
+@pytest.mark.parametrize("stem", _DOCUMENT_MUTATION_CASES)
+def test_preflight_accepts_every_corpus_document_mutation(stem: str) -> None:
     preflight_case_literals(_corpus_case(stem))
 
 
@@ -832,11 +844,29 @@ def test_preflight_refuses_a_negative_float_zero_at_a_document_path_leaf(
     dialect: str, member: str, value: float
 ) -> None:
     preflight_case_literals(_node_path_update(dialect, member, 0.0))
+    value_at = _assigned_value_at(dialect, member)
     with pytest.raises(
         CaseFailure,
-        match=rf"when\.scenario\[0\]\.statements\[0\]\.binds\.{dialect}\[1\]: .* not canonical",
+        match=rf"when\.scenario\[0\]\.statements\[0\]\.binds\.{dialect}{value_at}: "
+        r".* not canonical",
     ):
         preflight_case_literals(_node_path_update(dialect, member, value))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param("(payload) || (?)", id="parenthesized"),
+        pytest.param("cast(payload as jsonb) || cast(? as jsonb)", id="a-cast-target"),
+        pytest.param("cast(payload || cast(? as jsonb) as jsonb)", id="a-cast-merge"),
+    ],
+)
+def test_preflight_refuses_a_negative_float_zero_through_a_wrapped_document_merge(
+    mutation: str,
+) -> None:
+    preflight_case_literals(_node_path_update("postgres", "ratio", 0.0, mutation))
+    with pytest.raises(CaseFailure, match=r"binds\.postgres\[0\]\.ratio: .* not canonical"):
+        preflight_case_literals(_node_path_update("postgres", "ratio", -0.0, mutation))
 
 
 @pytest.mark.parametrize("dialect", _DIALECTS)
@@ -850,7 +880,10 @@ def test_preflight_refuses_a_negative_float_zero_at_a_document_path_leaf(
 def test_preflight_checks_a_document_path_occurrence_through_its_declaration(
     dialect: str, member: str, value: object, location: str
 ) -> None:
-    with pytest.raises(CaseFailure, match=rf"binds\.{dialect}\[1\]{location}: .* not canonical"):
+    value_at = _assigned_value_at(dialect, member)
+    with pytest.raises(
+        CaseFailure, match=rf"binds\.{dialect}{value_at}{location}: .* not canonical"
+    ):
         preflight_case_literals(_node_path_update(dialect, member, value))
 
 
@@ -860,10 +893,13 @@ def test_preflight_types_the_scenario_occurrence_path_values_of_a_corpus_case(
 ) -> None:
     case = _damaged("m-storage-layout-034-chained-occurrence-edits-layout-twin-document")
     statement = case.when["scenario"][0]["statements"][0]
-    statement["binds"][dialect][1]["stops"][1]["port"] = 42
+    binds = statement["binds"][dialect]
+    spec = binds[0]["spec"] if dialect == "postgres" else binds[1]
+    spec["stops"][1]["port"] = 42
+    value_at = _assigned_value_at(dialect, "spec")
     with pytest.raises(
         CaseFailure,
-        match=rf"when\.scenario\[0\]\.statements\[0\]\.binds\.{dialect}\[1\]"
+        match=rf"when\.scenario\[0\]\.statements\[0\]\.binds\.{dialect}{value_at}"
         r"\.stops\[1\]\.port: 42 is type-mismatch for string",
     ):
         preflight_case_literals(case)
@@ -874,9 +910,15 @@ def test_preflight_types_every_write_sequence_path_value_of_a_nested_mutation(
     dialect: str,
 ) -> None:
     case = _damaged("m-storage-layout-023-document-layout-patch-update")
-    case.then["statements"][-1]["binds"][dialect][3] = "21"
+    binds = case.then["statements"][-1]["binds"][dialect]
+    if dialect == "postgres":
+        binds[0]["score"] = "21"
+        score_at = r"\[0\]\.score"
+    else:
+        binds[3] = "21"
+        score_at = r"\[3\]"
     with pytest.raises(
-        CaseFailure, match=rf"binds\.{dialect}\[3\]: '21' is type-mismatch for int64"
+        CaseFailure, match=rf"binds\.{dialect}{score_at}: '21' is type-mismatch for int64"
     ):
         preflight_case_literals(case)
 
@@ -1015,7 +1057,7 @@ class _RecordingExecutor:
 
 
 @pytest.mark.parametrize("dialect", _DIALECTS)
-def test_execution_passes_document_path_binds_through_unadapted(dialect: str) -> None:
+def test_execution_passes_document_mutation_binds_through_unadapted(dialect: str) -> None:
     case = _corpus_case("m-storage-layout-032-assigned-occurrence-replacement-layout-twin-document")
     statement = case.when["scenario"][0]["statements"][0]
     binds = statement["binds"][dialect]
@@ -1037,14 +1079,11 @@ def _payment_write(dialect: str, sql: str, binds: list[object]) -> Case:
 
 
 def _payment_path_update(dialect: str, kind: str, value: object) -> Case:
-    mutation = {
-        "postgres": "jsonb_set(payload, ?, cast(? as jsonb))",
-        "mariadb": "json_set(payload, ?, json_extract(?, '$'))",
-    }[dialect]
     return _payment_write(
         dialect,
-        f"update px.payment_document set payload = {mutation} where id = ? and kind = ?",
-        [_document_path(dialect, "detail"), value, 2, kind],
+        f"update px.payment_document set payload = {_DOCUMENT_MUTATIONS[dialect]} "
+        "where id = ? and kind = ?",
+        [*_document_mutation_binds(dialect, "detail", value), 2, kind],
     )
 
 
@@ -1066,11 +1105,11 @@ def _payment_document_update(dialect: str, kind: str, value: object) -> Case:
 
 @pytest.mark.parametrize("dialect", _DIALECTS)
 @pytest.mark.parametrize(
-    ("write", "value_index", "location"),
+    ("write", "value_at"),
     [
-        (_payment_path_update, 1, ""),
-        (_payment_document_insert, 2, r"\.detail"),
-        (_payment_document_update, 0, r"\.detail"),
+        (_payment_path_update, {"postgres": r"\[0\]\.detail", "mariadb": r"\[1\]"}),
+        (_payment_document_insert, {"postgres": r"\[2\]\.detail", "mariadb": r"\[2\]\.detail"}),
+        (_payment_document_update, {"postgres": r"\[0\]\.detail", "mariadb": r"\[0\]\.detail"}),
     ],
 )
 @pytest.mark.parametrize(
@@ -1083,8 +1122,7 @@ def _payment_document_update(dialect: str, kind: str, value: object) -> Case:
 def test_preflight_types_a_sibling_reused_document_path_by_the_statement_tag(
     dialect: str,
     write: Any,
-    value_index: int,
-    location: str,
+    value_at: dict[str, str],
     kind: str,
     canonical: object,
     damaged: object,
@@ -1093,7 +1131,7 @@ def test_preflight_types_a_sibling_reused_document_path_by_the_statement_tag(
     preflight_case_literals(write(dialect, kind, canonical))
     with pytest.raises(
         CaseFailure,
-        match=rf"binds\.{dialect}\[{value_index}\]{location}: .* for {declared}",
+        match=rf"binds\.{dialect}{value_at[dialect]}: .* for {declared}",
     ):
         preflight_case_literals(write(dialect, kind, damaged))
 

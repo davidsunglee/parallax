@@ -65,13 +65,13 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **scalar element projection** (`m-predicate` scalar quantifiers) | `case when jsonb_typeof(t1.value) = ? then <typed projection of t1.value #>> ?> end` — the element's declared JSON kind guards the projection (see below) | none — a filtered scalar quantifier is outside the MariaDB lane and is refused (see below) |
 | **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
 | **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
-| **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, cast(? as jsonb))` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned path (see below) |
+| **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **merge** `col \|\| cast(? as jsonb)` — one object bind holding every assigned member, whatever their number | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned member (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-sql` *Read-lock suffix*) | an object find that must take the shared row lock: `for share of t0` | an object find that must take the shared row lock: **`lock in share mode`** (no `for share`; MDEV-17514) |
-| **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion (see below) |
+| **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite; a created Document table carries its named root-object check `jsonb_typeof(<col>) = 'object'` inline | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion; a created Document table carries its named root-object check `json_type(<col>) = 'OBJECT'` inline (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | **bind parameter limit** | 65535 | 65535 |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
@@ -494,41 +494,49 @@ membership; its affected-row count keeps the *Unchanged-row count* rule below.
 
 ### Document mutation-expression form (`m-storage-layout`)
 
-A Relational Document Layout `UPDATE` assigns one or more logical paths inside
-one Structured Column and MUST NOT rewrite the column whole
-(`m-storage-layout`). The assignment algebra this seam receives is flat and has
-two nodes — a leaf and a whole occurrence — and it renders them identically,
-because each hands it one already-encoded value for one absolute path: a leaf's
-canonical spelling, an occurrence's complete document, or JSON null. Composing
-those assignments into one `SET` expression is a dialect decision owned here,
-and the two engines take genuinely different shapes:
+A Relational Document Layout `UPDATE` assigns one or more top-level members
+inside one Structured Column and MUST NOT rewrite the column whole
+(`m-storage-layout`). The seam receives those assignments as one ordered mapping
+from each assigned member's name to its complete encoded value — a leaf's
+canonical spelling, a scalar collection's array, an occurrence's complete
+document, or JSON null — in canonical logical placement order, one key per
+assigned member. A leaf and a whole occurrence render identically, because each
+is one already-encoded value under one top-level key. Composing those
+assignments into one `SET` expression is a dialect decision owned here, and the
+two engines take genuinely different shapes:
 
 | Aspect | Postgres | MariaDB |
 |---|---|---|
-| one assignment | `jsonb_set(col, ?, cast(? as jsonb))` | `json_set(col, ?, json_extract(?, '$'))` |
-| N assignments | **nested** — each call's target is the previous call's result: `jsonb_set(jsonb_set(col, ?, cast(? as jsonb)), ?, cast(? as jsonb))` | **native N-pair** — one call: `json_set(col, ?, json_extract(?, '$'), ?, json_extract(?, '$'))` |
-| path bind | one `?` carrying the Postgres text-array path (`{displayName}`) | one `?` carrying the JSON-path string (`$.displayName`) |
-| value bind | one `?` per assignment, the encoded document value, wrapped in the **value expression** below | one `?` per assignment, the encoded document value, wrapped in the **value expression** below |
+| one assignment | `col \|\| cast(? as jsonb)` | `json_set(col, ?, json_extract(?, '$'))` |
+| N assignments | **merge** — the same term: `col \|\| cast(? as jsonb)` | **native N-pair** — one call: `json_set(col, ?, json_extract(?, '$'), ?, json_extract(?, '$'))` |
+| member key | a key of the bound object (`displayName`) | one `?` carrying the JSON-path string (`$.displayName`) |
+| value bind | one `?` for every assignment: the object of assigned members, crossing as one structured document inside the **value expression** below | one `?` per assignment, the encoded document value, wrapped in the **value expression** below |
 
 ```sql
 -- two assignments, canonical logical placement order
 -- postgres
-set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))
+set payload = payload || cast(? as jsonb)
 -- mariadb
 set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'))
 ```
+
+Postgres `||` over two objects keeps every key of the stored object the bound
+one does not name and replaces each key it does name with the bound value, whole:
+the merge does not recurse, so an assigned occurrence replaces its subtree and
+nothing inside the stored one survives. Because every assigned member is a
+top-level key (`m-storage-layout`), the shallow merge is exactly "assign these
+members". JSON null and the empty array a replacement completes with are values
+inside the bound object; the object itself is never SQL NULL.
 
 **The value hole needs a per-dialect expression, and a bare `?` works on
 neither engine.** Both spellings are this decision point's own, for reasons that
 are properties of the two engines rather than of the value being written:
 
-- On **Postgres** a bare `?` in `jsonb_set`'s value position resolves to the
-  function's declared `jsonb` parameter type, so nothing but a `jsonb`-typed
-  bind or JSON text is admissible there: an ordinary string bind is an
-  `invalid input syntax for type json` error and an ordinary integer bind is a
-  `function jsonb_set(jsonb, unknown, smallint) does not exist` error.
-  `cast(? as jsonb)` admits both a composite adapted to the driver's `jsonb`
-  type and a JSON scalar's text.
+- On **Postgres** `||` is overloaded — `jsonb || jsonb` merges while
+  `anynonarray || text` concatenates text — so a bare `?` takes whichever
+  operator the driver's bind type selects, and a text-typed bind turns the term
+  into text concatenation. `cast(? as jsonb)` pins the merge whatever the bind's
+  type, and admits the object adapted to the driver's `jsonb` type.
 - On **MariaDB** a bare `?` in `json_set`'s value position accepts a scalar but
   **silently escapes a composite** — `json_set(payload, '$.addr', '{"city": "Oslo"}')`
   stores the *string* `"{\"city\": \"Oslo\"}"` rather than an object — because
@@ -537,58 +545,67 @@ are properties of the two engines rather than of the value being written:
   unwrap a value only `json_extract(?, '$')` unwraps a scalar as well as a
   composite, so it is the one expression that serves every assignment.
 
-A grouped effect (`m-sql` *Grouped effects*) reads each assigned value from a
-per-row source column that already carries the document type rather than from
-a bind, so on Postgres that column takes the value position itself —
-`jsonb_set(t.payload, ?, v.c4)` — while each path still binds once. MariaDB has
-no grouped effect.
+A grouped effect (`m-sql` *Grouped effects*) reads each effect's object of
+assigned members from a per-row source column that already carries the document
+type rather than from a bind, so on Postgres that column is the merge's right
+operand — `t.payload || v.c4` — and the term binds nothing of its own. MariaDB
+has no grouped effect.
 
 A future dialect supplies its own value expression at this decision point.
 Nothing above this seam wraps, quotes, or type-tags an assigned value: `m-sql`
-hands the seam the encoded document value and the seam decides how it reaches
-the engine, exactly as it does for the containment candidate.
+hands the seam the encoded members and the seam decides how they reach the
+engine, exactly as it does for the containment candidate.
 
-An encoded composite may use `m-core`'s recognized recursively immutable object
-and array carriers. The dialect classifies those carriers as composites exactly
-as it classifies parsed object and array containers, so they take the existing
-structured-document bind route; scalar and null assignments retain the existing
-JSON-text route. The dialect neither thaws an immutable composite nor treats an
-arbitrary mapping as a trusted document. Concrete adapter serialization remains
-below this pure seam.
+An encoded value may use `m-core`'s recognized recursively immutable object and
+array carriers, which Postgres binds inside its one structured document without
+thawing them. MariaDB binds each composite value through the structured-document
+route and each scalar or null value as the JSON text its value expression parses,
+which the provider adapts from the plain value (`m-case-format`). The dialect
+neither thaws an immutable composite nor treats an arbitrary mapping as a trusted
+document. Concrete adapter serialization remains below this pure seam.
 
-**Both forms apply left to right, so assignment order is semantically
-significant on both dialects** — the innermost Postgres call and the first
-MariaDB pair are the first assignment. The dialect does not choose that order:
-it renders the sequence `m-sql` hands it, which is canonical logical placement
-order. A dialect MUST NOT reorder, deduplicate, or merge assignments.
+**Assignments keep canonical logical placement order on both dialects** — the
+first MariaDB pair and the first key of the Postgres object are the first
+assignment. The dialect does not choose that order: it renders the sequence
+`m-sql` hands it. Each assigned member is a distinct top-level key, so one
+assignment never overrides another; the order is what keeps the expression and
+its binds deterministic. A dialect MUST NOT reorder or deduplicate assignments:
+Postgres carries each assigned member as one key of its one object, and MariaDB
+as one pair.
 
-Both engines create only the **final** path segment: an assignment whose parent
-below the root is absent, JSON null, or a non-object silently leaves the
-document unchanged. That is a bound this seam has to be given, not one it works
-around — and
-`m-storage-layout` gives it: every assigned Document Path is one segment, whose
-parent is the Structured Column's own root object, which every governed row
-carries. A dialect therefore emits one call per assigned path and MUST NOT
-substitute an empty object, type-test a subtree, or write one back; assigning an
-occurrence stores the document the mutation supplied, and no stored state is read
-back into it.
+Both forms assign top-level keys only. MariaDB `json_set` creates only the
+**final** path segment, so an assignment whose parent below the root is absent,
+JSON null, or a non-object would silently leave the document unchanged; the
+Postgres merge names no path at all. Neither needs more, because `m-storage-layout`
+gives this seam its bound: every assigned Document Path is one segment, whose
+parent is the Structured Column's own root object. A dialect therefore MUST NOT
+substitute an empty object, type-test the root or a subtree, or write stored
+state back; assigning an occurrence stores the document the mutation supplied,
+and no stored state is read back into it.
 
 Over an object root, the expression replaces or adds each assigned top-level key
 and leaves every other key as stored, which is exactly what applying the same
 prepared patches in memory predicts (`m-document-codec`). A root that is not an
-object is external state no governed write produces, and there the engine's own
-result stands and the in-memory application, which builds an object, does not
-predict it. On Postgres a path into a JSON-null or scalar root fails with
-`22023`, a non-numeric segment into an array root fails with `22P02` while a
-numeric one replaces or appends an element, and a SQL NULL column stays SQL NULL.
-MariaDB's behavior at a non-object root is not established here. A temporal
-revision that patches a row not known to hold an object root is refused before
-it executes (`m-temporal-write` *Ownership disposal*).
+object is external state no governed write produces. A Document Table the
+generator creates carries the root-object check (*Schema DDL primitives*), so on
+either dialect any write that would store a JSON-null, scalar, or array root
+fails with the check's own name — Postgres `23514` (`constraintViolation`) —
+and leaves the row unchanged. That includes a Table that adopted the check
+without validating its existing rows: a merge over a legacy non-object root
+there fails by the same name. On a Table without the check the engine's own
+result stands, and the in-memory application, which builds an object, does not
+predict it: on Postgres the merge wraps a JSON-null, scalar, or array root into
+an array ending with the bound object (`null || {…}` stores `[null, {…}]`,
+`["a"] || {…}` stores `["a", {…}]`), and a SQL NULL column stays SQL NULL.
+MariaDB's behavior at a non-object root of a Table without the check is not
+established here. A temporal revision that patches a row not known to hold an
+object root is refused before it executes (`m-temporal-write` *Ownership
+disposal*).
 
-Because the bind-hole structure diverges — the same two assignments are four
-holes inside two nested Postgres calls and four holes inside one MariaDB call,
-with different path spellings — a document-mutation case authors its `binds` as
-a **per-dialect map** (`m-case-format`), exactly as nested extraction does.
+Because the bind-hole structure diverges — the same two assignments are one
+object hole on Postgres and four holes inside one MariaDB call — a
+document-mutation case authors its `binds` as a **per-dialect map**
+(`m-case-format`), exactly as nested extraction does.
 
 ### Document column DDL (`m-storage-layout`)
 
@@ -596,7 +613,8 @@ A Relational Document Layout Structured Column renders as `jsonb not null` on
 Postgres and `json not null` on MariaDB. It carries no database default, because
 every write this contract admits binds a complete object explicitly, including
 the empty object. The non-null spelling is not a dialect choice — it is the
-slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
+slot's `effectiveNullable` answer (`m-storage-layout`), rendered here. Its Table's
+root-object check is spelled with the other checks (*Schema DDL primitives*).
 
 A conventional Value Object Structured Column keeps its existing derivation: the
 `json` neutral type through the mapping table above, with the occurrence's own
@@ -614,8 +632,10 @@ true arm is JSON null, even when the same sentinel in the false arm denotes SQL
 decoding. The adapter boundary does not pre-classify JSON null, an object, a
 scalar, an array, or an array containing a non-object element.
 
-The initial contract adds no generated deep `CHECK` constraint over document
-contents on either dialect. The structured-document type therefore admits JSON
+No generated `CHECK` constrains document contents below the root on either
+dialect, and only a generated Document Table's shared column constrains its root.
+A conventional Value Object or scalar collection Structured Column, and the shared
+column of a Table created without the root-object check, therefore admit JSON
 null, arrays, and scalars as well as objects. If external state contains one of
 those non-object Entity carriers, each requested member of it reads as absent
 (`m-document-codec`); the adapter boundary neither rejects the row nor invents a
@@ -647,12 +667,23 @@ seam — `m-schema-delta` asks for a domain restatement in exactly two shapes, a
 neither can tighten one — so a dropped `not null` is the only nullability action a
 caller can request.
 
-Creating a Table depends on each temporal axis's interval check, in the caller's
-order. Postgres spells each one inline after the key clause as
+Creating a Table depends on each of its checks, in the caller's order: each
+temporal axis's interval check, then a Document Table's root-object check. Postgres
+spells each interval check inline after the key clause as
 `constraint <name> check (<start> < <end>)`, so every row the Table stores —
 whoever writes it — has a nonempty, non-inverted interval on that axis, and a
 violating row fails with the check's own name. MariaDB spells none: its generated
 temporal tables carry no native temporal constraint.
+
+Both dialects spell the root-object check over the shared Structured Column, as
+`constraint <name> check (jsonb_typeof(<column>) = 'object')` on Postgres and
+`constraint <name> check (json_type(<column>) = 'OBJECT')` on MariaDB. Every
+writer of a created Document Table — an insert, an update, or an external
+statement — that would store a JSON-null, scalar, or array root fails with the
+check's own name, which Postgres reports as `23514` (`constraintViolation`). A
+SQL NULL root passes the check and is refused by the column's `not null`
+instead. The check is independent of the temporal checks, so a MariaDB Document
+Table carries it although its temporal tables carry none.
 
 A temporal Table's key carries its compiled name, which Postgres spells as
 `constraint <name> primary key (…)`; a key without one is left for the database
@@ -716,7 +747,7 @@ lowering step substitutes another proof for the count.
 
 `maxIdentifierBytes` is how many bytes of an identifier the database stores
 without truncating it: **63** on Postgres and **64** on MariaDB. A Physical
-Index Name is shortened to this limit by `m-schema-delta`'s rule, and a temporal
+Index Name is shortened to this limit by `m-schema-delta`'s rule, and a table
 constraint name is fitted to a fixed 63 bytes, within both limits, by
 `m-storage-layout`'s rule. A resolved table or sequence component is never
 shortened: the dialect's **identifier validity** refuses an empty component, one

@@ -32,8 +32,8 @@ from parallax.core.internal.write_payload._storage import (
 from parallax.core.internal.write_plan.managed_row import ManagedRow
 from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
+    DocumentPatches,
     EffectSlots,
-    PatchedDocument,
     RowPayload,
     RowSlots,
 )
@@ -254,7 +254,7 @@ def _assignment_cells(
             if not patches:
                 continue
             matched += len(patches) - 1
-            value = PatchedDocument(prepare_managed_patches(storage.residents.shape, patches))
+            value = DocumentPatches(prepare_managed_patches(storage.residents.shape, patches))
         else:
             continue
         matched += 1

@@ -49,10 +49,10 @@ then:
           tags:
             - { label: pilot }
     - sql:
-        postgres: update px.traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        postgres: update px.traveler set payload = payload || cast(? as jsonb) where id = ?
         mariadb: update px.traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
       binds:
-        postgres: ['{address}', { city: Bodo }, 7]
+        postgres: [{ address: { city: Bodo } }, 7]
         mariadb: ['$.address', { city: Bodo }, 7]
   tableState:
     px:

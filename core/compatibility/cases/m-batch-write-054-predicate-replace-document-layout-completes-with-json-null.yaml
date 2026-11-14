@@ -41,10 +41,10 @@ when:
       expectAffectedRows: 1
       statements:
         - sql:
-            postgres: update px.traveler set payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            postgres: update px.traveler set payload = payload || cast(? as jsonb) where id = ?
             mariadb: update px.traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
           binds:
-            postgres: ['{displayName}', Dee, '{score}', 13, '{joinedOn}', null, '{note}', null, '{address}', null, '{tags}', [], 4]
+            postgres: [{ displayName: Dee, score: 13, joinedOn: null, note: null, address: null, tags: [] }, 4]
             mariadb: ['$.displayName', Dee, '$.score', 13, '$.joinedOn', null, '$.note', null, '$.address', null, '$.tags', [], 4]
 then:
   databaseCalls: 1

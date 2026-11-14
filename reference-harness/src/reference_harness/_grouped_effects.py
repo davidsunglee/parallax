@@ -45,8 +45,8 @@ def ungrouped_effect(statement: str, binds: Sequence[Any]) -> list[tuple[str, li
 
     Every ``v.cN`` the statement reads becomes that row's element of the array
     bound to source column ``cN`` — cast to ``jsonb`` where the array is a
-    ``jsonb[]``, as a lone document path assignment casts its value — every
-    shared scalar keeps its own bind, and the target alias is dropped.
+    ``jsonb[]``, as a lone document merge casts its object — every shared scalar
+    keeps its own bind, and the target alias is dropped.
     """
     tree = parse_indexed_statement(statement, "postgres")
     if not isinstance(tree, exp.Update | exp.Delete):
@@ -141,37 +141,3 @@ def _lone(
 
 def _marker(index: int) -> exp.Placeholder:
     return exp.Placeholder(this=f"{_LONE_PREFIX}{index}")
-
-
-def sourced_path_value_indices(statement: str) -> frozenset[int]:
-    """The positional indices of the arrays whose elements a PostgreSQL grouped
-    effect assigns at a document path (``jsonb_set(…, ?, v.cN)``).
-
-    Each element is one path's JSON value, ``null`` included: a path assignment
-    writes JSON ``null`` rather than SQL ``NULL``, which would null the whole
-    document ``jsonb_set`` returns.
-    """
-    tree = parse_indexed_statement(statement, "postgres")
-    if not isinstance(tree, exp.Update):
-        return frozenset()
-    try:
-        source = _source(tree)
-    except GroupedEffectShapeError:
-        return frozenset()
-    if source is None:
-        return frozenset()
-    unnest, alias, _ordinal = source
-    arguments = dict(
-        zip((column.name for column in alias.columns), unnest.expressions, strict=False)
-    )
-    indices: set[int] = set()
-    for function in tree.find_all(exp.Anonymous):
-        if function.name.lower() != "jsonb_set" or len(function.expressions) != 3:
-            continue
-        value = function.expressions[2]
-        if isinstance(value, exp.Column) and value.table == alias.name:
-            argument = arguments.get(value.name)
-            index = None if argument is None else bound_placeholder_index(argument)
-            if index is not None:
-                indices.add(index)
-    return frozenset(indices)

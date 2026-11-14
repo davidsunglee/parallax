@@ -57,6 +57,7 @@ from parallax.core.internal.document_codec import (
     SetScalar,
     SetValueObject,
     apply_prepared_patches,
+    assigned_members,
     comparison_text,
     encode_leaf,
     encode_occurrence,
@@ -1155,7 +1156,6 @@ def test_one_prepared_patch_sequence_applies_to_every_document_and_shares_its_va
     }
     assert patched[0]["origin"] is patched[1]["origin"] is prepared[1].value
     assert patched[0]["day"] is prepared[0].value
-    assert (prepared[0].leaf, prepared[1].leaf) == (DATE, None)
     replacement["city"] = "Alta"
     assert prepared[1].value == {"city": "Bergen"}
 
@@ -1164,6 +1164,61 @@ def test_a_prepared_removal_deletes_only_its_own_key() -> None:
     (removal,) = prepare_patches(_SHAPE, [SetScalar(("flag",), MISSING)])
     assert removal.removes
     assert apply_prepared_patches({"flag": True, "legacy": 1}, (removal,)) == {"legacy": 1}
+
+
+def test_assigned_members_map_each_top_level_patch_to_its_shared_value_in_patch_order() -> None:
+    prepared = prepare_patches(
+        _SHAPE,
+        [
+            SetValueObject(("origin",), {"city": "Bergen"}),
+            SetScalar(("flag",), NULL),
+            SetScalar(("day",), Present(dt.date(2026, 1, 15))),
+        ],
+    )
+    members = assigned_members(prepared)
+    assert list(members.items()) == [
+        ("origin", {"city": "Bergen"}),
+        ("flag", None),
+        ("day", "2026-01-15"),
+    ]
+    assert members["origin"] is prepared[0].value
+    assert assigned_members(prepared) is not members
+
+
+_MERGED_ROOTS: list[dict[str, object]] = [
+    {},
+    {"flag": True, "legacy": {"nested": [1]}, "entries": [{"kind": "home", "extra": 1}]},
+    {"origin": {"city": "Oslo", "sealNumber": "S-1"}, "day": "2025-01-01", "newerKey": None},
+]
+
+_MERGED_PATCHES: list[list[DocumentPatch]] = [
+    [SetScalar(("day",), Present(dt.date(2026, 1, 15)))],
+    [SetScalar(("flag",), NULL), SetValueObject(("origin",), None)],
+    [SetValueObject(("entries",), []), SetValueObject(("origin",), {"city": "Bergen"})],
+    [
+        SetScalar(("flag",), Present(False)),
+        SetScalar(("day",), NULL),
+        SetValueObject(("origin",), {}),
+        SetValueObject(("entries",), [{"kind": "work"}]),
+    ],
+]
+
+
+@pytest.mark.parametrize("patches", _MERGED_PATCHES)
+@pytest.mark.parametrize("root", _MERGED_ROOTS)
+def test_merging_assigned_members_into_an_object_root_applies_the_prepared_patches(
+    root: dict[str, object], patches: list[DocumentPatch]
+) -> None:
+    prepared = prepare_patches(_SHAPE, patches)
+    assert {**root, **assigned_members(prepared)} == apply_prepared_patches(root, prepared)
+
+
+def test_assigned_members_refuse_a_removal_and_a_nested_path() -> None:
+    removal = prepare_patches(_SHAPE, [SetScalar(("flag",), MISSING)])
+    nested = prepare_patches(_SHAPE, [SetScalar(("origin", "city"), Present("Oslo"))])
+    for prepared in (removal, nested):
+        with pytest.raises(ValueError, match="top-level and remove no key"):
+            assigned_members(prepared)
 
 
 # --------------------------------------------------------------------------- #

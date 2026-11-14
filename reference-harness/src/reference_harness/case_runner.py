@@ -1159,17 +1159,13 @@ def _is_self_increment(statement: str, column: str) -> bool:
     return re.search(pattern, statement, re.IGNORECASE) is not None
 
 
-def _document_path_bind(path: tuple[str, ...], dialect: str) -> str:
-    """The bind addressing *path* inside a document mutation, per dialect.
-
-    Postgres `jsonb_set` takes ONE text-array path; MariaDB `json_set` takes the
-    same ``$.a.b`` JSON-path string its `json_value` extraction does (m-dialect).
-    Spelled here rather than taken from any implementation: the ①↔② cross-check is
-    an independent derivation, so it must know the two spellings itself.
+def _document_path_bind(path: tuple[str, ...]) -> str:
+    """The bind addressing *path* inside a MariaDB `json_set`: the same ``$.a.b``
+    JSON-path string its `json_value` extraction takes (m-dialect). Spelled here
+    rather than taken from any implementation: the ①↔② cross-check is an
+    independent derivation, so it must know the spelling itself.
     """
-    if dialect == "mariadb":
-        return "$." + ".".join(path)
-    return "{" + ",".join(path) + "}"
+    return "$." + ".".join(path)
 
 
 def _document_assignments(
@@ -1182,7 +1178,8 @@ def _document_assignments(
     whole document. An assigned occurrence contributes ONE path carrying its whole
     encoded document, because assigning one replaces its subtree rather than
     reaching inside it. Order is the layout's, not the row's, because both
-    dialects' mutation expressions apply left to right (`m-dialect`).
+    dialects' mutation expressions carry assignments in canonical order
+    (`m-dialect`).
     """
     resident = case.model.storage_layout.document(entity.canonical_name).members
     assignments: list[_DocumentAssignment] = []
@@ -1208,15 +1205,14 @@ def _document_assignments(
 def _document_assignment_binds(
     assignments: tuple[_DocumentAssignment, ...], dialect: str
 ) -> list[Any]:
-    """Canonical logical path/value binds before provider-specific adaptation."""
+    """The canonical logical binds a document mutation carries before provider
+    adaptation: on Postgres one object keyed by each assigned top-level member,
+    on MariaDB one path and value pair per assignment (m-dialect)."""
+    if dialect != "mariadb":
+        return [{assignment.path[0]: assignment.value for assignment in assignments}]
     binds: list[Any] = []
     for assignment in assignments:
-        binds.extend(
-            [
-                _document_path_bind(assignment.path, dialect),
-                assignment.value,
-            ]
-        )
+        binds.extend([_document_path_bind(assignment.path), assignment.value])
     return binds
 
 
@@ -1569,11 +1565,11 @@ def _assert_versioned_update_input(
     statement per ① row.
 
     Under Relational Document Layout the Structured Column is one further `set`
-    term, carrying the dialect's mutation expression and contributing one
-    ``(path, value)`` PAIR per assigned Document Path in the layout's own order —
-    the same contribution :func:`_assert_update_input` derives for an unversioned
-    row. The version Column stays a plain assignment after it, because an explicit
-    optimistic-lock Attribute keeps a Column of its own under either layout.
+    term, carrying the dialect's mutation expression and contributing its binds
+    in the layout's own order — the same contribution :func:`_assert_update_input`
+    derives for an unversioned row. The version Column stays a plain assignment
+    after it, because an explicit optimistic-lock Attribute keeps a Column of its
+    own under either layout.
     """
     version_col = version_column(entity)
     document_column = case.model.storage_layout.document(entity.canonical_name).column
@@ -1638,11 +1634,11 @@ def _assert_update_input(
     """Cross-check a plain (unversioned, non-temporal) update step's ① against ②.
 
     Under Relational Document Layout the Structured Column is one `set` term
-    carrying the dialect's mutation expression rather than one bind, so its
-    contribution to the golden binds is one ``(path, value)`` PAIR per assigned
-    Document Path, in the layout's own order. Everything else — which columns the
-    `set` clause names, and in what order — is unchanged, because a document
-    assignment is still one column assignment.
+    carrying the dialect's mutation expression, so its contribution to the golden
+    binds is the Postgres object of assigned members or one MariaDB ``(path,
+    value)`` pair per assigned Document Path, in the layout's own order.
+    Everything else — which columns the `set` clause names, and in what order —
+    is unchanged, because a document assignment is still one column assignment.
     """
     document_column = case.model.storage_layout.document(entity.canonical_name).column
     assignments = (

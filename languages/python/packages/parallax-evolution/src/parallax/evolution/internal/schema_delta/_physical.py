@@ -20,6 +20,7 @@ __all__ = [
     "CreateExtension",
     "CreateIndex",
     "CreateTable",
+    "DocumentRootCheck",
     "DropIndex",
     "Exclusion",
     "IndexDefinition",
@@ -83,6 +84,14 @@ class IntervalCheck:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentRootCheck:
+    """A Document Table's named requirement that ``column`` hold a JSON object."""
+
+    name: str
+    column: Column
+
+
+@dataclass(frozen=True, slots=True)
 class Exclusion:
     """A temporal Table's named non-overlap constraint.
 
@@ -129,10 +138,12 @@ class CreateExtension:
 
 @dataclass(frozen=True, slots=True)
 class CreateTable:
-    """Create one whole Table: every target Column, the derived primary key, and
-    a temporal Table's interval checks and exclusion.
+    """Create one whole Table: every target Column, the derived primary key,
+    its checks, and a temporal Table's exclusion.
 
-    A temporal Table's primary key carries its resolved ``primary_key_name``;
+    ``checks`` holds a temporal Table's interval checks, Valid Time first, then
+    a Document Table's root-object check. A temporal Table's primary key
+    carries its resolved ``primary_key_name``;
     any other key is left for the database to name. Authored secondary Indices
     are deliberately excluded — each is its own separately named statement, so
     a violation reports a name a rollout can correlate.
@@ -141,7 +152,7 @@ class CreateTable:
     table: ResolvedTable
     columns: tuple[PhysicalColumn, ...]
     primary_key: tuple[Column, ...]
-    interval_checks: tuple[IntervalCheck, ...]
+    checks: tuple[IntervalCheck | DocumentRootCheck, ...]
     caused_by: tuple[EvolutionOperation, ...]
     primary_key_name: str | None = None
     exclusion: Exclusion | None = None

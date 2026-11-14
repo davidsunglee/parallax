@@ -3,6 +3,7 @@ from __future__ import annotations
 from parallax.core.internal.dialect import (
     ColumnDdl,
     Dialect,
+    DocumentRootCheckDdl,
     ExclusionDdl,
     IndexColumnDdl,
     IntervalCheckDdl,
@@ -13,9 +14,11 @@ from parallax.evolution.internal.schema_delta._physical import (
     CreateExtension,
     CreateIndex,
     CreateTable,
+    DocumentRootCheck,
     DropIndex,
     Exclusion,
     IndexDefinition,
+    IntervalCheck,
     PhysicalColumn,
     PhysicalOperation,
     RestateColumnDomain,
@@ -34,14 +37,7 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
                 operation.table.sql,
                 [_column(column, dialect) for column in operation.columns],
                 [dialect.quote(column.name) for column in operation.primary_key],
-                [
-                    IntervalCheckDdl(
-                        name=dialect.quote(check.name),
-                        start=dialect.quote(check.start.name),
-                        end=dialect.quote(check.end.name),
-                    )
-                    for check in operation.interval_checks
-                ],
+                [_check(check, dialect) for check in operation.checks],
                 primary_key_name=(
                     None
                     if operation.primary_key_name is None
@@ -78,6 +74,22 @@ def _column(column: PhysicalColumn, dialect: Dialect) -> ColumnDdl:
         type_sql=dialect.column_type(column.neutral_type, column.max_length),
         nullable=column.nullable,
     )
+
+
+def _check(
+    check: IntervalCheck | DocumentRootCheck, dialect: Dialect
+) -> IntervalCheckDdl | DocumentRootCheckDdl:
+    match check:
+        case IntervalCheck():
+            return IntervalCheckDdl(
+                name=dialect.quote(check.name),
+                start=dialect.quote(check.start.name),
+                end=dialect.quote(check.end.name),
+            )
+        case DocumentRootCheck():
+            return DocumentRootCheckDdl(
+                name=dialect.quote(check.name), column=dialect.quote(check.column.name)
+            )
 
 
 def _exclusion(exclusion: Exclusion, dialect: Dialect) -> ExclusionDdl:
