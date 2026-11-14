@@ -3,7 +3,7 @@
     "feature-boundary": {
       "runtimes": {
         "3.14": {
-          "executable": "/private/tmp/parallax-capture-moz3a59d/parallax-feature-boundary-3.14/bin/python",
+          "executable": "/private/tmp/parallax-capture-piti3_dr/parallax-feature-boundary-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -18,7 +18,7 @@
           "version": "3.14.10"
         },
         "3.15": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-282-model-to-database-binding-c9qsjn/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-287-speed-up-document-update-uvb138/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -44,7 +44,7 @@
     "instance-state": {
       "runtimes": {
         "3.14": {
-          "executable": "/private/tmp/parallax-capture-moz3a59d/parallax-instance-state-3.14/bin/python",
+          "executable": "/private/tmp/parallax-capture-piti3_dr/parallax-instance-state-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -59,7 +59,7 @@
           "version": "3.14.10"
         },
         "3.15": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-282-model-to-database-binding-c9qsjn/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-287-speed-up-document-update-uvb138/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -89,7 +89,7 @@
           "status": "unavailable"
         },
         "3.15": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-282-model-to-database-binding-c9qsjn/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-287-speed-up-document-update-uvb138/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -112,7 +112,7 @@
     "snapshot-delivery": {
       "runtimes": {
         "3.14": {
-          "executable": "/private/tmp/parallax-capture-moz3a59d/parallax-snapshot-delivery-3.14/bin/python",
+          "executable": "/private/tmp/parallax-capture-piti3_dr/parallax-snapshot-delivery-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -127,7 +127,7 @@
           "version": "3.14.10"
         },
         "3.15": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-282-model-to-database-binding-c9qsjn/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-287-speed-up-document-update-uvb138/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -159,7 +159,7 @@
     "write-lowering": {
       "runtimes": {
         "3.14": {
-          "executable": "/private/tmp/parallax-capture-moz3a59d/parallax-write-lowering-3.14/bin/python",
+          "executable": "/private/tmp/parallax-capture-piti3_dr/parallax-write-lowering-3.14/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -174,7 +174,7 @@
           "version": "3.14.10"
         },
         "3.15": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-282-model-to-database-binding-c9qsjn/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-287-speed-up-document-update-uvb138/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "productionOrigins": {
             "parallax.core.internal.document_codec._document": "packages/parallax-core/src/parallax/core/internal/document_codec/_document.py",
@@ -193,7 +193,7 @@
         "tests/unit/_scalar_type_support.py": "71f6046d30401d3f42f60e68204091ed7e71f93b3d784036ef715ee0f1b2fec0",
         "tests/unit/_structural_geometry_support.py": "7fa51846a665812af1bef662f4aea9c26a666382833177f044632944bbc9bffd",
         "tests/unit/_workload_spelling_support.py": "1ccd8896ef05d575e6563928117fe90083f16bf9aa78d9e61e6c7fec0204cfab",
-        "tests/unit/_write_lowering_support.py": "d073d0be1ec6599814750816a0a3de3be82fddcf437ff45e58b2e218e633914f",
+        "tests/unit/_write_lowering_support.py": "b2fe3d891baf261ed351f1da4c3aa24bb793aef0b68eca058918bfe7b9dc29fb",
         "tests/unit/memory_instruments.py": "654f3038f87a2696093b13c9ca74a7c6223018a140c14e7ae206adcdd773acc9",
         "tools/capture_journal.py": "362e2bbde2ff484cf82cfe9dea1df417d380007a38b7424e667574ff322ec1d3",
         "tools/production_origins.py": "04a6a2ce15bdd58aae258e52b8496c2d6969171378c9ecbce7960aa58610e75c",
