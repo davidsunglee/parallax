@@ -604,7 +604,7 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
     def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
         events.append(f"probe {command[-1] if command[0] == 'uv' else 'current'}")
         assert environment["PYTHONHASHSEED"] == "0"
-        return (0, identity, "") if "uv" not in command[0] else (1, "", "no 3.14 here")
+        return (0, identity, "") if command[0] != "uv" else (1, "", "no 3.14 here")
 
     def child(request: ChildRequest) -> ChildReading:
         events.append("child")
