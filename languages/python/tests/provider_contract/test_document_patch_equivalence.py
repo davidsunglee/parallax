@@ -6,8 +6,9 @@ provider.
 Each object-root case prepares one temporal revision's assignments through the
 production preparer once, applies those prepared patches to the stored document
 in memory, executes the production statement compiled from that same payload,
-and compares the complete persisted document either way. Outside an object root
-the provider's actual behavior is recorded per dialect instead, never asserted
+and compares the complete persisted document either way. Outside an object root,
+which only a table without its generated root-object check can hold, the
+provider's actual behavior is recorded per dialect instead, never asserted
 equal: a provider without recorded behavior fails rather than inheriting another
 provider's.
 """
@@ -155,11 +156,20 @@ def _prepared(assignments: PlannedAssignments) -> tuple[AssignmentPayload, Patch
     return payload, patched
 
 
-def _seed(profile_run: Any, document: str | None) -> None:
+def _seed(profile_run: Any, document: str | None, *, unmanaged: bool = False) -> None:
     """One current row of the entity holding ``document``'s JSON text, or SQL
-    NULL where ``document`` is ``None``."""
+    NULL where ``document`` is ``None``.
+
+    An ``unmanaged`` table has lost its generated root-object check, as one
+    created before the check existed has; only the SQL NULL root also drops the
+    column's ``not null``.
+    """
     profile_run.reset(_META, {}, TEST_BINDING)
     port = profile_run.port
+    if unmanaged:
+        root = bound_model(_META).table(_ENTITY).document_root_constraint
+        assert root is not None
+        port.execute_write(f"alter table px.{_TABLE} drop constraint {root.check_name}", [])
     if document is None:
         port.execute_write(f"alter table px.{_TABLE} alter column payload drop not null", [])
     port.execute_write(
@@ -253,7 +263,7 @@ def test_a_patch_outside_an_object_root_does_what_its_provider_does(
     profile_run: Any, root: str
 ) -> None:
     expected = _recorded(_EXTERNAL_ROOT_OUTCOMES, profile_run)[root]
-    _seed(profile_run, _EXTERNAL_ROOTS[root])
+    _seed(profile_run, _EXTERNAL_ROOTS[root], unmanaged=True)
     before = _persisted(profile_run)
     payload, _patched = _prepared(_assignments(_Patch(root, {"crew": 5}, {})))
     step = _revision(payload.assignments)

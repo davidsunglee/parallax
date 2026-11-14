@@ -9,6 +9,7 @@ from parallax.core.internal.storage_layout._facet import (
     DirectColumn,
     DocumentPath,
     DocumentResidentSelection,
+    DocumentRootConstraint,
     EntityLayoutView,
     InheritanceDiscriminator,
     PhysicalIndex,
@@ -28,6 +29,7 @@ from parallax.core.internal.storage_layout._rules import (
 )
 from parallax.core.internal.storage_layout._temporal import (
     TemporalConstraintNames,
+    document_root_check_name,
     temporal_constraint_names,
 )
 
@@ -43,6 +45,7 @@ __all__ = [
     "DirectColumn",
     "DocumentPath",
     "DocumentResidentSelection",
+    "DocumentRootConstraint",
     "EntityLayoutView",
     "InheritanceDiscriminator",
     "PhysicalIndex",
@@ -54,6 +57,7 @@ __all__ = [
     "TableLayout",
     "TemporalConstraintNames",
     "TemporalHistoryConstraints",
+    "document_root_check_name",
     "storage_layout_facet_of",
     "temporal_constraint_names",
 ]

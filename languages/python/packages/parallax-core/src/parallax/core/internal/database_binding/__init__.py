@@ -37,6 +37,7 @@ from parallax.core.internal.database_binding._errors import (
 from parallax.core.internal.database_binding._physical import (
     PhysicalSequence,
     PhysicalTable,
+    ResolvedDocumentRootConstraint,
     ResolvedTable,
     ResolvedTemporalConstraints,
 )
@@ -98,6 +99,7 @@ __all__ = [
     "PhysicalTable",
     "Relocation",
     "ResolvedBinding",
+    "ResolvedDocumentRootConstraint",
     "ResolvedTable",
     "ResolvedTemporalConstraints",
     "SequenceRelocated",

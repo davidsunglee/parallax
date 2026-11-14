@@ -90,7 +90,8 @@ def test_the_catalog_holds_each_axis_check_under_its_compiled_name(
         if constraints.valid_check_name is not None:
             expected.append((constraints.valid_check_name, "CHECK ((from_z < thru_z))", True))
         rows = profile_run.port.execute(_CHECKS, [table])
-        assert sorted(tuple(row) for row in rows) == sorted(expected)
+        interval = [tuple(row) for row in rows if not str(row[0]).startswith("pxc_doc_")]
+        assert sorted(interval) == sorted(expected)
 
 
 def test_a_non_temporal_table_holds_no_check(profile_run: Any) -> None:

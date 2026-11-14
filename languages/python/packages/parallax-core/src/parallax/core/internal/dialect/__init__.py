@@ -38,6 +38,7 @@ __all__ = [
     "Dialect",
     "DocumentAssignment",
     "DocumentLeafAssignment",
+    "DocumentRootCheckDdl",
     "DocumentValueAssignment",
     "EncodedJsonKind",
     "ExclusionDdl",
@@ -264,6 +265,17 @@ class IntervalCheckDdl:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentRootCheckDdl:
+    """One named check that a row's ``column`` holds a JSON object.
+
+    Every identifier is already quoted for the dialect.
+    """
+
+    name: str
+    column: str
+
+
+@dataclass(frozen=True, slots=True)
 class ExclusionDdl:
     """One named constraint that no two rows equal on every ``equal`` Column
     overlap on every ``overlapping`` half-open interval at once.
@@ -275,6 +287,14 @@ class ExclusionDdl:
     name: str
     equal: tuple[str, ...]
     overlapping: tuple[tuple[str, str], ...]
+
+
+def _check_condition(check: IntervalCheckDdl | DocumentRootCheckDdl) -> str:
+    match check:
+        case IntervalCheckDdl(start=start, end=end):
+            return f"{start} < {end}"
+        case DocumentRootCheckDdl(column=column):
+            return f"jsonb_typeof({column}) = 'object'"
 
 
 def _column_clause(column: ColumnDdl) -> str:
@@ -694,7 +714,7 @@ class Dialect:
         table: str,
         columns: Sequence[ColumnDdl],
         primary_key: Sequence[str],
-        interval_checks: Sequence[IntervalCheckDdl] = (),
+        checks: Sequence[IntervalCheckDdl | DocumentRootCheckDdl] = (),
         *,
         primary_key_name: str | None = None,
         exclusion: ExclusionDdl | None = None,
@@ -702,8 +722,8 @@ class Dialect:
         """``create table`` for one whole Table, keyed and constrained inline.
 
         The caller supplies the complete physical column sequence, the key
-        columns, the interval checks, and the exclusion in their own order; all
-        are already quoted. An empty ``primary_key`` emits no key clause, which
+        columns, the checks, and the exclusion in their own order; all are
+        already quoted. An empty ``primary_key`` emits no key clause, which
         is the keyless Table a model declaring no primary key produces, and a
         key without ``primary_key_name`` is left for the database to name. The
         exclusion is immediate and not deferrable: each statement is checked as
@@ -714,8 +734,7 @@ class Dialect:
             named = "" if primary_key_name is None else f"constraint {primary_key_name} "
             parts.append(f"{named}primary key ({', '.join(primary_key)})")
         parts.extend(
-            f"constraint {check.name} check ({check.start} < {check.end})"
-            for check in interval_checks
+            f"constraint {check.name} check ({_check_condition(check)})" for check in checks
         )
         if exclusion is not None:
             operands = [f"{column} with =" for column in exclusion.equal]

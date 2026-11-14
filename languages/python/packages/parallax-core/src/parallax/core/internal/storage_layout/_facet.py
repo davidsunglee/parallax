@@ -31,6 +31,7 @@ __all__ = [
     "DiscriminatorAssignment",
     "DocumentPath",
     "DocumentResidentSelection",
+    "DocumentRootConstraint",
     "EntityLayoutView",
     "InheritanceDiscriminator",
     "MemberPlacement",
@@ -227,6 +228,19 @@ class TemporalHistoryConstraints:
         return tuple(dict.fromkeys(axis.end for axis in ranged if axis is not None))
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentRootConstraint:
+    """The requirement that every row's shared Structured Column hold a JSON object.
+
+    ``slot`` is the Table's ``RelationalDocument`` slot. The constraint is
+    shallow: it governs the root's kind and none of the members inside it. Its
+    name is a fact of the physical table a binding resolves, not of this
+    definition.
+    """
+
+    slot: ColumnSlot
+
+
 class TableLayout(Protocol):
     """The complete canonical physical shape of one structural Table.
 
@@ -251,6 +265,8 @@ class TableLayout(Protocol):
     def unique_keys(self) -> Sequence[PhysicalIndex]: ...
     @property
     def temporal_constraints(self) -> TemporalHistoryConstraints | None: ...
+    @property
+    def document_root_constraint(self) -> DocumentRootConstraint | None: ...
     def column(self, column: Column) -> ColumnSlot | None: ...
     def column_position(self, column: Column) -> int | None: ...
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None: ...
@@ -344,6 +360,7 @@ class _TableLayout:
     primary_key_index: PhysicalIndex | None
     indices: tuple[PhysicalIndex, ...]
     temporal_constraints: TemporalHistoryConstraints | None
+    document_root_constraint: DocumentRootConstraint | None
     unique_keys: tuple[PhysicalIndex, ...] = field(repr=False, compare=False)
     _placements: Mapping[MemberIdentity, MemberPlacement] = field(repr=False, compare=False)
     _column_positions: Mapping[Column, int] = field(init=False, repr=False, compare=False)
@@ -385,6 +402,7 @@ def table_layout(
     secondary_indices: Sequence[PhysicalIndex],
     placements: Mapping[MemberIdentity, MemberPlacement],
     temporal_constraints: TemporalHistoryConstraints | None,
+    document_root_constraint: DocumentRootConstraint | None,
 ) -> TableLayout:
     """Construct one immutable lookup-bearing Table Layout.
 
@@ -392,7 +410,9 @@ def table_layout(
     answer for every member applicable to ``table``, so the published lookup is
     total rather than computed per call. The physical primary key is the
     primary-key Index's slot selection, and ``indices`` leads with that Index.
-    ``temporal_constraints`` is absent exactly when the Table is not temporal.
+    ``temporal_constraints`` is absent exactly when the Table is not temporal,
+    and ``document_root_constraint`` exactly when it has no shared Structured
+    Column.
     Public consumers receive the protocol and cannot mutate either index or
     ordered sequence.
     """
@@ -409,6 +429,7 @@ def table_layout(
         primary_key_index,
         indices,
         temporal_constraints,
+        document_root_constraint,
         tuple(index for index in indices if index.declaration.unique),
         MappingProxyType(dict(placements)),
     )
