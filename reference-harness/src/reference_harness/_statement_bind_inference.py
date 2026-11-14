@@ -253,8 +253,39 @@ def _update_targets(
                 targets[index] = _slot_target(case, slot, guarded)
         elif slot is not None and isinstance(slot.contributor, RelationalDocument):
             members = _document_members(case, slot, guarded)
-            targets.update(_path_assignment_targets(members, assignment, binds))
+            merged = _merged_operand(assignment)
+            index = None if merged is None else _transparent_index(merged)
+            if index is not None:
+                targets[index] = DocumentBindTarget(members)
+            else:
+                targets.update(_path_assignment_targets(members, assignment, binds))
     return targets
+
+
+def _merged_operand(assignment: exp.EQ) -> Expr | None:
+    """The operand ``m-dialect``'s Postgres document merge ``col || <operand>``
+    joins to the assigned column itself, whose keys are the members it assigns."""
+    merge = _unparenthesized(assignment.expression)
+    if isinstance(merge, exp.DPipe) and _names_column(
+        _unparenthesized(merge.this), assignment.this
+    ):
+        return merge.expression
+    return None
+
+
+def _unparenthesized(expression: Expr) -> Expr:
+    while isinstance(expression, exp.Paren):
+        expression = expression.this
+    return expression
+
+
+def _transparent_index(operand: Expr) -> int | None:
+    placeholders = tuple(operand.find_all(exp.Placeholder))
+    if isinstance(operand, exp.Placeholder):
+        placeholders = (operand,)
+    if len(placeholders) != 1 or not transparent_placeholder(operand, placeholders[0]):
+        return None
+    return placeholder_index(placeholders[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,18 +327,19 @@ def _grouped_source(case: Case, tree: Expr, dialect: str) -> _GroupedSource | No
 
 def _grouped_sources(
     case: Case, tree: Expr, binds: Sequence[object], dialect: str
-) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentArrayBindTarget, str]]:
     """Each source array of a grouped effect (``update t set … from unnest(…) with
     ordinality v(…) … returning v.ord``, or ``delete from t using unnest(…) …``)
     beside what types its elements: the slot of the column a source column is
-    assigned to or compared with, or the document member a path assignment writes
-    it to, and that column's name."""
+    assigned to or compared with, or one document target per row for the objects
+    a document merge joins to the shared Structured Column, and that column's
+    name."""
     grouped = _grouped_source(case, tree, dialect)
     if grouped is None:
         return
     for assignment in tree.expressions:
         if isinstance(assignment, exp.EQ) and isinstance(assignment.this, exp.Column):
-            yield from _assigned_sources(case, grouped, assignment, binds)
+            yield from _assigned_sources(case, grouped, tree, assignment, binds)
     where = tree.args.get("where")
     for comparison in () if where is None else _conjuncts(where.this):
         if isinstance(comparison, exp.EQ):
@@ -315,8 +347,12 @@ def _grouped_sources(
 
 
 def _assigned_sources(
-    case: Case, grouped: _GroupedSource, assignment: exp.EQ, binds: Sequence[object]
-) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+    case: Case,
+    grouped: _GroupedSource,
+    tree: Expr,
+    assignment: exp.EQ,
+    binds: Sequence[object],
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentArrayBindTarget, str]]:
     slot = grouped.layout.column(assignment.this.name)
     if slot is None:
         return
@@ -326,22 +362,24 @@ def _assigned_sources(
         return
     if not isinstance(slot.contributor, RelationalDocument):
         return
-    by_path = {member.path: member for member in _document_members(case, slot, {})}
-    for path, value in _sourced_paths(assignment.expression):
-        index = placeholder_index(path)
-        member = (
-            by_path.get(_document_path(binds[index]))
-            if index is not None and index < len(binds)
-            else None
-        )
-        argument = grouped.argument(value)
-        if member is not None and argument is not None:
-            yield argument, member, slot.column
+    merged = _merged_operand(assignment)
+    argument = grouped.argument(merged)
+    if argument is None or not isinstance(tree.this, exp.Table):
+        return
+    members = _document_members(case, slot, _guarded_values(tree.this, (tree,), binds))
+    index = bound_placeholder_index(argument)
+    objects = binds[index] if index is not None and index < len(binds) else None
+    rows = len(objects) if isinstance(objects, list) else 0
+    yield (
+        argument,
+        DocumentArrayBindTarget(tuple(DocumentBindTarget(members) for _ in range(rows))),
+        slot.column,
+    )
 
 
 def _compared_sources(
     grouped: _GroupedSource, comparison: exp.EQ
-) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentArrayBindTarget, str]]:
     for guarded, operand in (
         (comparison.this, comparison.expression),
         (comparison.expression, comparison.this),
@@ -354,18 +392,6 @@ def _compared_sources(
             and (slot := grouped.layout.column(guarded.name)) is not None
         ):
             yield argument, slot, slot.column
-
-
-def _sourced_paths(expression: Expr) -> Iterator[tuple[exp.Placeholder, Expr]]:
-    """The (path placeholder, value) pairs of a nested ``jsonb_set`` whose values
-    are read from a grouped effect's source rather than bound."""
-    current = expression
-    while isinstance(current, exp.Anonymous) and current.name.lower() == "jsonb_set":
-        if len(current.expressions) != 3:
-            return
-        current, path, value = current.expressions
-        if isinstance(path, exp.Placeholder):
-            yield path, value
 
 
 def _path_assignment_targets(
@@ -389,34 +415,19 @@ def _path_assignment_targets(
 def _path_assignments(
     column: exp.Column, expression: Expr
 ) -> Iterator[tuple[exp.Placeholder, exp.Placeholder]]:
-    """The (path, value) placeholder pairs of ``m-dialect``'s document mutation
-    expression over ``column``: nested ``jsonb_set`` or one N-pair ``json_set``."""
-    if isinstance(expression, exp.JSONSet):
-        arguments = expression.expressions
-        if _names_column(expression.this, column) and len(arguments) % 2 == 0:
-            for path, value in zip(arguments[::2], arguments[1::2], strict=True):
-                if (
-                    isinstance(path, exp.Placeholder)
-                    and isinstance(value, exp.JSONExtract)
-                    and isinstance(value.this, exp.Placeholder)
-                ):
-                    yield path, value.this
+    """The (path, value) placeholder pairs of ``m-dialect``'s MariaDB document
+    mutation expression over ``column``: one N-pair ``json_set``."""
+    if not isinstance(expression, exp.JSONSet):
         return
-    pairs: list[tuple[exp.Placeholder, exp.Placeholder]] = []
-    current = expression
-    while isinstance(current, exp.Anonymous) and current.name.lower() == "jsonb_set":
-        if len(current.expressions) != 3:
-            return
-        current, path, value = current.expressions
-        if not (
-            isinstance(path, exp.Placeholder)
-            and isinstance(value, exp.Cast)
-            and isinstance(value.this, exp.Placeholder)
-        ):
-            return
-        pairs.append((path, value.this))
-    if _names_column(current, column):
-        yield from pairs
+    arguments = expression.expressions
+    if _names_column(expression.this, column) and len(arguments) % 2 == 0:
+        for path, value in zip(arguments[::2], arguments[1::2], strict=True):
+            if (
+                isinstance(path, exp.Placeholder)
+                and isinstance(value, exp.JSONExtract)
+                and isinstance(value.this, exp.Placeholder)
+            ):
+                yield path, value.this
 
 
 def _names_column(expression: Expr, column: exp.Column) -> bool:
@@ -424,12 +435,8 @@ def _names_column(expression: Expr, column: exp.Column) -> bool:
 
 
 def _document_path(bind: object) -> tuple[str, ...]:
-    if not isinstance(bind, str):
-        return ()
-    if bind.startswith("$."):
+    if isinstance(bind, str) and bind.startswith("$."):
         return tuple(bind[2:].split("."))
-    if bind.startswith("{") and bind.endswith("}"):
-        return tuple(bind[1:-1].split(","))
     return ()
 
 
@@ -584,7 +591,7 @@ def _grouped_source_cast_mismatches(
     for argument, target, column in _grouped_sources(case, tree, binds, dialect):
         element = (
             "jsonb"
-            if isinstance(target, DocumentMember)
+            if isinstance(target, DocumentArrayBindTarget)
             else column_array_element(slot_neutral_type(target, declarations))
         )
         mismatch = _array_cast_mismatch(argument, exp.DataType.build(element, dialect="postgres"))

@@ -1011,8 +1011,8 @@ def _top_level_commas(clause: str) -> list[str]:
     """*clause* split on the commas that separate its assignments.
 
     A `set` term's right-hand side may itself be a call taking commas — the
-    document mutation expression is nested `jsonb_set` calls on Postgres and one
-    N-pair `json_set` on MariaDB (m-dialect) — so only a comma at bracket depth
+    document mutation expression is one N-pair `json_set` on MariaDB
+    (m-dialect) — so only a comma at bracket depth
     zero ends an assignment. A comma inside a quoted identifier or a string literal
     ends nothing at all: `set "payload,archive" = ?` is one assignment, not two.
     """

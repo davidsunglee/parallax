@@ -61,10 +61,10 @@ then:
           tags:
             - { label: scout }
     - sql:
-        postgres: update px_docs.traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+        postgres: update px_docs.traveler set payload = payload || cast(? as jsonb) where id = ?
         mariadb: update px_docs.traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
       binds:
-        postgres: ['{displayName}', Dagny, '{score}', 21, 6]
+        postgres: [{ displayName: Dagny, score: 21 }, 6]
         mariadb: ['$.displayName', Dagny, '$.score', 21, 6]
   tableState:
     px_docs:

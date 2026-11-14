@@ -13,7 +13,7 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
 from parallax.core.internal.write_plan import PredecessorRow
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import (
     Finite,
@@ -59,7 +59,7 @@ class StoredPositions:
         effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         answered = self.simulated(

@@ -23,17 +23,17 @@ when:
       note: the first edit restates the whole occurrence to add a stop
       statements:
         - sql:
-            postgres: update px.write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            postgres: update px.write_twin set payload = payload || cast(? as jsonb) where id = ?
             mariadb: update px.write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
-              - '{spec}'
-              - title: Meridian
-                note: second
-                origin: { country: SE }
-                stops:
-                  - { port: Bergen }
-                  - { port: Kiel }
+              - spec:
+                  title: Meridian
+                  note: second
+                  origin: { country: SE }
+                  stops:
+                    - { port: Bergen }
+                    - { port: Kiel }
               - 2
             mariadb:
               - '$.spec'
@@ -82,14 +82,14 @@ when:
       note: the second edit names two members, so it destroys what the first edit had just stored
       statements:
         - sql:
-            postgres: update px.write_twin set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            postgres: update px.write_twin set payload = payload || cast(? as jsonb) where id = ?
             mariadb: update px.write_twin set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
-              - '{spec}'
-              - title: Meridian
-                stops:
-                  - { port: Kiel }
+              - spec:
+                  title: Meridian
+                  stops:
+                    - { port: Kiel }
               - 2
             mariadb:
               - '$.spec'

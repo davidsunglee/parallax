@@ -87,7 +87,7 @@ from parallax.core.internal.read_delivery._paging import At, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
 from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
@@ -825,7 +825,7 @@ class TxnAttempt(_TxnAttemptBase):
         effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         """Execute ``steps`` as calls of the current flush's Flush activity,

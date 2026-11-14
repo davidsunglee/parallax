@@ -21,9 +21,9 @@ from parallax.core.internal.sql_gen._write import (
 )
 from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
+    DocumentPatches,
     EffectSlots,
     InsertPayload,
-    PatchedDocument,
     RowSlots,
     WritePayloadPreparer,
 )
@@ -120,7 +120,7 @@ class LoweringCursor:
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> None:
         self._steps = steps
@@ -282,7 +282,7 @@ def stream_physical(
     *,
     effect_spans: tuple[EffectSpan, ...] = (),
     capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-    capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+    capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
     | None = None,
 ) -> Iterator[LoweredStatement]:
     """Each statement ``steps`` execute as, in order: the effects of one of
@@ -411,7 +411,7 @@ def _predictable_revision(
     step: PlannedTemporalRevision, payload: AssignmentPayload
 ) -> AssignmentPayload:
     if not step.predecessor_document_is_object and any(
-        isinstance(value, PatchedDocument) for value in payload.values
+        isinstance(value, DocumentPatches) for value in payload.values
     ):
         raise _non_object_revision_refusal(step)
     return payload
@@ -473,11 +473,11 @@ def _stored_document(slots: RowSlots, cells: tuple[object, ...]) -> object | Non
     return None if index is None else cells[index]
 
 
-def _document_patches(payload: AssignmentPayload) -> PatchedDocument | None:
+def _document_patches(payload: AssignmentPayload) -> DocumentPatches | None:
     """The prepared patches ``payload`` applies to its row's Structured Column,
     ``None`` where it leaves the document as stored."""
     for value in payload.values:
-        if isinstance(value, PatchedDocument):
+        if isinstance(value, DocumentPatches):
             return value
     return None
 

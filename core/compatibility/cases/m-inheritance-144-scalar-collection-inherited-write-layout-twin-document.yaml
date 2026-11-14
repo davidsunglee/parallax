@@ -42,10 +42,10 @@ then:
         - 3
         - { tags: [], blades: [a] }
     - sql:
-        postgres: update px.tag_asset set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ? and kind = ?
+        postgres: update px.tag_asset set payload = payload || cast(? as jsonb) where id = ? and kind = ?
         mariadb: update px.tag_asset set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ? and kind = ?
       binds:
-        postgres: ['{ports}', [9], '{numbers}', [], 1, phone]
+        postgres: [{ ports: [9], numbers: [] }, 1, phone]
         mariadb: ['$.ports', [9], '$.numbers', [], 1, phone]
   tableState:
     px:

@@ -355,9 +355,7 @@ def test_a_temporal_unique_keys_axis_ends_never_make_a_milestone_effect_ungroupa
     assert storage.effect_shape(revision("code", "Z")) is None
 
 
-def test_effect_slots_of_a_document_twin_skip_a_shared_document_no_path_of_which_is_assigned() -> (
-    None
-):
+def test_effect_slots_skip_a_shared_document_no_resident_of_which_is_assigned() -> None:
     meta = corpus_model("scalar-collection-lifecycle-layout-twin-document")
     entity = EntityIdentity("parallax.compatibility", "TagLedger")
     storage = StorageCatalog(bound_model(meta)).entity(entity)

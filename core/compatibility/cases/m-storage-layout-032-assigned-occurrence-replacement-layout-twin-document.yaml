@@ -21,14 +21,12 @@ when:
       note: assign both occurrences, naming one leaf of the `one` and one element of the `many`
       statements:
         - sql:
-            postgres: update px.write_twin set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+            postgres: update px.write_twin set payload = payload || cast(? as jsonb) where id = ?
             mariadb: update px.write_twin set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
           binds:
             postgres:
-              - '{spec}'
-              - { title: Pilot, stops: [] }
-              - '{marks}'
-              - [{ code: Z }]
+              - spec: { title: Pilot, stops: [] }
+                marks: [{ code: Z }]
               - 1
             mariadb:
               - '$.spec'

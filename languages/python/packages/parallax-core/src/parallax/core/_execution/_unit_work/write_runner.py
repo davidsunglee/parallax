@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 from typing import Protocol
 
 from parallax.core.internal.document_codec import apply_prepared_patches
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.plan import CurrentRowOutput, EffectSpan, WriteEffects
 from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
@@ -44,7 +44,7 @@ class ExecuteWriteSteps(Protocol):
         effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]: ...
 
@@ -87,7 +87,7 @@ class _CurrentRowCapture:
             self._staged[id(output)] = document
 
     def capture_revision(
-        self, revision: PlannedTemporalRevision, patched: PatchedDocument | None
+        self, revision: PlannedTemporalRevision, patched: DocumentPatches | None
     ) -> None:
         output = self._outputs.get(id(revision))
         if output is None or output.emitter is not revision:

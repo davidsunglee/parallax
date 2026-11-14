@@ -4,9 +4,9 @@ A grouped effect (`m-sql` *Grouped effects*) is one ``update … from unnest(…
 ordinality v(…) … returning v.ord`` or ``delete … using unnest(…) …`` statement
 applying one keyed effect per source row. These tests pin, without a database,
 that the harness reads such a golden back as the lone statements it applies,
-types each source array by the column or document path it reaches, refuses a
-malformed source or result, binds each document path value as JSON, and leaves
-every other statement alone.
+types each source array by the column or document it reaches, refuses a
+malformed source or result, binds each row's document merge object as JSON, and
+leaves every other statement alone.
 """
 
 from __future__ import annotations
@@ -16,19 +16,16 @@ from pathlib import Path
 import pytest
 from psycopg.types.json import Jsonb
 
-from reference_harness._grouped_effects import (
-    GroupedEffectShapeError,
-    sourced_path_value_indices,
-    ungrouped_effect,
-)
+from reference_harness._grouped_effects import GroupedEffectShapeError, ungrouped_effect
 from reference_harness._sql_placeholders import array_bind_indices
 from reference_harness._statement_bind_inference import (
+    DocumentArrayBindTarget,
+    DocumentBindTarget,
     array_cast_mismatches,
     infer_statement_bind_targets,
 )
 from reference_harness.case import Case, load_model
 from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
-from reference_harness.storage_layout import DocumentMember
 
 _COMPATIBILITY_ROOT = Path(__file__).resolve().parents[2] / "core" / "compatibility"
 
@@ -37,19 +34,16 @@ _WALLET = (
     "with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord"
 )
 _DOCUMENT = (
-    "update px.tag_ledger t set payload = jsonb_set(jsonb_set(t.payload, ?, v.c4), ?, v.c5), "
-    "version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), "
-    "cast(? as jsonb[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, c5, ord) "
-    "where t.id = v.c1 and t.version = v.c2 returning v.ord"
+    "update px.tag_ledger t set payload = t.payload || v.c4, version = v.c3 from unnest("
+    "cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) "
+    "with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 "
+    "returning v.ord"
 )
 _DOCUMENT_BINDS: list[object] = [
-    "{label}",
-    "{tags}",
     [1, 2],
     [1, 4],
     [2, 5],
-    ["a", None],
-    [["c"], []],
+    [{"label": "a", "tags": ["c"]}, {"label": None, "tags": []}],
 ]
 
 
@@ -68,14 +62,14 @@ def test_a_grouped_effect_reads_back_as_the_lone_updates_it_applies() -> None:
     ]
 
 
-def test_document_paths_keep_their_shared_binds_beside_each_rows_values() -> None:
+def test_a_document_merge_reads_back_as_each_rows_lone_merge_of_its_own_object() -> None:
     lone = (
-        "update px.tag_ledger set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
-        "?, cast(? as jsonb)), version = ? where id = ? and version = ?"
+        "update px.tag_ledger set payload = payload || cast(? as jsonb), version = ? "
+        "where id = ? and version = ?"
     )
     assert ungrouped_effect(_DOCUMENT, _DOCUMENT_BINDS) == [
-        (lone, ["{label}", "a", "{tags}", ["c"], 2, 1, 1]),
-        (lone, ["{label}", None, "{tags}", [], 5, 2, 4]),
+        (lone, [{"label": "a", "tags": ["c"]}, 2, 1, 1]),
+        (lone, [{"label": None, "tags": []}, 5, 2, 4]),
     ]
 
 
@@ -177,7 +171,6 @@ def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
 )
 def test_any_other_statement_is_left_alone(statement: str) -> None:
     assert ungrouped_effect(statement, [1, 2]) is None
-    assert sourced_path_value_indices(statement) == frozenset()
 
 
 @pytest.mark.parametrize(
@@ -206,22 +199,42 @@ def test_a_malformed_grouped_effect_is_refused(
         ungrouped_effect(statement, binds)
 
 
-def test_each_source_array_is_typed_by_the_column_or_path_it_reaches() -> None:
+def test_each_source_array_is_typed_by_the_column_or_document_it_reaches() -> None:
     case = _case("scalar-collection-lifecycle-layout-twin-document")
     targets = infer_statement_bind_targets(case, _DOCUMENT, _DOCUMENT_BINDS, "postgres")
-    assert sorted(array_bind_indices(_DOCUMENT)) == [2, 3, 4, 5, 6]
-    assert {index: getattr(targets[index], "column", None) for index in (2, 3, 4)} == {
-        2: "id",
-        3: "version",
-        4: "version",
+    assert sorted(array_bind_indices(_DOCUMENT)) == [0, 1, 2, 3]
+    assert {index: getattr(targets[index], "column", None) for index in (0, 1, 2)} == {
+        0: "id",
+        1: "version",
+        2: "version",
     }
-    assert [targets[index] for index in (5, 6)] == [
-        member
-        for member in case.model.storage_layout.document("parallax.compatibility.TagLedger").members
-        if member.path in (("label",), ("tags",))
-    ]
-    assert all(isinstance(targets[index], DocumentMember) for index in (5, 6))
+    members = case.model.storage_layout.document("parallax.compatibility.TagLedger").members
+    assert targets[3] == DocumentArrayBindTarget(
+        (DocumentBindTarget(members), DocumentBindTarget(members))
+    )
     assert array_cast_mismatches(case, _DOCUMENT, _DOCUMENT_BINDS) == ()
+
+
+@pytest.mark.parametrize(
+    ("source", "cast"),
+    [
+        pytest.param("?", None, id="uncast"),
+        pytest.param("cast(? as text[])", "text", id="cast-to-text"),
+        pytest.param("cast(? as json[])", "json", id="cast-to-json"),
+    ],
+)
+def test_a_document_merge_source_not_cast_to_jsonb_array_is_refused(
+    source: str, cast: str | None
+) -> None:
+    case = _case("scalar-collection-lifecycle-layout-twin-document")
+    statement = _DOCUMENT.replace("cast(? as jsonb[])", source)
+    (mismatch,) = array_cast_mismatches(case, statement, _DOCUMENT_BINDS)
+    assert (mismatch.index, mismatch.cast, mismatch.expected, mismatch.column) == (
+        3,
+        cast,
+        "jsonb",
+        "payload",
+    )
 
 
 def test_a_source_array_cast_to_another_type_than_its_column_is_refused() -> None:
@@ -236,11 +249,9 @@ def test_a_source_array_cast_to_another_type_than_its_column_is_refused() -> Non
     )
 
 
-def test_a_path_value_array_binds_every_element_as_json_null_included() -> None:
-    assert sourced_path_value_indices(_DOCUMENT) == frozenset({5, 6})
+def test_a_document_merge_array_binds_each_rows_object_as_one_jsonb_element() -> None:
     bound = postgres_statement_binds(_DOCUMENT, _DOCUMENT_BINDS)
-    for index in (5, 6):
-        elements = bound[index]
-        assert isinstance(elements, list)
-        assert all(isinstance(element, Jsonb) for element in elements)
-    assert [element.obj for element in bound[5]] == ["a", None]
+    elements = bound[3]
+    assert isinstance(elements, list)
+    assert all(isinstance(element, Jsonb) for element in elements)
+    assert [element.obj for element in elements] == _DOCUMENT_BINDS[3]

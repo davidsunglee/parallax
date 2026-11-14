@@ -3,9 +3,9 @@
 Two properties are under test, and they are the write-side halves of the one the
 read suite pins. First, every document-resident member the statement touches
 reaches the SAME shared Structured Column: an opening statement fills it with one
-complete document and a revising one writes only the paths it assigns, so an
+complete document and a revising one merges only the members it assigns, so an
 unassigned key — a model member the step left alone as much as a key a newer
-application version wrote — survives, while an assigned occurrence's path takes
+application version wrote — survives, while an assigned occurrence's key takes
 its whole subtree and nothing inside the replaced one does. Second, what lands
 there is the CODEC's spelling of each value rather than the carrier the write
 input happened to hold.
@@ -31,6 +31,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import JSON, FrozenMap, InternalError, retain_document_value
+from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import ArrayBind, StructuredDocument
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.document_codec import _managed as managed
@@ -48,7 +49,7 @@ from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.sql_gen._write import InsertStatementBuilder
 from parallax.core.internal.unit_work import KeyedWriteInstruction
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import PredecessorRow
+from parallax.core.internal.write_plan import PredecessorRow, StateObservation, VersionObservation
 from parallax.core.internal.write_plan.managed_row import predecessor_state
 from parallax.core.internal.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
@@ -63,17 +64,28 @@ from parallax.core.internal.write_plan.steps import (
     WriteRow,
 )
 from tests._support.bindings import bound_model
+from tests._support.corpus import wire_value_deep
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction
 from tests._support.managed_rows import managed_row_of, row_selection_of
+from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
 
 
-def _lower(instruction: WriteInstruction, model: Metamodel = DOCUMENT) -> list[LoweredStatement]:
-    return lower_instruction(instruction, model)
+_LEDGER_DOCUMENT = corpus_model("scalar-collection-lifecycle-layout-twin-document")
+
+
+def _lower(
+    instruction: WriteInstruction,
+    model: Metamodel = DOCUMENT,
+    *,
+    concurrency: ConcurrencyPreference = "locking",
+    observation: StateObservation | None = None,
+) -> list[LoweredStatement]:
+    return lower_instruction(instruction, model, concurrency=concurrency, observation=observation)
 
 
 def _document(statement: LoweredStatement, index: int = -1) -> object:
@@ -133,18 +145,35 @@ def test_an_entity_with_no_document_member_still_binds_the_empty_object() -> Non
     assert _document(statement) == {}
 
 
-def test_an_update_patches_only_the_assigned_paths_in_canonical_order() -> None:
-    # The ROW lists `score` first; the statement assigns `displayName` first, because
-    # canonical logical placement order is the layout's and both dialects apply their
-    # mutation expressions left to right (m-dialect).
+_MERGE: Final = "update px.person set payload = payload || cast(? as jsonb) where id = ?"
+
+
+def _merged(statement: LoweredStatement) -> dict[str, object]:
+    """The one object a revising statement merges into its Structured Column,
+    as the driver receives it: a structured document whose Wire projection is
+    its own plain mapping, with no override standing in for any part of it."""
+    bound = statement.binds[0]
+    assert isinstance(bound, StructuredDocument)
+    assert statement.wire_bind_overrides == ()
+    assert statement.wire_binds()[0] == wire_value_deep(bound.document)
+    return cast("dict[str, object]", bound.document)
+
+
+def test_an_update_merges_only_the_assigned_members_in_canonical_order() -> None:
+    # The ROW lists `score` first; the merged object holds `displayName` first,
+    # because canonical logical placement order is the layout's (m-dialect).
     (statement,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "score": 9, "displayName": "Ada"},))
     )
-    assert statement.sql == (
-        "update px.person set payload = "
-        "jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?"
-    )
-    assert statement.binds == ("{displayName}", '"Ada"', "{score}", "9", 1)
+    assert statement.sql == _MERGE
+    assert list(_merged(statement).items()) == [("displayName", "Ada"), ("score", 9)]
+    assert statement.binds[1:] == (1,)
+
+
+def test_a_single_member_amendment_merges_the_same_term_as_a_wide_one() -> None:
+    (statement,) = _lower(KeyedWriteInstruction("amend", "Person", ({"id": 1, "score": 9},)))
+    assert statement.sql == _MERGE
+    assert _merged(statement) == {"score": 9}
 
 
 def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> None:
@@ -154,11 +183,11 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
     (statement,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "displayName": None},))
     )
-    assert statement.binds == ("{displayName}", "null", 1)
+    assert _merged(statement) == {"displayName": None}
 
 
-def test_a_predicate_replacement_completes_every_omitted_member_at_its_own_path() -> None:
-    # A completed null is the document's null at the member's path and an omitted
+def test_a_predicate_replacement_completes_every_omitted_member_in_the_merged_object() -> None:
+    # A completed null is the document's null at the member's key and an omitted
     # `many` the empty array, so the statement removes no key and touches none it
     # does not write.
     (statement,) = _lower(
@@ -173,54 +202,44 @@ def test_a_predicate_replacement_completes_every_omitted_member_at_its_own_path(
             row={"score": 9},
         )
     )
-    patch = "payload"
-    for _ in range(5):
-        patch = f"jsonb_set({patch}, ?, cast(? as jsonb))"
-    assert statement.sql == f"update px.person set payload = {patch} where id = ?"
-    assert statement.binds == (
-        "{displayName}",
-        "null",
-        "{score}",
-        "9",
-        "{joinedOn}",
-        "null",
-        "{address}",
-        "null",
-        "{tags}",
-        StructuredDocument(()),
-        1,
-    )
+    assert statement.sql == _MERGE
+    assert list(_merged(statement).items()) == [
+        ("displayName", None),
+        ("score", 9),
+        ("joinedOn", None),
+        ("address", None),
+        ("tags", ()),
+    ]
+    assert statement.binds[1:] == (1,)
 
 
-def test_assigning_a_one_occurrence_binds_its_whole_subtree_at_its_own_path() -> None:
-    # One path, one composite value, and no type test: the author stated a complete
+def test_assigning_a_one_occurrence_merges_its_whole_subtree_under_its_own_key() -> None:
+    # One key, one composite value, and no type test: the author stated a complete
     # `address`, so the statement writes that document rather than reaching inside the
     # stored one. `geo` is not named, and after this write the row does not hold it.
     (statement,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},))
     )
-    assert statement.sql == (
-        "update px.person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
-    )
-    assert statement.binds == ("{address}", StructuredDocument({"city": "Bodo"}), 1)
+    assert statement.sql == _MERGE
+    assert _merged(statement) == {"address": {"city": "Bodo"}}
 
 
 def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
     (statement,) = _lower(KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": None},)))
-    assert statement.binds == ("{address}", "null", 1)
+    assert _merged(statement) == {"address": None}
 
 
 def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     (statement,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
     )
-    assert statement.binds == ("{tags}", StructuredDocument(({"label": "member"},)), 1)
+    assert _merged(statement) == {"tags": ({"label": "member"},)}
 
 
 def test_one_and_many_assignments_render_the_identical_statement_shape() -> None:
     # The whole collapse in one assertion: cardinality selects no case, so the two
-    # occurrence kinds emit the same expression over their own paths and differ only
-    # in the document each binds.
+    # occurrence kinds emit the same expression and differ only in the object each
+    # binds.
     (one,) = _lower(
         KeyedWriteInstruction("amend", "Person", ({"id": 1, "address": {"city": "Bodo"}},))
     )
@@ -230,8 +249,8 @@ def test_one_and_many_assignments_render_the_identical_statement_shape() -> None
 
 def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> None:
     # A nested occurrence is never independently assignable, so naming one inside an
-    # authored `address` contributes a key to the ONE document that path binds rather
-    # than a second path of its own.
+    # authored `address` contributes a key to the ONE document that member holds
+    # rather than a member of its own.
     (statement,) = _lower(
         KeyedWriteInstruction(
             "amend",
@@ -239,7 +258,31 @@ def test_a_nested_occurrence_rides_inside_the_document_its_parent_binds() -> Non
             ({"id": 1, "address": {"geo": {"country": "NO"}}},),
         )
     )
-    assert statement.binds == ("{address}", StructuredDocument({"geo": {"country": "NO"}}), 1)
+    assert _merged(statement) == {"address": {"geo": {"country": "NO"}}}
+
+
+def test_a_direct_column_term_precedes_the_version_advance_beside_the_merge() -> None:
+    (statement,) = _lower(
+        KeyedWriteInstruction("amend", "TagLedger", ({"id": 1, "tags": ("c", "c")},)),
+        _LEDGER_DOCUMENT,
+        concurrency="optimistic",
+        observation=VersionObservation(observed_version=1),
+    )
+    assert statement.sql == (
+        "update px.tag_ledger set payload = payload || cast(? as jsonb), version = ? "
+        "where id = ? and version = ?"
+    )
+    assert _merged(statement) == {"tags": ("c", "c")}
+    assert statement.binds[1:] == (2, 1, 1)
+
+
+def test_the_columns_twin_of_an_update_assigns_each_member_its_own_column() -> None:
+    (statement,) = _lower(
+        KeyedWriteInstruction("amend", "Person", ({"id": 1, "score": 9, "address": None},)),
+        COLUMNS,
+    )
+    assert statement.sql == "update px.person set score = ?, address = ? where id = ?"
+    assert statement.binds == (9, None, 1)
 
 
 def test_a_direct_member_still_assigns_its_own_column() -> None:

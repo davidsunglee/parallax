@@ -15,10 +15,10 @@ when:
       expectAffectedRows: 2
       statements:
         - sql:
-            postgres: update px.storage_layout_transparency set payload = jsonb_set(payload, ?, cast(? as jsonb))
+            postgres: update px.storage_layout_transparency set payload = payload || cast(? as jsonb)
             mariadb: update px.storage_layout_transparency set payload = json_set(payload, ?, json_extract(?, '$'))
           binds:
-            postgres: ['{rank}', 5]
+            postgres: [{ rank: 5 }]
             mariadb: ['$.rank', 5]
 then:
   databaseCalls: 1

@@ -27,6 +27,7 @@ from tests._support.bind_positions import (
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.sweep_goldens import assert_wire_binds, write_golden_statements
+from tests.unit._corpus_model_support import model as corpus_model
 
 
 def _golden(case_id: str, index: int = 0) -> tuple[case_format.Case, str, list[Any]]:
@@ -98,10 +99,49 @@ def test_a_nested_casting_extraction_resolves_through_the_occurrence() -> None:
     assert positions == {3: FLOAT64}
 
 
-def test_a_document_path_assignment_types_each_value_bind() -> None:
+def test_a_document_merge_types_its_object_bind_as_the_shared_document() -> None:
     case, sql, binds = _golden("m-storage-layout-023", 1)
     positions = statement_bind_positions(engine.load_case_metamodel(case), sql, binds)
-    assert positions == {1: STRING, 3: INT64, 4: INT64}
+    assert positions.keys() == {0, 1}
+    document = positions[0]
+    assert isinstance(document, Document)
+    assert (document.members["displayName"], document.members["score"]) == (STRING, INT64)
+    assert positions[1] == INT64
+
+
+_MERGED_NODE = (
+    "update px.materialization_node set payload = payload || cast(? as jsonb) where id = ?"
+)
+
+
+def _graded_merge(golden: list[Any], observed: list[Any]) -> None:
+    model = corpus_model("materialization-stress-document")
+    compare_binds(observed, golden, statement_bind_positions(model, _MERGED_NODE, golden))
+
+
+def test_a_document_merge_refuses_a_negative_zero_member_beside_a_json_key() -> None:
+    golden: list[Any] = [{"ratio": 0.0, "extension": 0.0}, 1]
+    extension_negative = copy.deepcopy(golden)
+    extension_negative[0]["extension"] = -0.0
+    _graded_merge(golden, extension_negative)
+
+    member_negative = copy.deepcopy(golden)
+    member_negative[0]["ratio"] = -0.0
+    with pytest.raises(AssertionError, match=r"^bind 0: "):
+        _graded_merge(golden, member_negative)
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        pytest.param("payload = blob || cast(? as jsonb)", id="a-merge-into-another-column"),
+        pytest.param("payload = ? || payload", id="the-column-merged-into-a-bind"),
+    ],
+)
+def test_a_merge_not_over_its_own_column_leaves_its_bind_untyped(assignment: str) -> None:
+    model = corpus_model("materialization-stress-document")
+    sql = f"update px.materialization_node set {assignment} where id = ?"
+    assert statement_bind_positions(model, sql, [{"ratio": -0.0}, 1]) == {1: INT64}
 
 
 def test_a_shared_document_is_typed_by_the_owner_its_row_tags() -> None:
@@ -223,6 +263,21 @@ def test_a_shared_document_column_array_types_each_row_by_its_own_tag() -> None:
         pytest.param([ArrayBind(INT64, [1, 3])], [[1, 2]], id="a-changed-element"),
         pytest.param([ArrayBind(INT64, [1])], [[1, 2]], id="a-missing-element"),
         pytest.param([ArrayBind(INT64, [1])], [1], id="an-array-against-a-scalar"),
+        pytest.param(
+            [StructuredDocument({"score": "21"})],
+            [{"score": 21}],
+            id="a-merged-member-of-another-kind",
+        ),
+        pytest.param(
+            [StructuredDocument({"score": 21})],
+            [{"score": 21, "note": None}],
+            id="a-merged-member-missing",
+        ),
+        pytest.param(
+            [StructuredDocument({"tags": []})],
+            [{"tags": [None]}],
+            id="a-merged-collection-emptied",
+        ),
     ],
 )
 def test_compare_binds_alone_refuses_a_bind_the_golden_does_not_state(

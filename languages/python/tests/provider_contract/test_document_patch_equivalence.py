@@ -10,7 +10,8 @@ and compares the complete persisted document either way. Outside an object root,
 which only a table without its generated root-object check can hold, the
 provider's actual behavior is recorded per dialect instead, never asserted
 equal: a provider without recorded behavior fails rather than inheriting another
-provider's.
+provider's. A table adopting the check without validating its rows refuses a
+write that would keep such a root.
 """
 
 from __future__ import annotations
@@ -28,12 +29,11 @@ from parallax.core import Attr, Document, DomainModel, TxTemporal, ValueObject, 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core.internal.base import SQL_NULL, StructuredDocument
 from parallax.core.internal.db_error import DatabaseError
-from parallax.core.internal.dialect import DocumentLeafAssignment
 from parallax.core.internal.document_codec import apply_prepared_patches, persisted_document_equal
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
 from parallax.core.internal.sql_gen._write import compile_write_step
-from parallax.core.internal.write_plan.payload import AssignmentPayload, PatchedDocument
+from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
 from parallax.core.internal.write_plan.steps import (
     INFINITY,
     STALE_WRITE,
@@ -150,10 +150,16 @@ def _assignments(patch: _Patch) -> PlannedAssignments:
     )
 
 
-def _prepared(assignments: PlannedAssignments) -> tuple[AssignmentPayload, PatchedDocument]:
+def _prepared(assignments: PlannedAssignments) -> tuple[AssignmentPayload, DocumentPatches]:
     payload = build_write_planner(bound_model(_META)).payloads.assignments(_ENTITY, assignments)
-    (patched,) = (value for value in payload.values if isinstance(value, PatchedDocument))
+    (patched,) = (value for value in payload.values if isinstance(value, DocumentPatches))
     return payload, patched
+
+
+def _root_check_name() -> str:
+    root = bound_model(_META).table(_ENTITY).document_root_constraint
+    assert root is not None
+    return root.check_name
 
 
 def _seed(profile_run: Any, document: str | None, *, unmanaged: bool = False) -> None:
@@ -167,9 +173,7 @@ def _seed(profile_run: Any, document: str | None, *, unmanaged: bool = False) ->
     profile_run.reset(_META, {}, TEST_BINDING)
     port = profile_run.port
     if unmanaged:
-        root = bound_model(_META).table(_ENTITY).document_root_constraint
-        assert root is not None
-        port.execute_write(f"alter table px.{_TABLE} drop constraint {root.check_name}", [])
+        port.execute_write(f"alter table px.{_TABLE} drop constraint {_root_check_name()}", [])
     if document is None:
         port.execute_write(f"alter table px.{_TABLE} alter column payload drop not null", [])
     port.execute_write(
@@ -217,36 +221,21 @@ def test_prepared_patches_persist_what_applying_them_in_memory_predicts(
 
 
 # --------------------------------------------------------------------------- #
-# Outside an object root, each executable provider's own behavior.            #
+# Outside an object root, each executable provider's own stored result.       #
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class _Fails:
-    native_code: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Stores:
-    document: object
-
-
-type _Outcome = _Fails | _Stores
-
 _EXTERNAL_ROOTS: Final[Mapping[str, str | None]] = {
     "json-null": "null",
     "scalar": '"legacy"',
     "array": '["legacy", "old"]',
     "sql-null": None,
 }
-_EXTERNAL_ROOT_OUTCOMES: Final[Mapping[str, Mapping[str, _Outcome]]] = {
+_EXTERNAL_ROOT_OUTCOMES: Final[Mapping[str, Mapping[str, object]]] = {
     "postgres": {
-        "json-null": _Fails("22023"),
-        "scalar": _Fails("22023"),
-        "array": _Fails("22P02"),
-        "sql-null": _Stores(SQL_NULL),
+        "json-null": [None, {"crew": 5}],
+        "scalar": ["legacy", {"crew": 5}],
+        "array": ["legacy", "old", {"crew": 5}],
+        "sql-null": SQL_NULL,
     },
-}
-_NUMERIC_ARRAY_PATHS: Final[Mapping[str, Mapping[str, object]]] = {
-    "postgres": {"1": ["legacy", "new"], "5": ["legacy", "old", "new"]},
 }
 
 
@@ -258,37 +247,43 @@ def _recorded[T](table: Mapping[str, Mapping[str, T]], profile_run: Any) -> Mapp
     return recorded
 
 
+def _crew_revision() -> tuple[PlannedTemporalRevision, AssignmentPayload]:
+    payload, _patched = _prepared(_assignments(_Patch("crew", {"crew": 5}, {})))
+    return _revision(payload.assignments), payload
+
+
 @pytest.mark.parametrize("root", _EXTERNAL_ROOTS, ids=str)
 def test_a_patch_outside_an_object_root_does_what_its_provider_does(
     profile_run: Any, root: str
 ) -> None:
     expected = _recorded(_EXTERNAL_ROOT_OUTCOMES, profile_run)[root]
     _seed(profile_run, _EXTERNAL_ROOTS[root], unmanaged=True)
-    before = _persisted(profile_run)
-    payload, _patched = _prepared(_assignments(_Patch(root, {"crew": 5}, {})))
-    step = _revision(payload.assignments)
-    match expected:
-        case _Fails(native_code=code):
-            with pytest.raises(DatabaseError) as failed:
-                _execute(profile_run, step, payload)
-            assert failed.value.native_code == code
-            assert _persisted(profile_run) == before
-        case _Stores(document=document):
-            assert _execute(profile_run, step, payload) == 1
-            assert _persisted(profile_run) == document
+    step, payload = _crew_revision()
+    assert _execute(profile_run, step, payload) == 1
+    persisted = _persisted(profile_run)
+    if expected is SQL_NULL:
+        assert persisted == SQL_NULL
+    else:
+        assert isinstance(persisted, StructuredDocument)
+        assert persisted_document_equal(expected, persisted.document), persisted.document
 
 
-@pytest.mark.parametrize("segment", ["1", "5"])
-def test_a_numeric_path_into_an_array_root_does_what_its_provider_does(
-    profile_run: Any, segment: str
+@pytest.mark.parametrize("root", ["json-null", "scalar", "array"])
+def test_a_patch_keeping_a_legacy_non_object_root_is_refused_by_an_unvalidated_check(
+    profile_run: Any, root: str
 ) -> None:
-    # No governed assignment path is numeric; this records what a provider's
-    # mutation expression does where an external array root meets one.
-    expected = _recorded(_NUMERIC_ARRAY_PATHS, profile_run)[segment]
+    _seed(profile_run, _EXTERNAL_ROOTS[root], unmanaged=True)
+    name = _root_check_name()
     port = profile_run.port
-    dialect = port.dialect
-    expression, binds = dialect.document_mutation(
-        "cast(? as jsonb)", [DocumentLeafAssignment(path=(segment,), value="new")]
+    port.execute_write(
+        f"alter table px.{_TABLE} add constraint {name} "
+        "check (jsonb_typeof(payload) = 'object') not valid",
+        [],
     )
-    ((mutated,),) = port.execute(f"select {expression}", [json.dumps(["legacy", "old"]), *binds])
-    assert mutated == expected
+    before = _persisted(profile_run)
+    step, payload = _crew_revision()
+    with pytest.raises(DatabaseError) as refused:
+        _execute(profile_run, step, payload)
+    assert (refused.value.category, refused.value.native_code) == ("constraintViolation", "23514")
+    assert refused.value.constraint_name == name
+    assert _persisted(profile_run) == before

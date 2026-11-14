@@ -12,9 +12,9 @@ from parallax.core.internal.write_plan.steps import PlannedAssignments, PlannedS
 __all__ = [
     "AssignmentPayload",
     "ColumnPlacement",
+    "DocumentPatches",
     "EffectSlots",
     "InsertPayload",
-    "PatchedDocument",
     "RowPayload",
     "RowSlots",
     "WritePayloadPreparer",
@@ -22,9 +22,9 @@ __all__ = [
 
 
 @dataclass(frozen=True, slots=True)
-class PatchedDocument:
-    """The paths one revising step assigns inside a shared Structured Column,
-    as the ordered prepared patches a path-patching statement applies."""
+class DocumentPatches:
+    """The ordered prepared patches one revising step assigns inside a shared
+    Structured Column, one per assigned top-level member."""
 
     patches: tuple[PreparedPatch, ...]
 
@@ -148,7 +148,7 @@ class AssignmentPayload:
 
     ``assignments`` is the semantic assignment set the cells were prepared from,
     held by identity. The shared Structured Column's value is a
-    :class:`PatchedDocument` rather than a whole document, so unassigned content
+    :class:`DocumentPatches` rather than a whole document, so unassigned content
     stays as stored.
     """
 
@@ -176,15 +176,14 @@ class EffectSlots(Protocol):
     As-Of Axis end a milestone address names, in order — its column, or
     ``None`` where every effect shares the open Transaction-Time end —
     ``gate_source`` the version or Transaction-Time start gate's, ``None``
-    where the shape is ungated, and ``assignment_sources`` one entry per cell
-    the shape's assignments place, aligned with their placement — the column of
-    a cell assigned directly, or one column per path the shared Structured
-    Column's patches assign, in patch order. ``element_types`` holds each
-    column's Neutral Type: its scalar type, and ``json`` for a stored document
-    or an assigned path's encoded value. ``parameter_count`` is how many
-    parameters the grouped statement binds: one per column, one per assigned
-    path, one per shared open end, and the table-per-hierarchy tag where the
-    Entity has one.
+    where the shape is ungated, and ``assignment_sources`` the column of each
+    cell the shape's assignments place, aligned with their placement. A shared
+    Structured Column's cell is one column holding each effect's assigned
+    members as one mapping. ``element_types`` holds each column's Neutral Type:
+    its scalar type, and ``json`` for a stored document or an assigned-members
+    mapping. ``parameter_count`` is how many parameters the grouped statement
+    binds: one per column, one per shared open end, and the
+    table-per-hierarchy tag where the Entity has one.
     """
 
     @property
@@ -198,7 +197,7 @@ class EffectSlots(Protocol):
     @property
     def gate_source(self) -> int | None: ...
     @property
-    def assignment_sources(self) -> tuple[int | tuple[int, ...], ...]: ...
+    def assignment_sources(self) -> tuple[int, ...]: ...
     @property
     def element_types(self) -> tuple[NeutralType, ...]: ...
     @property

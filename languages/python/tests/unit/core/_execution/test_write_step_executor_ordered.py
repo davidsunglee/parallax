@@ -340,12 +340,13 @@ def test_the_statement_cap_ends_a_run_before_another_step_is_prepared(
 
 
 def test_an_effect_whose_parameter_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:
-    narrow = replace(POSTGRES, max_bind_parameters=5)
-    # A close's ceiling is six parameters and a guard's five, so only the guard fits.
+    narrow = replace(POSTGRES, max_bind_parameters=4)
+    # A close's ceiling is five parameters and an ungated removal's four, so only
+    # the removals fit.
     port = ScriptedAdapter(
         Write(), Ordered(OrderedWriteResultComplete((1, 1))), dialect=narrow, ordered=True
     )
-    executed = _execute(port, close(1), guard(2), guard(3))
+    executed = _execute(port, close(1), removal(2), removal(3))
     assert executed.raised is None
     assert [type(call) for call in port.calls] == [WriteCall, OrderedCall]
 

@@ -7,8 +7,8 @@ Value Object leaf inside a document bind — distinguishes ``-0.0`` from ``0.0``
 while a Json position and a document key no declaration names keep JSON-value
 equality. Nothing in a bind value says which it is, so the position is read off
 the statement and the case's model: a Column an ``insert`` lists or an ``update``
-assigns, a document path a mutation expression assigns, or the operand a bind is
-compared with. A multi-row insert's column array holds its Column's position at
+assigns, the members a document merge assigns, or the operand a bind is compared
+with. A multi-row insert's column array holds its Column's position at
 every element, and a shared Structured Column's array the document each row's
 own discriminator tag selects. A position this cannot resolve stays untyped and
 compares as JSON; a type is never guessed from a value.
@@ -120,8 +120,8 @@ def whole_document_binds(
 ) -> dict[int, bool]:
     """Each bind index of the canonical ``sql`` that writes one whole document
     Column, mapped to whether it binds a column array: an ``insert`` cell or
-    column array, or an ``update``'s bare ``column = ?``. A document path a
-    mutation expression assigns writes inside the Column, not the Column."""
+    column array, or an ``update``'s bare ``column = ?``. A merge into the
+    Column assigns some of its members, not the Column."""
     try:
         tree = sqlglot.parse_one(_indexed(sql), read=dialect)
     except sqlglot.ParseError:
@@ -446,14 +446,10 @@ class _Statement:
             if position is None:
                 continue
             index = _bare_bind(assignment.expression)
+            if index is None:
+                index = _merged_bind(assignment)
             if index is not None:
                 positions[index] = position
-                continue
-            for path_index, value_index in _path_assignments(assignment):
-                path = _text_array_path(self._bound(path_index))
-                member = None if path is None else _at_path(position, path)
-                if member is not None:
-                    positions[value_index] = member
         return positions
 
     def _slot_position(self, slot: ColumnSlot, known: Mapping[str, object]) -> BindPosition | None:
@@ -618,27 +614,16 @@ def _scope_tables(scope: exp.Expr) -> Iterator[exp.Table]:
             yield source
 
 
-def _path_assignments(assignment: exp.EQ) -> Iterator[tuple[int, int]]:
-    """The (path, value) bind pairs of a nested ``jsonb_set`` over the assigned
-    Column itself, innermost first."""
-    pairs: list[tuple[int, int]] = []
-    current = assignment.expression
-    while isinstance(current, exp.Anonymous) and current.name.lower() == "jsonb_set":
-        if len(current.expressions) != 3:
-            return
-        current, path, value = current.expressions
-        path_index, value_index = _index(path), _bare_bind(value)
-        if path_index is None or value_index is None:
-            return
-        pairs.append((path_index, value_index))
-    if isinstance(current, exp.Column) and current.name == assignment.this.name:
-        yield from reversed(pairs)
-
-
-def _text_array_path(value: object) -> list[str] | None:
-    if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
-        return value[1:-1].split(",")
-    return None
+def _merged_bind(assignment: exp.EQ) -> int | None:
+    """The bind index of the object a ``column || ?`` merge over the assigned
+    Column itself supplies: a partial document holding the members it assigns."""
+    merge = _unwrapped(assignment.expression)
+    if not isinstance(merge, exp.DPipe):
+        return None
+    target = _unwrapped(merge.this)
+    if not isinstance(target, exp.Column) or target.name != assignment.this.name:
+        return None
+    return _bare_bind(merge.expression)
 
 
 def _slot_named(layout: TableLayout, name: str) -> ColumnSlot | None:

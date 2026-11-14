@@ -24,6 +24,7 @@ from parallax.core.internal.document_codec import (
     SetScalar,
     SetValueObject,
     apply_prepared_patches,
+    assigned_members,
 )
 from parallax.core.internal.document_codec._document import (
     encode_managed_document,
@@ -46,7 +47,7 @@ from parallax.core.internal.storage_layout import (
     RelationalDocument,
 )
 from parallax.core.internal.write_plan.managed_row import occurrence_cells
-from parallax.core.internal.write_plan.payload import AssignmentPayload, PatchedDocument
+from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
     ExactCount,
@@ -628,12 +629,12 @@ class EffectSlots:
     """The source columns a grouped effect of one :class:`EffectShape` binds:
     each key Attribute's, then each As-Of Axis end's its effects bind their own
     bound at, then the gate's, then one per cell its assignments place in Table
-    Layout slot order — one per assigned path of the shared Structured Column,
-    in canonical logical placement order.
+    Layout slot order — the shared Structured Column's holding each effect's
+    assigned members as one mapping.
     """
 
     __slots__ = (
-        "_gathers",
+        "_documents",
         "_keyed",
         "assignment_sources",
         "element_types",
@@ -667,34 +668,30 @@ class EffectSlots:
         if shape.gate is not None:
             self.gate_source = len(types)
             types.append(attribute_type(shape.gate))
-        sources: list[int | tuple[int, ...]] = []
-        gathers: list[tuple[int, int]] = []
-        paths = 0
+        sources: list[int] = []
+        documents: list[bool] = []
         for slot in storage.slots:
             kind = slot.kind
             if kind == _SHARED:
                 residents = cast("_Residents", storage.residents)
-                assigned = sum(1 for position in residents.positions if presence >> position & 1)
-                if not assigned:
+                if not any(presence >> position & 1 for position in residents.positions):
                     continue
-                columns = tuple(range(len(types), len(types) + assigned))
-                gathers.extend((len(sources), patch) for patch in range(assigned))
-                types.extend([JSON] * assigned)
-                sources.append(columns)
-                paths += assigned
+                documents.append(True)
+                sources.append(len(types))
+                types.append(JSON)
             elif kind != _CONSTANT and presence >> slot.position & 1:
-                gathers.append((len(sources), -1))
+                documents.append(False)
                 sources.append(len(types))
                 types.append(_element_type(slot))
         self.kind = shape.kind
         self._keyed = shape.kind is PlannedUpdate or shape.kind is PlannedDelete
         self.entity = storage.entity
-        self.assignment_sources: tuple[int | tuple[int, ...], ...] = tuple(sources)
+        self.assignment_sources: tuple[int, ...] = tuple(sources)
         self.element_types: tuple[NeutralType, ...] = tuple(types)
-        self._gathers: tuple[tuple[int, int], ...] = tuple(gathers)
+        self._documents: tuple[bool, ...] = tuple(documents)
         tag = 0 if storage.view.discriminator is None else 1
         shared_ends = end_sources.count(None)
-        self.parameter_count = len(types) + paths + tag + shared_ends
+        self.parameter_count = len(types) + tag + shared_ends
 
     def gather(
         self,
@@ -705,8 +702,8 @@ class EffectSlots:
         """Append ``step``'s cell to each of ``columns``, one list per source
         column: each key value, axis end, and observed version or
         Transaction-Time start read from the step, and each assigned cell from
-        its payload — a path's prepared encoded value where the shared
-        Structured Column is patched. Every cell is read before any is
+        its payload — the assigned-members mapping of its patches where the
+        shared Structured Column is patched. Every cell is read before any is
         appended, so ``columns`` gain a whole row or nothing."""
         if self._keyed:
             keyed = cast("PlannedUpdate | PlannedDelete", step)
@@ -724,12 +721,11 @@ class EffectSlots:
                     cells.append(_upper_bound(ends[index]))
             if self.gate_source is not None:
                 cells.append(cast("TemporalGate", milestone.concurrency).observed_start)
-        if self._gathers:
+        if self._documents:
             values = cast("AssignmentPayload", payload).values
-            for value, patch in self._gathers:
-                cell = values[value]
+            for cell, document in zip(values, self._documents, strict=True):
                 cells.append(
-                    cell if patch < 0 else cast("PatchedDocument", cell).patches[patch].value
+                    assigned_members(cast("DocumentPatches", cell).patches) if document else cell
                 )
         if len(cells) != len(columns):
             raise InternalError(

@@ -13,6 +13,7 @@ import datetime as dt
 import sys
 from collections.abc import Sequence
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
@@ -31,7 +32,7 @@ from parallax.core.internal.base import (
     InternalError,
     Numeric,
 )
-from parallax.core.internal.db_port import JSON_NULL, ArrayBind
+from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel
 from parallax.core.internal.read_delivery import InvalidDataError
@@ -40,7 +41,7 @@ from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.sql_gen._write import GroupedEffectBuilder
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.core.internal.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
-from parallax.core.internal.write_plan.payload import AssignmentPayload
+from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
 from parallax.core.internal.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
@@ -186,8 +187,8 @@ def test_a_composite_key_binds_one_array_per_key_column() -> None:
     assert arrays(statement)[:2] == [(INT64, [1, 2]), (STRING, ["Ada", "Bo"])]
 
 
-def test_document_paths_bind_once_and_their_values_one_jsonb_array_each() -> None:
-    steps = [
+def _ledger_document_updates() -> list[PlannedUpdate]:
+    return [
         update(
             LEDGER_DOCUMENT,
             "TagLedger",
@@ -205,28 +206,62 @@ def test_document_paths_bind_once_and_their_values_one_jsonb_array_each() -> Non
             observed=4,
         ),
     ]
+
+
+def test_document_members_bind_as_one_jsonb_array_of_each_rows_assigned_members() -> None:
+    steps = _ledger_document_updates()
     _, (statement,) = grouped(LEDGER_DOCUMENT, steps)
     assert statement.sql == (
-        "update px.tag_ledger t set payload = jsonb_set(jsonb_set(jsonb_set(t.payload, ?, v.c4), "
-        "?, v.c5), ?, v.c6), version = v.c3 from unnest(cast(? as bigint[]), "
-        "cast(? as int[]), cast(? as int[]), cast(? as jsonb[]), cast(? as jsonb[]), "
-        "cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, c5, c6, ord) "
-        "where t.id = v.c1 and t.version = v.c2 returning v.ord"
+        "update px.tag_ledger t set payload = t.payload || v.c4, version = v.c3 from unnest("
+        "cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) "
+        "with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 "
+        "returning v.ord"
     )
-    assert [element for element, _ in arrays(statement)[3:]] == [INT64, INT32, INT32] + [JSON] * 3
+    assert [element for element, _ in arrays(statement)] == [INT64, INT32, INT32, JSON]
     assert statement.wire_binds() == (
-        "{label}",
-        "{tags}",
-        "{route}",
         [1, 2],
         [1, 4],
         [2, 5],
-        ["a", None],
-        [["c", "c"], []],
-        [None, {"stops": ["x"]}],
+        [
+            {"label": "a", "tags": ["c", "c"], "route": None},
+            {"label": None, "tags": [], "route": {"stops": ["x"]}},
+        ],
     )
-    label, _, route = [values for _, values in arrays(statement)[6:]]
-    assert (label[1], route[0]) == (JSON_NULL, JSON_NULL)
+    first, second = arrays(statement)[3][1]
+    assert list(cast("dict[str, object]", first)) == ["label", "tags", "route"]
+    assert cast("dict[str, object]", second)["label"] is None
+
+
+def test_a_document_effects_parameters_are_its_source_arrays() -> None:
+    preparer = LayoutPayloadPreparer(bound_model(LEDGER_DOCUMENT))
+    step = _ledger_document_updates()[0]
+    shape = preparer.effect_shape(step)
+    assert shape is not None
+    slots = preparer.effect_slots(step.entity, shape)
+    assert slots.assignment_sources == (2, 3)
+    assert slots.element_types == (INT64, INT32, INT32, JSON)
+    assert slots.parameter_count == 4
+
+
+def test_a_document_effect_whose_patches_have_no_merged_form_gathers_nothing() -> None:
+    preparer = LayoutPayloadPreparer(bound_model(LEDGER_DOCUMENT))
+    steps = _ledger_document_updates()
+    shape = preparer.effect_shape(steps[0])
+    assert shape is not None
+    builder = GroupedEffectBuilder(
+        preparer.effect_slots(steps[0].entity, shape), bound_model(LEDGER_DOCUMENT), POSTGRES
+    )
+    builder.append(steps[0], preparer.assignments(steps[0].entity, steps[0].assignments))
+    payload = preparer.assignments(steps[1].entity, steps[1].assignments)
+    removing = tuple(
+        DocumentPatches((dataclasses.replace(value.patches[0], removes=True), *value.patches[1:]))
+        if isinstance(value, DocumentPatches)
+        else value
+        for value in payload.values
+    )
+    with pytest.raises(ValueError, match="top-level and remove no key"):
+        builder.append(steps[1], dataclasses.replace(payload, values=removing))
+    assert [len(values) for _, values in arrays(builder.finish())] == [1, 1, 1, 1]
 
 
 def test_a_value_object_column_and_a_collection_column_bind_whole_documents() -> None:
@@ -775,7 +810,7 @@ def test_revisions_assign_payload_and_valid_start_per_row() -> None:
     ]
 
 
-def test_document_revisions_patch_each_path_from_the_source() -> None:
+def test_document_revisions_merge_each_rows_assigned_members_from_the_source() -> None:
     steps = [
         revision(
             COVERAGE_DOCUMENT,
@@ -787,13 +822,12 @@ def test_document_revisions_patch_each_path_from_the_source() -> None:
     ]
     _, (statement,) = grouped(COVERAGE_DOCUMENT, steps)
     assert statement.sql == (
-        "update px.coverage_span t set payload = jsonb_set(t.payload, ?, v.c3) from unnest("
+        "update px.coverage_span t set payload = t.payload || v.c3 from unnest("
         "cast(? as bigint[]), cast(? as timestamptz[]), cast(? as jsonb[])) with ordinality "
         "v(c1, c2, c3, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? "
         "returning v.ord"
     )
-    assert statement.wire_binds()[0] == "{amount}"
-    assert statement.wire_binds()[3] == [150, 250]
+    assert statement.wire_binds()[2] == [{"amount": 150}, {"amount": 250}]
 
 
 def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefix() -> None:
@@ -824,7 +858,7 @@ def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefi
     assert held == tuple(steps[:2])
     assert isinstance(raised, InvalidDataError) and raised.code == STORED_DOCUMENT_NOT_OBJECT
     assert "not known to be an object" in str(raised)
-    assert arrays(statement)[1] == (INT64, [1, 2])
+    assert arrays(statement)[0] == (INT64, [1, 2])
 
 
 def test_each_milestone_kind_and_gate_is_its_own_shape() -> None:

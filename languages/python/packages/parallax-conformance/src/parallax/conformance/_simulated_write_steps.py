@@ -6,7 +6,7 @@ from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.internal.write_plan.payload import DocumentPatches, WritePayloadPreparer
 from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
@@ -74,7 +74,7 @@ class SimulatedWriteSteps:
         effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         lowered = tuple(

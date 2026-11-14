@@ -223,10 +223,14 @@ def test_an_effect_whose_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:
     meta = model("position")
     entity = entity_of(meta, "Position").identity
     close, guard, *_ = _effects(entity, entity, {AttributeIdentity(entity, "value"): Decimal("1")})
-    # A close's ceiling is six parameters and a guard's five.
-    narrow = replace(POSTGRES, max_bind_parameters=5)
+    # A close's ceiling is four parameters for its address and one for its
+    # assigned end, and a guard's four for its address and one for its gate.
+    narrow = replace(POSTGRES, max_bind_parameters=4)
     assert ordered_parameter_ceiling(close, narrow) is None
-    assert ordered_parameter_ceiling(guard, narrow) == 5
+    assert ordered_parameter_ceiling(guard, narrow) is None
+    fitting = replace(POSTGRES, max_bind_parameters=5)
+    assert ordered_parameter_ceiling(close, fitting) == 5
+    assert ordered_parameter_ceiling(guard, fitting) == 5
 
 
 def test_a_statement_exceeding_the_ceiling_it_promised_is_a_lowering_failure() -> None:
@@ -291,8 +295,8 @@ def _planned(
 def test_a_single_key_non_temporal_effect_promises_the_ceiling_its_statement_keeps() -> None:
     meta = model("wallet")
     update, delete = _wallet_effects(1)
-    # Key and tag guard, plus an assigned member's two.
-    assert ordered_parameter_ceiling(update, POSTGRES) == 4
+    # Key and tag guard, plus an assigned member's one.
+    assert ordered_parameter_ceiling(update, POSTGRES) == 3
     assert ordered_parameter_ceiling(delete, POSTGRES) == 2
     payloads = build_write_planner(bound_model(meta)).payloads
     for step in (update, delete):
@@ -319,7 +323,7 @@ def test_a_version_gate_and_a_registry_increment_each_fit_the_ceiling() -> None:
         ),
         affected_rows=ExactCount(1, OPTIMISTIC_CONFLICT),
     )
-    assert ordered_parameter_ceiling(gated, POSTGRES) == 7
+    assert ordered_parameter_ceiling(gated, POSTGRES) == 5
     registry_model = model("pk-sequence")
     registry = _planned(
         registry_model,
@@ -332,7 +336,7 @@ def test_a_version_gate_and_a_registry_increment_each_fit_the_ceiling() -> None:
         isinstance(value, SelfIncrement) for value in registry.assignments.attributes.values()
     )
     ceiling = ordered_parameter_ceiling(registry, POSTGRES)
-    assert ceiling == 4
+    assert ceiling == 3
     payloads = build_write_planner(bound_model(registry_model)).payloads
     statement = lowered_within(registry, ceiling, payloads, bound_model(registry_model), POSTGRES)
     assert statement.binds == (3, "pass_seq")
@@ -360,7 +364,7 @@ def test_a_multi_key_or_predicate_selected_effect_runs_alone() -> None:
 
 def test_a_non_temporal_effect_whose_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:
     update, delete = _wallet_effects(1)
-    narrow = replace(POSTGRES, max_bind_parameters=3)
+    narrow = replace(POSTGRES, max_bind_parameters=2)
     assert ordered_parameter_ceiling(update, narrow) is None
     assert ordered_parameter_ceiling(delete, narrow) == 2
 
