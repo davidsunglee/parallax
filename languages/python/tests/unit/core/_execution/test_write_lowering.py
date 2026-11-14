@@ -60,7 +60,6 @@ from parallax.core.internal.base import (
     JSON,
     STRING,
     TIMESTAMP,
-    DocumentValue,
     FrozenMap,
     InternalError,
     UsageError,
@@ -112,8 +111,8 @@ from parallax.core.internal.write_plan import (
 )
 from parallax.core.internal.write_plan.payload import (
     AssignmentPayload,
+    DocumentPatches,
     InsertPayload,
-    PatchedDocument,
     RowPayload,
     RowSlots,
     WritePayloadPreparer,
@@ -1455,9 +1454,9 @@ def test_a_narrow_update_prepares_its_assignments_alone() -> None:
 
 
 def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
-    # The document paths a revising statement assigns are the prepared patches'
-    # own encoded values, so a successor document patched from the same
-    # preparation and this statement store one encoding.
+    # The document members a revising statement merges are the prepared
+    # patches' own encoded values, so a successor document patched from the
+    # same preparation and this statement store one encoding.
     document = document_model()
     address = ValueObjectIdentity(PERSON, ("address",))
     step = PlannedUpdate(
@@ -1472,15 +1471,16 @@ def test_a_revision_binds_the_very_values_its_prepared_patches_encode() -> None:
     )
     payload = LayoutPayloadPreparer(bound_model(document)).assignments(PERSON, step.assignments)
     (patched,) = payload.values
-    assert isinstance(patched, PatchedDocument)
+    assert isinstance(patched, DocumentPatches)
     name, occurrence = patched.patches
 
     statement = compile_write_step(step, payload, bound_model(document), POSTGRES)
 
-    assert StructuredDocument(cast("DocumentValue", occurrence.value)) in statement.binds
     (bound,) = (bind for bind in statement.binds if isinstance(bind, StructuredDocument))
-    assert bound.document is occurrence.value
-    assert name.value == "Ada"
+    merged = cast("dict[str, object]", bound.document)
+    assert merged == {"displayName": "Ada", "address": occurrence.value}
+    assert merged["displayName"] is name.value
+    assert merged["address"] is occurrence.value
 
 
 # --------------------------------------------------------------------------- #
@@ -1570,7 +1570,7 @@ def test_a_revision_patching_a_document_known_to_be_an_object_prepares_it_once(
     step = _span_revision({"amount": 300}, predecessor_document_is_object=True)
     payloads = _CountingPreparer(_SPANS_DOCUMENT)
     statement = lower(step, payloads, _SPANS_DOCUMENT)
-    assert "jsonb_set(" in statement.sql
+    assert "payload = payload || cast(? as jsonb)" in statement.sql
     assert [assignments is step.assignments for assignments in payloads.prepared] == [True]
 
 
@@ -1588,7 +1588,7 @@ def test_a_revision_patching_no_document_lowers_whatever_its_predecessor_held(
     step = _span_revision(assigned, predecessor_document_is_object=False)
     statement = lowered(step, LayoutPayloadPreparer(bound_model(meta)), bound_model(meta), POSTGRES)
     assert statement.sql.startswith("update px.sequence_span set ")
-    assert "jsonb_set(" not in statement.sql
+    assert "||" not in statement.sql
 
 
 def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> None:
@@ -1633,7 +1633,7 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
 
 def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
     # A cell is placed by its contributor's slot, and a document key removal no
-    # assignment can express is refused rather than silently dropped.
+    # merge can express is refused rather than silently dropped.
     payloads = LayoutPayloadPreparer(bound_model(_CRATE_MODEL))
     update = _crate_update()
     assigned = payloads.assignments(_CRATE, update.assignments)
@@ -1653,12 +1653,12 @@ def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
     )
     prepared = LayoutPayloadPreparer(bound_model(document)).assignments(PERSON, step.assignments)
     (patched,) = prepared.values
-    assert isinstance(patched, PatchedDocument)
+    assert isinstance(patched, DocumentPatches)
     (score,) = patched.patches
     removal = dataclasses.replace(
-        prepared, values=(PatchedDocument((dataclasses.replace(score, removes=True),)),)
+        prepared, values=(DocumentPatches((dataclasses.replace(score, removes=True),)),)
     )
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="removes no document key"):
+    with pytest.raises(ValueError, match="top-level and remove no key"):
         compile_write_step(step, removal, bound_model(document), POSTGRES)
 
 

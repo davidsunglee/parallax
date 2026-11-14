@@ -435,10 +435,10 @@ The rule is therefore identical to conventional Value Object storage, where a
 top-level occurrence's own Structured Column is bound atomically and every update
 rewrites it whole (`m-value-object`). The two layouts differ only in whether the
 row as stored is one document or several columns; assigning an occurrence
-replaces its value under both, and neither layout carries a merge. What still
-distinguishes this layout is that an update leaves every key it does not assign
-standing, which is what makes a key written by a newer application version
-survive an unrelated write.
+replaces its value under both, and neither layout merges an assigned occurrence
+into the stored one. What still distinguishes this layout is that an update
+leaves every key it does not assign standing, which is what makes a key written
+by a newer application version survive an unrelated write.
 
 ## Tier classification and ordering
 

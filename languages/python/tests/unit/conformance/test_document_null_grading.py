@@ -1,6 +1,6 @@
 """Golden ``null`` grading at whole document Columns (`m-value-object`): such a
 ``null`` states SQL NULL, so a bind of the literal JSON null document fails
-there, while a document path assignment's JSON null is not a whole Column."""
+there, while a JSON null member of a document merge is not a whole Column."""
 
 from __future__ import annotations
 
@@ -56,10 +56,11 @@ def test_a_column_array_holds_sql_null_for_each_null_value_object() -> None:
             _grade(case, sql, golden, [ids, names, ArrayBind(JSON, values)])
 
 
-def test_a_document_path_assignment_of_json_null_is_not_a_whole_column() -> None:
+def test_a_document_merge_of_json_null_members_is_not_a_whole_column() -> None:
     case, sql, golden = _golden("m-batch-write-054", 0)
+    assert golden[0]["joinedOn"] is None
     assert whole_document_binds(engine.load_case_metamodel(case), sql) == {}
-    _grade(case, sql, golden, [*golden[:5], "null", *golden[6:]])
+    _grade(case, sql, golden, [StructuredDocument(golden[0]), *golden[1:]])
 
 
 def test_a_shared_structured_column_insert_writes_its_whole_document() -> None:

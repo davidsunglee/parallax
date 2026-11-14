@@ -11,7 +11,7 @@ from typing import Final
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 
@@ -69,7 +69,7 @@ class ObservedSteps:
         effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         position = self.executions

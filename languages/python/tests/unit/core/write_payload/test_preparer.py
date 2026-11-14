@@ -17,7 +17,7 @@ from typing import cast
 
 import pytest
 
-from parallax.core.internal.base import INFINITY, FrozenMap, InternalError, NeutralType
+from parallax.core.internal.base import INFINITY, FrozenMap, InternalError
 from parallax.core.internal.document_codec import PreparedPatch
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
@@ -28,7 +28,7 @@ from parallax.core.internal.metamodel import (
 from parallax.core.internal.storage_layout import RelationalDocument
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.core.internal.write_plan import PredecessorRow
-from parallax.core.internal.write_plan.payload import PatchedDocument, RowPayload
+from parallax.core.internal.write_plan.payload import DocumentPatches, RowPayload
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
     MAX_PLUS_ONE,
@@ -184,19 +184,11 @@ def test_an_assignment_set_patches_only_its_paths_with_prepared_values() -> None
     (contributor,) = payload.contributors
     (patched,) = payload.values
     assert contributor == RelationalDocument(_EXPEDITION)
-    assert isinstance(patched, PatchedDocument)
+    assert isinstance(patched, DocumentPatches)
     title, route = patched.patches
-    assert title == PreparedPatch(("title",), None, _title_type())
-    assert (route.path, route.leaf, route.removes) == (("route",), None, False)
+    assert title == PreparedPatch(("title",), None)
+    assert (route.path, route.removes) == (("route",), False)
     assert route.value == {"name": "Coastal", "stops": [{"port": "Oslo"}]}
-
-
-def _title_type() -> NeutralType:
-    entity = _EXPEDITIONS.entity(_EXPEDITION)
-    assert entity is not None
-    attribute = entity.attribute("title")
-    assert attribute is not None
-    return attribute.type
 
 
 def test_a_columns_row_encodes_each_occurrence_into_its_own_column() -> None:
@@ -563,6 +555,6 @@ def test_a_document_assignment_patches_a_whole_collection_as_composite_content()
     )
 
     (patched,) = payload.values
-    assert isinstance(patched, PatchedDocument)
+    assert isinstance(patched, DocumentPatches)
     (tags,) = patched.patches
-    assert (tags.path, tags.leaf, tags.removes, tags.value) == (("tags",), None, False, ("b", "b"))
+    assert (tags.path, tags.removes, tags.value) == (("tags",), False, ("b", "b"))

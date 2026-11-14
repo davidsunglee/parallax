@@ -57,6 +57,7 @@ __all__ = [
     "SetScalar",
     "SetValueObject",
     "apply_prepared_patches",
+    "assigned_members",
     "comparison_text",
     "encode_managed_document",
     "encode_managed_many",
@@ -618,16 +619,13 @@ class PreparedPatch:
     """One patch resolved against its shape and encoded, ready to apply anywhere.
 
     ``value`` is the recursively immutable encoded content the path receives: a
-    single scalar's spelling or JSON null when ``leaf`` names its type, and
-    composite content — an occurrence's complete document or JSON null, or a
-    scalar collection's encoded array — when ``leaf`` is ``None``. ``removes``
-    marks a scalar patch that deletes the key instead, which no SQL assignment
-    expresses.
+    single scalar's spelling, an occurrence's complete document, a scalar
+    collection's encoded array, or JSON null. ``removes`` marks a scalar patch
+    that deletes the key instead, which no SQL assignment expresses.
     """
 
     path: tuple[str, ...]
     value: object
-    leaf: NeutralType | None
     removes: bool = False
 
 
@@ -639,13 +637,14 @@ def prepare_patches(
     The preparation is independent of any predecessor document, so one prepared
     sequence applies to every document of that shape
     (:func:`apply_prepared_patches`) and supplies the same encoded values to a
-    path-patching statement. A path the shape does not declare is refused, and so
-    is a patch whose kind contradicts the member it names — a :class:`SetScalar` at
-    an occurrence, whatever presence it carries, or a :class:`SetValueObject` at a
-    leaf. What a patch *carries* stays the caller's: removing a required member's
-    key, writing JSON null over it, or assigning an occurrence a document of some
-    other shape all produce a document this same shape then reads back as invalid
-    stored data, and nothing here refuses them.
+    merging statement (:func:`assigned_members`). A path the shape does not
+    declare is refused, and so is a patch whose kind contradicts the member it
+    names — a :class:`SetScalar` at an occurrence, whatever presence it carries,
+    or a :class:`SetValueObject` at a leaf. What a patch *carries* stays the
+    caller's: removing a required member's key, writing JSON null over it, or
+    assigning an occurrence a document of some other shape all produce a document
+    this same shape then reads back as invalid stored data, and nothing here
+    refuses them.
     """
     return _prepared_patches(
         shape, patches, _validated_leaf, encode_scalar_many, retain_document_value
@@ -694,25 +693,25 @@ def _prepared_patches(
         if isinstance(patch, SetValueObject):
             if not isinstance(member, OccurrenceDefinition):
                 raise ValueError(f"{dotted!r} names a leaf; use SetScalar")
-            prepared.append(PreparedPatch(patch.path, document(patch.document), None))
+            prepared.append(PreparedPatch(patch.path, document(patch.document)))
             continue
         if not isinstance(member, ScalarDefinition):
             raise ValueError(f"{dotted!r} names an occurrence; use SetValueObject")
         presence = patch.value
         if isinstance(presence, Missing):
-            prepared.append(PreparedPatch(patch.path, None, member.type, removes=True))
+            prepared.append(PreparedPatch(patch.path, None, removes=True))
         elif member.multiplicity is Multiplicity.MANY:
             elements = (
                 ()
                 if isinstance(presence, ExplicitNull) or presence.value is None
                 else cast("Iterable[object]", presence.value)
             )
-            prepared.append(PreparedPatch(patch.path, many(member.type, elements), None))
+            prepared.append(PreparedPatch(patch.path, many(member.type, elements)))
         elif isinstance(presence, ExplicitNull):
-            prepared.append(PreparedPatch(patch.path, None, member.type))
+            prepared.append(PreparedPatch(patch.path, None))
         else:
             encoded = leaf(member.type, presence.value)
-            prepared.append(PreparedPatch(patch.path, encoded, member.type))
+            prepared.append(PreparedPatch(patch.path, encoded))
     return tuple(prepared)
 
 
@@ -764,6 +763,24 @@ def apply_prepared_patches(
         else:
             target[patch.path[-1]] = patch.value
     return cast("FrozenMap[str, object]", _adopt_document_builder(current))
+
+
+def assigned_members(prepared: Sequence[PreparedPatch]) -> dict[str, object]:
+    """The top-level members ``prepared`` assigns, each mapped to its encoded
+    value, in patch order.
+
+    Over an object root, merging the mapping's keys into the root is
+    :func:`apply_prepared_patches`: ``{**root, **assigned_members(prepared)}``
+    equals ``apply_prepared_patches(root, prepared)``. The mapping is fresh on
+    every call and shares each encoded value. A patch that removes a key or
+    names a nested path has no merged form, so it is refused.
+    """
+    members: dict[str, object] = {}
+    for patch in prepared:
+        if patch.removes or len(patch.path) != 1:
+            raise ValueError("assigned members are top-level and remove no key")
+        members[patch.path[0]] = patch.value
+    return members
 
 
 # Strings and object members are compared inline in the per-node loop that judges

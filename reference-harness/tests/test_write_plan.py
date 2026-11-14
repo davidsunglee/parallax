@@ -124,15 +124,12 @@ def test_a_statement_assigning_nothing_answers_nothing() -> None:
 
 
 def test_a_set_clause_splits_on_the_commas_that_separate_its_assignments() -> None:
-    # A document mutation expression takes commas of its own — nested `jsonb_set`
-    # calls on Postgres, one N-pair `json_set` on MariaDB — so only a comma at
-    # bracket depth zero ends an assignment. Splitting naively would read the
-    # expression's own arguments as further SET columns.
-    nested = (
-        "update t set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
-        "?, cast(? as jsonb)) where id = ?"
-    )
-    assert parse_set_columns(nested) == ["payload"]
+    # A document mutation expression may take commas of its own — one N-pair
+    # `json_set` on MariaDB — so only a comma at bracket depth zero ends an
+    # assignment. Splitting naively would read the expression's own arguments as
+    # further SET columns.
+    merged = "update t set payload = payload || cast(? as jsonb), version = ? where id = ?"
+    assert parse_set_columns(merged) == ["payload", "version"]
     pairs = "update t set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?"
     assert parse_set_columns(pairs) == ["payload"]
     plain = "update t set a = ?, b = ? where id = ?"

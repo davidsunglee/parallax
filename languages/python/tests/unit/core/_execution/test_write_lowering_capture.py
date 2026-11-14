@@ -23,7 +23,7 @@ from parallax.core.internal.base import INFINITY as OPEN
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel, entity_by_name
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -67,7 +67,7 @@ class _Captures:
     def insert(self, entry: WriteRow, document: object | None) -> None:
         self.seen.append(("insert", entry, document, self._prepared()))
 
-    def revision(self, step: PlannedTemporalRevision, patched: PatchedDocument | None) -> None:
+    def revision(self, step: PlannedTemporalRevision, patched: DocumentPatches | None) -> None:
         self.seen.append(("revision", step, patched, self._prepared()))
 
 
@@ -245,5 +245,5 @@ def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_i
     assert isinstance(document, Mapping)
     assert cast("Mapping[str, object]", document)["label"] == "opened"
     assert revision_kind == "revision"
-    assert isinstance(patched, PatchedDocument)
+    assert isinstance(patched, DocumentPatches)
     assert patched.patches

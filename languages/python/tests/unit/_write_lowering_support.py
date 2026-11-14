@@ -147,7 +147,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.storage_layout import storage_layout_facet_of as storage_layout_view
 from parallax.core.internal.unit_work import KeyedMutation, TargetMutation
 from parallax.core.internal.write_plan.managed_row import managed_row, named_members
-from parallax.core.internal.write_plan.payload import PatchedDocument
+from parallax.core.internal.write_plan.payload import DocumentPatches
 from parallax.core.internal.write_plan.plan import EffectSpan, WriteGroup, WritePlan
 from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 from parallax.postgres._connection import adapt_binds, initialize_connection, to_driver_sql
@@ -1800,7 +1800,7 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         allocates: bool,
         flush: FlushActivity,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         regions.executing()

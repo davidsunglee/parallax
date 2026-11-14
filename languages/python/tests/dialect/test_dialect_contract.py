@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from importlib.resources import files
+from typing import cast
 
 import pytest
 
@@ -45,9 +46,7 @@ from parallax.core.internal.dialect import (
     POSTGRES,
     ColumnDdl,
     Dialect,
-    DocumentLeafAssignment,
     DocumentRootCheckDdl,
-    DocumentValueAssignment,
     ExclusionDdl,
     IndexColumnDdl,
     IntervalCheckDdl,
@@ -288,114 +287,45 @@ def test_array_guard_fragment_top_level_many_needs_no_path_descent(dialect: Dial
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_mutation_composes_one_assignment_through_the_value_expression(
+def test_document_mutation_merges_every_assigned_member_as_one_object_bind(
     dialect: Dialect,
 ) -> None:
-    # m-dialect *Document mutation-expression form*: the value hole is a
-    # per-dialect EXPRESSION, not a bare `?`. A bare parameter there resolves to
-    # `jsonb_set`'s declared `jsonb` and rejects every scalar bind, so the cast
-    # is what makes one authored bind form work at all.
-    sql, binds = dialect.document_mutation(
-        "payload", [DocumentLeafAssignment(("displayName",), "Solveig")]
-    )
-    assert sql == "jsonb_set(payload, ?, cast(? as jsonb))"
-    assert binds == ["{displayName}", '"Solveig"']
+    # m-dialect *Document mutation-expression form*: the term is the same for
+    # every assignment count, and the members cross as one structured document
+    # in canonical placement order, scalars and JSON null included.
+    one, one_binds = dialect.document_mutation("payload", {"displayName": "Solveig"})
+    members: dict[str, object] = {
+        "displayName": "Solveig",
+        "score": 7,
+        "active": True,
+        "note": None,
+        "address": {"city": "Oslo"},
+        "tags": [],
+    }
+    many, many_binds = dialect.document_mutation("t0.payload", members)
+    assert one == "payload || cast(? as jsonb)"
+    assert many == "t0.payload || cast(? as jsonb)"
+    assert one_binds == [StructuredDocument({"displayName": "Solveig"})]
+    (bound,) = many_binds
+    assert isinstance(bound, StructuredDocument)
+    assert list(cast("dict[str, object]", bound.document).items()) == list(members.items())
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_mutation_nests_n_assignments_innermost_first(dialect: Dialect) -> None:
-    # Each call's target is the previous call's result, so the INNERMOST call is
-    # the first assignment and the binds read path, value, path, value in
-    # assignment order — which is what keeps canonical logical placement order
-    # observable (m-storage-layout / m-sql).
-    sql, binds = dialect.document_mutation(
-        "t0.payload",
-        [
-            DocumentLeafAssignment(("displayName",), "Solveig"),
-            DocumentLeafAssignment(("score",), 7),
-        ],
-    )
-    assert sql == "jsonb_set(jsonb_set(t0.payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))"
-    assert binds == ["{displayName}", '"Solveig"', "{score}", "7"]
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_json_text(
+def test_document_mutation_binds_the_members_and_their_values_as_handed_over(
     dialect: Dialect,
 ) -> None:
-    # m-case-format draws the boundary: a composite rides as the portable
-    # document the provider adapts, so no key order or separator convention
-    # reaches a golden; a JSON scalar — which no structural authoring form
-    # distinguishes from an ordinary scalar bind — rides as the JSON text both
-    # dialects' value expressions parse, and has neither to protect.
-    _, binds = dialect.document_mutation(
-        "payload",
-        [
-            DocumentValueAssignment(("address",), {"city": "Oslo"}),
-            DocumentValueAssignment(("tags",), [{"label": "x"}]),
-            DocumentLeafAssignment(("score",), None),
-            DocumentLeafAssignment(("active",), True),
-        ],
-    )
-    assert binds[1] == {"city": "Oslo"}
-    assert binds[3] == [{"label": "x"}]
-    assert binds[5] == "null"
-    assert binds[7] == "true"
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_mutation_preserves_supported_frozen_composites(dialect: Dialect) -> None:
     frozen_object = FrozenMap({"city": "Oslo"})
-    frozen_array = (FrozenMap({"label": "x"}),)
-    _, binds = dialect.document_mutation(
-        "payload",
-        [
-            DocumentValueAssignment(("address",), frozen_object),
-            DocumentValueAssignment(("tags",), frozen_array),
-        ],
-    )
-
-    assert binds[1] is frozen_object
-    assert binds[3] is frozen_array
+    members: dict[str, object] = {"address": frozen_object}
+    _, (bound,) = dialect.document_mutation("payload", members)
+    assert isinstance(bound, StructuredDocument)
+    assert bound.document is members
+    assert cast("dict[str, object]", bound.document)["address"] is frozen_object
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_mutation_does_not_route_container_subclasses_as_composites(
-    dialect: Dialect,
-) -> None:
-    tuple_subclass = type("TupleSubclass", (tuple,), {})
-    value = tuple_subclass(({"label": "x"},))
-
-    _, binds = dialect.document_mutation("payload", [DocumentValueAssignment(("tags",), value)])
-
-    assert binds[1] == '[{"label": "x"}]'
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_an_occurrence_assignment_is_one_call_over_its_own_path(dialect: Dialect) -> None:
-    # The seam renders both nodes of the algebra identically, because an assigned
-    # occurrence hands it one already-encoded document for one absolute path. There
-    # is no type test and no write-back: only the FINAL path segment has to be
-    # created, and a top-level occurrence's parent is the document root itself.
-    sql, binds = dialect.document_mutation(
-        "payload",
-        [
-            DocumentValueAssignment(("manifest",), {"origin": {"city": "Oslo"}}),
-            DocumentValueAssignment(("berths",), None),
-        ],
-    )
-    assert "jsonb_typeof" not in sql
-    assert sql == ("jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))")
-    assert binds == ["{manifest}", {"origin": {"city": "Oslo"}}, "{berths}", "null"]
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_document_path_is_the_dialects_own_mutation_path_spelling(dialect: Dialect) -> None:
-    # Divergent from the extraction path binds above on purpose: `jsonb_set`
-    # takes ONE text-array path where `jsonb_extract_path_text` takes one bind
-    # per segment.
-    assert dialect.document_path(("displayName",)) == "{displayName}"
-    assert dialect.document_path(("address", "city")) == "{address,city}"
+def test_sourced_document_mutation_merges_its_source_and_binds_nothing(dialect: Dialect) -> None:
+    assert dialect.sourced_document_mutation("t.payload", "v.c4") == "t.payload || v.c4"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
