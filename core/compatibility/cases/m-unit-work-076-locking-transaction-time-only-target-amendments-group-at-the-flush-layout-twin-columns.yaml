@@ -1,0 +1,43 @@
+model: models/unchanged-milestone-layout-twin-columns.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each target write acquires the current row the fixtures stored before it writes, so its emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: amend
+      write:
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 1, amount: 110 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 2, amount: 120 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 4
+      note: each call reads its current row whole under the shared lock, and the flush reuses both rows with no read of its own; both writes are ready at once and run as one Write Group, their ungated closes one grouped effect ahead of one insert opening both successors
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c2 from unnest(cast(? as bigint[]), cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.id = v.c1 and t.out_z = ? returning v.ord
+          binds:
+            - [1, 2]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: insert into px.kept_log(id, amount, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 2]
+            - [110, 120]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ note: n5 }, { note: n6 }]
+then:
+  databaseCalls: 4
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n5 } }
+        - { id: 2, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n6 } }
+        - { id: 1, amount: 110, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n5 } }
+        - { id: 2, amount: 120, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n6 } }

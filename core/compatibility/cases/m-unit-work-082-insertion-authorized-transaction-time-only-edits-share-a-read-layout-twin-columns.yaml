@@ -1,0 +1,68 @@
+model: models/unchanged-milestone-layout-twin-columns.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, audit-only, temporal, scenario, insertion-authority, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the edits settle against the rows their own unit's earlier flush stored, so their emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: own
+      write:
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 3, amount: 100, memo: { note: n7 } }], at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 4, amount: 100, memo: { note: n8 } }], at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 1
+      note: open logs 3 and 4
+      statements:
+        - sql:
+            postgres: insert into px.kept_log(id, amount, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [3, 4]
+            - [100, 100]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ note: n7 }, { note: n8 }]
+    - uow: own
+      objectQuery:
+        target: parallax.compatibility.KeptLog
+        predicate:
+          greaterThan: { path: parallax.compatibility.KeptLog.id, value: 2 }
+        orderBy:
+          - { attr: parallax.compatibility.KeptLog.id, direction: asc }
+        temporal: { transaction-time: { asOf: latest } }
+      databaseCalls: 1
+      note: flush both openings and read them
+      statements:
+        - sql:
+            postgres: select t0.id, t0.amount, t0.in_z, t0.out_z, not t0.memo is null, t0.memo from px.kept_log t0 where t0.id > ? and t0.out_z = ? order by t0.id asc
+          binds: [2, infinity]
+      expectRows:
+        - { id: 3, amount: 100, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n7 } }
+        - { id: 4, amount: 100, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n8 } }
+    - uow: own
+      write:
+        - { mutation: amend, "on": "/scenario/0/write/0", entity: parallax.compatibility.KeptLog, rows: [{ id: 3, amount: 130 }], at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": "/scenario/0/write/1", entity: parallax.compatibility.KeptLog, rows: [{ id: 4, amount: 140 }], at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 2
+      note: each amendment an insertion authorized defers once its insertion has flushed, and the two are one acquisition span read by one membership statement; each log is a row the attempt opened, so it is revised in place, the two revisions one grouped effect, with no history
+      statements:
+        - sql:
+            postgres: update px.kept_log t set amount = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as bigint[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [3, 4]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [130, 140]
+            - infinity
+then:
+  databaseCalls: 4
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, memo: { note: n5 } }
+        - { id: 2, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, memo: { note: n6 } }
+        - { id: 3, amount: 130, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n7 } }
+        - { id: 4, amount: 140, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n8 } }

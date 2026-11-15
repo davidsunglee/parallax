@@ -1,0 +1,74 @@
+model: models/unchanged-milestone-layout-twin-columns.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, bitemporal, temporal, scenario, target-write, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each target write's range reads the coverage the fixtures stored, so its emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: amend
+      write:
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 1, amount: 110 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 2, amount: 120 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amendUntil, entity: parallax.compatibility.KeptSpan, row: { id: 1, amount: 150 }, ifTxStart: "2023-12-01T00:00:00.000000Z", validFrom: "2024-01-01T00:00:00.000000Z", until: "2024-02-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amendUntil, entity: parallax.compatibility.KeptSpan, row: { id: 2, amount: 150 }, ifTxStart: "2023-12-01T00:00:00.000000Z", validFrom: "2024-01-01T00:00:00.000000Z", until: "2024-02-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 6
+      note: the logs' target amendments are one acquisition span and the spans' another, and each span reads its objects' coverage in one statement, then runs as one Write Group whose closes are one grouped effect ahead of one insert, the logs' group before the spans' read
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: insert into px.kept_log(id, amount, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 2]
+            - [110, 120]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ note: n5 }, { note: n6 }]
+        - sql:
+            postgres: update px.kept_span t set out_z = v.c4 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? and t.in_z = v.c3 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2024-04-01T00:00:00.000000Z", infinity]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: insert into px.kept_span(id, amount, label, from_z, thru_z, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 1, 2, 2]
+            - [150, 100, 150, 100]
+            - [a, a, d, d]
+            - ["2024-01-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+            - ["2024-02-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", infinity]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity, infinity, infinity]
+            - [{ note: n1 }, { note: n1 }, { note: n4 }, { note: n4 }]
+then:
+  databaseCalls: 6
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n5 } }
+        - { id: 2, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n6 } }
+        - { id: 1, amount: 110, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n5 } }
+        - { id: 2, amount: 120, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n6 } }
+      kept_span:
+        - { id: 1, amount: 180, label: b, from_z: "2024-05-01T00:00:00.000000Z", thru_z: "2024-08-01T00:00:00.000000Z", in_z: "2023-12-15T00:00:00.000000Z", out_z: infinity, memo: { note: n2 } }
+        - { id: 1, amount: 100, label: c, from_z: "2024-08-01T00:00:00.000000Z", thru_z: "2024-12-01T00:00:00.000000Z", in_z: "2024-01-02T00:00:00.000000Z", out_z: infinity, memo: { note: n3 } }
+        - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-04-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n1 } }
+        - { id: 2, amount: 100, label: d, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n4 } }
+        - { id: 1, amount: 150, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-02-01T00:00:00.000000Z", in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n1 } }
+        - { id: 1, amount: 100, label: a, from_z: "2024-02-01T00:00:00.000000Z", thru_z: "2024-04-01T00:00:00.000000Z", in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n1 } }
+        - { id: 2, amount: 150, label: d, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-02-01T00:00:00.000000Z", in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n4 } }
+        - { id: 2, amount: 100, label: d, from_z: "2024-02-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, memo: { note: n4 } }

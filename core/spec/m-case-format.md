@@ -1215,9 +1215,30 @@ state:
   not read first. A case that reads one before a Locking target write is a
   state-graded scenario, whose count is not graded (*State-graded scenarios*).
 
-A **grouped** scenario write step owes none of its own: its group's find steps
-are what publish the values it settles against, and those finds already declare
-their own `databaseCalls`.
+A **grouped** scenario write step owes no resolving read of its own: its group's
+find steps are what publish the values it settles against, and those finds already
+declare their own `databaseCalls`. What it owes is what its target submissions
+cost and the coverage reads its flush makes. Under the Locking strategy each object
+its target submissions write owes one acquisition at its call, as a target entry's
+does above; under Optimistic none. A temporal object whose write defers owes its
+uncovered parts to the flush's coverage reads, counted as below:
+
+- a **target** submission observed nothing, so it reads its object's one part —
+  the enclosing window of its entries on a Bitemporal object, the current row on
+  a Transaction-Time-Only one — except that under Locking its acquisition already
+  holds a Transaction-Time-Only object's current row;
+- a write through the value of an insert an **earlier flush of its group**
+  executed reads its object's one part the same way, since the insertion's
+  authority observed nothing;
+- a write settling against a find reads, on a Bitemporal object, the part of its
+  requested extent the find's rectangle leaves uncovered, and on a
+  Transaction-Time-Only object nothing, its find having observed the current row.
+
+Every such count is structural, from the case document and its model. A target
+submission whose cost would depend on anything else — an acquisition a live read
+or pending write could stand in for, or a Bitemporal Locking acquisition's held
+coverage, which is stored state the document does not state — belongs to a
+state-graded scenario (*Buffered keyed write instructions*).
 
 A **conflict attempt** owes one, and a `when.attempts` sequence owes one PER
 attempt, because every attempt settles against a state of its own (*Conflict
@@ -1456,6 +1477,20 @@ A write settling against a find's result is **query-result-dependent**: the stat
 it settles against is read off a row no compile lane executes, so such a case
 declares `compileEligibility: run-only` (see *Compile eligibility*).
 
+#### Aligning a target submission
+
+A target submission of a golden-graded step names no find: its caller states the
+revision it starts from, and that revision is what its golden is aligned with.
+Every existing-row statement addressing its object belongs to it, a grouped
+effect read as the lone statement each of its source rows stands for (`m-sql`
+*Grouped effects*). Under Optimistic a temporal target's starting row is closed or
+guarded exactly once, gated on the stated `ifTxStart`; under Locking its start was
+proven when its row was acquired, so no statement states it, and the table state
+grades what the write did. A versioned target's statement gates on the stated
+`ifVersion` and advances it, as a write settling against a find does on the
+generation that find observed. A target write reads only stored state it does not
+state, so a case carrying one is query-result-dependent and run-only.
+
 #### Streamed read steps (`stream`)
 
 A scenario READ step MAY carry the same **`stream`** context member a `read`
@@ -1589,11 +1624,15 @@ entry layers only the `at` / `validFrom` / `until` authoring surface and the
 entry's own `on` and `expectError`. In a golden-graded case every entry is a **keyed** instruction
 (`mutation` + `entity` + `rows`, the case-format analogue of
 `write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts,
-never a source-authorized `replace` / `replaceUntil`. A state-graded case's
-buffer MAY also carry such a replacement, whose coverage depends on what its
-flush reads, a **target** submission
+never a source-authorized `replace` / `replaceUntil`, or a **target** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
-`targetWriteInstruction`) and a
+`targetWriteInstruction`) whose cost the document alone states: the only
+submission of its group naming its object, of an object no earlier find of its
+group returned a row of, and, under the Locking strategy, of an Entity with no
+Valid Time (*Resolving reads a write owes*). Its golden aligns with the revision
+its caller states (*Aligning a target submission*, below). A state-graded case's
+buffer MAY also carry such a replacement, whose coverage depends on what its
+flush reads, any other target submission, a submission its verb refuses, and a
 **predicate** write (*State-graded scenarios*, below). A predicate write executes
 at its submission, after a Flush of the entries buffered before it, so a later
 entry flushes after it. The step's golden SQL (`statements`) is the **independent expected

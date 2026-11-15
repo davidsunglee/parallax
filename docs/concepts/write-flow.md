@@ -174,9 +174,21 @@ each gate, and lets audit finalize each row it produces.
 
 A temporal write whose window reaches coverage no read observed cannot be expanded yet.
 It settles as a **deferred** write: its meaning, gates and instant are fixed now, and
-the flush reads the missing coverage when it reaches the write
+the flush reads the missing coverage inside the flush
 ([Write Plan](../../core/spec/m-unit-work.md#write-plan-and-planned-steps),
 [row acquisition](../../core/spec/m-unit-work.md#row-acquisition)).
+
+Consecutive deferred writes of distinct objects of one Entity form an **acquisition
+span**, which shares those reads whatever the Entity's temporal shape or the verb
+that wrote them. Each read fetches a bounded number of **uncovered parts**: one per
+Valid-Time interval of a Bitemporal write's window that no held row covers, or one
+for a Transaction-Time-Only write's current row. A span only grants permission to
+read ahead. Its writes execute as **Write Groups** as their reads complete: the
+leading writes whose parts are all read run together before the next read, so a
+span of many objects costs a few reads and a few grouped statements rather than a
+read and a write per object
+([shared coverage acquisition](../../core/spec/m-unit-work.md#shared-coverage-acquisition),
+[requested ranges](../../core/spec/m-sql.md#requested-ranges--coverage-read-and-statement-order)).
 
 Settlement also forms the **Write Groups**: runs of settled writes of distinct objects
 within one Mutation Phase, each with every effect before any insert

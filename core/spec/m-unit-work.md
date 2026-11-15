@@ -1050,17 +1050,17 @@ releases them all.
 ### Shared coverage acquisition
 
 An **acquisition span** is a bounded run of at least two consecutive plan entries,
-each one deferred settled write of a Bitemporal Entity that names its
-one complete Object Key, a key the database does not allocate. Its writes belong
-to one mutation phase, target one concrete Entity — so one key attribute and one
-member selection — and either all take the shared lock their coverage read
-takes under Locking or none do. Each names an object no earlier write of the
-span names under its Inheritance Family's primary key. A span never skips an
-entry: any Write Group, a deferred write of another Entity or lock requirement,
-a repeated object, a phase boundary, or the bound, which is the implementation's,
-ends it, and the next eligible write may start another. A deferred write outside
-any span, a Transaction-Time-Only one included, acquires its coverage alone at its
-turn and executes as a Write Group of its own.
+each one deferred settled write that names its one complete Object Key, a key the
+database does not allocate, whatever its Entity's temporal shape or the verb that
+wrote it. Its writes belong to one mutation phase, target one concrete Entity — so
+one key attribute and one member selection — and either all take the shared lock
+their coverage read takes under Locking or none do. Each names an object no
+earlier write of the span names under its Inheritance Family's primary key. A
+span never skips an entry: any Write Group, a deferred write of another Entity or
+lock requirement, a repeated object, a phase boundary, or the bound, which is the
+implementation's, ends it, and the next eligible write may start another. A
+deferred write outside any span acquires its coverage alone at its turn and
+executes as a Write Group of its own.
 
 A span grants acquisition permission; its execution groups follow readiness.
 Whenever the span's first remaining write is ready, the unit of work binds it
@@ -1079,9 +1079,12 @@ When the flush reaches a span's first write, the unit of work, before binding
 any write of the span or reading any of its coverage, completes every
 still-current retained starting row of every write in the span and discards the
 stale ones (*Retained starting rows*), then determines each write's uncovered
-parts once. It reads those parts in shared coverage statements (`m-sql`
-*Requested ranges*), packed in the span's write order and each write's
-Valid-Time order. A write is **ready** once every statement naming its parts has
+parts once. A Bitemporal write's uncovered parts are the Valid-Time intervals of
+its window no row it holds covers; a Transaction-Time-Only write has one part,
+its current row, uncovered unless a row the unit holds — retained or observed —
+is it. It reads those parts in shared coverage statements (`m-sql` *Requested
+ranges*), packed in the span's write order, a Bitemporal write's in Valid-Time
+order. A write is **ready** once every statement naming its parts has
 succeeded, whatever those statements returned; a write with no uncovered part
 needs no statement, takes no lock, and is ready at once. Before reading each
 statement, the flush binds every leading write of the span that is ready as one

@@ -171,7 +171,9 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
     )
     settled = _deferred_write(observed)
     assert settled.deferred is not None
-    (window,) = _coverage(settled).terms[0].valid_time_windows
+    windows = _coverage(settled).terms[0].valid_time_windows
+    assert windows is not None
+    (window,) = windows
     assert window == TimeInterval(JUN, SEP)
     prepared = observed.instruction.valid_time_window
     assert prepared is not None
@@ -182,7 +184,9 @@ def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared()
     target = addressed_write(value="150.00")
     settled = _deferred_write(target)
     assert settled.deferred is not None
-    (window,) = _coverage(settled).terms[0].valid_time_windows
+    windows = _coverage(settled).terms[0].valid_time_windows
+    assert windows is not None
+    (window,) = windows
     assert window is target.instruction.valid_time_window
 
 

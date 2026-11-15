@@ -2554,7 +2554,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
     **dict.fromkeys(
-        ("m-unit-work-061", "m-unit-work-062", "m-unit-work-063", "m-unit-work-064"),
+        (
+            "m-unit-work-061",
+            "m-unit-work-062",
+            "m-unit-work-063",
+            "m-unit-work-064",
+            *(f"m-unit-work-{number:03d}" for number in range(74, 84)),
+        ),
         _SHARED_COVERAGE_REASON,
     ),
     # -- buffered sequences, state-graded ------------------------------------ #

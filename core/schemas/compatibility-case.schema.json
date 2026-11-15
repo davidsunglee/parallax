@@ -290,7 +290,7 @@
         }
       },
       "else": {
-        "description": "A golden-graded scenario's every step declares the Database Calls its golden SQL is graded against, and its buffered entries are keyed instructions whose verbs accept them: its golden SQL is the independent lowering of that keyed buffer. A source-authorized replacement is state-graded only: the coverage it establishes depends on what its flush reads. A state-graded step MAY omit `databaseCalls`, which nothing grades.",
+        "description": "A golden-graded scenario's every step declares the Database Calls its golden SQL is graded against, and its buffered entries are keyed or target instructions whose verbs accept them: its golden SQL is the independent lowering of that buffer, and which target submissions a golden-graded case may carry is m-case-format's (*Buffered keyed write instructions*). A source-authorized replacement is state-graded only: the coverage it establishes depends on what its flush reads. A state-graded step MAY omit `databaseCalls`, which nothing grades.",
         "properties": {
           "when": {
             "properties": {
@@ -307,11 +307,16 @@
                       "if": { "type": "array" },
                       "then": {
                         "items": {
-                          "required": ["rows"],
                           "not": { "required": ["expectError"] },
-                          "properties": {
-                            "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
-                          }
+                          "anyOf": [
+                            {
+                              "required": ["rows"],
+                              "properties": {
+                                "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
+                              }
+                            },
+                            { "required": ["row"] }
+                          ]
                         }
                       }
                     }
@@ -1199,7 +1204,7 @@
                 "$ref": "#/$defs/streamContext"
               },
               "write": {
-                "description": "A WRITE step has two structured forms, disjoint by JSON type: a single predicate-selected `$defs/predicateWrite` instruction, or an ordered `$defs/bufferedWriteSequence` of keyed instructions accumulated and flushed together. The buffer can mix objects and mutation kinds; same-object folding is the runtime coalescing rule, not a shape constraint. Under `grading: state`, a buffer may also carry target and predicate submissions (`$defs/submission`). The requested operation feeds compilation and API no-drift checks independently of the golden `statements`, which remain the expected lowering rather than an input used to infer the write.",
+                "description": "A WRITE step has two structured forms, disjoint by JSON type: a single predicate-selected `$defs/predicateWrite` instruction, or an ordered `$defs/bufferedWriteSequence` of keyed instructions accumulated and flushed together. The buffer can mix objects and mutation kinds; same-object folding is the runtime coalescing rule, not a shape constraint. A buffer may also carry target submissions whose cost its document states, and under `grading: state` any target or predicate submission (`$defs/submission`). The requested operation feeds compilation and API no-drift checks independently of the golden `statements`, which remain the expected lowering rather than an input used to infer the write.",
                 "oneOf": [
                   { "$ref": "#/$defs/predicateWrite" },
                   { "$ref": "#/$defs/bufferedWriteSequence" }
@@ -2965,7 +2970,7 @@
       "enum": ["write-evidence-already-claimed", "write-evidence-inserted", "write-evidence-consumed"]
     },
     "targetSubmission": {
-      "description": "A target submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, exactly one caller's revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. State-graded cases only.",
+      "description": "A target submission inside a buffered scenario: `write-instruction.schema.json`'s `targetWriteInstruction` — one `row` naming an existing object by primary key, exactly one caller's revision as `ifVersion` or `ifTxStart`, and on a Bitemporal target `validFrom` with an optional `until` — beside the Clock-supplied `at`. A golden-graded case carries one only where its document states what it costs (m-case-format *Buffered keyed write instructions*).",
       "type": "object",
       "additionalProperties": false,
       "required": ["mutation", "entity", "row"],
@@ -3000,7 +3005,7 @@
       ]
     },
     "submission": {
-      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a target one, and `target` a predicate write, which executes at its submission after a Flush of the entries before it (state-graded cases only). Each references the canonical write-instruction vocabulary; a keyed or target entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
+      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a target one, and `target` a predicate write, which executes at its submission after a Flush of the entries before it (state-graded cases only, as are target submissions whose cost the document does not state). Each references the canonical write-instruction vocabulary; a keyed or target entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
       "oneOf": [
         { "$ref": "#/$defs/keyedWrite" },
         { "$ref": "#/$defs/targetSubmission" },
@@ -3044,7 +3049,7 @@
       "then": { "properties": { "outcome": { "const": "rolledBack" } } }
     },
     "bufferedWriteSequence": {
-      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an amendment of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-amend writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-amend / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a target submission or a predicate write, which executes at its submission after a Flush of the entries before it (`$defs/submission`); a golden-graded buffer stays keyed.",
+      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an amendment of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-amend writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-amend / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. An entry MAY also be a target submission, in a golden-graded buffer only where its document states what it costs (m-case-format *Buffered keyed write instructions*), and under `grading: state` a predicate write, which executes at its submission after a Flush of the entries before it (`$defs/submission`).",
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/submission" }

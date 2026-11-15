@@ -1634,6 +1634,60 @@ def test_a_coverage_read_of_several_objects_names_each_objects_windows_beside_it
     assert statement.binds[-8:] == (1, jan, mar, may, jul, 2, mar, INFINITY)
 
 
+_BALANCE = accepted_model("balance")
+_MARIADB = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
+_BALANCE_COLUMNS = "select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0"
+
+
+@pytest.mark.parametrize(
+    ("dialect", "keys", "where", "binds"),
+    [
+        (POSTGRES, (7,), "t0.bal_id = ?", (7,)),
+        (_MARIADB, (7,), "t0.bal_id = ?", (7,)),
+        (
+            POSTGRES,
+            (7, 3, 5),
+            "t0.bal_id = any(cast(? as bigint[]))",
+            (ArrayBind(INT64, [7, 3, 5]),),
+        ),
+        (_MARIADB, (7, 3, 5), "t0.bal_id in (?, ?, ?)", (7, 3, 5)),
+    ],
+    ids=["one-key", "one-key-without-arrays", "several-keys", "several-keys-without-arrays"],
+)
+def test_a_coverage_read_of_current_rows_selects_them_by_key_equality_or_membership(
+    dialect: Any, keys: tuple[int, ...], where: str, binds: tuple[object, ...]
+) -> None:
+    balance = entity_of(_BALANCE, "Balance")
+    query = read_planning.plan_coverage_read(
+        balance, model=_BALANCE, key="id", terms=tuple((key, None) for key in keys)
+    )
+    statement = compile_read(query, bound_model(_BALANCE), dialect).statement
+    assert statement.sql == f"{_BALANCE_COLUMNS} where {where} and t0.out_z = ?"
+    assert statement.binds == (*binds, INFINITY)
+
+
+@pytest.mark.parametrize(
+    ("model", "entity", "windows"),
+    [
+        (_BALANCE, "Balance", (TimeInterval(dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY),)),
+        (RATE, "Rate", None),
+        (RATE, "Rate", ()),
+    ],
+    ids=["window-without-valid-time", "current-row-over-valid-time", "no-window-over-valid-time"],
+)
+@pytest.mark.parametrize("objects", [1, 2], ids=["one-object", "two-objects"])
+def test_a_coverage_term_inconsistent_with_its_entitys_axes_is_refused(
+    model: Any, entity: str, windows: tuple[TimeInterval, ...] | None, objects: int
+) -> None:
+    with pytest.raises(ValueError, match="coverage read"):
+        read_planning.plan_coverage_read(
+            entity_of(model, entity),
+            model=model,
+            key="id",
+            terms=tuple((key, windows) for key in range(1, objects + 1)),
+        )
+
+
 @pytest.mark.parametrize("retain_predecessor", [False, True], ids=["revision", "retained"])
 def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(
     retain_predecessor: bool,
@@ -1748,7 +1802,7 @@ def test_an_unnarrowed_read_carries_its_targets_own_inheritance_view(
         assert query.position is facet.entity(_identity(strategy, name))
     left = projection_support.matrix_entity(strategy, "document", "Left")
     target = read_planning.plan_target_read(left, model=_MATRIX, key="id", key_value=1)
-    coverage = read_planning.plan_coverage_read(left, model=_MATRIX, key="id", terms=((1, ()),))
+    coverage = read_planning.plan_coverage_read(left, model=_MATRIX, key="id", terms=((1, None),))
     assert target.position is facet.entity(left.identity)
     assert coverage.position is facet.entity(left.identity)
     holder = _matrix(strategy, "Holder")

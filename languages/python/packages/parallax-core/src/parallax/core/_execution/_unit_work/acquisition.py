@@ -93,13 +93,25 @@ class RetainedTargetState:
 
 @dataclass(frozen=True, slots=True)
 class CoverageTerm:
-    """One object's part of a coverage read: its current rows overlapping any
-    of ``valid_time_windows`` — sorted, disjoint, and never adjacent. A
-    Transaction-Time-Only object has no Valid Time, so it names no window and
-    its one current row is its coverage."""
+    """One object's uncovered parts a coverage read names: its current rows
+    overlapping any of ``valid_time_windows`` — sorted, disjoint, and never
+    adjacent — or, where they are ``None``, its one current row, the single
+    part of an object with no Valid Time. A term names at least one part."""
 
     key_value: ManagedValue
-    valid_time_windows: tuple[TimeInterval, ...]
+    valid_time_windows: tuple[TimeInterval, ...] | None
+
+    def __post_init__(self) -> None:
+        if self.valid_time_windows == ():
+            raise ValueError(
+                "a coverage term names at least one window, or None for the current row"
+            )
+
+    @property
+    def part_count(self) -> int:
+        """How many uncovered parts the term counts toward a read's bound."""
+        windows = self.valid_time_windows
+        return 1 if windows is None else len(windows)
 
 
 @dataclass(frozen=True, slots=True)

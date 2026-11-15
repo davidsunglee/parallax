@@ -28,6 +28,7 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
+    TargetMutation,
     TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
@@ -218,7 +219,7 @@ def _observed(
     return observations
 
 
-_LIMIT = settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+_LIMIT = settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
 
 
 @pytest.mark.parametrize(
@@ -478,6 +479,45 @@ def test_a_plan_with_no_deferred_write_records_no_span() -> None:
     assert _spans(shared_plan([_inside(1), _inside(2)])) == []
 
 
+def _target(
+    model: Metamodel,
+    entity: str,
+    key: int,
+    verb: TargetMutation = "amend",
+    valid_from: dt.datetime | None = None,
+) -> AdmittedWrite:
+    """An Optimistic target write of object ``key`` stating ``_JAN``, which
+    reads its coverage at execution."""
+    values: dict[str, object] = {"id": key} if verb == "terminate" else {"id": key, "amount": 5}
+    if entity == "Balance":
+        values = {"id": key} if verb == "terminate" else {"id": key, "value": "9.00"}
+    return target_write(
+        prepare_wire_write(
+            TargetWriteInstruction(verb, entity, values, if_tx_start=_JAN, valid_from=valid_from),
+            write_preparation_of(model),
+        ),
+        inheritance.inheritance_facet_of(model),
+    )
+
+
+def _transaction_time_targets(*keys: int, verb: TargetMutation = "amend") -> list[AdmittedWrite]:
+    return [_target(_BALANCE, "Balance", key, verb) for key in keys]
+
+
+def _bitemporal_plan(objects: int) -> WritePlan:
+    return shared_plan(_fragmented(*range(1, objects + 1)))
+
+
+def _transaction_time_plan(objects: int) -> WritePlan:
+    targets = _transaction_time_targets(*range(1, objects + 1))
+    return _finalize(admitted_writes(_BALANCE, targets), _BALANCE)
+
+
+@pytest.mark.parametrize(
+    "planned",
+    [_bitemporal_plan, _transaction_time_plan],
+    ids=["bitemporal", "transaction-time-only"],
+)
 @pytest.mark.parametrize(
     ("objects", "spans"),
     [
@@ -492,9 +532,9 @@ def test_a_plan_with_no_deferred_write_records_no_span() -> None:
     ],
 )
 def test_consecutive_deferred_writes_share_spans_of_at_most_32(
-    objects: int, spans: list[tuple[int, int]]
+    planned: Callable[[int], WritePlan], objects: int, spans: list[tuple[int, int]]
 ) -> None:
-    plan = shared_plan(_fragmented(*range(1, objects + 1)))
+    plan = planned(objects)
     # Every deferred write keeps its own entry, whatever span it belongs to.
     assert _sizes(plan) == ["deferred"] * objects
     assert _spans(plan) == spans
@@ -509,28 +549,51 @@ def test_a_span_never_skips_a_group_of_another_entity_or_a_write_bound_at_planni
     assert _spans(planned) == [(2, 4)]
 
 
-def test_a_span_never_crosses_a_mutation_phase() -> None:
-    plan = shared_plan([*_fragmented(1, 2), _terminated(3), _terminated(4)])
+def test_a_transaction_time_only_span_never_skips_a_write_bound_at_planning() -> None:
+    observed = KeyedWriteInstruction("amend", "Balance", ({"id": 4, "value": Decimal("2.00")},))
+    buffer = [*_transaction_time_targets(1), observed, *_transaction_time_targets(2, 3)]
+    plan = _finalize(
+        observed_buffer(buffer, _BALANCE, _observed(_BALANCE, [observed], _balance_observation)),
+        _BALANCE,
+    )
+    assert _sizes(plan) == ["deferred", 1, "deferred", "deferred"]
+    assert _spans(plan) == [(2, 4)]
+
+
+def test_deferred_writes_of_each_temporal_shape_form_spans_of_their_own() -> None:
+    model = corpus_model("unchanged-milestone-layout-twin-columns")
+    feb = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    buffer = [
+        _target(model, "KeptLog", 1),
+        _target(model, "KeptLog", 2),
+        _target(model, "KeptSpan", 1, valid_from=feb),
+        _target(model, "KeptSpan", 2, valid_from=feb),
+    ]
+    plan = _finalize(admitted_writes(model, buffer), model)
     assert _sizes(plan) == ["deferred"] * 4
     assert _spans(plan) == [(0, 2), (2, 4)]
 
 
-def test_a_transaction_time_only_deferred_write_reads_alone() -> None:
-    buffer = [
-        target_write(
-            prepare_wire_write(
-                TargetWriteInstruction(
-                    "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_JAN
-                ),
-                write_preparation_of(_BALANCE),
-            ),
-            inheritance.inheritance_facet_of(_BALANCE),
-        )
-        for key in (1, 2)
-    ]
-    plan = _finalize(admitted_writes(_BALANCE, buffer), _BALANCE)
-    assert _sizes(plan) == ["deferred", "deferred"]
-    assert _spans(plan) == []
+@pytest.mark.parametrize(
+    ("model", "deferred"),
+    [
+        (SHARED_MODEL, lambda: [*_fragmented(1, 2), _terminated(3), _terminated(4)]),
+        (
+            _BALANCE,
+            lambda: [
+                *_transaction_time_targets(1, 2),
+                *_transaction_time_targets(3, 4, verb="terminate"),
+            ],
+        ),
+    ],
+    ids=["bitemporal", "transaction-time-only"],
+)
+def test_a_span_never_crosses_a_mutation_phase(
+    model: Metamodel, deferred: Callable[[], list[AdmittedWrite]]
+) -> None:
+    plan = _finalize(admitted_writes(model, deferred()), model)
+    assert _sizes(plan) == ["deferred"] * 4
+    assert _spans(plan) == [(0, 2), (2, 4)]
 
 
 def _candidate(key: int, *, shared_lock: bool = False, entity: str = "ShareCols") -> Any:
@@ -584,8 +647,8 @@ def test_a_deferred_write_naming_no_complete_key_reads_alone() -> None:
 
 def test_the_ready_writes_of_a_full_span_fit_one_write_group() -> None:
     # A span's ready writes execute as one group, which no span can overfill.
-    ranges = settlement._ACQUISITION_RANGES  # pyright: ignore[reportPrivateUsage] - the span bound
-    writes = settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+    ranges = settlement._WRITES_PER_SPAN  # pyright: ignore[reportPrivateUsage] - the span bound
+    writes = settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
     assert ranges <= writes
 
 

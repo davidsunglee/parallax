@@ -169,9 +169,7 @@ def unit_resolving_reads(
         if any(key not in opened for key in keys):
             needed.add(entity.canonical_name)
     deferred = {key: _uncovered_target_parts(windows) for key, windows in coverage.items()}
-    covered = flush_coverage_reads(
-        case, settled, deferred, bitemporal=_bitemporal_keys(case, coverage)
-    )
+    covered = flush_coverage_reads(case, settled, deferred)
     return len(needed) + len(acquired) + covered
 
 
@@ -242,20 +240,19 @@ def flush_coverage_reads(
     case: Case,
     settled: list[SettledObject],
     deferred: dict[tuple[str, tuple[Any, ...]], int],
-    *,
-    bitemporal: frozenset[tuple[str, tuple[Any, ...]]],
 ) -> int:
     """The coverage reads one flush makes for ``settled``, the objects its
     entries write in authored order (`m-case-format` *Resolving reads a write
     owes*).
 
     ``deferred`` maps each object whose write defers to the uncovered parts it
-    reads, and ``bitemporal`` names the deferred objects that may share an
-    acquisition span. Objects coalesce at their first entry and order by mutation
-    phase, each phase in authored order. Consecutive deferred Bitemporal objects
-    of one Entity and phase share reads in runs up to the corpus ceiling, each run
-    owing one read per ceiling of parts, rounded up; any other object ends a run,
-    and an object outside every run reads its own parts alone.
+    reads: one per uncovered Valid-Time interval, and one for a
+    Transaction-Time-Only object's current row (`m-sql` *Requested ranges*).
+    Objects coalesce at their first entry and order by mutation phase, each
+    phase in authored order. Consecutive deferred objects of one Entity and
+    phase share reads in runs up to the corpus ceiling, whatever their temporal
+    shape, each run owing one read per ceiling of parts, rounded up; any other
+    object ends a run.
 
     Where two deferred objects could share, an order the planner alone decides is
     refused rather than guessed: a phase that sorts several Entities by
@@ -263,7 +260,7 @@ def flush_coverage_reads(
     object both assigned and destroyed over different regions.
     """
     objects, undecided = _coalesced(settled)
-    if _shares_any(objects, deferred, bitemporal, undecided):
+    if _shares_any(objects, deferred, undecided):
         _refuse_planner_order(case, settled, objects, undecided)
     reads = 0
     run: tuple[str, str] | None = None
@@ -272,12 +269,11 @@ def flush_coverage_reads(
     for phase in _PHASES:
         for item in (item for item in objects if item.phase == phase):
             owed = deferred.get(item.key)
-            shares = (item.entity, phase) if owed is not None and item.key in bitemporal else None
+            shares = (item.entity, phase) if owed is not None else None
             if shares is None or shares != run or members == _ACQUISITION_SPAN_WRITES:
                 reads += _statements(parts)
                 run, members, parts = shares, 0, 0
             if shares is None:
-                reads += _statements(owed or 0)
                 continue
             members += 1
             parts += owed or 0
@@ -322,12 +318,11 @@ def _coalesced(
 def _shares_any(
     objects: list[SettledObject],
     deferred: dict[tuple[str, tuple[Any, ...]], int],
-    bitemporal: frozenset[tuple[str, tuple[Any, ...]]],
     undecided: frozenset[tuple[str, tuple[Any, ...]]],
 ) -> bool:
     candidates: dict[tuple[str, str], int] = {}
     for item in objects:
-        if item.key in deferred and item.key in bitemporal:
+        if item.key in deferred:
             phases = ("update", "delete") if item.key in undecided else (item.phase,)
             for phase in phases:
                 group = (item.entity, phase)
@@ -366,19 +361,6 @@ def _refuse_planner_order(
                 f"count does not decide where its composed write settles."
             )
         seen.append(item.key)
-
-
-def _bitemporal_keys(
-    case: Case, coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]]
-) -> frozenset[tuple[str, tuple[Any, ...]]]:
-    return frozenset(
-        key
-        for key in coverage
-        if any(
-            axis.get("dimension") == "valid-time"
-            for axis in case.model.entity(key[0]).temporal_runtime_axes
-        )
-    )
 
 
 class _TargetWindow(NamedTuple):

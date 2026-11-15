@@ -83,7 +83,7 @@ class Card(Entity, table="wgh_card", namespace=_NS):
 
 
 _MODEL: Final = DomainModel(SpanRow, AuditedRow, PlainRow, Card)
-_LIMIT: Final = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+_LIMIT: Final = write_settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
 
 
 def _rows(kind: str, objects: int) -> list[MappingRow]:

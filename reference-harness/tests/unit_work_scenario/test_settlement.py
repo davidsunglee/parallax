@@ -117,7 +117,7 @@ def test_a_versioned_writes_gate_binds_the_named_generation() -> None:
     # the named find never returned is the misresolution this catches.
     assert_judged(_versioned_settled_case(version=2))
 
-    with pytest.raises(CaseFailure, match="observed version 2"):
+    with pytest.raises(CaseFailure, match="from version 2"):
         assert_unit_work_scenario(_versioned_settled_case(version=1), RefusingProvider())
 
 
@@ -160,7 +160,7 @@ def test_a_versioned_writes_binds_are_read_for_the_executing_dialect() -> None:
     assert_judged(_versioned_settled_case(version=2, dialect_keyed_binds=True))
 
     stale = _versioned_settled_case(version=1, dialect_keyed_binds=True)
-    with pytest.raises(CaseFailure, match="observed version 2"):
+    with pytest.raises(CaseFailure, match="from version 2"):
         assert_unit_work_scenario(stale, RefusingProvider())
 
 
@@ -185,7 +185,7 @@ def test_each_object_is_graded_against_its_own_statement() -> None:
     # key, so a golden gating one object on the other's version is refused.
     assert_judged(_multi_object_settled_case())
 
-    with pytest.raises(CaseFailure, match="observed version 5"):
+    with pytest.raises(CaseFailure, match="from version 5"):
         assert_unit_work_scenario(_multi_object_settled_case(second_version=2), RefusingProvider())
 
 
@@ -201,7 +201,7 @@ def test_the_goldens_need_not_follow_the_entries_own_order() -> None:
 
     stale = _multi_object_settled_case(second_version=2)
     stale.when["scenario"][1]["statements"].reverse()
-    with pytest.raises(CaseFailure, match="observed version 5"):
+    with pytest.raises(CaseFailure, match="from version 5"):
         assert_unit_work_scenario(stale, RefusingProvider())
 
 

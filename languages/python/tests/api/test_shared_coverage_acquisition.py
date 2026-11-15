@@ -1,5 +1,6 @@
 """Deferred writes of distinct objects sharing their coverage reads, against
-real Postgres (`m-unit-work` *Shared coverage acquisition*).
+real Postgres (`m-unit-work` *Shared coverage acquisition*), whatever their
+temporal shape.
 
 One shared read observes the database as of its own execution under Read
 Committed, and the transaction's snapshot under Repeatable Read; the writes it
@@ -16,12 +17,22 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    DomainModel,
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    RootExecution,
+    TxTemporal,
+    attr,
+)
+from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import IsolationLevel
@@ -43,7 +54,12 @@ class ShareSpan(Bitemporal, table="share_span", namespace=_NAMESPACE):
     label: Attr[str] = attr(max_length=16)
 
 
-_MODEL: Final = DomainModel(ShareSpan)
+class ShareLog(TxTemporal, table="share_log", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+
+
+_MODEL: Final = DomainModel(ShareSpan, ShareLog)
 _T0: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _TP: Final = dt.datetime(2024, 10, 15, tzinfo=dt.UTC)
 _AT: Final = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
@@ -312,3 +328,89 @@ def test_a_locking_shared_read_holds_the_lock_on_the_rows_it_selected_and_no_oth
     assert _rows(profile_run, 1) == _corrected(1)
     assert _rows(profile_run, 2) == _corrected(2)
     assert _rows(profile_run, 3) == _UNCHANGED
+
+
+# --------------------------------------------------------------------------- #
+# Transaction-Time-Only target writes share spans of at most 32 objects.      #
+# --------------------------------------------------------------------------- #
+class _Statements:
+    """A Provider recording the SQL of every Database Call, in order."""
+
+    def __init__(self) -> None:
+        self.sql: list[str] = []
+
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
+        del execution
+        return self
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        raise AssertionError(error)
+
+    def handle(self, event: object, /) -> None:
+        if isinstance(event, DatabaseCallStarted):
+            self.sql.append(event.statement.sql)
+
+
+_LOGS: Final = 33
+_LOG_COLUMNS: Final = "select t0.id, t0.amount, t0.in_z, t0.out_z from px.share_log t0 where "
+
+
+def _seeded_logs(profile_run: Any) -> None:
+    """Objects 1 to 33 each as one current row at amount ``k``, known from T0."""
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    control = profile_run.control()
+    try:
+        for key in range(1, _LOGS + 1):
+            control.execute_write(
+                "insert into px.share_log(id, amount, in_z, out_z) values (?, ?, ?, ?)",
+                [key, key, _T0, INFINITY],
+            )
+    finally:
+        control.close()
+
+
+def _log_rows(profile_run: Any) -> list[tuple[object, ...]]:
+    rows = profile_run.port.execute(
+        "select id, in_z, case when out_z = 'infinity' then null else out_z end, amount "
+        "from px.share_log order by id, in_z",
+        [],
+    )
+    return [tuple(row) for row in rows]
+
+
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_transaction_time_only_target_writes_share_spans_of_at_most_32_objects(
+    profile_run: Any, representation: Literal["typed", "wire"]
+) -> None:
+    _seeded_logs(profile_run)
+    statements = _Statements()
+    calls = FlushCalls(statements)
+
+    def fn(tx: TxnContext) -> None:
+        for key in range(1, _LOGS + 1):
+            if representation == "typed":
+                tx.amend_if(ShareLog, ShareLog.amount.set(1000 + key), key=key, tx_start=_T0)
+            else:
+                tx.wire.amend_if(
+                    f"{_NAMESPACE}.ShareLog", {"id": key, "amount": 1000 + key}, tx_start=_T0
+                )
+
+    _db(profile_run, _AT, calls).transact(fn, concurrency="optimistic")
+    (flush,) = calls.flushes
+    # The first span's 32 objects are one membership read, one grouped close,
+    # and one batched insert; the 33rd starts the next span, read alone.
+    assert call_runs(flush.calls) == [("read", 32), ("write", 2), ("read", 1), ("write", 2)]
+    first_read, close, insert, last_read, last_close, last_insert = statements.sql
+    assert first_read == f"{_LOG_COLUMNS}t0.id = any(cast(? as bigint[])) and t0.out_z = ?"
+    assert close.startswith("update px.share_log t set out_z = v.c3 from unnest(")
+    assert close.endswith("where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord")
+    assert insert.startswith(
+        "insert into px.share_log(id, amount, in_z, out_z) select * from unnest("
+    )
+    assert last_read == f"{_LOG_COLUMNS}t0.id = ? and t0.out_z = ?"
+    assert last_close == "update px.share_log set out_z = ? where id = ? and out_z = ? and in_z = ?"
+    assert last_insert == "insert into px.share_log(id, amount, in_z, out_z) values (?, ?, ?, ?)"
+    expected: list[tuple[object, ...]] = []
+    for key in range(1, _LOGS + 1):
+        expected += [(key, _T0, _AT, key), (key, _AT, None, 1000 + key)]
+    assert _log_rows(profile_run) == expected

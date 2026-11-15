@@ -9,8 +9,8 @@ import pytest
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
-from parallax.core.internal.base import INFINITY, InternalError, StructuredDocument
-from parallax.core.internal.db_port import Bind, DocumentReadOrdinals, Row
+from parallax.core.internal.base import INFINITY, INT64, InternalError, StructuredDocument
+from parallax.core.internal.db_port import ArrayBind, Bind, DocumentReadOrdinals, Row
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import deserialize
@@ -470,6 +470,40 @@ def test_coverage_plans_render_each_keys_windows_and_keep_the_requested_lock(
     assert _root(plans[0])[1] is _root(plans[1])[1]
 
 
+@pytest.mark.parametrize("shared_lock", [False, True], ids=["optimistic", "locking"])
+def test_current_row_coverage_plans_share_one_membership_template_whatever_their_key_count(
+    shared_lock: bool,
+) -> None:
+    model = CatalogedModel(corpus_model("balance"), TEST_BINDING)
+    entity = target(model.meta, "Balance")
+    cache = ReadPlanCache()
+    plans = [
+        cache.plan_acquisition(
+            edition="edition-a",
+            model=model,
+            dialect=ScriptedAdapter().dialect,
+            query=read_planning.plan_coverage_read(
+                entity, model=model.meta, key="id", terms=tuple((key, None) for key in keys)
+            ),
+            preference="optimistic",
+            coverage_shared_lock=shared_lock,
+        )
+        for keys in ((1, 2), (3, 4, 5), (6,))
+    ]
+    compiled = [_root(plan)[0] for plan in plans]
+    assert all(("for share of t0" in read.statement.sql) is shared_lock for read in compiled)
+    pair, triple, single = compiled
+    assert "t0.bal_id = any(cast(? as bigint[])) and t0.out_z = ?" in pair.statement.sql
+    assert "t0.bal_id = ? and t0.out_z = ?" in single.statement.sql
+    assert pair.statement.sql == triple.statement.sql != single.statement.sql
+    assert _root(plans[0])[1] is _root(plans[1])[1]
+    assert _root(plans[0])[1] is not _root(plans[2])[1]
+    assert [read.statement.binds[0] for read in (pair, triple)] == [
+        ArrayBind(INT64, [1, 2]),
+        ArrayBind(INT64, [3, 4, 5]),
+    ]
+
+
 @pytest.mark.parametrize("keys, kept", [((1, 2, 3), 2), ((1, 2, 2), 1)], ids=["lookahead", "tie"])
 def test_page_continuation_collects_only_the_retained_root_prefix(
     keys: tuple[int, ...],
@@ -545,7 +579,7 @@ def test_a_malformed_discarded_root_is_refused_before_any_root_is_converted(
 def test_transaction_time_coverage_is_single_instant_write_support() -> None:
     model = CatalogedModel(corpus_model("balance"), TEST_BINDING)
     entity = target(model.meta, "Balance")
-    query = read_planning.plan_coverage_read(entity, model=model.meta, key="id", terms=((1, ()),))
+    query = read_planning.plan_coverage_read(entity, model=model.meta, key="id", terms=((1, None),))
     plan = ReadPlanCache().plan_acquisition(
         edition="edition-a",
         model=model,

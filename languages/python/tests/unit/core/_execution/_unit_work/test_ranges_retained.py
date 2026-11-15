@@ -120,7 +120,7 @@ def _bind(
     return bound, held
 
 
-def _coverage_windows(held: HeldRows) -> list[tuple[TimeInterval, ...]]:
+def _coverage_windows(held: HeldRows) -> list[tuple[TimeInterval, ...] | None]:
     return [
         request.terms[0].valid_time_windows
         for request in held.requests

@@ -371,7 +371,7 @@ _FOUR = (
 def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_cap(
     monkeypatch: pytest.MonkeyPatch, terms: int
 ) -> None:
-    monkeypatch.setattr(ranges, "_COVERAGE_WINDOWS", terms)
+    monkeypatch.setattr(ranges, "_PARTS_PER_READ", terms)
     first, second, third, fourth = _calendar(*_FOUR)
     coverage = (
         [Read(rows=[second, fourth])] if terms > 1 else [Read(rows=[second]), Read(rows=[fourth])]

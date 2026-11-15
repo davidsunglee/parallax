@@ -96,12 +96,13 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     declared counts — the harness never compiles a query to SQL.
     """
     case = scenario.case
-    _assert_one_step_owns_each_shared_read(scenario)
+    flushed = _flushed_inserts(scenario)
+    _assert_one_step_owns_each_shared_read(scenario, flushed)
     total = 0
     for step in scenario.steps:
         declared = step.database_calls
         statements = step.statements.sql(dialect)
-        reads = _resolving_reads(case, step)
+        reads = _resolving_reads(case, step, flushed)
         if len(statements) + reads != declared:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step.index}] declares databaseCalls "
@@ -118,68 +119,93 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
         )
 
 
-def _resolving_reads(case: Case, step: Any) -> int:
-    """The resolving and coverage reads ONE scenario step owes beside the SQL it
-    lists.
+def _resolving_reads(case: Case, step: Any, flushed: frozenset[str]) -> int:
+    """The resolving, acquisition, and coverage reads ONE scenario step owes
+    beside the SQL it lists.
 
     An UNGROUPED write step is its own choreography unit, so it owes what any unit
     owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes no
     resolving read of its own: its group's find steps are what publish the values
     it settles against, and those finds already declare their own Database Calls
-    (`m-case-format` *Resolving reads a write owes*). What a settled one can owe is
-    the coverage read its flush makes for a Bitemporal object whose requested
-    extent its named find's rectangle does not cover (:func:`_coverage_reads`). A
+    (`m-case-format` *Resolving reads a write owes*). What it can owe is one
+    acquisition of each object a Locking target submission writes, made at its
+    call, and the coverage reads its flush makes (:func:`_coverage_reads`). A
     find step owes none either — a read IS the SQL it lists.
     """
     if isinstance(step, _GroupedWrite):
-        return _coverage_reads(case, step)
+        acquired = (
+            {
+                _object_key(submission)
+                for submission in step.submissions
+                if submission.kind == "target" and submission.refusal is None
+            }
+            if case.concurrency_mode == "locking"
+            else set()
+        )
+        return len(acquired) + _coverage_reads(case, step, flushed)
     if not isinstance(step, _UngroupedWrite):
         return 0
     return unit_resolving_reads(case, list(step.entries))
 
 
-def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
-    """The coverage reads a settled step's flush makes for the Bitemporal objects
-    it writes beyond the rectangles their named finds observed (`m-temporal-write`
-    *Observed writes span their requested extent*; `m-sql` *Requested ranges*).
+def _coverage_reads(case: Case, step: _GroupedWrite, flushed: frozenset[str]) -> int:
+    """The coverage reads a settled step's flush makes for the objects whose
+    writes defer (`m-temporal-write` *Observed writes span their requested
+    extent*; `m-sql` *Requested ranges*).
 
-    An object's requested extent encloses its entries' ``[validFrom, until)``
-    windows, through infinity where one states no ``until``, as separate
-    operations pending together read their enclosing window (`m-sql`), and what
-    its finds observed covers part of it; the rest is the parts its write reads.
-    Consecutive such writes share reads (:func:`write_plan.flush_coverage_reads`);
-    an object whose finds cover its extent settles at planning and ends a run,
-    and an amendment assigning nothing is dropped before it settles.
+    Consecutive such writes share reads whatever their temporal shape
+    (:func:`write_plan.flush_coverage_reads`); an object whose coverage is known
+    at planning settles there and ends a run, and an amendment assigning
+    nothing is dropped before it settles.
     """
-    settled, deferred = _step_coverage(case, step)
-    return flush_coverage_reads(case, settled, deferred, bitemporal=frozenset(deferred))
+    settled, deferred = _step_coverage(case, step, flushed)
+    return flush_coverage_reads(case, settled, deferred)
 
 
 def _step_coverage(
-    case: Case, step: _GroupedWrite
+    case: Case, step: _GroupedWrite, flushed: frozenset[str]
 ) -> tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]:
     """The objects a settled step's writes settle, in authored order, beside the
-    uncovered parts of each one whose write defers."""
+    uncovered parts of each one whose write defers.
+
+    A Bitemporal write settling against a find reads the part of its requested
+    extent — the enclosing window of its entries' ``[validFrom, until)``,
+    through infinity where one states no ``until`` — that the find's rectangle
+    leaves uncovered; a Transaction-Time-Only one settles against the current row
+    its find observed and reads nothing. A target write observed nothing, and
+    neither did a write through the value of an insert an earlier flush of its
+    group executed: each reads its object's one part, its window or its current
+    row, except that a Locking target's acquisition already holds a
+    Transaction-Time-Only object's current row.
+    """
     settled: list[SettledObject] = []
     requested: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
     observed: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
+    unobserved: dict[tuple[str, tuple[Any, ...]], int] = {}
     for submission in step.submissions:
         entry = dict(submission.entry)
         key = _object_key(submission)
         if submission.entity is None or key is None:
             settled.append(_unkeyed(submission.pointer))
             continue
-        if assigns_nothing(submission.entity, entry):
+        if submission.refusal is not None or assigns_nothing(submission.entity, entry):
             continue
         region = (entry.get("validFrom"), entry.get("until"))
         settled.append(settled_object(key, submission.mutation, region))
-        origin = submission.settles_on
-        if origin is None:
-            continue
         entity = case.model.entity(entry["entity"])
         axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
+        if not axes:
+            continue
+        if submission.kind == "target":
+            held = case.concurrency_mode == "locking" and "valid-time" not in axes
+            unobserved[key] = 0 if held else 1
+            continue
+        if entry.get("on") in flushed:
+            unobserved[key] = 1
+            continue
+        origin = submission.settles_on
         valid_axis = axes.get("valid-time")
-        if valid_axis is None or entry.get("validFrom") is None:
+        if origin is None or valid_axis is None or entry.get("validFrom") is None:
             continue
         row = _sole_settled_row(case, step.index, entity, entry)
         _, pk, _set_cols, _observed = classify_write_row(
@@ -200,7 +226,32 @@ def _step_coverage(
         for key, windows in requested.items()
         if (parts := uncovered_parts([_enclosing(windows)], observed[key]))
     }
+    deferred.update(unobserved)
     return settled, deferred
+
+
+def _flushed_inserts(scenario: CompiledScenario) -> frozenset[str]:
+    """The pointers of the insert submissions a flush executed before a later
+    write of their own group could compose with them: those pending when a find
+    or a flushing predicate submission of the group runs."""
+    flushed: set[str] = set()
+    for unit in scenario.units.values():
+        pending: list[str] = []
+        for index in unit.steps:
+            step = scenario.steps[index]
+            if isinstance(step, (_RowPublishingStep, _BoundaryAction)):
+                flushed.update(pending)
+                pending = []
+                continue
+            if not isinstance(step, _GroupedWrite):
+                continue
+            for submission in step.submissions:
+                if submission.inserts and submission.refusal is None:
+                    pending.append(submission.pointer)
+                if submission.flushes:
+                    flushed.update(pending)
+                    pending = []
+    return frozenset(flushed)
 
 
 def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
@@ -212,7 +263,9 @@ def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
     )
 
 
-def _assert_one_step_owns_each_shared_read(scenario: CompiledScenario) -> None:
+def _assert_one_step_owns_each_shared_read(
+    scenario: CompiledScenario, flushed: frozenset[str]
+) -> None:
     """Refuse deferred writes of one Entity that one flush settles but several
     write steps author.
 
@@ -233,7 +286,7 @@ def _assert_one_step_owns_each_shared_read(scenario: CompiledScenario) -> None:
                 continue
             if not isinstance(step, _GroupedWrite):
                 continue
-            _, deferred = _step_coverage(case, step)
+            _, deferred = _step_coverage(case, step, flushed)
             for submission in step.submissions:
                 key = _object_key(submission)
                 if submission.flushes:
@@ -323,8 +376,8 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
     """
     case = scenario.case
     for step in scenario.steps:
-        if not isinstance(step, _GroupedWrite) or all(
-            submission.settles_on is None for submission in step.submissions
+        if not isinstance(step, _GroupedWrite) or not any(
+            _aligns(submission) for submission in step.submissions
         ):
             continue
         # The write-grading operations this delegates to speak of the statement
@@ -334,13 +387,21 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
             _assert_settled_step(case, step, dialect)
 
 
+def _aligns(submission: Submission) -> bool:
+    """Whether grading aligns *submission* with a golden statement: a keyed
+    write naming the find it settles against, or a target write, whose caller
+    states the revision it starts from."""
+    return submission.settles_on is not None or submission.kind == "target"
+
+
 def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
-    """Grade one settled write step's golden against each entry's named find.
+    """Grade one settled write step's golden against each entry's named find or
+    stated revision.
 
     Every existing-row statement belongs to an entry of the step once every entry
-    names its find; a step whose other entries name none leaves their statements
-    to the table state. A grouped effect is graded as the lone statement each of
-    its source rows stands for (:func:`ungrouped_effect`)."""
+    aligns; a step whose other entries name no find leaves their statements to the
+    table state. A grouped effect is graded as the lone statement each of its
+    source rows stands for (:func:`ungrouped_effect`)."""
     index = step.index
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
@@ -348,8 +409,11 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
         if is_existing_row_statement(statement)
     ]
     aligned: set[int] = set()
-    every_entry_settles = all(submission.settles_on is not None for submission in step.submissions)
+    every_entry_settles = all(_aligns(submission) for submission in step.submissions)
     for submission in step.submissions:
+        if submission.kind == "target":
+            _assert_target_statement(case, index, submission, settling, aligned, dialect)
+            continue
         origin = submission.settles_on
         if origin is None:
             continue
@@ -365,9 +429,12 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
                 case, index, entity, pk, settling, aligned, dialect
             )
             assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
-            _assert_settled_version_binds(
-                case, entity, index, origin, pk, binds, statement, dialect
-            )
+            version_col = version_column(entity)
+            if version_col is not None:
+                observed_version = _settled_generation(case, entity, index, origin, pk, version_col)
+                _assert_version_binds(
+                    case, entity, index, observed_version, binds, statement, dialect
+                )
             continue
         _settled_start(case, index, entity, entry, origin)
         observed = _settled_milestone(case, entity, index, origin, pk)
@@ -405,6 +472,76 @@ def _ungrouped_pairs(
             yield statement, binds
         else:
             yield from rows
+
+
+def _assert_target_statement(
+    case: Case,
+    index: int,
+    submission: Submission,
+    settling: list[tuple[ObjectAddress, str, list[Any]]],
+    aligned: set[int],
+    dialect: str,
+) -> None:
+    """Grade one target entry's golden against the revision its caller states
+    (`m-case-format` *Buffered keyed write instructions*).
+
+    Every existing-row statement addressing the entry's object belongs to it. A
+    temporal target under Optimistic closes or guards its starting row exactly
+    once, gated on the stated ``ifTxStart``, which is the lone statement's last
+    bind; under Locking its start was proven when its row was acquired, so
+    nothing it emits states the revision and the table state grades it. A
+    versioned target's statement gates on and advances the stated ``ifVersion``
+    as a settled write's does on the generation its find observed.
+    """
+    entity, key = submission.entity, submission.key
+    assert entity is not None and key is not None  # a target submission names its object
+    entry = submission.entry
+    pk = _target_key(case, entity, key)
+    matches = [
+        position
+        for position, (address, _statement, _binds) in enumerate(settling)
+        if address.names_table(case.entity_table(entity.canonical_name, dialect))
+        and address.names_key_column(entity.identity_column)
+        and write_value_equal(address.key, pk)
+    ]
+    aligned.update(matches)
+    if temporal_axes(entity.runtime_facts):
+        if case.concurrency_mode != "optimistic":
+            return
+        gated = [
+            position
+            for position in matches
+            if settling[position][2]
+            and write_value_equal(settling[position][2][-1], entry.get("ifTxStart"))
+        ]
+        if len(gated) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] carries {len(gated)} existing-row "
+                f"statement(s) addressing {entity.name} pk {pk!r} gated on its caller's stated "
+                f"start {entry.get('ifTxStart')!r} — an Optimistic target write closes or guards "
+                f"its starting row exactly once."
+            )
+        _address, statement, binds = settling[gated[0]]
+        assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
+        return
+    if len(matches) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] carries {len(matches)} existing-row "
+            f"statement(s) addressing {entity.name} pk {pk!r} — a target write of a versioned "
+            f"object emits one."
+        )
+    _address, statement, binds = settling[matches[0]]
+    assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
+    _assert_version_binds(case, entity, index, entry.get("ifVersion"), binds, statement, dialect)
+
+
+def _target_key(case: Case, entity: Entity, key: Mapping[str, Any]) -> Any:
+    """The key value a target entry's statements address, as
+    :func:`write_plan.classify_write_row` derives it for a keyed row."""
+    _, pk, _set_cols, _observed = classify_write_row(
+        case, entity, dict(key), mutation="delete", opening=False
+    )
+    return pk
 
 
 def _settled_start(
@@ -541,37 +678,31 @@ def _statement_address(
     return address
 
 
-def _assert_settled_version_binds(
+def _assert_version_binds(
     case: Case,
     entity: Entity,
     index: int,
-    origin: _SettledOn,
-    pk: Any,
+    observed: Any,
     binds: list[Any],
     statement: str,
     dialect: str,
 ) -> None:
-    """Cross-check a settled VERSIONED Non-Temporal write's golden against the
-    generation the find it names observed OF ITS OWN KEY.
+    """Cross-check a VERSIONED Non-Temporal write's golden against the generation
+    it starts from: the one a settled write's named find observed of its own key,
+    or the one a target write's caller states.
 
     A versioned write is addressed by its key alone, so the whole difference
-    between one observed generation and another lands on what the observation
-    derives, and both halves are graded: the optimistic gate, which is the
-    golden's LAST bind and is the observed version itself, and the
-    framework-computed advance, which is one more than it and is assigned in
-    BOTH concurrency modes. A locking UPDATE therefore still states its observed
-    generation; a DELETE assigns nothing, so a locking one states none and there
-    is nothing here to cross-check.
+    between one generation and another lands on what that generation derives,
+    and both halves are graded: the optimistic gate, which is the golden's LAST
+    bind and is the generation itself, and the framework-computed advance, which
+    is one more than it and is assigned in BOTH concurrency modes. A locking
+    UPDATE therefore still states its generation; a DELETE assigns nothing, so a
+    locking one states none and there is nothing here to cross-check.
 
     Which of the two the statement carries is read off the STATEMENT rather than
     off the entry's own verb, because coalescing decides what survives: a
     destructive intent supersedes the assignments buffered before it, so an
     entry spelling `update` may reach a golden DELETE that advances nothing.
-
-    The generation is read off the named find step's own ``expectRows`` by the
-    write's own key, exactly as the temporal arm reads its milestone
-    (:func:`_settled_milestone`), so the corpus states which generation the write
-    settled against in two independent places.
 
     The version column is located in the SET clause by the spelling the golden
     renders it with (:func:`quote_identifier`) rather than by its model name: a
@@ -581,14 +712,12 @@ def _assert_settled_version_binds(
     version_col = version_column(entity)
     if version_col is None:
         return
-    observed = _settled_generation(case, entity, index, origin, pk, version_col)
     if case.concurrency_mode == "optimistic" and (
         not binds or not write_value_equal(binds[-1], observed)
     ):
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
-            f"observed version {observed!r}, but its golden gate binds "
-            f"{binds[-1] if binds else None!r}."
+            f"{case.path.name}: scenario[{index}] writes {entity.name} from version "
+            f"{observed!r}, but its golden gate binds {binds[-1] if binds else None!r}."
         )
     assigned = parse_set_columns(statement)
     if assigned is None:
@@ -596,7 +725,7 @@ def _assert_settled_version_binds(
     spelling = quote_identifier(version_col, dialect)
     if spelling not in assigned:
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a versioned {entity.name} update "
+            f"{case.path.name}: scenario[{index}] writes a versioned {entity.name} update "
             f"whose golden SET clause {assigned} assigns no {spelling!r} — a versioned "
             f"update advances the framework-owned version under either concurrency strategy."
         )
@@ -604,9 +733,9 @@ def _assert_settled_version_binds(
     advanced = binds[position] if position < len(binds) else None
     if not write_value_equal(advanced, observed + 1):
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find that "
-            f"observed version {observed!r}, but its golden advances the version to "
-            f"{advanced!r} rather than {observed + 1!r}."
+            f"{case.path.name}: scenario[{index}] writes {entity.name} from version "
+            f"{observed!r}, but its golden advances the version to {advanced!r} rather than "
+            f"{observed + 1!r}."
         )
 
 
