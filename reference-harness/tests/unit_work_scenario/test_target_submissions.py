@@ -8,14 +8,15 @@ before provisioning."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from reference_harness.case import Case
+from reference_harness.case import Case, load_model
 from reference_harness.case_assertions import CaseFailure
 
-from .conftest import assert_judged
+from .conftest import COMPATIBILITY_ROOT, assert_judged
 
 type CaseLoader = Callable[[str], Case]
 
@@ -83,6 +84,52 @@ def test_a_step_declares_the_reads_its_targets_owe(
         assert_judged(case)
 
 
+def test_a_write_through_a_pending_insert_composes_with_it_and_reads_nothing(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_INSERTED)
+    scenario: list[dict[str, Any]] = case.when["scenario"]
+    edits = scenario.pop(2)
+    scenario[0]["write"].extend(edits["write"])
+    scenario[0]["statements"][0]["binds"][1] = [130, 140]
+    for row, amount in zip(scenario[1]["expectRows"], (130, 140), strict=True):
+        row["amount"] = amount
+    case.then["databaseCalls"] = 2
+    assert_judged(case)
+
+
+@pytest.mark.parametrize("name", [_OPTIMISTIC, _LOCKING], ids=["optimistic", "locking"])
+def test_an_empty_target_amendment_costs_and_emits_nothing(
+    damaged_case: CaseLoader, name: str
+) -> None:
+    case = damaged_case(name)
+    write: list[dict[str, Any]] = case.when["scenario"][0]["write"]
+    write.append({**write[0], "row": {"id": 999}})
+    assert_judged(case)
+
+
+def test_a_target_a_temporal_conflict_refuses_emits_nothing(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_OPTIMISTIC)
+    seed = damaged_case(_UNCHANGED).when["scenario"][0]
+    step: dict[str, Any] = case.when["scenario"][0]
+    step["write"] = [{**step["write"][0], "at": "2023-12-01T00:00:00.000000Z"}]
+    step["databaseCalls"], step["statements"] = 1, []
+    case.when["scenario"].insert(0, seed)
+    case.then["databaseCalls"] = 2
+    case.then["units"] = {
+        "amend": {
+            "outcome": "rolledBack",
+            "flushFailure": {
+                "at": "commit",
+                "entity": "parallax.compatibility.KeptLog",
+                "key": {"id": 1},
+                "error": "temporalConflict",
+            },
+        }
+    }
+    assert_judged(case)
+
+
 # --- the revision a target's golden states -------------------------------------
 
 
@@ -95,6 +142,37 @@ def test_an_optimistic_target_gates_its_starting_row_on_its_callers_start(
     first["binds"][1] = ["2023-12-02T00:00:00.000000Z", *first["binds"][1][1:]]
     with pytest.raises(CaseFailure, match="gated on its caller's stated start"):
         assert_judged(case)
+
+
+def _through_may(case: Case, *, stated: str, may_start: str) -> Case:
+    """Case 080 with span 1's target extended over its May rectangle, whose
+    close starts at *may_start*, the target stating *stated*."""
+    step: dict[str, Any] = case.when["scenario"][0]
+    step["write"][2] = {
+        **step["write"][2],
+        "until": "2024-08-01T00:00:00.000000Z",
+        "ifTxStart": stated,
+    }
+    close = step["statements"][2]["binds"]
+    close[0] = [1, 1, 2]
+    close[1] = ["2024-04-01T00:00:00.000000Z", "2024-08-01T00:00:00.000000Z", "infinity"]
+    close[2] = ["2023-12-01T00:00:00.000000Z", may_start, "2023-12-01T00:00:00.000000Z"]
+    close[3] = ["2024-11-01T00:00:00.000000Z"] * 3
+    return case
+
+
+def test_a_bitemporal_target_gates_its_starting_rectangle_on_its_callers_start(
+    damaged_case: CaseLoader,
+) -> None:
+    december_15 = "2023-12-15T00:00:00.000000Z"
+    stale = _through_may(damaged_case(_MIXED), stated=december_15, may_start=december_15)
+    with pytest.raises(CaseFailure, match="gated on its caller's stated start"):
+        assert_judged(stale)
+
+
+def test_rectangles_sharing_a_start_gate_on_it_each(damaged_case: CaseLoader) -> None:
+    december_1 = "2023-12-01T00:00:00.000000Z"
+    assert_judged(_through_may(damaged_case(_MIXED), stated=december_1, may_start=december_1))
 
 
 # --- the target forms only a state-graded case carries -------------------------
@@ -148,5 +226,67 @@ def test_a_target_of_an_object_its_group_observed_stays_state_graded(
         ],
     }
     case.when["scenario"].insert(0, find)
+    with pytest.raises(CaseFailure, match="scenario\\[0\\] of its group observed"):
+        assert_judged(case)
+
+
+def test_a_find_of_another_entity_observes_no_target_of_the_same_key(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_OPTIMISTIC)
+    find = {
+        "uow": "amend",
+        "objectQuery": {
+            "target": "parallax.compatibility.KeptSpan",
+            "predicate": {"eq": {"path": "parallax.compatibility.KeptSpan.id", "value": 1}},
+        },
+        "databaseCalls": 0,
+        "statements": [],
+        "expectRows": [{"id": 1, "amount": 100, "label": "a"}],
+    }
+    case.when["scenario"].insert(0, find)
+    assert_judged(case)
+
+
+def test_a_find_including_a_targets_entity_may_have_observed_it() -> None:
+    raw: dict[str, Any] = {
+        "model": "models/orders-versioned.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "uow": {"concurrency": "locking"},
+            "scenario": [
+                {
+                    "uow": "g",
+                    "objectQuery": {
+                        "target": "parallax.compatibility.Order",
+                        "predicate": {
+                            "eq": {"path": "parallax.compatibility.Order.id", "value": 1}
+                        },
+                        "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
+                    },
+                    "databaseCalls": 0,
+                    "statements": [],
+                    "expectRows": [{"id": 1}],
+                },
+                {
+                    "uow": "g",
+                    "write": [
+                        {
+                            "mutation": "amend",
+                            "entity": "parallax.compatibility.OrderItem",
+                            "row": {"id": 11, "sku": "Z"},
+                            "ifVersion": 1,
+                        }
+                    ],
+                    "databaseCalls": 2,
+                    "statements": [],
+                },
+            ],
+        },
+        "then": {"databaseCalls": 2},
+    }
+    model = load_model(COMPATIBILITY_ROOT, "models/orders-versioned.yaml")
+    case = Case(path=Path("m-unit-work-996-synthetic.yaml"), raw=raw, model=model)
     with pytest.raises(CaseFailure, match="scenario\\[0\\] of its group observed"):
         assert_judged(case)

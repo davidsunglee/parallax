@@ -1220,8 +1220,10 @@ find steps are what publish the values it settles against, and those finds alrea
 declare their own `databaseCalls`. What it owes is what its target submissions
 cost and the coverage reads its flush makes. Under the Locking strategy each object
 its target submissions write owes one acquisition at its call, as a target entry's
-does above; under Optimistic none. A temporal object whose write defers owes its
-uncovered parts to the flush's coverage reads, counted as below:
+does above; under Optimistic none. An empty amendment owes nothing, being dropped
+with no database work (`m-unit-work` *Target writes*). A temporal object whose
+write defers owes its uncovered parts to the flush's coverage reads, counted as
+below:
 
 - a **target** submission observed nothing, so it reads its object's one part —
   the enclosing window of its entries on a Bitemporal object, the current row on
@@ -1484,12 +1486,17 @@ revision it starts from, and that revision is what its golden is aligned with.
 Every existing-row statement addressing its object belongs to it, a grouped
 effect read as the lone statement each of its source rows stands for (`m-sql`
 *Grouped effects*). Under Optimistic a temporal target's starting row is closed or
-guarded exactly once, gated on the stated `ifTxStart`; under Locking its start was
-proven when its row was acquired, so no statement states it, and the table state
-grades what the write did. A versioned target's statement gates on the stated
-`ifVersion` and advances it, as a write settling against a find does on the
-generation that find observed. A target write reads only stored state it does not
-state, so a case carrying one is query-result-dependent and run-only.
+guarded exactly once, gated on the stated `ifTxStart`. On a Bitemporal object that
+row is the rectangle holding `validFrom`, so its statement addresses the earliest
+Valid-Time end of the object's statements; each later rectangle's gates on its own
+start, which the table state grades. Under Locking its start was proven when its
+row was acquired, so no statement states it, and the table state grades what the
+write did. A versioned target's statement gates on the stated `ifVersion` and
+advances it, as a write settling against a find does on the generation that find
+observed. An empty amendment, and a write of the object a Temporal Conflict of its
+flush names (*Unit fates*), address no statement. A target write reads only
+stored state it does not state, so a case carrying one is query-result-dependent
+and run-only.
 
 #### Streamed read steps (`stream`)
 
@@ -1628,8 +1635,11 @@ never a source-authorized `replace` / `replaceUntil`, or a **target** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
 `targetWriteInstruction`) whose cost the document alone states: the only
 submission of its group naming its object, of an object no earlier find of its
-group returned a row of, and, under the Locking strategy, of an Entity with no
-Valid Time (*Resolving reads a write owes*). Its golden aligns with the revision
+group may have returned a row of, and, under the Locking strategy, of an Entity
+with no Valid Time (*Resolving reads a write owes*). A find may have returned a
+row of every object of an inheritance family its include paths reach, whose rows
+its document need not state, and of an object of its root's family unless its
+stated root rows omit that object. Its golden aligns with the revision
 its caller states (*Aligning a target submission*, below). A state-graded case's
 buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, any other target submission, a submission its verb refuses, and a

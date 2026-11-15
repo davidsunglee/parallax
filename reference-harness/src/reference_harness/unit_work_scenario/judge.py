@@ -26,6 +26,7 @@ from ..value_object_resolve import RejectionError
 from ..write_plan import (
     ObjectAddress,
     SettledObject,
+    address_valid_end,
     assert_inheritance_write_routing,
     assert_write_values,
     assigns_nothing,
@@ -44,6 +45,7 @@ from ..write_plan import (
 )
 from .compile import (
     CompiledScenario,
+    FlushFailure,
     Submission,
     _BoundaryAction,
     _GroupedWrite,
@@ -96,13 +98,13 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     declared counts — the harness never compiles a query to SQL.
     """
     case = scenario.case
-    flushed = _flushed_inserts(scenario)
-    _assert_one_step_owns_each_shared_read(scenario, flushed)
+    through_flushed = _writes_through_flushed_inserts(scenario)
+    _assert_one_step_owns_each_shared_read(scenario, through_flushed)
     total = 0
     for step in scenario.steps:
         declared = step.database_calls
         statements = step.statements.sql(dialect)
-        reads = _resolving_reads(case, step, flushed)
+        reads = _resolving_reads(case, step, through_flushed)
         if len(statements) + reads != declared:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step.index}] declares databaseCalls "
@@ -119,7 +121,7 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
         )
 
 
-def _resolving_reads(case: Case, step: Any, flushed: frozenset[str]) -> int:
+def _resolving_reads(case: Case, step: Any, through_flushed: frozenset[str]) -> int:
     """The resolving, acquisition, and coverage reads ONE scenario step owes
     beside the SQL it lists.
 
@@ -129,7 +131,8 @@ def _resolving_reads(case: Case, step: Any, flushed: frozenset[str]) -> int:
     it settles against, and those finds already declare their own Database Calls
     (`m-case-format` *Resolving reads a write owes*). What it can owe is one
     acquisition of each object a Locking target submission writes, made at its
-    call, and the coverage reads its flush makes (:func:`_coverage_reads`). A
+    call, and the coverage reads its flush makes (:func:`_coverage_reads`). An
+    empty amendment is dropped with no database work, acquisition included. A
     find step owes none either — a read IS the SQL it lists.
     """
     if isinstance(step, _GroupedWrite):
@@ -137,18 +140,20 @@ def _resolving_reads(case: Case, step: Any, flushed: frozenset[str]) -> int:
             {
                 _object_key(submission)
                 for submission in step.submissions
-                if submission.kind == "target" and submission.refusal is None
+                if submission.kind == "target"
+                and submission.refusal is None
+                and not _is_empty_target(submission)
             }
             if case.concurrency_mode == "locking"
             else set()
         )
-        return len(acquired) + _coverage_reads(case, step, flushed)
+        return len(acquired) + _coverage_reads(case, step, through_flushed)
     if not isinstance(step, _UngroupedWrite):
         return 0
     return unit_resolving_reads(case, list(step.entries))
 
 
-def _coverage_reads(case: Case, step: _GroupedWrite, flushed: frozenset[str]) -> int:
+def _coverage_reads(case: Case, step: _GroupedWrite, through_flushed: frozenset[str]) -> int:
     """The coverage reads a settled step's flush makes for the objects whose
     writes defer (`m-temporal-write` *Observed writes span their requested
     extent*; `m-sql` *Requested ranges*).
@@ -158,12 +163,12 @@ def _coverage_reads(case: Case, step: _GroupedWrite, flushed: frozenset[str]) ->
     at planning settles there and ends a run, and an amendment assigning
     nothing is dropped before it settles.
     """
-    settled, deferred = _step_coverage(case, step, flushed)
+    settled, deferred = _step_coverage(case, step, through_flushed)
     return flush_coverage_reads(case, settled, deferred)
 
 
 def _step_coverage(
-    case: Case, step: _GroupedWrite, flushed: frozenset[str]
+    case: Case, step: _GroupedWrite, through_flushed: frozenset[str]
 ) -> tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]:
     """The objects a settled step's writes settle, in authored order, beside the
     uncovered parts of each one whose write defers.
@@ -200,7 +205,7 @@ def _step_coverage(
             held = case.concurrency_mode == "locking" and "valid-time" not in axes
             unobserved[key] = 0 if held else 1
             continue
-        if entry.get("on") in flushed:
+        if submission.pointer in through_flushed:
             unobserved[key] = 1
             continue
         origin = submission.settles_on
@@ -230,12 +235,14 @@ def _step_coverage(
     return settled, deferred
 
 
-def _flushed_inserts(scenario: CompiledScenario) -> frozenset[str]:
-    """The pointers of the insert submissions a flush executed before a later
-    write of their own group could compose with them: those pending when a find
-    or a flushing predicate submission of the group runs."""
-    flushed: set[str] = set()
+def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str]:
+    """The pointers of the submissions writing through the value of an insert a
+    flush of their group executed before them, a find's or a flushing predicate
+    submission's; one written through while that insert is still pending
+    composes with it instead (`m-unit-work` *Insertion authority*)."""
+    through: set[str] = set()
     for unit in scenario.units.values():
+        flushed: set[str] = set()
         pending: list[str] = []
         for index in unit.steps:
             step = scenario.steps[index]
@@ -246,12 +253,24 @@ def _flushed_inserts(scenario: CompiledScenario) -> frozenset[str]:
             if not isinstance(step, _GroupedWrite):
                 continue
             for submission in step.submissions:
+                if submission.entry.get("on") in flushed:
+                    through.add(submission.pointer)
                 if submission.inserts and submission.refusal is None:
                     pending.append(submission.pointer)
                 if submission.flushes:
                     flushed.update(pending)
                     pending = []
-    return frozenset(flushed)
+    return frozenset(through)
+
+
+def _is_empty_target(submission: Submission) -> bool:
+    """Whether *submission* is a target amendment naming nothing beside its key,
+    which is dropped once validated (`m-unit-work` *Target writes*)."""
+    return (
+        submission.kind == "target"
+        and submission.entity is not None
+        and assigns_nothing(submission.entity, submission.entry)
+    )
 
 
 def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
@@ -264,7 +283,7 @@ def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
 
 
 def _assert_one_step_owns_each_shared_read(
-    scenario: CompiledScenario, flushed: frozenset[str]
+    scenario: CompiledScenario, through_flushed: frozenset[str]
 ) -> None:
     """Refuse deferred writes of one Entity that one flush settles but several
     write steps author.
@@ -286,7 +305,7 @@ def _assert_one_step_owns_each_shared_read(
                 continue
             if not isinstance(step, _GroupedWrite):
                 continue
-            _, deferred = _step_coverage(case, step, flushed)
+            _, deferred = _step_coverage(case, step, through_flushed)
             for submission in step.submissions:
                 key = _object_key(submission)
                 if submission.flushes:
@@ -380,11 +399,20 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
             _aligns(submission) for submission in step.submissions
         ):
             continue
+        fate = scenario.units.get(step.group) if step.group is not None else None
+        failure = fate.flush_failure if fate is not None else None
+        refused = (
+            failure
+            if failure is not None
+            and failure.error == "temporalConflict"
+            and step.index in failure.flushed_steps
+            else None
+        )
         # The write-grading operations this delegates to speak of the statement
         # they were handed rather than of the Scenario position that handed it
         # over, so the position is added here, at the boundary that knows it.
         with reported_against(case, step.index):
-            _assert_settled_step(case, step, dialect)
+            _assert_settled_step(case, step, refused, dialect)
 
 
 def _aligns(submission: Submission) -> bool:
@@ -394,14 +422,19 @@ def _aligns(submission: Submission) -> bool:
     return submission.settles_on is not None or submission.kind == "target"
 
 
-def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
+def _assert_settled_step(
+    case: Case, step: _GroupedWrite, refused: FlushFailure | None, dialect: str
+) -> None:
     """Grade one settled write step's golden against each entry's named find or
     stated revision.
 
     Every existing-row statement belongs to an entry of the step once every entry
     aligns; a step whose other entries name no find leaves their statements to the
     table state. A grouped effect is graded as the lone statement each of its
-    source rows stands for (:func:`ungrouped_effect`)."""
+    source rows stands for (:func:`ungrouped_effect`). An entry that emits no
+    statement aligns with none: an empty target amendment, dropped with no
+    database work, and a write of the object a Temporal Conflict of its flush
+    (*refused*) names, refused before any statement addresses it."""
     index = step.index
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
@@ -411,6 +444,10 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
     aligned: set[int] = set()
     every_entry_settles = all(_aligns(submission) for submission in step.submissions)
     for submission in step.submissions:
+        if _is_empty_target(submission) or (
+            refused is not None and submission.names(refused.entity, refused.key)
+        ):
+            continue
         if submission.kind == "target":
             _assert_target_statement(case, index, submission, settling, aligned, dialect)
             continue
@@ -487,11 +524,13 @@ def _assert_target_statement(
 
     Every existing-row statement addressing the entry's object belongs to it. A
     temporal target under Optimistic closes or guards its starting row exactly
-    once, gated on the stated ``ifTxStart``, which is the lone statement's last
-    bind; under Locking its start was proven when its row was acquired, so
-    nothing it emits states the revision and the table state grades it. A
-    versioned target's statement gates on and advances the stated ``ifVersion``
-    as a settled write's does on the generation its find observed.
+    once, gated on the stated ``ifTxStart``, which is that statement's last
+    bind (:func:`_starting_statement`); every later rectangle's gates on its own
+    start, which the table state grades. Under Locking its start was proven when
+    its row was acquired, so nothing it emits states the revision and the table
+    state grades it. A versioned target's statement gates on and advances the
+    stated ``ifVersion`` as a settled write's does on the generation its find
+    observed.
     """
     entity, key = submission.entity, submission.key
     assert entity is not None and key is not None  # a target submission names its object
@@ -508,20 +547,14 @@ def _assert_target_statement(
     if temporal_axes(entity.runtime_facts):
         if case.concurrency_mode != "optimistic":
             return
-        gated = [
-            position
-            for position in matches
-            if settling[position][2]
-            and write_value_equal(settling[position][2][-1], entry.get("ifTxStart"))
-        ]
-        if len(gated) != 1:
+        statement, binds = _starting_statement(case, index, entity, pk, matches, settling)
+        stated = entry.get("ifTxStart")
+        if not binds or not write_value_equal(binds[-1], stated):
             raise CaseFailure(
-                f"{case.path.name}: scenario[{index}] carries {len(gated)} existing-row "
-                f"statement(s) addressing {entity.name} pk {pk!r} gated on its caller's stated "
-                f"start {entry.get('ifTxStart')!r} — an Optimistic target write closes or guards "
-                f"its starting row exactly once."
+                f"{case.path.name}: scenario[{index}] closes or guards {entity.name} pk {pk!r}'s "
+                f"starting row gated on {binds[-1] if binds else None!r} rather than gated on "
+                f"its caller's stated start {stated!r}."
             )
-        _address, statement, binds = settling[gated[0]]
         assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
         return
     if len(matches) != 1:
@@ -533,6 +566,37 @@ def _assert_target_statement(
     _address, statement, binds = settling[matches[0]]
     assert_inheritance_write_routing(case, entity, [statement], [binds], dialect)
     _assert_version_binds(case, entity, index, entry.get("ifVersion"), binds, statement, dialect)
+
+
+def _starting_statement(
+    case: Case,
+    index: int,
+    entity: Entity,
+    pk: Any,
+    matches: list[int],
+    settling: list[tuple[ObjectAddress, str, list[Any]]],
+) -> tuple[str, list[Any]]:
+    """The one statement of *matches* that closes or guards a temporal target's
+    starting row: the sole one of a Transaction-Time-Only object, and on a
+    Bitemporal one the one addressing the earliest Valid-Time end, since the
+    rectangle holding ``validFrom`` ends before every later one its extent
+    reaches (`m-temporal-write` *A target write*)."""
+
+    def end(position: int) -> dt.datetime:
+        _address, statement, binds = settling[position]
+        return window_instant(address_valid_end(entity, statement, binds))
+
+    ordered = sorted(matches, key=end)
+    if not ordered or (len(ordered) > 1 and end(ordered[0]) == end(ordered[1])):
+        starting = [position for position in ordered if end(position) == end(ordered[0])]
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] carries {len(starting)} existing-row "
+            f"statement(s) addressing {entity.name} pk {pk!r} at its starting row — an "
+            f"Optimistic target write closes or guards its starting row exactly once, gated on "
+            f"its caller's stated start."
+        )
+    _address, statement, binds = settling[ordered[0]]
+    return statement, binds
 
 
 def _target_key(case: Case, entity: Entity, key: Mapping[str, Any]) -> Any:

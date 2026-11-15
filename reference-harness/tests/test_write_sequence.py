@@ -422,7 +422,11 @@ def test_a_target_step_owes_a_read_only_where_it_is_acquired() -> None:
     locking = _account_case({"when": {"uow": {"concurrency": "locking"}}})
     assert unit_resolving_reads(locking, [entry, entry]) == 1
     unversioned = _synthetic_case({})
-    wallet = {**entry, "entity": "parallax.compatibility.Customer", "rows": [{"id": 1}]}
+    wallet = {
+        **entry,
+        "entity": "parallax.compatibility.Customer",
+        "rows": [{"id": 1, "name": "Ada"}],
+    }
     assert unit_resolving_reads(unversioned, [wallet]) == 1
 
 
