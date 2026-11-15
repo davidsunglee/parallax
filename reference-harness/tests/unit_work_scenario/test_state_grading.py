@@ -40,6 +40,10 @@ _ROLLBACK = (
 _CONFLICT = (
     "m-temporal-write-076-a-close-at-or-before-its-stored-start-is-refused-layout-twin-columns.yaml"
 )
+_TERMINATED = (
+    "m-unit-work-084-transaction-time-only-target-terminations-close-unread-in-one-statement"
+    "-layout-twin-columns.yaml"
+)
 
 _T0 = "2023-12-01T00:00:00.000000Z"
 _T1 = "2023-12-15T00:00:00.000000Z"
@@ -69,8 +73,13 @@ _STARTING_SPANS = (
 )
 _STARTING_TAGS = ({"id": 1, "quantity": 5, "label": "t"}, {"id": 2, "quantity": 9, "label": "u"})
 _STARTING_ACCOUNTS = ({"id": 1, "balance": 10, "version": 1, "memo": {"note": "m1"}},)
+_STARTING_LOGS = (
+    {"id": 1, "amount": 100, "in_z": _T0, "out_z": _INF, "memo": {"note": "n5"}},
+    {"id": 2, "amount": 100, "in_z": _T0, "out_z": _INF, "memo": {"note": "n6"}},
+)
 _STARTING = {
     PhysicalTable(("px",), "sequence_span"): _STARTING_SPANS,
+    PhysicalTable(("px",), "kept_log"): _STARTING_LOGS,
     PhysicalTable(("px",), "sequence_tag"): _STARTING_TAGS,
     PhysicalTable(("px",), "sequence_account"): _STARTING_ACCOUNTS,
 }
@@ -581,6 +590,55 @@ def test_an_observed_write_within_its_recorded_row_reads_no_current_row(
         if row["id"] == 3:
             row["out_z"] = _ENDED
     rows.append(_span(3, "2024-01-01T00:00:00.000000Z", _INF, _ENDED, _INF, 300, "c"))
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
+        _grade(case)
+
+
+def _stated_conflict(case: Case, *, stated: str, at: str) -> Case:
+    """Case 084 state-graded: its group terminates log 1 alone at *at* on the
+    start *stated*, rolled back by a Temporal Conflict, leaving every log as it
+    started."""
+    case.raw["grading"] = "state"
+    (step,) = case.when["scenario"]
+    step["write"] = [{**step["write"][0], "ifTxStart": stated, "at": at}]
+    for golden in ("databaseCalls", "statements", "note"):
+        del step[golden]
+    del case.then["databaseCalls"]
+    case.then["units"] = {
+        "terminate": {
+            "outcome": "rolledBack",
+            "flushFailure": {
+                "at": "commit",
+                "entity": "parallax.compatibility.KeptLog",
+                "key": {"id": 1},
+                "error": "temporalConflict",
+            },
+        }
+    }
+    case.then["tableState"]["px"]["kept_log"] = [dict(row) for row in _STARTING_LOGS]
+    return case
+
+
+def test_a_read_free_termination_conflicts_on_the_start_its_caller_states(
+    damaged_case: CaseLoader,
+) -> None:
+    # The stored row starts in December; the caller states June, which the
+    # instant does not follow, and nothing is read to contradict it.
+    june = "2024-06-01T00:00:00.000000Z"
+    _grade(_stated_conflict(damaged_case(_TERMINATED), stated=june, at=june))
+
+
+def test_a_read_free_termination_following_its_stated_start_raises_no_conflict(
+    damaged_case: CaseLoader,
+) -> None:
+    # The stored row starts in December, after the instant, but the close is
+    # gated on the October start its caller states, which the instant follows:
+    # it executes and falls short as a failed precondition instead.
+    case = _stated_conflict(
+        damaged_case(_TERMINATED),
+        stated="2023-10-01T00:00:00.000000Z",
+        at="2023-11-01T00:00:00.000000Z",
+    )
     with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
         _grade(case)
 
