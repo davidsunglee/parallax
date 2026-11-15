@@ -37,6 +37,7 @@ METAMODEL_INDEX_IDENTITY_DUPLICATE = "metamodel-index-identity-duplicate"
 METAMODEL_INDEX_ATTRIBUTE_MISSING = "metamodel-index-attribute-missing"
 METAMODEL_INDEX_ATTRIBUTE_NOT_LOCAL = "metamodel-index-attribute-not-local"
 METAMODEL_INDEX_ATTRIBUTE_DUPLICATE = "metamodel-index-attribute-duplicate"
+METAMODEL_INDEX_TEMPORAL_ATTRIBUTE = "metamodel-index-temporal-attribute"
 METAMODEL_TEMPORAL_MEMBER_RESERVED = "metamodel-temporal-member-reserved"
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
@@ -51,6 +52,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         METAMODEL_INDEX_ATTRIBUTE_MISSING,
         METAMODEL_INDEX_ATTRIBUTE_NOT_LOCAL,
         METAMODEL_INDEX_ATTRIBUTE_DUPLICATE,
+        METAMODEL_INDEX_TEMPORAL_ATTRIBUTE,
         METAMODEL_TEMPORAL_MEMBER_RESERVED,
     }
 )
@@ -282,13 +284,19 @@ def validate_primary_keys(entity_defs: Sequence[Mapping[str, Any]]) -> None:
 
 
 def validate_index_components(entity_defs: Sequence[Mapping[str, Any]]) -> None:
-    """Refuse an authored Index component that is repeated, names no Attribute,
-    or names one the Entity inherits rather than declares."""
+    """Refuse an authored Index component that is repeated, names one of the
+    Entity's own As-Of Axis endpoints, names no Attribute, or names one the Entity
+    inherits rather than declares."""
     definitions = _definitions(entity_defs)
     family = Family(definitions)
     for definition in definitions:
         local = {str(attribute.get("name")) for attribute in _declared(definition, "attributes")}
         applicable = _applicable_attribute_names(family, definition)
+        endpoints = {
+            endpoint.name
+            for axis in temporal_axes(definition)
+            for endpoint in (axis.start, axis.end)
+        }
         for index in _declared(definition, "indices"):
             site = f"Index {index.get('name')!r} of {_identity(definition)}"
             seen: set[str] = set()
@@ -300,6 +308,11 @@ def validate_index_components(entity_defs: Sequence[Mapping[str, Any]]) -> None:
                         f"{site} names Attribute {name!r} more than once",
                     )
                 seen.add(name)
+                if name in endpoints:
+                    raise RejectionError(
+                        METAMODEL_INDEX_TEMPORAL_ATTRIBUTE,
+                        f"{site} names As-Of Axis endpoint {name!r}; the axis ends are derived",
+                    )
                 if name in local:
                     continue
                 if name in applicable:

@@ -2865,6 +2865,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-metamodel-013": _METAMODEL_FORMATION_REJECT_REASON,
     "m-metamodel-014": _METAMODEL_FORMATION_REJECT_REASON,
     "m-metamodel-015": _METAMODEL_FORMATION_REJECT_REASON,
+    "m-metamodel-016": _METAMODEL_FORMATION_REJECT_REASON,
     # -- m-navigate: relationship quantifier siblings -------------------------- #
     "m-navigate-001": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,
     "m-navigate-005": _RELATIONSHIP_QUANTIFIER_SIBLING_REASON,

@@ -69,8 +69,8 @@ def ingest_document(document: object) -> Metamodel:
     Schema validation runs first and reports every violation the canonical
     schema finds over the whole document; only a schema-valid document reaches
     the value phase, which reports every schema-valid but unconstructible
-    ``type`` spelling, every authored Attribute bearing an As-Of Axis endpoint's
-    canonical name, and every authored Index component naming one. Reference
+    ``type`` spelling and every authored Attribute bearing an As-Of Axis
+    endpoint's canonical name. Reference
     resolution, relationship pairing, and every other semantic question belong to
     Model Formation, reached later by passing this function's result to
     :func:`~parallax.descriptor._adapter.unresolved_metamodel` and the
@@ -81,7 +81,6 @@ def ingest_document(document: object) -> Metamodel:
     violations = (
         *_type_spelling_violations(mapping),
         *_temporal_attribute_violations(mapping),
-        *_index_temporal_violations(mapping),
     )
     if violations:
         raise _judged(DESCRIPTOR_VALUE_INVALID, "value", violations)
@@ -229,48 +228,6 @@ def _entity_temporal_attribute_violations(
         )
         for position, attribute in enumerate(attributes)
         if attribute["name"] in reserved
-    ]
-
-
-def _index_temporal_violations(
-    document: Mapping[str, object],
-) -> tuple[DescriptorViolation, ...]:
-    """Every authored Index component naming an As-Of Axis endpoint.
-
-    Every Index of a temporal Entity already ends with the derived axis ends, so
-    an authored component naming an end restates one in an author-chosen
-    position and one naming a start substitutes for the end-keyed shape. Each
-    offending component is one violation at its own document path.
-    """
-    return tuple(
-        violation
-        for prefix, entity in _entities(document)
-        for violation in _entity_index_temporal_violations(entity, prefix)
-    )
-
-
-def _entity_index_temporal_violations(
-    entity: Mapping[str, object], prefix: tuple[str | int, ...]
-) -> list[DescriptorViolation]:
-    """``entity``'s offending Index components, in document order.
-
-    The schema phase has already fixed every shape read here: an ``indices``
-    entry names a nonempty component list, so only its presence is tested.
-    """
-    endpoints = _endpoint_names(entity)
-    indices = cast("list[Mapping[str, Any]]", entity.get("indices", ()))
-    return [
-        DescriptorViolation(
-            path=(*prefix, "indices", position, "attributes", offset),
-            rule="index-temporal-attribute",
-            message=(
-                f"index component {component!r} is an as-of axis endpoint; "
-                "the physical key over the axis endpoints is derived"
-            ),
-        )
-        for position, index in enumerate(indices)
-        for offset, component in enumerate(cast("list[str]", index["attributes"]))
-        if component in endpoints
     ]
 
 

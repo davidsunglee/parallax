@@ -19,10 +19,8 @@ Two contract facts are asserted, both Docker-free:
    phase judges only schema-valid documents and realizes the m-descriptor
    named rejections: a ``type-spelling-invalid`` violation for a numeric
    spelling whose parameters break the m-core bounds or carry non-canonical
-   digits, a ``temporal-attribute-declared`` violation for an authored Attribute
-   bearing an as-of axis endpoint's canonical name, and an
-   ``index-temporal-attribute`` violation for an authored Index component naming
-   one.
+   digits, and a ``temporal-attribute-declared`` violation for an authored
+   Attribute bearing an as-of axis endpoint's canonical name.
 2. **Export determinism** — every corpus model under ``models/`` canonicalizes
    to a byte-identical fixed point in both JSON and YAML (serialize ->
    deserialize -> serialize), the m-descriptor byte-deterministic export law
@@ -165,26 +163,6 @@ def _temporal_attribute_violations(entity: Any, prefix: tuple[str | int, ...]) -
     }
 
 
-def _index_temporal_violations(entity: Any, prefix: tuple[str | int, ...]) -> set[Violation]:
-    """Every authored Index component of *entity* naming an as-of axis endpoint.
-
-    Every Index of a temporal Entity already ends with the derived axis ends, so
-    an authored component naming an end restates one in an author-chosen
-    position and one naming a start substitutes for the end-keyed shape. Each
-    offending component is one violation at its own document path."""
-    indices = entity.get("indices")
-    if not isinstance(indices, list):
-        return set()
-    endpoints = _endpoint_names(entity)
-    return {
-        Violation((*prefix, "indices", position, "attributes", offset), "index-temporal-attribute")
-        for position, index in enumerate(indices)
-        if isinstance(index.get("attributes"), list)
-        for offset, component in enumerate(index["attributes"])
-        if component in endpoints
-    }
-
-
 def _entities(document: Any) -> list[tuple[tuple[str | int, ...], Any]]:
     if not isinstance(document, dict):
         return []
@@ -208,11 +186,9 @@ def canonical_value_violations(document: Any) -> list[Violation]:
     exactly the rules m-descriptor names for phase 3: every ``type`` member
     holding a numeric spelling whose parameters break the m-core bounds or
     carry non-canonical digits is one ``type-spelling-invalid`` violation at
-    that member's document path, every authored Attribute bearing an as-of axis
-    endpoint's canonical name is one ``temporal-attribute-declared`` violation at
-    its own, and every authored Index component naming one is one
-    ``index-temporal-attribute`` violation at its own. An empty result means the
-    document is value-valid."""
+    that member's document path, and every authored Attribute bearing an as-of
+    axis endpoint's canonical name is one ``temporal-attribute-declared``
+    violation at its own. An empty result means the document is value-valid."""
     identities: set[Violation] = set()
 
     def walk(node: Any, path: tuple[str | int, ...]) -> None:
@@ -229,7 +205,6 @@ def canonical_value_violations(document: Any) -> list[Violation]:
     walk(document, ())
     for prefix, entity in _entities(document):
         identities |= _temporal_attribute_violations(entity, prefix)
-        identities |= _index_temporal_violations(entity, prefix)
     return sorted(identities, key=violation_sort_key)
 
 

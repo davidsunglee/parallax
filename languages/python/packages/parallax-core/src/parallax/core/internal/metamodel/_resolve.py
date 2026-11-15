@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, TypeGuard
@@ -152,6 +152,11 @@ it is inherited rather than declared here. A component that exists nowhere is
 INDEX_ATTRIBUTE_DUPLICATE: Final[IssueCode] = "metamodel-index-attribute-duplicate"
 """One Attribute occurs more than once among an Index's components."""
 
+INDEX_TEMPORAL_ATTRIBUTE: Final[IssueCode] = "metamodel-index-temporal-attribute"
+"""An authored Index component is a start or end Attribute of one of its
+Entity's As-Of Axes. The derived primary-key Index is exempt: its end
+components are the derivation's."""
+
 AS_OF_DIMENSION_DUPLICATE: Final[IssueCode] = "metamodel-as-of-dimension-duplicate"
 """One Entity declares the same Temporal Dimension on more than one axis."""
 
@@ -189,6 +194,7 @@ RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         INDEX_ATTRIBUTE_MISSING,
         INDEX_ATTRIBUTE_NOT_LOCAL,
         INDEX_ATTRIBUTE_DUPLICATE,
+        INDEX_TEMPORAL_ATTRIBUTE,
         AS_OF_DIMENSION_DUPLICATE,
         AS_OF_ATTRIBUTE_MISSING,
         AS_OF_ATTRIBUTE_OWNER,
@@ -579,6 +585,11 @@ def _index_issues(
     alone.
     """
     local = {attribute.identity.name for attribute in declaration.attributes}
+    endpoints = frozenset(
+        attribute
+        for axis in declaration.as_of_axes
+        for attribute in (axis.start_attribute, axis.end_attribute)
+    )
     issues: list[MetamodelIssue] = []
     names: Counter[IndexIdentity] = Counter()
     reached: dict[IndexIdentity, set[MetamodelIssue]] = {}
@@ -620,33 +631,67 @@ def _index_issues(
                 )
             if occurrences[component] > 1:
                 continue
-            if component.entity != declaration.identity:
-                declared_issues.append(
-                    MetamodelIssue(
-                        INDEX_ATTRIBUTE_NOT_LOCAL,
-                        location,
-                        related,
-                        message="an Index component belongs to another Entity",
-                    )
-                )
-            elif component.name not in local:
-                inherited = _applicable_attribute((declaration,), component.name, index)
-                declared_issues.append(
-                    MetamodelIssue(
-                        INDEX_ATTRIBUTE_NOT_LOCAL if inherited else INDEX_ATTRIBUTE_MISSING,
-                        location,
-                        related,
-                        message=(
-                            f"Index component {component.name!r} is inherited"
-                            if inherited
-                            else f"Index component {component.name!r} names no declared Attribute"
-                        ),
-                    )
-                )
+            issue = _component_issue(
+                declaration,
+                component,
+                location,
+                index,
+                local=local,
+                refused=frozenset() if declared_index is primary else endpoints,
+            )
+            if issue is not None:
+                declared_issues.append(issue)
         position = reached.setdefault(identity, set())
         issues.extend(issue for issue in declared_issues if issue not in position)
         position.update(declared_issues)
     return issues
+
+
+def _component_issue(
+    declaration: UnresolvedEntityDeclaration,
+    component: AttributeIdentity,
+    location: IndexLocation,
+    index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
+    *,
+    local: Set[str],
+    refused: Set[AttributeIdentity],
+) -> MetamodelIssue | None:
+    """The defect of one Index component's first occurrence, or ``None``.
+
+    ``refused`` holds the As-Of Axis endpoints the Index may not name: every one
+    for an authored Index, none for the derived primary-key Index.
+    """
+    related = (AttributeLocation(component),)
+    if component.entity != declaration.identity:
+        return MetamodelIssue(
+            INDEX_ATTRIBUTE_NOT_LOCAL,
+            location,
+            related,
+            message="an Index component belongs to another Entity",
+        )
+    if component.name not in local:
+        inherited = _applicable_attribute((declaration,), component.name, index)
+        return MetamodelIssue(
+            INDEX_ATTRIBUTE_NOT_LOCAL if inherited else INDEX_ATTRIBUTE_MISSING,
+            location,
+            related,
+            message=(
+                f"Index component {component.name!r} is inherited"
+                if inherited
+                else f"Index component {component.name!r} names no declared Attribute"
+            ),
+        )
+    if component in refused:
+        return MetamodelIssue(
+            INDEX_TEMPORAL_ATTRIBUTE,
+            location,
+            related,
+            message=(
+                f"Index component {component.name!r} is an As-Of Axis endpoint; "
+                "every Index of a temporal Table ends with the derived axis ends"
+            ),
+        )
+    return None
 
 
 def _axis_issues(declaration: UnresolvedEntityDeclaration) -> list[MetamodelIssue]:
