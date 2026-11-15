@@ -172,11 +172,16 @@ Instant if the write needs one, expands a temporal write over the milestones it 
 ([temporal expansion](../../core/spec/m-temporal-write.md#temporal-expansion)), decides
 each gate, and lets audit finalize each row it produces.
 
-A temporal write whose window reaches coverage no read observed cannot be expanded yet.
-It settles as a **deferred** write: its meaning, gates and instant are fixed now, and
-the flush reads the missing coverage inside the flush
+A temporal write whose window reaches coverage no read observed, and which needs that
+coverage's rows to settle, cannot be expanded yet. It settles as a **deferred** write:
+its meaning, gates and instant are fixed now, and the flush reads the missing coverage
+inside the flush
 ([Write Plan](../../core/spec/m-unit-work.md#write-plan-and-planned-steps),
-[row acquisition](../../core/spec/m-unit-work.md#row-acquisition)).
+[row acquisition](../../core/spec/m-unit-work.md#row-acquisition)). A write needing
+nothing of its current row but the key and Transaction-Time start its caller states,
+such as an Optimistic termination of a Transaction-Time-Only target, reads nothing and
+settles now on that stated milestone
+([target writes](../../core/spec/m-unit-work.md#target-writes)).
 
 Consecutive deferred writes of distinct objects of one Entity form an **acquisition
 span**, which shares those reads whatever the Entity's temporal shape or the verb

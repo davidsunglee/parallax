@@ -34,7 +34,8 @@ rows is. The proofs read the document and those rows alone:
   arise from; a Temporal Conflict names an object one of them would close, a
   predecessor of which that write holds — the row its find recorded, or a row
   current when that flush ran within the part of its Valid-Time window no
-  recorded row covers — starts at or after the group's instant.
+  recorded row covers, or the start a write reading nothing states — starts at
+  or after the group's instant.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ from ..case_assertions import CaseFailure, rows_equal, write_value_equal
 from ..database_binding import PhysicalTable
 from ..temporality import Axis, temporal_axes
 from ..write_plan import (
+    binds_from_stated_start,
     has_temporal_gate,
     has_version_gate,
     statement_object,
@@ -559,7 +561,9 @@ def _assert_overtaken(
     group's instant does not follow.
 
     A target write holds the rows within its Valid-Time window that are current
-    when the flush runs. An observed write holds the row its find recorded,
+    when the flush runs, unless its object's target writes read nothing
+    (:func:`binds_from_stated_start`): each then holds the milestone at the
+    start its caller states, whatever is stored. An observed write holds the row its find recorded,
     however a peer has changed it since, and reads current rows only for the
     part of its window that row does not cover. A current row is one
     ``then.tableState`` states starting before the group — a starting row's, or
@@ -598,9 +602,15 @@ def _assert_overtaken(
         and _instant(row.get(tx_start)) in prior
         and (_instant(row.get(tx_end)) == _OPEN or _instant(row.get(tx_end)) in after)
     ]
+    stated = binds_from_stated_start(
+        case, entity, [closer.mutation for closer in closers if closer.kind == "target"]
+    )
     held: list[Mapping[str, Any]] = []
     for closer in closers:
         if closer.kind == "target":
+            if stated:
+                held.append({tx_start: closer.entry.get("ifTxStart")})
+                continue
             held += [row for row in current if _within_window(row, closer, valid_axis)]
             continue
         recorded = _recorded_predecessor(scenario, closer, entity, identity, valid_axis)
