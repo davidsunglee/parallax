@@ -1,6 +1,6 @@
 # Write sequence: a plain Bitemporal amend that keeps an authored unique value.
 # The close keeps `code` on the inactivated rectangle, and the head and tail
-# successors both carry it. The authored unique index ends with `thru_z, out_z`:
+# successors both carry it. The authored unique index ends with `out_z, thru_z`:
 # the closed row's `out_z` is finite and the two current successors end at
 # different Valid-Time instants, so all three rows differ on it and the
 # successor insert succeeds.

@@ -7,7 +7,7 @@
 #   id 1  valid [2024-01-01, 2024-06-01)  thru_z 2024-06-01  out_z infinity
 #   id 2  valid [2024-03-01, infinity)    thru_z infinity    out_z infinity
 #
-# The authored unique index is (code, thru_z, out_z), so the two rows differ on
+# The authored unique index is (code, out_z, thru_z), so the two rows differ on
 # it and both load: Bitemporal uniqueness is per milestone end, not an overlap
 # exclusion.
 parallax.compatibility.Assignment:

@@ -2,7 +2,7 @@
 # the authored unique code Y are both current, over overlapping Valid Time with
 # different Valid-Time ends. A read at Valid Time 2024-04-01 and Latest
 # Transaction Time sees both, because the end-keyed unique index
-# (code, thru_z, out_z) refuses equal ends, not overlapping ranges.
+# (code, out_z, thru_z) refuses equal ends, not overlapping ranges.
 model: models/temporal-authored-index.yaml
 tags: [m-temporal-read, m-object-query, m-sql, m-storage-layout, bitemporal, temporal, as-of, unique-index, slice-snapshot-1]
 shape: read
