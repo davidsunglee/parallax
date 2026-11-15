@@ -594,13 +594,15 @@ def test_an_observed_write_within_its_recorded_row_reads_no_current_row(
         _grade(case)
 
 
-def _stated_conflict(case: Case, *, stated: str, at: str) -> Case:
+def _stated_conflict(case: Case, *, stated: str, at: str, amended: bool = False) -> Case:
     """Case 084 state-graded: its group terminates log 1 alone at *at* on the
-    start *stated*, rolled back by a Temporal Conflict, leaving every log as it
-    started."""
+    start *stated*, after amending it on that start where *amended*, rolled
+    back by a Temporal Conflict, leaving every log as it started."""
     case.raw["grading"] = "state"
     (step,) = case.when["scenario"]
-    step["write"] = [{**step["write"][0], "ifTxStart": stated, "at": at}]
+    termination = {**step["write"][0], "ifTxStart": stated, "at": at}
+    amendment = {**termination, "mutation": "amend", "row": {"id": 1, "amount": 7}}
+    step["write"] = [amendment, termination] if amended else [termination]
     for golden in ("databaseCalls", "statements", "note"):
         del step[golden]
     del case.then["databaseCalls"]
@@ -619,13 +621,17 @@ def _stated_conflict(case: Case, *, stated: str, at: str) -> Case:
     return case
 
 
+@pytest.mark.parametrize(
+    "amended", [False, True], ids=["termination", "amendment-then-termination"]
+)
 def test_a_read_free_termination_conflicts_on_the_start_its_caller_states(
-    damaged_case: CaseLoader,
+    damaged_case: CaseLoader, amended: bool
 ) -> None:
     # The stored row starts in December; the caller states June, which the
-    # instant does not follow, and nothing is read to contradict it.
+    # instant does not follow, and nothing is read to contradict it. A
+    # termination supersedes the amendment before it, so the pair reads nothing.
     june = "2024-06-01T00:00:00.000000Z"
-    _grade(_stated_conflict(damaged_case(_TERMINATED), stated=june, at=june))
+    _grade(_stated_conflict(damaged_case(_TERMINATED), stated=june, at=june, amended=amended))
 
 
 def test_a_read_free_termination_following_its_stated_start_raises_no_conflict(

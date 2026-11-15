@@ -226,16 +226,19 @@ def settled_object(
 
 
 def binds_from_stated_start(case: Case, entity: Entity, mutations: Iterable[str]) -> bool:
-    """Whether target writes of one ``entity`` object stating ``mutations`` need
-    no cell of its current row but the key and Transaction-Time start their
-    callers state, so the object's write settles at planning from that start and
-    reads nothing (`m-temporal-write` *A target write*): under Optimistic, on an
-    Entity without Valid Time, where none of them assigns."""
+    """Whether target writes of one ``entity`` object stating ``mutations``
+    together need no cell of its current row but the key and Transaction-Time
+    start their callers state, so the object's write settles at planning from
+    that start and reads nothing (`m-temporal-write` *A target write*): under
+    Optimistic, on an Entity without Valid Time, where they compose to a write
+    opening no successor. One destruction among them is that composition, since
+    it supersedes the assignments before it and refuses those after it
+    (`m-unit-work` *Observed-State Coalescing*)."""
     return (
         case.concurrency_mode == "optimistic"
         and entity.is_temporal
         and not any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes)
-        and not any(mutation in _ASSIGNING_MUTATIONS for mutation in mutations)
+        and any(mutation not in _ASSIGNING_MUTATIONS for mutation in mutations)
     )
 
 

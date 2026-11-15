@@ -590,7 +590,7 @@ def test_a_units_transaction_time_only_terminations_need_no_row_under_optimistic
     concurrency: str, mutations: list[str], reads: int
 ) -> None:
     # A termination needs nothing of its current row but the key and start its
-    # caller states; an object any of whose writes assigns still reads it.
+    # caller states; an object only amended still reads it.
     case = _target_unit("models/balance.yaml", concurrency)
     entries = _targets("parallax.compatibility.Balance", range(1, 3))
     for entry, mutation in zip(entries, mutations, strict=True):
@@ -598,6 +598,14 @@ def test_a_units_transaction_time_only_terminations_need_no_row_under_optimistic
         if mutation == "terminate":
             entry["rows"] = [{"id": entry["rows"][0]["id"]}]
     assert unit_resolving_reads(case, entries) == reads
+
+
+def test_a_termination_superseding_an_amendment_of_its_object_reads_nothing() -> None:
+    case = _target_unit("models/balance.yaml", "optimistic")
+    (amendment,) = _targets("parallax.compatibility.Balance", range(1, 2))
+    amendment["mutation"] = "amend"
+    termination = {**amendment, "mutation": "terminate", "rows": [{"id": 1}]}
+    assert unit_resolving_reads(case, [amendment, termination]) == 0
 
 
 def test_a_units_bitemporal_terminations_still_read_their_window() -> None:
