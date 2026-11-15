@@ -1,7 +1,3 @@
-# Negative (m-metamodel): an authored Index names an As-Of Axis endpoint of its own
-# Bitemporal Entity. Every Index of a temporal Table already ends with the derived
-# axis ends, so an authored endpoint component is refused wherever it stands.
-# The document is otherwise valid, so the refusal is Model Formation's.
 model: models/person.yaml
 tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, temporal, bitemporal, slice-snapshot-1]
 shape: rejected
