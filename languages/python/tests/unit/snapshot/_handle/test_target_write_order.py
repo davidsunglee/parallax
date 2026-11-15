@@ -263,7 +263,9 @@ def _not_scalar(verb_key: str = "dict") -> _Expected:
 # An admitted write reaches the buffering its target and strategy route it    #
 # to: an Optimistic Non-Temporal write reads nothing and gates at the flush, a #
 # Locking one acquires its row at the call, and an Optimistic temporal one     #
-# reads its coverage at the flush — through every public input form.          #
+# reads its coverage at the flush, unless it is a Transaction-Time-Only one   #
+# needing nothing of its row but its stated start — through every public      #
+# input form.                                                                 #
 # --------------------------------------------------------------------------- #
 _GATED: Final = _wrote(WriteCall)
 _ACQUIRED: Final = _wrote(ReadCall, WriteCall)
@@ -289,7 +291,7 @@ _ADMITTED: Final[tuple[_Row, ...]] = (
     _Row(TargetWriteScenario(_BALANCE, "amend"), _both(_SUCCESSOR)),
     _Row(TargetWriteScenario(_BALANCE, "amend", concurrency="locking"), _both(_SUCCESSOR)),
     _Row(TargetWriteScenario(_BALANCE, "replace"), _both(_SUCCESSOR)),
-    _Row(TargetWriteScenario(_BALANCE, "terminate"), _both(_ACQUIRED)),
+    _Row(TargetWriteScenario(_BALANCE, "terminate"), _both(_GATED)),
     _Row(TargetWriteScenario(_BALANCE, "terminate", concurrency="locking"), _both(_ACQUIRED)),
     _Row(TargetWriteScenario(_POSITION, "amend", valid_from="stated"), _both(_SUCCESSOR)),
     _Row(

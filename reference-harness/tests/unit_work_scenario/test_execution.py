@@ -307,6 +307,56 @@ def test_a_flush_failure_reported_before_the_groups_last_flush_is_refused(damage
         assert_judged(case)
 
 
+# --- a grouped effect's shortfall, graded on the source row it struck ---------
+
+_STALE_TERMINATIONS = (
+    "m-unit-work-086-a-stale-or-missing-start-fails-its-terminations-group-layout-twin-columns.yaml"
+)
+
+
+def _grouped_script(case: Case, stale: tuple[int, ...], missing: tuple[int, ...]) -> list[Any]:
+    """m-unit-work-086's chronology: each group's grouped close returning the
+    ordinals of ``stale`` and ``missing``, then the table read back."""
+    final = case.then["tableState"]["px"]["kept_log"]
+    return [
+        Rows(tuple({"ord": ordinal} for ordinal in stale)),
+        Rows(tuple({"ord": ordinal} for ordinal in missing)),
+        Rows(tuple(final)),
+    ]
+
+
+def test_a_grouped_effect_falls_short_on_the_source_row_its_ordinal_is_missing_for(
+    corpus_case,
+) -> None:
+    case = corpus_case(_STALE_TERMINATIONS)
+    with ScriptedProvider(script=_grouped_script(case, (1,), (1,))) as db:
+        assert_unit_work_scenario(case, db)
+    statements = [call for call in db.chronology if isinstance(call, Queried)][:2]
+    assert [(call.session, call.sql) for call in statements] == [
+        (0, _pair(case, 0)[0]),
+        (1, _pair(case, 1)[0]),
+    ]
+    assert [call for call in db.chronology if isinstance(call, RolledBack)] == [
+        RolledBack(0),
+        RolledBack(1),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("stale", "missing"),
+    [((2,), (1,)), ((1, 2), (1,)), ((1,), (1, 2))],
+    ids=["another-row-struck", "no-row-struck", "the-other-group-matched-every-row"],
+)
+def test_a_grouped_flush_failure_whose_named_row_matched_is_refused(
+    corpus_case, stale: tuple[int, ...], missing: tuple[int, ...]
+) -> None:
+    case = corpus_case(_STALE_TERMINATIONS)
+    with pytest.raises(CaseFailure, match="MUST have affected no row; found 0"):
+        assert_unit_work_scenario(
+            case, ScriptedProvider(script=_grouped_script(case, stale, missing))
+        )
+
+
 # --- what a failed step leaves behind ---------------------------------------
 
 

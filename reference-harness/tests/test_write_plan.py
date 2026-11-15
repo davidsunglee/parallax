@@ -82,6 +82,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "assert_inheritance_write_routing",
         "assigns_nothing",
         "assert_write_values",
+        "binds_from_stated_start",
         "address_valid_end",
         "classify_write_row",
         "close_address_binds",
@@ -574,6 +575,42 @@ def test_a_units_transaction_time_only_target_writes_share_their_current_row_rea
     for entry in entries:
         entry["mutation"] = "amend"
     assert unit_resolving_reads(case, entries) == reads
+
+
+@pytest.mark.parametrize(
+    ("concurrency", "mutations", "reads"),
+    [
+        ("optimistic", ["terminate", "terminate"], 0),
+        ("optimistic", ["amend", "terminate"], 1),
+        ("locking", ["terminate", "terminate"], 2),
+    ],
+    ids=["unread-terminations", "an-amendment-reads-its-row", "locking-reads-at-the-call"],
+)
+def test_a_units_transaction_time_only_terminations_need_no_row_under_optimistic(
+    concurrency: str, mutations: list[str], reads: int
+) -> None:
+    # A termination needs nothing of its current row but the key and start its
+    # caller states; an object any of whose writes assigns still reads it.
+    case = _target_unit("models/balance.yaml", concurrency)
+    entries = _targets("parallax.compatibility.Balance", range(1, 3))
+    for entry, mutation in zip(entries, mutations, strict=True):
+        entry["mutation"] = mutation
+        if mutation == "terminate":
+            entry["rows"] = [{"id": entry["rows"][0]["id"]}]
+    assert unit_resolving_reads(case, entries) == reads
+
+
+def test_a_units_bitemporal_terminations_still_read_their_window() -> None:
+    case = _target_unit("models/position.yaml", "optimistic")
+    entries = _targets(
+        "parallax.compatibility.Position",
+        range(1, 3),
+        validFrom="2024-03-01T00:00:00.000000Z",
+    )
+    for entry in entries:
+        entry["mutation"] = "terminate"
+        entry["rows"] = [{"id": entry["rows"][0]["id"]}]
+    assert unit_resolving_reads(case, entries) == 1
 
 
 def test_held_target_windows_join_the_span_and_read_nothing() -> None:

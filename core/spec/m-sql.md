@@ -1336,8 +1336,11 @@ emitted for an unchanged rectangle.
 
 A target temporal write (`m-temporal-write` *Target writes span
 their requested extent*) observed nothing, so under Optimistic its coverage read
-starts at its own `validFrom`; a Transaction-Time-Only one reads its current row.
-Separate operations over
+starts at its own `validFrom`; a Transaction-Time-Only one reads its current row,
+unless it needs none of that row's cells beyond the key and `in_z` its caller
+states — a termination — when it reads nothing and its close, gated on the stated
+`ifTxStart`, is planned with the flush's other planned writes (`m-temporal-write`
+*A target write*). Separate operations over
 disjoint windows pending together read their enclosing window, from the earliest
 window's start to the latest's end. Under Locking the rows the writes' submissions
 acquired are held already where still current (`m-unit-work` *Retained starting

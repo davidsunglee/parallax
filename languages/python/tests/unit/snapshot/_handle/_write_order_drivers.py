@@ -1715,9 +1715,16 @@ def _target_reachable(scenario: TargetWriteScenario, representation: Representat
 def _target_reads_its_row(scenario: TargetWriteScenario) -> bool:
     """Whether an admitted write of this scenario reads its object's row inside
     the writing transaction: a Locking call acquires it at the call, and an
-    Optimistic temporal flush reads the coverage it reaches. An amendment of
-    nothing is dropped before either."""
-    reads = scenario.concurrency == "locking" or scenario.target.profile != "non_temporal"
+    Optimistic temporal flush reads the coverage it reaches, except a
+    Transaction-Time-Only termination's, which needs nothing of the row but
+    the start its caller stated. An amendment of nothing is dropped before
+    either."""
+    if scenario.concurrency == "locking":
+        reads = True
+    elif scenario.target.profile == "transaction_time":
+        reads = scenario.verb != "terminate"
+    else:
+        reads = scenario.target.profile != "non_temporal"
     return reads and not (scenario.verb == "amend" and scenario.payload == "empty")
 
 

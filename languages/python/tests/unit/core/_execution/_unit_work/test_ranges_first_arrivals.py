@@ -7,11 +7,12 @@ destruction."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from decimal import Decimal
 
 import pytest
 
+from parallax.core import ConflictError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import (
@@ -30,9 +31,10 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY
-from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import (
+    TEMPORAL_CONFLICT,
     KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
@@ -56,19 +58,23 @@ from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
 from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
+    TRANSACTION_TIME_ENDS,
     BoundRange,
     SettledWrite,
+    TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
 from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     Finite,
     PlannedStep,
+    PlannedTemporalRemoval,
     TemporalGate,
 )
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
+from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admit,
@@ -83,6 +89,7 @@ from tests.unit.core._execution._unit_work._acquired_rows_support import (
     bind_held,
     coverage_read,
 )
+from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     FAMILIES,
     JAN,
@@ -289,10 +296,12 @@ def test_an_observed_transaction_time_write_closes_its_observed_row_at_planning(
 # --------------------------------------------------------------------------- #
 # A target write: its caller's start gates the row it finds.                  #
 # --------------------------------------------------------------------------- #
-def _balance_target(tx_start: dt.datetime, **members: object) -> TargetWrite:
+def _balance_target(
+    tx_start: dt.datetime, mutation: TargetMutation = "amend", **members: object
+) -> TargetWrite:
     return target_write(
         prepare_wire_write(
-            TargetWriteInstruction("amend", "Balance", {"id": 1, **members}, if_tx_start=tx_start),
+            TargetWriteInstruction(mutation, "Balance", {"id": 1, **members}, if_tx_start=tx_start),
             write_preparation_of(_BALANCE),
         ),
         inheritance.inheritance_facet_of(_BALANCE),
@@ -315,6 +324,62 @@ def test_a_transaction_time_target_finding_no_row_binds_nothing() -> None:
     with pytest.raises(WritePreconditionError) as refused:
         _bound(_BALANCE, write, [])
     assert refused.value.expected == T0
+
+
+def _stated_milestone(tx_start: dt.datetime) -> TemporalObjectStateKey:
+    return TemporalObjectStateKey(_BALANCE_OBJECT, temporal_read.Edge(tx_time=tx_start))
+
+
+_OWNED_BALANCE = OpenedRows(
+    frozenset({TemporalRowCoordinates(_BALANCE_ENTITY, (1,), TRANSACTION_TIME_ENDS)})
+)
+
+
+@pytest.mark.parametrize(
+    "writes",
+    [
+        lambda: [_balance_target(T0, "terminate")],
+        lambda: [_balance_target(T0, value="175.00"), _balance_target(T0, "terminate")],
+    ],
+    ids=["termination", "amendment-then-termination"],
+)
+def test_an_optimistic_transaction_time_target_assigning_nothing_binds_from_its_stated_start(
+    writes: Callable[[], list[TargetWrite]],
+) -> None:
+    plan = _planned(_BALANCE, *writes())
+    (write,) = settled_writes(plan)
+    assert write.deferred is None
+    (close,) = plan_steps(plan)
+    assert isinstance(close, PlannedClose)
+    assert (close.cause, _gate(close)) == (TERMINATED, T0)
+    assert close.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert tuple(write.changed) == (_stated_milestone(T0),)
+
+
+def test_a_transaction_time_termination_of_an_owned_row_removes_it_from_its_stated_start() -> None:
+    admission = write_admission(_BALANCE)
+    admit(admission, _balance_target(T0, "terminate"))
+    plan = _plan(admission, _BALANCE, _OWNED_BALANCE)
+    (write,) = settled_writes(plan)
+    (removal,) = plan_steps(plan)
+    assert isinstance(removal, PlannedTemporalRemoval)
+    assert removal.concurrency == TemporalGate(
+        start_attribute=AttributeIdentity(_BALANCE_ENTITY, "txStart"), observed_start=T0
+    )
+    assert removal.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert tuple(write.removed) == tuple(_OWNED_BALANCE.coordinates)
+
+
+@pytest.mark.parametrize(
+    "tx_start",
+    [instant_at(_AT).value(), instant_at("2024-11-01T00:00:00+00:00").value()],
+    ids=["equal", "later"],
+)
+def test_a_termination_stating_a_start_its_instant_cannot_follow_is_refused_at_planning(
+    tx_start: dt.datetime,
+) -> None:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT):
+        _planned(_BALANCE, _balance_target(tx_start, "terminate"))
 
 
 def _position_target(mutation: TargetMutation, **members: object) -> TargetWrite:

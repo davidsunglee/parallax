@@ -1209,7 +1209,11 @@ state:
   under Locking, already read rows covering that window (`m-unit-work`
   *Retained starting rows*): a Transaction-Time-Only object's always do, and a
   Bitemporal one's do where the rectangles the case's own history leaves current
-  at each `validFrom` cover it. A live read may stand in for an acquisition, and
+  at each `validFrom` cover it. Under Optimistic a Transaction-Time-Only object
+  none of whose unit's writes assigns — every one a termination — owes none
+  either: needing nothing of its current row but the key and `in_z` its callers
+  state, its write settles at planning without reading (`m-temporal-write` *A
+  target write*). A live read may stand in for an acquisition, and
   whether one does can vary with what the caller still holds (`m-unit-work`
   *Target writes*), so these counts are derivable only for an object its unit did
   not read first. A case that reads one before a Locking target write is a
@@ -1228,7 +1232,10 @@ below:
 - a **target** submission observed nothing, so it reads its object's one part —
   the enclosing window of its entries on a Bitemporal object, the current row on
   a Transaction-Time-Only one — except that under Locking its acquisition already
-  holds a Transaction-Time-Only object's current row;
+  holds a Transaction-Time-Only object's current row, and under Optimistic one
+  assigning nothing on a Transaction-Time-Only object, a termination, needs no
+  cell of that row: it does not defer, reads nothing, and settles at planning
+  like any write a find observed;
 - a write through the value of an insert an **earlier flush of its group**
   executed reads its object's one part the same way, since the insertion's
   authority observed nothing;
@@ -1496,9 +1503,10 @@ advances it, as a write settling against a find does on the generation that find
 observed. An empty amendment, and a write of the object a Temporal Conflict of its
 flush names (*Unit fates*), address no statement; another write of that flush
 may address none, since the refusal precedes the execution of every write of its
-Write Group (`m-unit-work` *Shared coverage acquisition*). A target write reads only
-stored state it does not state, so a case carrying one is query-result-dependent
-and run-only.
+Write Group (`m-unit-work` *Shared coverage acquisition*). What a target write does
+depends on stored state it does not state — what its read returns, or whether its
+gate matches a row — so a case carrying one is query-result-dependent and
+run-only.
 
 #### Streamed read steps (`stream`)
 
@@ -1821,8 +1829,11 @@ each replay runs at the group's same `at` and refuses again, so the group report
 the failure once the bound is exhausted.
 
 A golden-graded group's flush failure is graded on the golden of the write steps
-that flush ran, the ones still pending when it began. For a Shortfall, exactly
-one statement addressing the object it names affected no row, gated where
+that flush ran, the ones still pending when it began, a grouped effect read as
+the lone statement each of its source rows stands for, affecting the rows the
+effect returns that row's ordinal for (`m-sql` *Grouped effects*). For a
+Shortfall, exactly one statement addressing the object it names affected no row,
+gated where
 the Shortfall is a gate's — an optimistic conflict, or a failed precondition,
 under `concurrency: optimistic` — and ungated otherwise, so a rollback that merely
 discarded writes that all succeeded fails the case rather than passing on the

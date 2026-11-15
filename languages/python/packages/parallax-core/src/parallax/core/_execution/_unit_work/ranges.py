@@ -39,6 +39,7 @@ from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
 from parallax.core.internal.temporal_read import (
     Bitemporal,
+    Edge,
     TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
@@ -83,12 +84,13 @@ trip a larger statement saves."""
 
 @dataclass(frozen=True, slots=True)
 class _RangePredecessor:
-    """One current row a range transforms: its complete state, the exact state
-    it is, and the Valid Time it covers — ``None`` on a Transaction-Time-Only
-    target."""
+    """One current milestone a range transforms: the exact state it is, its
+    complete stored ``row`` — ``None`` where only the milestone a caller stated
+    is known (:func:`_stated_predecessor`) — and the Valid Time it covers,
+    ``None`` on a Transaction-Time-Only target."""
 
-    predecessor: PredecessorRow
-    state: ObjectStateKey
+    row: PredecessorRow | None
+    state: TemporalObjectStateKey
     valid_time_coverage: TimeInterval | None
 
 
@@ -201,26 +203,15 @@ def _held(
 
 _START: Final = attrgetter("start")
 
-_UNANCHORED: Final = object()
-"""The anchor of a range no insertion authorized any write of."""
 
-_EXISTENCE: Final = object()
-"""The anchor of a Transaction-Time-Only range an insertion authorized a write
-of: the current row itself, wherever it lies on an axis that has no Valid Time."""
-
-
-def _anchor(intents: tuple[TemporalIntent, ...]) -> object:
-    """Where a range requires current coverage because an insertion
-    authorized one of its writes: that insertion's own start, which every such
-    write states as its window's start."""
+def _anchor(intents: tuple[TemporalIntent, ...]) -> InsertionAuthorizedIntent | None:
+    """The first write of a range an insertion authorized, whose window's start
+    is where the range requires current coverage — every such write states
+    that insertion's start — or ``None`` where no insertion authorized one."""
     for intent in intents:
         if isinstance(intent, InsertionAuthorizedIntent):
-            return _anchored_at(intent.intent.valid_time_window)
-    return _UNANCHORED
-
-
-def _anchored_at(window: TimeInterval | None) -> object:
-    return _EXISTENCE if window is None else window.start
+            return intent
+    return None
 
 
 def _conditions(intents: tuple[TemporalIntent, ...]) -> tuple[TargetIntent, ...]:
@@ -266,10 +257,35 @@ def _predecessor(
     shape = facts.shape
     if state is None:
         state = TemporalObjectStateKey(target, milestone_edge(shape, row, None))
+    assert isinstance(state, TemporalObjectStateKey)  # a temporal row is a milestone
     return _RangePredecessor(
-        predecessor=row,
-        state=state,
-        valid_time_coverage=valid_time_coverage(shape, row, None),
+        row=row, state=state, valid_time_coverage=valid_time_coverage(shape, row, None)
+    )
+
+
+def _binds_from_stated_start(meaning: _RangeMeaning) -> bool:
+    """Whether ``meaning`` needs no cell of the milestone it starts from but its
+    key and Transaction-Time start, so it binds from the start its caller
+    stated rather than from a read row (`m-temporal-write` *A target write*):
+    under Optimistic, a Transaction-Time-Only target write assigning no
+    successor cells, which no insertion authorized."""
+    return (
+        meaning.gated
+        and isinstance(meaning.facts.shape, TransactionTimeOnly)
+        and bool(meaning.conditions)
+        and meaning.anchor is None
+        and not meaning.transform.assigns
+    )
+
+
+def _stated_predecessor(meaning: _RangeMeaning) -> _RangePredecessor:
+    """The current milestone ``meaning``'s one target condition names: its key
+    at the Transaction-Time start its caller stated, with no stored row."""
+    (condition,) = meaning.conditions
+    return _RangePredecessor(
+        row=None,
+        state=TemporalObjectStateKey(meaning.object_key, Edge(tx_time=condition.expected.instant)),
+        valid_time_coverage=None,
     )
 
 
@@ -315,14 +331,6 @@ def _coverage_start(predecessor: _RangePredecessor) -> dt.datetime:
     return coverage.start
 
 
-def _holds(predecessor: _RangePredecessor, anchor: object) -> bool:
-    """Whether ``predecessor`` holds the insertion ``anchor`` of a Bitemporal
-    range."""
-    coverage = predecessor.valid_time_coverage
-    assert coverage is not None and isinstance(anchor, dt.datetime)  # a Bitemporal anchor
-    return coverage.contains(anchor)
-
-
 def _physical(predecessor: _RangePredecessor) -> tuple[ObjectStateKey, object | None]:
     """The physical row ``predecessor`` is: its state, which names its start on
     each axis, and the Valid-Time end its coordinates hold."""
@@ -333,7 +341,9 @@ def _expansions(
     starts: Sequence[_RangePredecessor],
     validations: Sequence[_RangePredecessor],
     predecessors: Sequence[_RangePredecessor],
-) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]]:
+) -> Iterator[
+    tuple[PredecessorRow | None, ExpansionRole, TemporalObjectStateKey, TimeInterval | None]
+]:
     """Each predecessor in the role it settles in, in the order its kind of
     effect runs: the starts, the validations, then every other predecessor."""
     for predecessor in starts:
@@ -347,8 +357,8 @@ def _expansions(
 
 def _expanded(
     predecessor: _RangePredecessor, role: ExpansionRole
-) -> tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]:
-    return predecessor.predecessor, role, predecessor.state, predecessor.valid_time_coverage
+) -> tuple[PredecessorRow | None, ExpansionRole, TemporalObjectStateKey, TimeInterval | None]:
+    return predecessor.row, role, predecessor.state, predecessor.valid_time_coverage
 
 
 def _valid_end(predecessor: _RangePredecessor) -> object | None:
@@ -386,7 +396,7 @@ class _RangeMeaning:
     gated: bool
     key_attribute: AttributeIdentity
     key_value: object
-    anchor: object = _UNANCHORED
+    anchor: InsertionAuthorizedIntent | None = None
     conditions: tuple[TargetIntent, ...] = ()
     guards: bool = False
     opening: _OpeningSeed | None = None
@@ -473,9 +483,10 @@ class _TemporalRangeBinder:
 
     def _require_anchor(self, predecessors: Sequence[_RangePredecessor]) -> None:
         anchor = self.meaning.anchor
-        if anchor is _UNANCHORED:
+        if anchor is None:
             return
-        if any(anchor is _EXISTENCE or _holds(row, anchor) for row in predecessors):
+        window = anchor.intent.valid_time_window
+        if any(_holds_start(window, row) for row in predecessors):
             return
         raise shortfall(
             MISSING_TARGET, self.meaning.facts.entity.identity, self._key_target(), 1, 0
@@ -498,15 +509,11 @@ class _TemporalRangeBinder:
         for condition in conditions:
             window = condition.intent.valid_time_window
             start = next((row for row in predecessors if _holds_start(window, row)), None)
-            if start is None or self._tx_start(start) != condition.expected.instant:
+            if start is None or start.state.milestone.tx_time != condition.expected.instant:
                 raise self._failed(condition)
             if all(start is not held for held in starts):
                 starts.append(start)
         return tuple(starts)
-
-    def _tx_start(self, predecessor: _RangePredecessor) -> object:
-        tx_start = self.meaning.facts.shape.transaction_time.start_attribute
-        return predecessor.predecessor.cell(tx_start)
 
     def _failed(self, condition: TargetIntent) -> WritePreconditionError:
         return WritePreconditionError(
@@ -618,8 +625,11 @@ def settle_range(
     does a target write, whose caller's condition requires the
     coverage at its start to stand at the Transaction-Time start it states;
     the starting row its Locking admission read whole travels with the range,
-    which reuses it as coverage if it is still current at execution. A range
-    bound now reuses none, and releases each such row here.
+    which reuses it as coverage if it is still current at execution. A target
+    write needing no cell of that row but its key and start binds now from the
+    milestone its caller stated (:func:`_binds_from_stated_start`), its gate
+    proving that start when it executes. A range bound now reuses none, and
+    releases each such row here.
 
     ``instant`` is the attempt's already-resolved Transaction Instant, which a
     deferred range retains as a value.
@@ -645,6 +655,8 @@ def settle_range(
         guards=guards,
     )
     retained = _retained(intents)
+    if not predecessors and _binds_from_stated_start(meaning):
+        predecessors = (_stated_predecessor(meaning),)
     if window is not None:
         reached = window.first_uncovered(_valid_time_coverages(predecessors)) is not None
     else:

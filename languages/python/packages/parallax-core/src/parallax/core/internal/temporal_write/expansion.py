@@ -23,7 +23,7 @@ from parallax.core.internal.temporal_write.coverage import (
     CoverageTransform,
     Successor,
 )
-from parallax.core.internal.write_plan.keys import ObjectStateKey
+from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
 from parallax.core.internal.write_plan.managed_row import (
     ManagedRow,
     RowSelection,
@@ -230,31 +230,34 @@ class PredecessorExpander:
 
     def expand(
         self,
-        predecessor: PredecessorRow,
+        row: PredecessorRow | None,
         *,
         role: ExpansionRole,
-        state: ObjectStateKey,
+        state: TemporalObjectStateKey,
         coverage: TimeInterval | None,
     ) -> BoundRange:
-        """``predecessor`` settled alone (:meth:`settle`): the steps and effects
-        of an object whose only reached milestone it is."""
-        return self.settle(((predecessor, role, state, coverage),))
+        """The milestone ``state`` names, its complete ``row`` where one was
+        read, settled alone (:meth:`settle`): the steps and effects of an
+        object whose only reached milestone it is."""
+        return self.settle(((row, role, state, coverage),))
 
     def closing(
         self,
-        predecessor: PredecessorRow,
+        state: TemporalObjectStateKey,
         coverage: TimeInterval | None,
         cause: CloseCause,
         *,
         starting: bool = False,
     ) -> PlannedClose:
-        """The close of ``predecessor`` at its own address, gated on its
-        observed Transaction-Time start where the write gates."""
+        """The close of the milestone ``state`` names at its own address, gated
+        on that milestone's Transaction-Time start where the write gates."""
         facts = self._facts
         gate: TemporalConcurrency = UNGATED
         if self._gated:
-            start = facts.shape.transaction_time.start_attribute
-            gate = TemporalGate(start_attribute=start, observed_start=predecessor.cell(start))
+            gate = TemporalGate(
+                start_attribute=facts.shape.transaction_time.start_attribute,
+                observed_start=state.milestone.tx_time,
+            )
         return _planned_close(
             facts,
             key_attributes=self._key_attributes,
@@ -269,38 +272,38 @@ class PredecessorExpander:
             ),
         )
 
-    def _keeps(self, predecessor: PredecessorRow, owned: bool) -> bool:
-        """Whether ``predecessor``, if unchanged, could be kept as it is
-        (:func:`_provable`).
+    def _keeps(self, state: TemporalObjectStateKey, owned: bool) -> bool:
+        """Whether the milestone ``state`` names, if unchanged, could be kept as
+        it is (:func:`_provable`).
 
         Ownership proves only the row the attempt opened at the address it
         records. Every such row carries the attempt's instant, so a gated
-        predecessor at another Transaction-Time start is an earlier milestone
-        observed at an address the attempt has since reopened: it is never kept
+        milestone at another Transaction-Time start is an earlier one observed
+        at an address the attempt has since reopened: it is never kept
         unchanged, and its disposal gates on its observed start."""
         gated = self._gated
         if owned and gated:
-            start = self._facts.shape.transaction_time.start_attribute
-            return predecessor.cell(start) == self._facts.instant
+            return state.milestone.tx_time == self._facts.instant
         return _provable(owned=owned, gated=gated, guards=self._guards)
 
     def _unchanged(
         self,
-        predecessor: PredecessorRow,
+        row: PredecessorRow | None,
         coverage: TimeInterval | None,
         successors: Sequence[Successor],
     ) -> bool:
-        """Whether ``successors`` leave ``predecessor`` as it was: together they
-        cover all of it, and each assigned member already holds its value there
-        — an amendment's assignments and a replacement's complete writable state
-        alike, compared by declared value."""
+        """Whether ``successors`` leave the predecessor stored as ``row`` as it
+        was: together they cover all of it, and each assigned member already
+        holds its value there — an amendment's assignments and a replacement's
+        complete writable state alike, compared by declared value."""
         if coverage is None:
             if len(successors) != 1:
                 return False
         elif not _complete(successors, coverage):
             return False
+        assert row is not None  # a milestone with successors was read whole
         return all(
-            successor.assigned is None or predecessor.holds(self._comparison(successor.assigned))
+            successor.assigned is None or row.holds(self._comparison(successor.assigned))
             for successor in successors
         )
 
@@ -371,7 +374,7 @@ class PredecessorExpander:
     def settle(
         self,
         predecessors: Iterable[
-            tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]
+            tuple[PredecessorRow | None, ExpansionRole, TemporalObjectStateKey, TimeInterval | None]
         ],
         *,
         lineage: tuple[ManagedRow, TimeInterval] | None = None,
@@ -379,7 +382,9 @@ class PredecessorExpander:
     ) -> BoundRange:
         """One object settled whole: a pending insertion's surviving parts
         (``lineage``, its resolved seed over its own window), each predecessor
-        expanded in its role, in the order its kind of effect runs, and a
+        expanded in its role, in the order its kind of effect runs — its
+        complete row, or ``None`` where only the milestone its state names is
+        known, which only a milestone producing no successor may be — and a
         replacement's ``gaps`` — as the steps realizing them and the effects
         their success publishes (`m-temporal-write` *Merging produced
         successors*).
@@ -426,8 +431,8 @@ class PredecessorExpander:
                     kept=False,
                     shares=(extent,),
                 )
-        for predecessor, role, state, coverage in predecessors:
-            self._reach(settlement, predecessor, role, state, coverage)
+        for row, role, state, coverage in predecessors:
+            self._reach(settlement, row, role, state, coverage)
         for gap in gaps:
             window = gap.valid_time_window
             settlement.produce(
@@ -442,14 +447,14 @@ class PredecessorExpander:
     def _reach(
         self,
         settlement: _Settlement,
-        predecessor: PredecessorRow,
+        row: PredecessorRow | None,
         role: ExpansionRole,
-        state: ObjectStateKey,
+        state: TemporalObjectStateKey,
         coverage: TimeInterval | None,
     ) -> None:
-        """Add ``predecessor`` — the current row whose observed state is
-        ``state`` and whose Valid Time is ``coverage`` (``None`` without Valid
-        Time) — expanded in its ``role``.
+        """Add the predecessor — the current milestone ``state`` names, stored
+        as ``row`` where it was read, whose Valid Time is ``coverage`` (``None``
+        without Valid Time) — expanded in its ``role``.
 
         A transform that does not reach the predecessor leaves it alone. One
         it leaves exactly as it was is kept where that is proven, whether the
@@ -466,7 +471,7 @@ class PredecessorExpander:
         """
         facts = self._facts
         if role == "validation":
-            closing = self.closing(predecessor, coverage, TERMINATED)
+            closing = self.closing(state, coverage, TERMINATED)
             own = _target_endpoint(facts, closing.target)
             owned = self._ownership.owns(own)
             code = _disposition(
@@ -480,7 +485,7 @@ class PredecessorExpander:
             )
             settlement.reached.append(
                 _Reached(
-                    predecessor,
+                    row,
                     state,
                     coverage,
                     closing,
@@ -500,12 +505,11 @@ class PredecessorExpander:
             if any(successor.assigned is not None for successor in successors)
             else TERMINATED
         )
-        closing = self.closing(predecessor, coverage, cause, starting=role == "starting")
+        closing = self.closing(state, coverage, cause, starting=role == "starting")
         own = _target_endpoint(facts, closing.target)
         owned = self._ownership.owns(own)
         code = _disposition(
-            unchanged=self._keeps(predecessor, owned)
-            and self._unchanged(predecessor, coverage, successors),
+            unchanged=self._keeps(state, owned) and self._unchanged(row, coverage, successors),
             owned=owned,
             gated=self._gated,
             guards=self._guards,
@@ -524,11 +528,11 @@ class PredecessorExpander:
         )
         if disposal == _GUARD:
             settlement.reached.append(
-                _Reached(predecessor, state, coverage, closing, own, owned, code, inserted)
+                _Reached(row, state, coverage, closing, own, owned, code, inserted)
             )
             return
         reached = _Reached(
-            predecessor,
+            row,
             state,
             coverage,
             closing,
@@ -539,6 +543,9 @@ class PredecessorExpander:
             demanded=ownership.demanded(state, own if owned else None),
         )
         settlement.reached.append(reached)
+        if not successors:
+            return
+        assert row is not None  # a successor carries its predecessor's stored cells
         kept = _kept_index(code)
         # A row a successor may open shares one bindable predecessor; the
         # successor keeping an owned row's address is only ever revised into.
@@ -546,10 +553,10 @@ class PredecessorExpander:
         for index, successor in enumerate(successors):
             extent = successor.valid_time_coverage
             if index == kept:
-                source = predecessor
+                source = row
             else:
                 if bindable is None:
-                    bindable = predecessor.with_bindable_document()
+                    bindable = row.with_bindable_document()
                 source = bindable
             settlement.produce(
                 extent,
@@ -629,26 +636,24 @@ class PredecessorExpander:
         decorated close, a guard, a removal, a revision, or none.
 
         A close of a predecessor the attempt did not open ends it at the
-        attempt's instant, so that instant must follow the predecessor's
-        stored Transaction-Time start; otherwise the close is refused as a
-        ``temporal-conflict`` before anything is decorated."""
+        attempt's instant, so that instant must follow the Transaction-Time
+        start of the milestone it closes — for a gated close, its gate's, the
+        only stored start whose row it can change; otherwise the close is
+        refused as a ``temporal-conflict`` before anything is decorated."""
         disposal = record.code & _DISPOSAL
         if disposal == _CLOSE:
             if not record.owned:
-                self._require_later_than(record)
+                self._require_instant_after_start(record)
             return self._audit.decorate_close(record.closing)
         return (
             None
             if disposal == _KEEP
-            else _own_step(
-                self._facts, record.code, record.closing, record.realized, record.predecessor
-            )
+            else _own_step(self._facts, record.code, record.closing, record.realized, record.row)
         )
 
-    def _require_later_than(self, record: _Reached) -> None:
+    def _require_instant_after_start(self, record: _Reached) -> None:
         facts = self._facts
-        stored_start = record.predecessor.cell(facts.shape.transaction_time.start_attribute)
-        assert isinstance(stored_start, dt.datetime)  # a stored Transaction-Time start is finite
+        stored_start = record.state.milestone.tx_time
         if facts.instant > stored_start:
             return
         target = record.closing.target
@@ -742,7 +747,8 @@ class PredecessorExpander:
             record = edge.reached
             assert record is not None  # a kept successor keeps its predecessor's address
             realized = _rebound_row(facts, edge.row, start, edge.end)
-            if _revises(facts, realized, record.predecessor):
+            assert record.row is not None  # a kept successor was produced from a read row
+            if _revises(facts, realized, record.row):
                 record.code = _REVISE
                 record.realized = realized
                 record.realized_coverage = merged
@@ -808,8 +814,9 @@ class PredecessorExpander:
 
 @dataclass(slots=True)
 class _Reached:
-    """One predecessor a write settles a statement or a successor for: what its
-    disposition decided before the object's produced rows merged and what it
+    """One predecessor a write settles a statement or a successor for — the
+    milestone its ``state`` names, stored as ``row`` where that was read: what
+    its disposition decided before the object's produced rows merged and what it
     finally is once they have, the parts of it an insertion contributed where
     the attempt owned it, and the row it is revised into, if any, over its
     Valid Time.
@@ -818,8 +825,8 @@ class _Reached:
     predecessor, and ``publishes`` that one reaches the row it is revised
     into, so execution captures that row."""
 
-    predecessor: PredecessorRow
-    state: ObjectStateKey
+    row: PredecessorRow | None
+    state: TemporalObjectStateKey
     coverage: TimeInterval | None
     closing: PlannedClose
     own: TemporalRowCoordinates
@@ -1041,13 +1048,14 @@ def _revised_output(record: _Reached, step: PlannedTemporalRevision) -> CurrentR
     """The output ``step``, revising ``record``'s owned predecessor in place,
     persists."""
     realized = record.realized
-    assert realized is not None  # a revision states the row it revises into
+    row = record.row
+    assert realized is not None and row is not None  # a revision revises a read row
     return CurrentRowOutput(
         coordinates=record.own,
         valid_time_coverage=record.realized_coverage,
         row=realized,
         emitter=step,
-        predecessor_document=record.predecessor.document,
+        predecessor_document=row.document,
     )
 
 

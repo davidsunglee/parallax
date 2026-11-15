@@ -30,9 +30,11 @@ graded against it.
 from __future__ import annotations
 
 import contextlib
+from collections import Counter
 from typing import Any
 
 from .._case_execution import CaseExecution
+from .._grouped_effects import ungrouped_effect
 from ..case_assertions import CaseFailure
 from ..providers import DatabaseProvider
 from ..table_state import assert_table_state
@@ -97,12 +99,22 @@ def _apply_grouped_write(
 
     The GROUP commits or rolls back as ONE unit at its last step
     (:func:`.settlement.finish_group`), never this step alone, so what the step
-    contributes is the executed statements the group's fate is graded on.
+    contributes is the executed statements the group's fate is graded on. A
+    grouped effect contributes the lone statement each of its source rows
+    stands for (:func:`ungrouped_effect`), each affecting the rows the effect
+    returned its ordinal for, so a shortfall is graded on the row it struck.
     """
     counts: list[int] = []
     for statement, binds in step.statements.pairs(dialect):
-        counts.append(session.execute(statement, binds))
-        state.executed.append((step.index, statement, binds, counts[-1]))
+        lone = ungrouped_effect(statement, binds) if dialect == "postgres" else None
+        if lone is None:
+            counts.append(session.execute(statement, binds))
+            state.executed.append((step.index, statement, binds, counts[-1]))
+            continue
+        returned = Counter(row["ord"] for row in session.query(statement, binds))
+        counts.append(returned.total())
+        for ordinal, (each, each_binds) in enumerate(lone, start=1):
+            state.executed.append((step.index, each, each_binds, returned[ordinal]))
     _assert_affected_rows(step, counts)
 
 

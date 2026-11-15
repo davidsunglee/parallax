@@ -155,7 +155,8 @@ revised or removed as above (`m-unit-work` *Insertion authority*).
 A target amendment, replacement, or termination (`m-unit-work`
 *Target writes*) observed no row either: it states the `in_z` of the
 current row its caller last observed as `ifTxStart`, and takes no Valid-Time
-bound. The current row is read inside the flush that writes it. An amendment or
+bound. The current row is read inside the flush that writes it, unless the
+write needs none of its cells beyond the key and that start (below). An amendment or
 replacement closes and chains it as an `amend` does — an amendment's chained
 row keeps every member it does not assign, a replacement's states the complete
 writable state — or keeps it unchanged where every value it assigns is one the
@@ -168,7 +169,22 @@ precondition before any statement executes; where it finds more than one current
 row, the write fails sooner, as Cardinality Corruption (`m-unit-work`). Under
 Optimistic the close's gate — or the guard keeping an unchanged row — binds the
 stated `ifTxStart` rather than an observation, and its zero-row shortfall is
-that failed precondition, never a retriable conflict. Under Locking the current
+that failed precondition, never a retriable conflict.
+
+Under Optimistic a write that opens no successor — a termination — needs nothing
+of the current row but its key and `in_z`, both of which its caller states, so
+it reads nothing: the write settles at planning on the milestone its caller
+names, and its close, gated on the stated `ifTxStart`, is the only proof of that
+milestone. No current row, or one at another `in_z`, is then that close's
+zero-row shortfall, the same failed precondition raised when the close executes
+rather than before any statement does, and the write's Temporal Conflict is
+judged against the stated start (*A close follows its predecessor's start*).
+More than one current row cannot arise, the `(key, out_z)` primary key
+(`m-storage-layout` *Physical primary key*) refusing it, so no read counts them.
+A milestone the attempt opened is removed under the same gate (*Ownership
+disposal*).
+
+Under Locking the current
 row was read whole under the shared lock at submission, and the flush reuses it
 unless an earlier settled write of the attempt has since changed it, when it reads the
 row again under the lock (`m-unit-work` *Retained starting rows*); the close is
@@ -748,7 +764,13 @@ The comparison reads the stored start the held predecessor already carries —
 the same value an Optimistic gate binds — so it adds no read, statement, or
 predicate, and it is made wherever the predecessor is expanded: during planning
 for a predecessor planning holds, and while binding inside the flush for one a
-deferred range reads. Ownership decides first, by the attempt's record alone:
+deferred range reads. A gated close of a milestone no row was read for — an
+Optimistic Transaction-Time-Only termination (*A target write*) — compares its
+gate's start, which is the only stored start whose row that close can change;
+where no row stands at it, the close changes nothing and the comparison decides
+only which failure comes first. Made during planning, its refusal leaves the
+write pending and the attempt usable, as any planning refusal does
+(`m-unit-work` *Closes the instant cannot follow*). Ownership decides first, by the attempt's record alone:
 a row the attempt opened is revised or removed in place whatever its start
 (*Ownership disposal*), a predecessor kept unchanged is not closed, and no
 timestamp equality establishes ownership. A Temporal Conflict is never
