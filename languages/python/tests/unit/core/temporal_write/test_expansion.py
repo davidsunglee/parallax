@@ -107,6 +107,7 @@ def _facts(meta: Metamodel, entity: EntityIdentity) -> TemporalFacts:
 
 _SPAN_FACTS = _facts(_SPANS, _SPAN)
 _BALANCE_FACTS = _facts(_BALANCES, _BALANCE)
+_BALANCE_TX_START = _BALANCE_FACTS.shape.transaction_time.start_attribute
 
 
 def _named(members: Mapping[str, object]) -> ManagedRow:
@@ -407,6 +408,62 @@ def test_a_transaction_time_only_close_at_or_before_its_stored_start_is_refused(
         )
     assert refused.value.key == {"id": 1}
     assert f"stored start {stored_start.isoformat()}" in str(refused.value)
+
+
+_TERMINATION = NO_TRANSFORM.followed_by(None, None, replaces=False)
+_OWNED_BALANCE = OpenedRows(
+    frozenset({TemporalRowCoordinates(_BALANCE, (1,), TRANSACTION_TIME_ENDS)})
+)
+
+
+def _stated(start: dt.datetime) -> TemporalObjectStateKey:
+    return TemporalObjectStateKey(
+        ObjectKey(_BALANCE, (("id", 1),)), temporal_read.Edge(tx_time=start)
+    )
+
+
+def _terminated(
+    row: PredecessorRow | None, start: dt.datetime, ownership: TemporalWriteOwnership
+) -> BoundRange:
+    return _expansion(_BALANCE_FACTS, _TERMINATION, ownership=ownership).settle(
+        ((row, "starting", _stated(start), None),)
+    )
+
+
+@pytest.mark.parametrize(
+    ("ownership", "step"),
+    [(NO_TEMPORAL_WRITE_OWNERSHIP, PlannedClose), (_OWNED_BALANCE, PlannedTemporalRemoval)],
+    ids=["closed", "removed"],
+)
+def test_a_milestone_known_by_its_stated_start_settles_as_its_read_row_would(
+    ownership: TemporalWriteOwnership, step: type[PlannedStep]
+) -> None:
+    stated = _terminated(None, _T0, ownership)
+    assert stated == _terminated(_balance(), _T0, ownership)
+    (only,) = stated.steps
+    assert isinstance(only, step)
+    assert isinstance(only, PlannedClose | PlannedTemporalRemoval)
+    assert only.concurrency == TemporalGate(start_attribute=_BALANCE_TX_START, observed_start=_T0)
+    assert only.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert tuple(stated.changed) == (_stated(_T0),)
+
+
+@pytest.mark.parametrize("start", [_NOW, _LATER], ids=["equal", "later"])
+def test_a_close_at_or_before_a_stated_start_is_refused(start: dt.datetime) -> None:
+    with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
+        _terminated(None, start, NO_TEMPORAL_WRITE_OWNERSHIP)
+    assert f"stored start {start.isoformat()}" in str(refused.value)
+
+
+@pytest.mark.parametrize("start", [_T0, _NOW, _LATER], ids=["before", "equal", "later"])
+def test_removing_an_owned_milestone_known_by_its_stated_start_follows_no_start(
+    start: dt.datetime,
+) -> None:
+    (removal,) = _terminated(None, start, _OWNED_BALANCE).steps
+    assert isinstance(removal, PlannedTemporalRemoval)
+    assert removal.concurrency == TemporalGate(
+        start_attribute=_BALANCE_TX_START, observed_start=start
+    )
 
 
 def test_a_close_one_microsecond_after_its_predecessors_start_proceeds() -> None:
@@ -944,8 +1001,9 @@ def test_a_starting_close_differs_from_the_objects_other_closes_only_by_its_shor
         _SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}), gated=gated
     )
     coverage = TimeInterval(_JAN, INFINITY)
-    ordinary = expansion.closing(_STORED, coverage, SUPERSEDED)
-    start = expansion.closing(_STORED, coverage, SUPERSEDED, starting=True)
+    stored = _state(_SPAN_FACTS, _STORED)
+    ordinary = expansion.closing(stored, coverage, SUPERSEDED)
+    start = expansion.closing(stored, coverage, SUPERSEDED, starting=True)
 
     assert start.assignments is ordinary.assignments
     assert start.target.end_attributes is ordinary.target.end_attributes

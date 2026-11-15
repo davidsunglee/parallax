@@ -1,0 +1,34 @@
+model: models/unchanged-milestone-layout-twin-columns.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each termination's close is gated on the start its caller states, so what it changes depends on the rows the fixtures stored"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: terminate
+      write:
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 1 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 2 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 1
+      note: each termination needs nothing of its current row but the key and start its caller states, so neither is read; both settle at planning into one Write Group, their closes gated on the stated starts one grouped effect
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+then:
+  databaseCalls: 1
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n5 } }
+        - { id: 2, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", memo: { note: n6 } }

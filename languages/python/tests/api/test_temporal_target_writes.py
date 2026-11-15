@@ -55,6 +55,7 @@ from parallax.descriptor import domain_model_from_document, export_document
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, edge_of
 from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
+from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
 from tests.api._peer_commit import commit_as_a_peer
@@ -1488,6 +1489,61 @@ def test_a_transaction_time_target_reads_its_current_row_once(
         (_T0, _TA, "seed", _S1, []),
         (_TA, None, "p", _S1, []),
     ]
+
+
+_TERMINATED_KEYS = range(1, 34)
+
+
+@_LOG_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_transaction_time_terminations_of_many_objects_close_in_grouped_statements(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    # An Optimistic termination needs nothing of its row but the start its
+    # caller stated: it reads nothing and plans its close with every other
+    # termination, up to the Write Group bound. A Locking one acquires its row
+    # at the call and executes with the ready writes of its acquisition span.
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    _db(profile_run, _T0).transact(
+        lambda tx: [
+            tx.insert(entity(id=key, label="seed", spec=Spec(title="s1")))
+            for key in _TERMINATED_KEYS
+        ]
+    )
+    reads = _Reads()
+    calls = FlushCalls(reads)
+    db = own_root(
+        connect(
+            profile_run.port,
+            _MODEL,
+            clock=ScriptedClock([_TA]),
+            lifecycle_provider=calls,
+            binding=TEST_BINDING,
+        )
+    ).using_database_login()
+
+    def fn(tx: TxnContext) -> None:
+        for key in _TERMINATED_KEYS:
+            if representation == "typed":
+                tx.terminate_if(entity, key=key, tx_start=_T0)
+            else:
+                tx.wire.terminate_if(_name(entity), {"id": key}, tx_start=_T0)
+
+    db.transact(fn, concurrency=concurrency)
+    (flush,) = calls.flushes
+    acquisitions = reads.of(entity)
+    if concurrency == "optimistic":
+        assert call_runs(flush.calls) == [("write", 1)]
+        assert acquisitions == []
+    else:
+        assert call_runs(flush.calls) == [("write", 2)]
+        assert len(acquisitions) == len(_TERMINATED_KEYS)
+        assert all(sql.endswith("for share of t0") for sql in acquisitions)
+    assert _log_rows(profile_run, entity) == [(_T0, _TA, "seed", _S1, [])] * len(_TERMINATED_KEYS)
 
 
 @_SPAN_AXES

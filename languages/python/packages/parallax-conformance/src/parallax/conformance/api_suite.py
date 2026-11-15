@@ -2491,6 +2491,14 @@ _SHARED_COVERAGE_REASON: Final[str] = (
     "would add no developer surface"
 )
 
+_TARGET_TERMINATION_REASON: Final[str] = (
+    "a layout-twin flush of target terminations grouped into one close, committed or "
+    "falling short on one stated start, graded per twin by the run conformance lane and "
+    "checked for consistency by the reference harness; whether a termination reads its row "
+    "is no developer verb, and its developer spellings are the real-database public "
+    "witnesses of target terminations, so a story here would add no developer surface"
+)
+
 _INDEPENDENT_OPENING_REASON: Final[str] = (
     "a state-graded buffered sequence whose read-authorized correction and independent "
     "pending insertion share one flush, run through the public verbs by the run "
@@ -2562,6 +2570,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             *(f"m-unit-work-{number:03d}" for number in range(74, 84)),
         ),
         _SHARED_COVERAGE_REASON,
+    ),
+    **dict.fromkeys(
+        (f"m-unit-work-{number:03d}" for number in range(84, 90)), _TARGET_TERMINATION_REASON
     ),
     # -- buffered sequences, state-graded ------------------------------------ #
     **dict.fromkeys(

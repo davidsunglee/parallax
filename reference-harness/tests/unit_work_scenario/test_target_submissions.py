@@ -39,6 +39,17 @@ _INSERTED = (
     "m-unit-work-082-insertion-authorized-transaction-time-only-edits-share-a-read"
     "-layout-twin-columns.yaml"
 )
+_TERMINATED = (
+    "m-unit-work-084-transaction-time-only-target-terminations-close-unread-in-one-statement"
+    "-layout-twin-columns.yaml"
+)
+_FAILED_TERMINATIONS = (
+    "m-unit-work-086-a-stale-or-missing-start-fails-its-terminations-group-layout-twin-columns.yaml"
+)
+_LOCKING_TERMINATED = (
+    "m-unit-work-088-locking-transaction-time-only-target-terminations-group-at-the-flush"
+    "-layout-twin-columns.yaml"
+)
 
 
 def _miscounted(case: Case, step: int, by: int) -> Case:
@@ -48,7 +59,19 @@ def _miscounted(case: Case, step: int, by: int) -> Case:
     return case
 
 
-@pytest.mark.parametrize("name", [_OPTIMISTIC, _LOCKING, _UNCHANGED, _MIXED, _INSERTED])
+@pytest.mark.parametrize(
+    "name",
+    [
+        _OPTIMISTIC,
+        _LOCKING,
+        _UNCHANGED,
+        _MIXED,
+        _INSERTED,
+        _TERMINATED,
+        _FAILED_TERMINATIONS,
+        _LOCKING_TERMINATED,
+    ],
+)
 def test_a_golden_graded_buffer_carries_target_submissions(
     corpus_case: CaseLoader, name: str
 ) -> None:
@@ -66,6 +89,9 @@ def test_a_golden_graded_buffer_carries_target_submissions(
         (_UNCHANGED, 1, 1),
         (_MIXED, 0, 2),
         (_INSERTED, 2, 1),
+        (_TERMINATED, 0, 0),
+        (_FAILED_TERMINATIONS, 1, 0),
+        (_LOCKING_TERMINATED, 0, 2),
     ],
     ids=[
         "transaction-time-only-targets-share-one-read",
@@ -73,6 +99,9 @@ def test_a_golden_graded_buffer_carries_target_submissions(
         "guarded-and-closed-targets-share-one-read",
         "each-shape-reads-in-a-span-of-its-own",
         "writes-through-flushed-inserts-share-one-read",
+        "optimistic-terminations-read-nothing",
+        "a-failing-termination-reads-nothing-either",
+        "locking-terminations-acquire-each-row-at-its-call",
     ],
 )
 @pytest.mark.parametrize("by", [-1, 1], ids=["one-fewer", "one-more"])

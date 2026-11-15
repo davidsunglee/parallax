@@ -35,7 +35,11 @@ from parallax.core import (
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.unit_work import TEMPORAL_CONFLICT, TRANSACTION_ROLLBACK_ONLY
+from parallax.core.internal.unit_work import (
+    TEMPORAL_CONFLICT,
+    TRANSACTION_ROLLBACK_ONLY,
+    WritePreconditionError,
+)
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code, retry_notes
@@ -346,6 +350,114 @@ def test_a_caught_refusal_bound_inside_the_flush_dooms_the_attempt_and_is_retrie
     assert doomed.__cause__ is refusal
     assert retried == []
     assert _log_rows(profile_run, entity) == [(_SEEDED, _JUN, "seeded"), (_JUN, None, "first")]
+
+
+# --------------------------------------------------------------------------- #
+# An Optimistic Transaction-Time-Only termination reads nothing: its close is  #
+# judged against the start its caller states, at planning, and only its gate  #
+# proves that start, when the close executes.                                 #
+# --------------------------------------------------------------------------- #
+_JUL: Final = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+
+def _terminate_if(
+    tx: TxnContext, entity: type[Any], representation: _Representation, tx_start: dt.datetime
+) -> None:
+    if representation == "typed":
+        tx.terminate_if(entity, key=1, tx_start=tx_start)
+    else:
+        tx.wire.terminate_if(_name(entity), {"id": 1}, tx_start=tx_start)
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", _LOGS)
+def test_a_termination_stating_a_future_start_conflicts_then_fails_its_precondition(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    # Stored at January, the caller states June: the first attempt's June
+    # instant cannot follow it, and the retry's July close matches no row.
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = _db(profile_run, [_JAN, _JUN, _JUL])
+    db.transact(lambda tx: tx.insert(entity(id=1, label="seeded")))
+    failures: list[BaseException] = []
+
+    def change(tx: TxnContext) -> None:
+        _terminate_if(tx, entity, representation, _JUN)
+        try:
+            _find(tx, entity, representation)
+        except (ConflictError, WritePreconditionError) as failure:
+            failures.append(failure)
+            raise
+
+    with pytest.raises(WritePreconditionError) as failed:
+        db.transact(change, concurrency="optimistic", retry=fast_retry(3))
+    conflict, precondition = failures
+    assert isinstance(conflict, ConflictError)
+    assert conflict.code == TEMPORAL_CONFLICT
+    assert precondition is failed.value
+    assert (dict(failed.value.key), failed.value.expected) == ({"id": 1}, _JUN)
+    assert _log_rows(profile_run, entity) == [(_JAN, None, "seeded")]
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", _LOGS)
+def test_a_caught_termination_conflict_is_a_planning_refusal_that_dooms_nothing(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    # The stated start equals the attempt's instant, so planning refuses the
+    # close and leaves the termination buffered: each later flush refuses it
+    # again, none of them rollback-only, and the commit refuses it last.
+    db = _seeded_db(profile_run, entity, [_SEEDED, _SEEDED])
+    caught: list[ConflictError | UsageError] = []
+
+    def change(tx: TxnContext) -> str:
+        _terminate_if(tx, entity, representation, _SEEDED)
+        for _ in range(2):
+            try:
+                _find(tx, entity, representation)
+            except (ConflictError, UsageError) as failure:
+                caught.append(failure)
+        return "withheld"
+
+    with raises_code(ConflictError, TEMPORAL_CONFLICT):
+        db.transact(change, concurrency="optimistic", retry=RetryPolicy(max_retries=0))
+    assert [(type(failure), failure.code) for failure in caught] == [
+        (ConflictError, TEMPORAL_CONFLICT)
+    ] * 2
+    assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]
+
+
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", _LOGS)
+def test_a_caught_shortfall_of_an_unread_termination_dooms_the_attempt(
+    profile_run: Any, entity: type[Any], representation: _Representation
+) -> None:
+    # The close gated on a start no row stands at executes and falls short:
+    # an execution failure, so the attempt is doomed however it is caught, and
+    # the insert it flushed with rolls back with it.
+    db = _seeded_db(profile_run, entity, [_SEEDED, _JUN])
+    observed: list[BaseException] = []
+
+    def change(tx: TxnContext) -> str:
+        tx.insert(entity(id=2, label="other"))
+        _terminate_if(tx, entity, representation, _JAN)
+        for _ in range(2):
+            try:
+                _find(tx, entity, representation)
+            except (WritePreconditionError, UsageError) as failure:
+                observed.append(failure)
+        return "withheld"
+
+    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as refused:
+        db.transact(change, concurrency="optimistic")
+    shortfall, doomed = observed
+    assert isinstance(shortfall, WritePreconditionError)
+    assert isinstance(doomed, UsageError)
+    assert doomed.code == TRANSACTION_ROLLBACK_ONLY
+    assert doomed.__cause__ is shortfall
+    assert refused.value.__cause__ is shortfall
+    assert _log_rows(profile_run, entity) == [(_SEEDED, None, "seeded")]
+    assert _log_rows(profile_run, entity, key=2) == []
 
 
 # --------------------------------------------------------------------------- #

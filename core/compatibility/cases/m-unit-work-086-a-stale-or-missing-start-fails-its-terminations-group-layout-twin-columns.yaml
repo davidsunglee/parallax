@@ -1,0 +1,55 @@
+model: models/unchanged-milestone-layout-twin-columns.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each termination's close is gated on the start its caller states, so whether it matches a row depends on the rows the fixtures stored"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: stale
+      write:
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 1 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 2 }, ifTxStart: "2023-11-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 1
+      note: log 2 stands at December, not the November its caller states, so its row of the grouped close matches nothing and fails that caller's precondition; log 1's close, which matched, rolls back with it
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2023-12-01T00:00:00.000000Z", "2023-11-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+    - uow: missing
+      write:
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 1 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 9 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 1
+      note: no log 9 stands at any start, so its row of the grouped close matches nothing and fails the same precondition
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 9]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+then:
+  units:
+    stale:
+      outcome: rolledBack
+      flushFailure: { at: commit, entity: parallax.compatibility.KeptLog, key: { id: 2 }, shortfall: failedPrecondition }
+    missing:
+      outcome: rolledBack
+      flushFailure: { at: commit, entity: parallax.compatibility.KeptLog, key: { id: 9 }, shortfall: failedPrecondition }
+  databaseCalls: 2
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, memo: { note: n5 } }
+        - { id: 2, amount: 100, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, memo: { note: n6 } }

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -133,7 +133,9 @@ def unit_resolving_reads(
     flush makes for the window its entries reach together
     (:func:`flush_coverage_reads`), less what every such entry's acquisition
     already holds: a Transaction-Time-Only row holds it all, and a Bitemporal one
-    whatever ``acquired_start`` places it over. An amendment assigning nothing
+    whatever ``acquired_start`` places it over. An object whose writes need no
+    cell of its current row (:func:`binds_from_stated_start`) owes none and
+    settles at planning. An amendment assigning nothing
     is dropped with no database work, so it owes no acquisition or coverage and
     ends no run of shared reads.
 
@@ -144,6 +146,7 @@ def unit_resolving_reads(
     needed: set[str] = set()
     acquired: set[tuple[str, tuple[Any, ...]]] = set()
     coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]] = {}
+    targeted: dict[tuple[str, tuple[Any, ...]], tuple[Entity, list[str]]] = {}
     settled: list[SettledObject] = []
     for entry in entries:
         entity = _entry_entity(case, entry)
@@ -158,6 +161,7 @@ def unit_resolving_reads(
                 window = _target_window(entity, entry, acquires, acquired_start)
                 for item in written:
                     coverage.setdefault(item.key, []).append(window)
+                    targeted.setdefault(item.key, (entity, []))[1].append(str(entry["mutation"]))
             continue
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
@@ -169,7 +173,11 @@ def unit_resolving_reads(
             continue
         if any(key not in opened for key in keys):
             needed.add(entity.canonical_name)
-    deferred = {key: _uncovered_target_parts(windows) for key, windows in coverage.items()}
+    deferred = {
+        key: _uncovered_target_parts(windows)
+        for key, windows in coverage.items()
+        if not binds_from_stated_start(case, *targeted[key])
+    }
     covered = flush_coverage_reads(case, settled, deferred)
     return len(needed) + len(acquired) + covered
 
@@ -215,6 +223,20 @@ def settled_object(
         phase = "delete"
     first, last = region
     return SettledObject(key, key[0], phase, (window_instant(first), window_instant(last)))
+
+
+def binds_from_stated_start(case: Case, entity: Entity, mutations: Iterable[str]) -> bool:
+    """Whether target writes of one ``entity`` object stating ``mutations`` need
+    no cell of its current row but the key and Transaction-Time start their
+    callers state, so the object's write settles at planning from that start and
+    reads nothing (`m-temporal-write` *A target write*): under Optimistic, on an
+    Entity without Valid Time, where none of them assigns."""
+    return (
+        case.concurrency_mode == "optimistic"
+        and entity.is_temporal
+        and not any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes)
+        and not any(mutation in _ASSIGNING_MUTATIONS for mutation in mutations)
+    )
 
 
 def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:

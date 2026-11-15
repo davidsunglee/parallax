@@ -710,7 +710,12 @@ and a replacement also opens its state over every gap of its window
 (`m-temporal-write` *Target writes span their requested extent*). Where
 that read shows no current row at `validFrom`, or one at another
 Transaction-Time start, the write is a failed precondition before any of its
-statements executes.
+statements executes. A write that needs no cell of its current row beyond the
+key and Transaction-Time start that address it reads nothing under Optimistic
+on a Transaction-Time-Only target, whose one current row its caller names whole:
+it settles at planning from the milestone its caller states, and the gate on
+that start is what proves it when the write executes (`m-temporal-write` *A
+target write*). A termination, which opens no successor, is such a write.
 
 Submission follows the target Entity's Effective Concurrency Strategy:
 
@@ -920,7 +925,9 @@ does for a write settled at planning, changing no topology or gate. A range
 whose observed rows already cover it
 settles at planning like any other write. A target temporal write is
 such a range whatever it composes with, unless observed rows of its
-composition cover its window; its meaning also carries the caller's starting
+composition cover its window, or it needs nothing of its current row but the
+milestone its caller states (*Target writes*), when it settles at planning
+from that milestone; its meaning also carries the caller's starting
 condition, which binding judges against the rows read before any step exists,
 and a replacement's extent, whose uncovered parts binding opens. Its meaning
 carries, too, the starting rows its callers' Locking acquisitions retained
@@ -1651,12 +1658,14 @@ Error**, raised with:
 - the Entity Identity and the attempt's Transaction Instant, always;
 - the object's key, by declared attribute name, where the refusing path knows
   it;
-- the stored Transaction-Time start the instant failed to follow, where the
-  refusal compared one.
+- the Transaction-Time start the instant failed to follow, where the refusal
+  compared one: the stored start, which for a close no row was read for is the
+  start its gate binds (`m-temporal-write` *A target write*).
 
 It retains no statement, plan, row, or payload. It is not a Write Effect Error,
-whose payload is counts, and it is not a Write Precondition Error, because no
-caller stated the start it compares; it is their standalone sibling, owned by
+whose payload is counts, and it is not a Write Precondition Error, because what
+it refuses is the instant, not a caller's start: a row standing at the start it
+compares would be refused alike; it is their standalone sibling, owned by
 `m-temporal-write` and exposed beside them.
 
 The comparison uses the predecessor expansion already holds, so it consults the

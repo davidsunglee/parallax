@@ -1247,10 +1247,10 @@ def _terminate(tx: TxnContext) -> None:
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
-def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_chains_nothing(
+def test_an_optimistic_transaction_time_termination_closes_its_stated_milestone_unread(
     representation: str,
 ) -> None:
-    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_T0)]), Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
         if representation == "typed":
@@ -1260,8 +1260,7 @@ def test_an_optimistic_transaction_time_termination_closes_its_current_row_and_c
         assert _calls(port) == []
 
     db_for(BALANCE, port).transact(fn)
-    (coverage,) = _reads(port)
-    assert coverage.sql.endswith("from px.balance t0 where t0.bal_id = ? and t0.out_z = ?")
+    assert _reads(port) == []
     (close,) = _writes(port)
     assert close.sql.endswith("where bal_id = ? and out_z = ? and in_z = ?")
     assert close.binds[1:] == (1, "infinity", _T0)

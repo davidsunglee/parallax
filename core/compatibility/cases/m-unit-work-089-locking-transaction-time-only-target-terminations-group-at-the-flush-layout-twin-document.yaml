@@ -1,0 +1,33 @@
+model: models/unchanged-milestone-layout-twin-document.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, document-layout, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each termination acquires the current row the fixtures stored before it writes, so its emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: terminate
+      write:
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 1 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: terminate, entity: parallax.compatibility.KeptLog, row: { id: 2 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 3
+      note: each call reads its current row whole under the shared lock, and the flush reuses both rows with no read of its own; both terminations are ready at once and run as one Write Group, their ungated closes one grouped effect
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c2 from unnest(cast(? as bigint[]), cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.id = v.c1 and t.out_z = ? returning v.ord
+          binds:
+            - [1, 2]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+then:
+  databaseCalls: 3
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n5 }, amount: 100 } }
+        - { id: 2, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n6 }, amount: 100 } }

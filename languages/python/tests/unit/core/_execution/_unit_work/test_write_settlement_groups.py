@@ -45,12 +45,15 @@ from parallax.core.internal.write_plan import (
 )
 from parallax.core.internal.write_plan.plan import AcquisitionSpan, SettledWrite, WriteGroup
 from parallax.core.internal.write_plan.steps import (
+    FAILED_PRECONDITION,
+    TERMINATED,
     KeyTarget,
     MilestoneTarget,
     PlannedClose,
     PlannedInsert,
     PlannedStep,
     PlannedUpdate,
+    TemporalGate,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.bindings import bound_model
@@ -575,25 +578,80 @@ def test_deferred_writes_of_each_temporal_shape_form_spans_of_their_own() -> Non
 
 
 @pytest.mark.parametrize(
-    ("model", "deferred"),
+    ("model", "deferred", "concurrency"),
     [
-        (SHARED_MODEL, lambda: [*_fragmented(1, 2), _terminated(3), _terminated(4)]),
+        (SHARED_MODEL, lambda: [*_fragmented(1, 2), _terminated(3), _terminated(4)], "optimistic"),
         (
             _BALANCE,
             lambda: [
                 *_transaction_time_targets(1, 2),
                 *_transaction_time_targets(3, 4, verb="terminate"),
             ],
+            "locking",
         ),
     ],
     ids=["bitemporal", "transaction-time-only"],
 )
 def test_a_span_never_crosses_a_mutation_phase(
-    model: Metamodel, deferred: Callable[[], list[AdmittedWrite]]
+    model: Metamodel,
+    deferred: Callable[[], list[AdmittedWrite]],
+    concurrency: ConcurrencyPreference,
 ) -> None:
-    plan = _finalize(admitted_writes(model, deferred()), model)
+    plan = _finalize(admitted_writes(model, deferred()), model, concurrency=concurrency)
     assert _sizes(plan) == ["deferred"] * 4
     assert _spans(plan) == [(0, 2), (2, 4)]
+
+
+def _terminations(*keys: int) -> list[AdmittedWrite]:
+    return _transaction_time_targets(*keys, verb="terminate")
+
+
+def test_an_optimistic_transaction_time_only_termination_settles_at_planning() -> None:
+    plan = _finalize(_terminations(1, 2, 3), _BALANCE)
+    (group,) = _groups(plan)
+    assert _spans(plan) == []
+    assert [type(step) for step in group.steps] == [PlannedClose] * 3
+    assert [_keys(step) for step in group.steps] == [(1,), (2,), (3,)]
+    for step in group.steps:
+        assert isinstance(step, PlannedClose)
+        assert step.cause == TERMINATED
+        assert isinstance(step.concurrency, TemporalGate)
+        assert step.concurrency.observed_start == _JAN
+        assert step.affected_rows.on_shortfall == FAILED_PRECONDITION
+    assert [(span.start, span.stop) for span in group.effect_spans] == [(0, 3)]
+
+
+def test_optimistic_transaction_time_only_terminations_fill_groups_to_the_group_bound() -> None:
+    plan = _finalize(_terminations(*range(1, _LIMIT + 2)), _BALANCE)
+    assert _sizes(plan) == [_LIMIT, 1]
+    assert [(span.start, span.stop) for span in _groups(plan)[0].effect_spans] == [(0, _LIMIT)]
+
+
+def test_a_repeated_termination_target_starts_the_next_group() -> None:
+    # Reaching the planner as admitted, the later termination of object 1 is
+    # not composed into the earlier one.
+    plan = _finalize(_terminations(1, 2, 1, 3), _BALANCE)
+    assert _sizes(plan) == [2, 2]
+
+
+@pytest.mark.parametrize(
+    "deferred",
+    [
+        lambda: _finalize(_transaction_time_targets(1, 2), _BALANCE),
+        lambda: _finalize(_terminations(1, 2), _BALANCE, concurrency="locking"),
+        lambda: _finalize(
+            [_target(_POSITION, "Position", key, "terminate", valid_from=_JAN) for key in (1, 2)],
+            _POSITION,
+        ),
+    ],
+    ids=["optimistic-amendments", "locking-terminations", "bitemporal-terminations"],
+)
+def test_a_target_needing_its_predecessors_cells_or_lock_still_defers(
+    deferred: Callable[[], WritePlan],
+) -> None:
+    plan = deferred()
+    assert _sizes(plan) == ["deferred"] * 2
+    assert _spans(plan) == [(0, 2)]
 
 
 def _candidate(key: int, *, shared_lock: bool = False, entity: str = "ShareCols") -> Any:

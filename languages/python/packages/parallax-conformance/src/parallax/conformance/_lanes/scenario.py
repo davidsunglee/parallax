@@ -1416,14 +1416,15 @@ class _StepRead:
 class _GroupRun:
     """One `uow` group's own report: its steps' lowered emissions in step order,
     the Database Calls its single transaction made, the per-step observations
-    its read steps filled, each in step order, and the count each of its
-    predicate-write steps returned, by step index."""
+    its read steps filled, each in step order, the count each of its
+    predicate-write steps returned, by step index, and its fate."""
 
     lowered: list[LoweredStep]
     database_calls: int
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
     affected: dict[int, int]
+    fate: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -1537,27 +1538,35 @@ def _run_uow_group(
 ) -> _GroupRun:
     """Run one contiguous group in production.
 
+    A group whose fate is a plain rollback is abandoned once its last step ran;
+    any other runs to commit, and a flush that fails ends it where it ran, the
+    fate it reports, beside the statements that flush executed.
+
     Reports and source references are attempt-local; delivered lifecycle calls, including
     failed attempts, remain cumulative."""
     tx_instant = group_tx_instant(steps, range(start, end + 1))
-    doomed = _group_is_doomed(case, cast("str", steps[start]["uow"]))
+    stated = case_document.unit_fate(case, cast("str", steps[start]["uow"]))
+    abandoned = stated.get("outcome") == "rolledBack" and "flushFailure" not in stated
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    session = GroupSession(write_adapter(port, rollback=doomed), context, instant, observation)
+    session = GroupSession(write_adapter(port, rollback=abandoned), context, instant, observation)
     try:
         lowered: list[LoweredStep] = []
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
         state = GroupReport()
         prior_buffered: list[tuple[int, int]] = []
+        running: list[int] = []
 
         def body(tx: TxnContext) -> None:
             nonlocal state, lowered, rows_observed, step_graphs
             prior_buffered.extend(state.buffered)
             state = GroupReport()
             lowered, rows_observed, step_graphs = [], [], []
+            running.clear()
             submitter = WireSubmitter(tx, context.model)
             for index in range(start, end + 1):
+                running.append(index)
                 step, read = run_group_step(
                     tx, context, submitter, state, steps[index], index, observation
                 )
@@ -1573,9 +1582,20 @@ def _run_uow_group(
                 )
                 if observed is not None:
                     step_graphs.append(observed)
+            running.clear()
 
-        with absorbing_rollback():
-            transact(session.database, body, **context.requests)
+        fate: dict[str, object] = {"outcome": "rolledBack" if abandoned else "committed"}
+        try:
+            with absorbing_rollback():
+                transact(session.database, body, **context.requests)
+        except ConflictError as failure:
+            if not is_flush_failure(failure):
+                raise
+            at: int | Literal["commit"] = running[-1] if running else "commit"
+            fate = {
+                "outcome": "rolledBack",
+                "flushFailure": flush_failure(context.model, failure, at),
+            }
         state.buffered[:0] = prior_buffered
         shares = group_writes(state, observation.writes, "a held `uow` group")
         reported = [
@@ -1586,7 +1606,7 @@ def _run_uow_group(
         # group's Database Calls come from rather than from a second count this lane
         # keeps.
         return _GroupRun(
-            reported, observation.database_calls, rows_observed, step_graphs, state.affected
+            reported, observation.database_calls, rows_observed, step_graphs, state.affected, fate
         )
     finally:
         session.close()
@@ -1831,9 +1851,7 @@ def run_scenario_case(
             if label is not None:
                 start, end = spans[label]
                 group = _run_uow_group(case, port, context, steps, start, end, lifecycle)
-                units[label] = {
-                    "outcome": "rolledBack" if _group_is_doomed(case, label) else "committed"
-                }
+                units[label] = group.fate
                 lowered.extend(group.lowered)
                 rows_observed.extend(group.step_rows)
                 step_graphs.extend(group.step_graphs)

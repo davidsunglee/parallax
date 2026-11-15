@@ -30,6 +30,7 @@ from ..write_plan import (
     assert_inheritance_write_routing,
     assert_write_values,
     assigns_nothing,
+    binds_from_stated_start,
     classify_write_row,
     close_address_binds,
     flush_coverage_reads,
@@ -181,7 +182,8 @@ def _step_coverage(
     neither did a write through the value of an insert an earlier flush of its
     group executed: each reads its object's one part, its window or its current
     row, except that a Locking target's acquisition already holds a
-    Transaction-Time-Only object's current row.
+    Transaction-Time-Only object's current row, and a target needing no cell of
+    that row (:func:`write_plan.binds_from_stated_start`) settles at planning.
     """
     settled: list[SettledObject] = []
     requested: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
@@ -202,6 +204,8 @@ def _step_coverage(
         if not axes:
             continue
         if submission.kind == "target":
+            if binds_from_stated_start(case, entity, (submission.mutation,)):
+                continue
             held = case.concurrency_mode == "locking" and "valid-time" not in axes
             unobserved[key] = 0 if held else 1
             continue

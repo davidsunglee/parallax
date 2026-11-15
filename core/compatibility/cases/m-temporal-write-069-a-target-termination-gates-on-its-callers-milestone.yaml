@@ -4,7 +4,7 @@ shape: writeSequence
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "the target write's range reads the rows an earlier entry stored, so its emissions depend on a query result"
+  note: "the target write closes the row an earlier entry stored at the start its caller states, so whether its gate matches depends on stored state"
 when:
   uow:
     concurrency: optimistic
@@ -19,7 +19,7 @@ when:
     - mutation: terminate
       entity: parallax.compatibility.Balance
       statements: 1
-      note: the caller states the key and the Transaction-Time start it last observed; the flush reads the current row and closes it gated on the caller's start, chaining nothing
+      note: the caller states the key and the Transaction-Time start it last observed; the termination needs nothing more of the current row, so the flush reads nothing and closes it gated on the caller's start, chaining nothing
       row: { id: 1 }
       ifTxStart: "2024-01-01T00:00:00.000000Z"
       at: "2024-06-01T00:00:00.000000Z"
@@ -37,4 +37,4 @@ then:
     px:
       balance:
         - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
-  databaseCalls: 3
+  databaseCalls: 2
