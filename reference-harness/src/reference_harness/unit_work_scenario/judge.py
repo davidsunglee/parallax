@@ -239,11 +239,15 @@ def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str
     """The pointers of the submissions writing through the value of an insert a
     flush of their group executed before them, a find's or a flushing predicate
     submission's; one written through while that insert is still pending
-    composes with it instead (`m-unit-work` *Insertion authority*)."""
+    composes with it instead (`m-unit-work` *Insertion authority*). A keyed
+    write naming no ``on`` writes through its group's latest insert of its
+    object, where one precedes it (`m-case-format` *Settling against a grouped
+    find*)."""
     through: set[str] = set()
     for unit in scenario.units.values():
         flushed: set[str] = set()
         pending: list[str] = []
+        inserted: dict[tuple[str, tuple[Any, ...]] | None, str] = {}
         for index in unit.steps:
             step = scenario.steps[index]
             if isinstance(step, (_RowPublishingStep, _BoundaryAction)):
@@ -253,10 +257,14 @@ def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str
             if not isinstance(step, _GroupedWrite):
                 continue
             for submission in step.submissions:
-                if submission.entry.get("on") in flushed:
+                source = submission.entry.get("on")
+                if source is None and submission.kind == "keyed" and not submission.inserts:
+                    source = inserted.get(_object_key(submission))
+                if source in flushed:
                     through.add(submission.pointer)
                 if submission.inserts and submission.refusal is None:
                     pending.append(submission.pointer)
+                    inserted[_object_key(submission)] = submission.pointer
                 if submission.flushes:
                     flushed.update(pending)
                     pending = []
@@ -433,8 +441,8 @@ def _assert_settled_step(
     table state. A grouped effect is graded as the lone statement each of its
     source rows stands for (:func:`ungrouped_effect`). An entry that emits no
     statement aligns with none: an empty target amendment, dropped with no
-    database work, and a write of the object a Temporal Conflict of its flush
-    (*refused*) names, refused before any statement addresses it."""
+    database work, and a write a Temporal Conflict of its flush (*refused*)
+    stops (:func:`_stopped_by`)."""
     index = step.index
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
@@ -445,7 +453,7 @@ def _assert_settled_step(
     every_entry_settles = all(_aligns(submission) for submission in step.submissions)
     for submission in step.submissions:
         if _is_empty_target(submission) or (
-            refused is not None and submission.names(refused.entity, refused.key)
+            refused is not None and _stopped_by(case, submission, refused, settling, dialect)
         ):
             continue
         if submission.kind == "target":
@@ -494,6 +502,41 @@ def _assert_settled_step(
         )
 
 
+def _stopped_by(
+    case: Case,
+    submission: Submission,
+    refused: FlushFailure,
+    settling: list[tuple[ObjectAddress, str, list[Any]]],
+    dialect: str,
+) -> bool:
+    """Whether the Temporal Conflict *refused* stops *submission* before any
+    statement addresses its object: the write of the object it names, and any
+    other no statement of the flush addresses, since the refusal precedes the
+    execution of every write of its Write Group (`m-unit-work` *Shared coverage
+    acquisition*)."""
+    entity, key = submission.entity, submission.key
+    if entity is None or key is None or submission.names(refused.entity, refused.key):
+        return True
+    return not _addressing(case, entity, _target_key(case, entity, key), settling, dialect)
+
+
+def _addressing(
+    case: Case,
+    entity: Entity,
+    pk: Any,
+    settling: list[tuple[ObjectAddress, str, list[Any]]],
+    dialect: str,
+) -> list[int]:
+    """The positions of the *settling* statements addressing *entity*'s object *pk*."""
+    return [
+        position
+        for position, (address, _statement, _binds) in enumerate(settling)
+        if address.names_table(case.entity_table(entity.canonical_name, dialect))
+        and address.names_key_column(entity.identity_column)
+        and write_value_equal(address.key, pk)
+    ]
+
+
 def _ungrouped_pairs(
     case: Case, index: int, pairs: Iterable[tuple[str, list[Any]]]
 ) -> Iterator[tuple[str, list[Any]]]:
@@ -536,13 +579,7 @@ def _assert_target_statement(
     assert entity is not None and key is not None  # a target submission names its object
     entry = submission.entry
     pk = _target_key(case, entity, key)
-    matches = [
-        position
-        for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(case.entity_table(entity.canonical_name, dialect))
-        and address.names_key_column(entity.identity_column)
-        and write_value_equal(address.key, pk)
-    ]
+    matches = _addressing(case, entity, pk, settling, dialect)
     aligned.update(matches)
     if temporal_axes(entity.runtime_facts):
         if case.concurrency_mode != "optimistic":
@@ -647,13 +684,7 @@ def _settled_close(
     graded. The others address coverage no find observed, which the table state
     grades.
     """
-    matches = [
-        position
-        for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(case.entity_table(entity.canonical_name, dialect))
-        and address.names_key_column(entity.identity_column)
-        and write_value_equal(address.key, pk)
-    ]
+    matches = _addressing(case, entity, pk, settling, dialect)
     observed: list[int] = []
     for position in matches:
         _address, statement, binds = settling[position]
@@ -696,13 +727,7 @@ def _settled_statement(
     ``aligned`` collects the statements entries reached, which is what lets the
     caller name a golden addressing an object the buffer never writes.
     """
-    matches = [
-        position
-        for position, (address, _statement, _binds) in enumerate(settling)
-        if address.names_table(case.entity_table(entity.canonical_name, dialect))
-        and address.names_key_column(entity.identity_column)
-        and write_value_equal(address.key, pk)
-    ]
+    matches = _addressing(case, entity, pk, settling, dialect)
     if not matches:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] settles a write of {entity.name} pk {pk!r} "

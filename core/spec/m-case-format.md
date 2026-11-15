@@ -1494,7 +1494,9 @@ row was acquired, so no statement states it, and the table state grades what the
 write did. A versioned target's statement gates on the stated `ifVersion` and
 advances it, as a write settling against a find does on the generation that find
 observed. An empty amendment, and a write of the object a Temporal Conflict of its
-flush names (*Unit fates*), address no statement. A target write reads only
+flush names (*Unit fates*), address no statement; another write of that flush
+may address none, since the refusal precedes the execution of every write of its
+Write Group (`m-unit-work` *Shared coverage acquisition*). A target write reads only
 stored state it does not state, so a case carrying one is query-result-dependent
 and run-only.
 

@@ -98,6 +98,15 @@ def test_a_write_through_a_pending_insert_composes_with_it_and_reads_nothing(
     assert_judged(case)
 
 
+def test_a_write_through_its_flushed_insert_by_default_reads_its_coverage(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_INSERTED)
+    for entry in case.when["scenario"][2]["write"]:
+        del entry["on"]
+    assert_judged(case)
+
+
 @pytest.mark.parametrize("name", [_OPTIMISTIC, _LOCKING], ids=["optimistic", "locking"])
 def test_an_empty_target_amendment_costs_and_emits_nothing(
     damaged_case: CaseLoader, name: str
@@ -108,11 +117,16 @@ def test_an_empty_target_amendment_costs_and_emits_nothing(
     assert_judged(case)
 
 
-def test_a_target_a_temporal_conflict_refuses_emits_nothing(damaged_case: CaseLoader) -> None:
+@pytest.mark.parametrize("targets", [1, 2], ids=["alone", "beside-another-it-stops"])
+def test_a_target_a_temporal_conflict_refuses_emits_nothing(
+    damaged_case: CaseLoader, targets: int
+) -> None:
     case = damaged_case(_OPTIMISTIC)
     seed = damaged_case(_UNCHANGED).when["scenario"][0]
     step: dict[str, Any] = case.when["scenario"][0]
-    step["write"] = [{**step["write"][0], "at": "2023-12-01T00:00:00.000000Z"}]
+    step["write"] = [
+        {**entry, "at": "2023-12-01T00:00:00.000000Z"} for entry in step["write"][:targets]
+    ]
     step["databaseCalls"], step["statements"] = 1, []
     case.when["scenario"].insert(0, seed)
     case.then["databaseCalls"] = 2
