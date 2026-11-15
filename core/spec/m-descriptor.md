@@ -380,8 +380,8 @@ component never equals another.
 Every Entity that declares a primary key derives one unique index, placed before
 its authored indices. Its components are that Entity's own primary-key
 Attributes in declaration order, followed by each declared axis's **end**
-Attribute in canonical dimension order (Valid Time, then Transaction Time). Its
-name is `<table>_pk` when the Entity declares a `table`, and otherwise the
+Attribute, the Transaction-Time end first (`m-storage-layout` *Physical primary
+key*). Its name is `<table>_pk` when the Entity declares a `table`, and otherwise the
 Entity's `name` with its first character lowercased and then folded by
 `defaultColumn`, suffixed `_pk` — so a tableless `table-per-concrete-subtype`
 root named `Rate` derives `rate_pk`.
@@ -448,10 +448,11 @@ Attribute bearing a derived endpoint's canonical name is rejected in phase 3 as
 `temporal-attribute-declared`.
 
 A temporal Entity's physical primary key is its model primary key plus each
-dimension's end Attribute, the components the derived primary-key index above
-already fixes. The derived Attributes appear after every authored Attribute,
+dimension's end Attribute, in the component order the derived primary-key index
+above fixes. The derived Attributes appear after every authored Attribute,
 with Valid Time before Transaction Time, preserving `from_z, thru_z, in_z,
-out_z` projection order for Bitemporal Entities.
+out_z` projection order for Bitemporal Entities; that Attribute order is not the
+key's component order.
 
 Like `persistence` and `layout`, `temporality` is family-wide and root-owned: a
 descendant MUST omit it even when repeating the root's value, which whole-model

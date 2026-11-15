@@ -16,6 +16,11 @@ canonical export, and model evolution keep the authored components alone
 refused, now because the ends are derived for every index rather than only for
 the key.
 
+*Superseded in part (2026-11, [ADR 0094](0094-indices-on-bitemporal-tables-end-with-the-transaction-time-end-first.md)):*
+on a Bitemporal table every index, the primary key included, now ends with the
+Transaction-Time end before the Valid-Time end. The derived ends and uniqueness
+per milestone end stand.
+
 Before this, an authored unique index spanned every milestone. A temporal amend
 closes the current row, which keeps its unassigned values, and inserts a
 successor carrying them, so an amend that kept an authored unique value was

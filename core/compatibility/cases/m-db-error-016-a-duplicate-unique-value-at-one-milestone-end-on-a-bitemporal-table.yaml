@@ -1,5 +1,5 @@
 # Two DISTINCT current Assignments carrying one authored unique code and the
-# same Valid-Time end. The authored unique index is (code, thru_z, out_z), so
+# same Valid-Time end. The authored unique index is (code, out_z, thru_z), so
 # the second insert repeats the whole key and is refused as a uniqueViolation,
 # although its Valid-Time start differs. Distinct ids keep the primary key and
 # the logical-key exclusion out of it.

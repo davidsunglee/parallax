@@ -524,13 +524,17 @@ of the Entity that declares the family's primary key, in that Index's own
 component order:
 
 1. every model primary-key Attribute slot, in model-key order; then
-2. each temporal dimension's **end** Attribute slot, in accepted axis order.
+2. each temporal dimension's **end** Attribute slot, the Transaction-Time end
+   first.
 
 The Index is the sole provenance: this module selects slots for components
 `m-descriptor` already derived rather than composing a key of its own, so no
 consumer can observe a physical key no Index Metadata declares. Keying on the
 end Attributes is what makes a Latest predicate and a milestone close key hits,
-since both pin the exclusive upper bounds.
+since both pin the exclusive upper bounds. Ending with the Transaction-Time end
+first serves reads at the present Transaction Time, which pin it by equality and
+bound the Valid-Time end by a range; that order is the index ending only, and
+`columns` keeps each dimension's endpoints in canonical dimension order.
 
 It may therefore span the Identity and Temporal tiers. A temporal-end Attribute
 remains at its one canonical position in `columns`; selecting it into
@@ -553,10 +557,9 @@ by `m-descriptor`'s rule, so it equals that Entity's derived Index without being
 looked up among its accepted Indices. Each entry selects the Table's existing
 slots for its components in component order. On a Table carrying
 `temporalConstraints`, every other entry — unique and non-unique alike — then
-selects the Table's axis end slots in canonical dimension order, Valid Time
-before Transaction Time, which are the ends the primary-key entry's own
-components already close with; every Index of a temporal Table therefore ends
-with the axis ends. An entry names a slot once where two temporal dimensions
+selects the Table's axis end slots in the order the primary-key entry's own
+components close with them, the Transaction-Time end first; every Index of a
+temporal Table therefore ends with the same axis ends in the same order. An entry names a slot once where two temporal dimensions
 designate one end Attribute. It copies no slot and creates no other
 layout-owned column sequence. `primaryKeyIndex` is that first entry, whose
 `columns` are exactly `physicalPrimaryKey`; `uniqueKeys` selects the unique
