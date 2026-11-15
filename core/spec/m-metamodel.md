@@ -588,7 +588,11 @@ every consumer reads its multiplicity from this one definition.
 Every Index component is a distinct local Attribute of the Index's Entity and
 preserves declaration order. Indices are not inherited and do not repeat
 physical column names; storage consumers resolve those through Attribute
-Metadata.
+Metadata. An authored Index never names an As-Of Axis endpoint of its Entity:
+the storage layout ends every Index of a temporal Table with the derived axis
+ends, so an authored end would restate one in an author-chosen position and an
+authored start would replace the end-keyed shape. The derived primary-key Index
+is not authored; its end components are the derivation's.
 
 `declared_primary_key_index` is the derived Index of the Entity that locally
 declares the key, or absent when it declares none. “Declared” means belonging
@@ -706,6 +710,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-index-attribute-missing` | An index component names no declared Attribute. |
 | `metamodel-index-attribute-not-local` | An index component is inherited or belongs to another Entity; indices contain local components only. |
 | `metamodel-index-attribute-duplicate` | One Attribute occurs more than once in an Index. |
+| `metamodel-index-temporal-attribute` | An authored Index component is the start or end Attribute of one of its Entity's As-Of Axes. |
 | `metamodel-as-of-dimension-duplicate` | One Entity declares the same Temporal Dimension more than once. |
 | `metamodel-as-of-attribute-missing` | An axis start or end Attribute does not exist. |
 | `metamodel-as-of-attribute-owner` | An axis start or end Attribute belongs to another Entity. |

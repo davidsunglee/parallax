@@ -2654,6 +2654,8 @@ unequal declared neutral types, `relationship-join-source-invalid`,
 counting the derived primary-key Index a frontend hands over,
 `metamodel-index-attribute-missing`, `metamodel-index-attribute-not-local`,
 `metamodel-index-attribute-duplicate`,
+`metamodel-index-temporal-attribute`: an authored Index component is an As-Of Axis
+endpoint of its Entity (see `m-metamodel`),
 `metamodel-temporal-member-reserved`: a top-level member other than an As-Of Axis
 endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `pk-gen-sequence-conflict`: two key declarations share a Sequence allocator key

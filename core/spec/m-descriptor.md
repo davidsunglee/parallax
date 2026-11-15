@@ -353,7 +353,9 @@ facts. Full recursive semantics belong to `m-value-object`.
 Indices are metadata: they declare the storage indices an implementation
 **SHOULD** create and the **unique** keys a storage consumer may exploit. An
 authored index is a secondary index — a genuine business key or a lookup path.
-The primary-key index is not authored.
+The primary-key index is not authored. A component naming an As-Of Axis
+endpoint the Entity's `temporality` derives resolves to that endpoint, which
+Model Formation refuses (`metamodel-index-temporal-attribute`, `m-metamodel`).
 
 An authored index's `attributes` are what the author wrote, on every profile.
 On a temporal Entity the stored index also ends with each axis's end Attribute,
@@ -639,7 +641,6 @@ JSON-Schema keywords:
 |---|---|
 | `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `numeric(0,9)`, `numeric(2,5)`, `numeric(09,2)` |
 | `temporal-attribute-declared` | an authored `attribute` bearing the canonical name of an endpoint its Entity's `temporality` derives |
-| `index-temporal-attribute` | an authored `index` component naming an As-Of Axis endpoint its Entity's `temporality` derives |
 
 `temporal-attribute-declared` fires once per offending Attribute, at that
 Attribute's own `name` path. The profile derives both endpoints of every axis it
@@ -647,12 +648,6 @@ names, over framework-fixed columns, so authoring one declares a member the
 profile already supplies — and a `column` override on it is the same rejection
 rather than a second one, because the override has no declaration of its own to
 sit on.
-
-`index-temporal-attribute` fires once per offending component, at that
-component's own document path. Every index of a temporal Entity already ends
-with the derived axis ends, so an authored component naming an end restates a
-derived component in an author-chosen position, and one naming a start
-substitutes for the end-keyed shape; neither is a shape the contract admits.
 
 The vocabulary grows only with a rejection named in this specification. A
 conforming adapter evaluates the whole document, and violation equality,
