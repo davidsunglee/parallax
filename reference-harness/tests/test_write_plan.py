@@ -82,6 +82,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "assert_inheritance_write_routing",
         "assigns_nothing",
         "assert_write_values",
+        "address_valid_end",
         "classify_write_row",
         "close_address_binds",
         "has_temporal_gate",
@@ -539,11 +540,11 @@ def test_a_units_bitemporal_target_writes_share_their_coverage_reads(
 
 
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
-def test_a_units_target_amendment_assigning_nothing_owes_no_coverage_and_ends_no_run(
+def test_a_units_target_amendment_assigning_nothing_owes_no_reads_and_ends_no_run(
     concurrency: str,
 ) -> None:
-    # Of 33 target writes, the one assigning nothing settles nothing, so the
-    # other 32 fill one span.
+    # Of 33 target writes, the one assigning nothing is dropped before it
+    # acquires or settles anything, so the other 32 fill one span.
     case = _target_unit("models/position.yaml", concurrency)
     entries = _targets(
         "parallax.compatibility.Position",
@@ -552,7 +553,7 @@ def test_a_units_target_amendment_assigning_nothing_owes_no_coverage_and_ends_no
         until="2024-09-01T00:00:00.000000Z",
     )
     entries[1]["rows"] = [{"id": 2}]
-    acquisitions = 33 if concurrency == "locking" else 0
+    acquisitions = 32 if concurrency == "locking" else 0
     assert unit_resolving_reads(case, entries, acquired_start=lambda entry: None) == (
         acquisitions + 1
     )

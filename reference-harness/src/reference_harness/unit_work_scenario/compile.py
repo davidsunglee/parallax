@@ -10,6 +10,7 @@ from typing import Any, Literal
 from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure, write_value_equal
 from ..database_binding import PhysicalTable
+from ..inheritance import Family
 from ..temporality import temporal_axes
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
@@ -478,10 +479,11 @@ def _assert_golden_submissions(
     or refused submission has no golden statement that grading could align it
     with. A target submission is admitted where what it costs follows from the
     document alone: it is the only submission of its group naming its object,
-    and no earlier find of the group returned a row of that object, so nothing
-    pending or observed stands in for its acquisition or composes with it; and
-    under Locking its Entity has no Valid Time, since the coverage a Bitemporal
-    acquisition holds is stored state the document does not state.
+    and no earlier find of the group may have returned a row of that object
+    (:func:`_observes`), so nothing pending or observed stands in for its
+    acquisition or composes with it; and under Locking its Entity has no Valid
+    Time, since the coverage a Bitemporal acquisition holds is stored state the
+    document does not state.
     """
     for submission in submissions:
         if submission.kind == "target" and submission.refusal is None:
@@ -531,16 +533,41 @@ def _assert_golden_target(
 
 
 def _observes(case: Case, step: _RowPublishingStep, entity: Entity, key: Mapping[str, Any]) -> bool:
-    """Whether the find *step* returned a row of the object *key* names."""
-    rows = case.scenario[step.index].get("expectRows") or ()
-    columns = {
-        attribute["column"]: key[attribute["name"]]
-        for attribute in entity.attributes
-        if attribute.get("primaryKey")
-    }
+    """Whether the find *step* may have returned a row of the object *key* names.
+
+    Object identity is the inheritance family's. A find reaching that family
+    through an include path may have returned the object below its roots, which
+    its document need not state, so it is taken to have; one rooted in that
+    family returned it unless its stated root rows omit it.
+    """
+    found = case.scenario[step.index]
+    query = found.get("objectQuery")
+    if not isinstance(query, Mapping):
+        return False
+    family = Family(case.model.entity_defs)
+    identity = family.root_of(entity.canonical_name)
+    reached = (
+        family.relationship_target(segment.get("rel"))
+        for path in query.get("includes") or ()
+        for segment in path.get("segments") or ()
+    )
+    if any(target is not None and family.root_of(target) == identity for target in reached):
+        return True
+    if family.root_of(str(query.get("target"))) != identity:
+        return False
+    keyed = [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
+    if "expectRows" in found:
+        rows, spelling = found["expectRows"] or (), "column"
+    elif isinstance(found.get("expectGraph"), Mapping):
+        rows, spelling = next(iter(found["expectGraph"].values()), ()), "name"
+    else:
+        return True
     return any(
         isinstance(row, Mapping)
-        and all(write_value_equal(row.get(column), value) for column, value in columns.items())
+        and all(
+            write_value_equal(row.get(attribute[spelling]), key[attribute["name"]])
+            for attribute in keyed
+        )
         for row in rows
     )
 

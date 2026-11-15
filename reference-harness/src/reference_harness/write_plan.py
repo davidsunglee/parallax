@@ -134,7 +134,8 @@ def unit_resolving_reads(
     (:func:`flush_coverage_reads`), less what every such entry's acquisition
     already holds: a Transaction-Time-Only row holds it all, and a Bitemporal one
     whatever ``acquired_start`` places it over. An amendment assigning nothing
-    settles nothing, so it owes no coverage and ends no run of shared reads.
+    is dropped with no database work, so it owes no acquisition or coverage and
+    ends no run of shared reads.
 
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
@@ -151,7 +152,7 @@ def unit_resolving_reads(
         settled.extend(written)
         if entry.get("target"):
             acquires = _acquires(case, entity)
-            if acquires:
+            if acquires and not assigns_nothing(entity, entry):
                 acquired.update(keys)
             if entity.is_temporal:
                 window = _target_window(entity, entry, acquires, acquired_start)
@@ -770,6 +771,18 @@ def close_address_binds(case: Case, entity: Entity, pk: Any, valid_end: Any) -> 
             )
         binds.append(valid_end)
     return binds
+
+
+def address_valid_end(entity: Entity, statement: str, binds: list[Any]) -> Any:
+    """The Valid-Time end an existing-row *statement* of *entity* addresses, read
+    where :func:`close_address_binds` places it, or ``None`` where *entity* has no
+    Valid Time or the statement binds none there."""
+    dimensions = [axis["dimension"] for axis in _as_of_axes(entity)]
+    offset = _predicate_bind_offset(statement)
+    if "valid-time" not in dimensions or offset is None:
+        return None
+    position = offset + (1 if tag(entity) is None else 2) + dimensions.index("valid-time")
+    return binds[position] if position < len(binds) else None
 
 
 # --- reading a rendered golden statement apart -----------------------------------
