@@ -271,7 +271,7 @@ def _tpcs_definitions() -> list[dict[str, Any]]:
     ]
 
 
-def _ranked_temporal_definitions(mapping: str) -> tuple[list[dict[str, Any]], str, str]:
+def _bitemporal_definitions(mapping: str) -> tuple[list[dict[str, Any]], str, str]:
     root = f"example.{mapping.title()}Temporal"
     local_root = root.rpartition(".")[2]
     concrete = f"example.{mapping.title()}TemporalRow"
@@ -448,14 +448,14 @@ def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() ->
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_temporal_ends_follow_dimension_rank(mapping: str) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping)
+def test_physical_key_ends_with_the_transaction_time_end_first(mapping: str) -> None:
+    definitions, table, root = _bitemporal_definitions(mapping)
     layout = _table(compile_storage_layout(definitions), table)
     assert layout is not None
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor(root, "id"),
-        AttributeContributor(root, "validEnd"),
         AttributeContributor(root, "txEnd"),
+        AttributeContributor(root, "validEnd"),
     ]
 
 
@@ -463,7 +463,7 @@ def test_physical_key_temporal_ends_follow_dimension_rank(mapping: str) -> None:
 def test_temporal_axes_and_authored_indices_resolve_onto_the_tables_own_slots(
     mapping: str,
 ) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping)
+    definitions, table, root = _bitemporal_definitions(mapping)
     definitions[0]["attributes"].insert(1, _attribute("code"))
     definitions[0]["indices"] = [{"name": "ranked_code", "attributes": ["code"], "unique": True}]
     layout = _table(compile_storage_layout(definitions), table)
@@ -477,15 +477,15 @@ def test_temporal_axes_and_authored_indices_resolve_onto_the_tables_own_slots(
     for axis in layout.temporal_axes:
         assert layout.contribution(axis.start.contributor) is axis.start
         assert layout.contribution(axis.end.contributor) is axis.end
-    assert layout.axis_ends == (layout.temporal_axes[0].end, layout.temporal_axes[1].end)
+    assert layout.axis_ends == (layout.temporal_axes[1].end, layout.temporal_axes[0].end)
 
     (authored,) = layout.secondary_indices
     assert authored.declaration.attributes == (AttributeContributor(root, "code"),)
     assert authored.declaration.unique
     assert authored.column_attributes == (
         AttributeContributor(root, "code"),
-        AttributeContributor(root, "validEnd"),
         AttributeContributor(root, "txEnd"),
+        AttributeContributor(root, "validEnd"),
     )
     assert authored.columns == (
         layout.contribution(AttributeContributor(root, "code")),

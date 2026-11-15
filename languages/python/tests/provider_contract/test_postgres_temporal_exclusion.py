@@ -276,8 +276,9 @@ def test_every_accepted_key_type_is_excluded_by_equality(
 # --------------------------------------------------------------------------- #
 def _legacy(profile_run: Any, *, inverted: bool = True) -> ResolvedTemporalConstraints:
     """A ``position`` table as a release before named temporal keys created it:
-    its key named by the database, no checks, no exclusion, and illegal rows:
-    an overlapping pair and, if ``inverted``, a row whose interval is inverted."""
+    its key named by the database and ending ``thru_z, out_z``, no checks, no
+    exclusion, and illegal rows: an overlapping pair and, if ``inverted``, a row
+    whose interval is inverted."""
     constraints = _constraints(_provision(profile_run, "position.yaml"), "position")
     assert constraints.valid_check_name is not None
     for name in (
@@ -287,8 +288,8 @@ def _legacy(profile_run: Any, *, inverted: bool = True) -> ResolvedTemporalConst
     ):
         profile_run.port.execute_write(f"alter table px.position drop constraint {name}", [])
     profile_run.port.execute_write(
-        f"alter table px.position rename constraint {constraints.primary_key_name} to "
-        "position_pkey",
+        f"alter table px.position drop constraint {constraints.primary_key_name}, "
+        "add constraint position_pkey primary key (pos_id, thru_z, out_z)",
         [],
     )
     if inverted:
@@ -353,8 +354,11 @@ def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any
     _await_older_transactions(profile_run, corrected_at)
     assert profile_run.port.execute(_OVERLAPS, []) == []
     for statement in (
-        "alter table px.position rename constraint position_pkey to "
-        f"{constraints.primary_key_name}",
+        f"create unique index concurrently {constraints.primary_key_name} "
+        "on px.position (pos_id, out_z, thru_z)",
+        "alter table px.position drop constraint position_pkey, "
+        f"add constraint {constraints.primary_key_name} "
+        f"primary key using index {constraints.primary_key_name}",
         f"alter table px.position add constraint {constraints.transaction_check_name} "
         "check (in_z < out_z)",
         f"alter table px.position add constraint {constraints.valid_check_name} "
@@ -365,6 +369,6 @@ def test_the_documented_migration_reaches_the_generated_catalog(profile_run: Any
         profile_run.port.execute_write(statement, [])
     rows = profile_run.port.execute(_CONSTRAINTS, ["position"])
     assert [tuple(row) for row in rows] == [
-        (constraints.primary_key_name, "p", "PRIMARY KEY (pos_id, thru_z, out_z)", False),
+        (constraints.primary_key_name, "p", "PRIMARY KEY (pos_id, out_z, thru_z)", False),
         (constraints.exclusion_name, "x", _exclusion_definition(constraints.definition), False),
     ]

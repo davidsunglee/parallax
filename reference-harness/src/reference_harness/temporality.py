@@ -19,6 +19,7 @@ from typing import Any
 
 __all__ = [
     "TEMPORALITY_PROFILES",
+    "INDEX_END_RANK",
     "TEMPORAL_DIMENSION_RANK",
     "TEMPORAL_MEMBERS",
     "Axis",
@@ -72,9 +73,13 @@ TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
 )
 """The canonical order of the As-Of Axis dimensions, the bitemporal profile's own.
 
-Every ordered per-axis sequence follows it — the physical primary key's temporal
-end slots, and a milestone close's one exclusive upper bound per axis.
+Every ordered per-axis sequence follows it except an Index's ending — for
+instance a milestone close's one exclusive upper bound per axis.
 """
+
+INDEX_END_RANK: Mapping[str, int] = MappingProxyType({"transaction-time": 0, "valid-time": 1})
+"""The order every Index of a temporal table — its primary key included — closes
+with its axis end columns: the Transaction-Time end first."""
 
 
 def temporal_axes(definition: Mapping[str, Any]) -> tuple[Axis, ...]:

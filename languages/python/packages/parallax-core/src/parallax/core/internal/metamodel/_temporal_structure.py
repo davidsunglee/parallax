@@ -88,6 +88,10 @@ _TRANSACTION_TIME_AXIS: Final = DerivedAxis(
     *TEMPORAL_MEMBERS[TemporalDimension.TRANSACTION_TIME],
 )
 
+# Not canonical dimension order: reads at the present Transaction Time pin its
+# end by equality and bound the Valid-Time end by a range, so it leads.
+_INDEX_END_ORDER: Final = (TemporalDimension.TRANSACTION_TIME, TemporalDimension.VALID_TIME)
+
 TEMPORALITY_PROFILES: Final[Mapping[str, tuple[DerivedAxis, ...]]] = MappingProxyType(
     {
         NONTEMPORAL: (),
@@ -172,7 +176,7 @@ def derive_primary_key_index(
     every concrete Table.
 
     Components are the local primary-key Attributes in declaration order followed
-    by each declared axis's **end** Attribute in canonical dimension order. The
+    by each declared axis's **end** Attribute, the Transaction-Time end first. The
     end Attributes are what a Latest predicate and a milestone close both pin, so
     keying the physical row identity on them makes both a key hit. They are
     distinct by construction: each dimension derives its own endpoints, and no
@@ -222,7 +226,5 @@ def _primary_key_index_components(
     )
     if not keys:
         return ()
-    return (
-        *keys,
-        *(axis.end_attribute for axis in sorted(as_of_axes, key=lambda axis: axis.dimension.value)),
-    )
+    ends = {axis.dimension: axis.end_attribute for axis in as_of_axes}
+    return (*keys, *(ends[dimension] for dimension in _INDEX_END_ORDER if dimension in ends))

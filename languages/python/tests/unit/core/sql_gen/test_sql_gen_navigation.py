@@ -1883,11 +1883,11 @@ def test_owner_results_are_keyed_by_every_physical_primary_key_column() -> None:
     compiled = compile_read(op, bound_model(family), POSTGRES, target(family, "Desk"))
     assert compiled.statement.sql.endswith(
         "left join px.span t1 on t1.id = t0.span_id and t1.thru_z = ? and t1.out_z = ? "
-        "left join (select t3.id, t3.thru_z, t3.out_z, exists (select 1 from "
+        "left join (select t3.id, t3.out_z, t3.thru_z, exists (select 1 from "
         "jsonb_array_elements(case when jsonb_typeof(t3.tags) = ? then t3.tags else "
         "cast(? as jsonb) end) t2 where case when jsonb_typeof(t2.value) = ? then "
-        "t2.value #>> ? end = ?) q0 from px.span t3) r0 on r0.id = t1.id and r0.thru_z = t1.thru_z "
-        "and r0.out_z = t1.out_z where coalesce(r0.q0, false)"
+        "t2.value #>> ? end = ?) q0 from px.span t3) r0 on r0.id = t1.id and r0.out_z = t1.out_z "
+        "and r0.thru_z = t1.thru_z where coalesce(r0.q0, false)"
     )
 
 

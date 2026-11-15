@@ -147,10 +147,10 @@ def test_provisioning_temporal_pk_is_business_key_plus_to_columns() -> None:
     # key columns.
     audit = _tables(_MODELS["balance"])["balance"]
     assert "primary key (bal_id, out_z)" in audit
-    # Bitemporal Position keys on the business key plus BOTH end columns, Valid Time
-    # before Transaction Time (thru_z then out_z), which is the derived index's order.
+    # Bitemporal Position keys on the business key plus BOTH end columns, the
+    # Transaction-Time end first (out_z then thru_z), which is the derived index's order.
     bitemporal = _tables(_MODELS["position"])["position"]
-    assert "primary key (pos_id, thru_z, out_z)" in bitemporal
+    assert "primary key (pos_id, out_z, thru_z)" in bitemporal
 
 
 def test_provisioning_constrains_each_temporal_table_inline_in_axis_order() -> None:
@@ -163,8 +163,8 @@ def test_provisioning_constrains_each_temporal_table_inline_in_axis_order() -> N
         "exclude using gist (bal_id with =, tstzrange(in_z, out_z) with &&))"
     )
     assert _tables(_MODELS["position"])["position"].endswith(
-        "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
-        "primary key (pos_id, thru_z, out_z), "
+        "constraint pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9 "
+        "primary key (pos_id, out_z, thru_z), "
         "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z), "
         "constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z), "
         "constraint pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610 exclude using gist "
@@ -438,9 +438,9 @@ def test_provisioning_tpcs_temporal_pk_includes_the_root_declared_axes() -> None
     # stored.
     tables = _statements(_MODELS["rate"])
     (deposit,) = [t for t in tables if t.startswith("create table px.deposit_rate ")]
-    assert "primary key (id, thru_z, out_z)" in deposit
+    assert "primary key (id, out_z, thru_z)" in deposit
     (loan,) = [t for t in tables if t.startswith("create table px.loan_rate ")]
-    assert "primary key (id, thru_z, out_z)" in loan
+    assert "primary key (id, out_z, thru_z)" in loan
     # Quote (models/quote.yaml): the audit-only (single-axis) TPCS counterpart.
     (spot,) = [t for t in _statements(_MODELS["quote"]) if t.startswith("create table ")]
     assert "primary key (id, out_z)" in spot
@@ -453,7 +453,7 @@ def test_provisioning_tph_temporal_pk_includes_the_root_declared_axes() -> None:
     # physical PK must still be the business key plus EACH axis's end column,
     # never just the business key alone.
     (ddl,) = [stmt for stmt in _statements(_MODELS["instrument"]) if "instrument" in stmt]
-    assert "primary key (id, thru_z, out_z)" in ddl
+    assert "primary key (id, out_z, thru_z)" in ddl
 
 
 def test_provisioning_render_the_structured_column_last_and_not_null() -> None:
@@ -600,11 +600,11 @@ def test_a_temporal_descendant_index_is_named_over_the_roots_axis_end_attributes
     delta = _delta(model)
     (created,) = delta.created_indices
     assert created.physical_index_name.value == (
-        "pxi_root_tbl_leaf_leaf_code_uq_81dcabcdf97f6ddb8fe4864a7f38b96d"
+        "pxi_root_tbl_leaf_leaf_code_uq_1fbb5f35f8179b3c374d5075fc460ace"
     )
     assert delta.statements[-1] == (
-        f"create unique index {created.physical_index_name.value} on px.root_tbl (code, thru_z, "
-        "out_z)"
+        f"create unique index {created.physical_index_name.value} on px.root_tbl (code, out_z, "
+        "thru_z)"
     )
 
 
@@ -748,7 +748,7 @@ def test_a_temporal_index_alteration_creates_its_end_keyed_target_before_droppin
     assert created.physical_index_name != held.physical_index_name
     assert delta.statements == (
         f"create unique index {created.physical_index_name.value} on px.permit "
-        "(serial, thru_z, out_z)",
+        "(serial, out_z, thru_z)",
         f"drop index px.{held.physical_index_name.value}",
     )
 

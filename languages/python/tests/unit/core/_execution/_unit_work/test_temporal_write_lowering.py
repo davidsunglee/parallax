@@ -609,8 +609,8 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
     assert view is not None
     assert tuple(slot.column.name for slot in view.layout.physical_primary_key) == (
         "id",
-        "thru_z",
         "out_z",
+        "thru_z",
     )
     terminate = KeyedWriteInstruction(
         "terminate", "Bond", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")

@@ -310,12 +310,15 @@ def test_only_a_non_primary_unique_key_member_makes_an_update_ungroupable() -> N
 
 
 @pytest.mark.parametrize(
-    ("name", "ends"),
-    [("Handle", ("txEnd",)), ("Assignment", ("validEnd", "txEnd"))],
+    ("name", "ends", "index_ends"),
+    [
+        ("Handle", ("txEnd",), ("txEnd",)),
+        ("Assignment", ("validEnd", "txEnd"), ("txEnd", "validEnd")),
+    ],
     ids=["transaction-time", "bitemporal"],
 )
 def test_a_temporal_unique_keys_axis_ends_never_make_a_milestone_effect_ungroupable(
-    name: str, ends: tuple[str, ...]
+    name: str, ends: tuple[str, ...], index_ends: tuple[str, ...]
 ) -> None:
     storage = StorageCatalog(bound_model(corpus_model("temporal-authored-index"))).entity(
         EntityIdentity("parallax.compatibility", name)
@@ -323,7 +326,10 @@ def test_a_temporal_unique_keys_axis_ends_never_make_a_milestone_effect_ungroupa
     entity = storage.entity
     end_attributes = tuple(AttributeIdentity(entity, end) for end in ends)
     (code,) = storage.view.layout.unique_keys[1:]
-    assert code.column_attributes == (AttributeIdentity(entity, "code"), *end_attributes)
+    assert code.column_attributes == (
+        AttributeIdentity(entity, "code"),
+        *(AttributeIdentity(entity, end) for end in index_ends),
+    )
     target = MilestoneTarget(
         key_attributes=(AttributeIdentity(entity, "id"),),
         key_values=(1,),

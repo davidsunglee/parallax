@@ -103,8 +103,8 @@ def _rows(profile_run: Any, sql: str, binds: Sequence[object] = ()) -> list[tupl
     [
         ("tai_ledger_code", True, ["code", "out_z"]),
         ("tai_ledger_label", False, ["label", "out_z"]),
-        ("tai_tenancy_code", True, ["code", "thru_z", "out_z"]),
-        ("tai_tenancy_label", False, ["label", "thru_z", "out_z"]),
+        ("tai_tenancy_code", True, ["code", "out_z", "thru_z"]),
+        ("tai_tenancy_label", False, ["label", "out_z", "thru_z"]),
     ],
 )
 def test_the_catalog_holds_each_authored_index_ending_with_the_axis_ends(
@@ -194,13 +194,13 @@ _FORMS: Final = {
     "tai_tenancy_code": (
         True,
         "code",
-        "thru_z, out_z",
+        "out_z, thru_z",
         "pxi_tai_tenancy_temporal_autho_3dd287f95af5b6801656585213c4a94f",
     ),
     "tai_tenancy_label": (
         False,
         "label",
-        "thru_z, out_z",
+        "out_z, thru_z",
         "pxi_tai_tenancy_temporal_autho_4b4256e4c1b39ee4c1cb73f11b8eea03",
     ),
 }

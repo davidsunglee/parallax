@@ -409,8 +409,8 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
 
     assert statement.sql.count("for share") == 1
     assert (
-        ")) u join px.position t0 on u.pos_id = t0.pos_id and u.thru_z = t0.thru_z "
-        "and u.out_z = t0.out_z order by t0.thru_z asc, "
+        ")) u join px.position t0 on u.pos_id = t0.pos_id and u.out_z = t0.out_z "
+        "and u.thru_z = t0.thru_z order by t0.thru_z asc, "
         "t0.pos_id asc limit ? for share of t0"
     ) in statement.sql
     assert statement.binds == (

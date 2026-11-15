@@ -205,8 +205,8 @@ def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_n
     prerequisite, postgres, *_indices = px_ddl(model, "postgres")
     assert prerequisite == "create extension if not exists btree_gist"
     assert (
-        "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
-        "primary key (pos_id, thru_z, out_z)" in postgres
+        "constraint pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9 "
+        "primary key (pos_id, out_z, thru_z)" in postgres
     )
     assert (
         "constraint pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610 exclude using gist "

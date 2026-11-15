@@ -282,7 +282,7 @@ def test_a_key_selection_projects_every_physical_key_column(
 
     assert predicate.selection
     assert predicate.sql == (
-        "select t0.id, t0.thru_z, t0.out_z from px.coverage t0 left join px.policy t1 "
+        "select t0.id, t0.out_z, t0.thru_z from px.coverage t0 left join px.policy t1 "
         "on t1.id = t0.policy_id and t1.thru_z = ? and t1.out_z = ? "
         "where t1.name = ? and t0.thru_z = ? and t0.out_z = ?"
     )

@@ -1036,13 +1036,17 @@ where datname = current_database() and pid <> pg_backend_pid()
 
 Until then, the exclusion's index build still reads the version of each row from
 before your corrections, because an older transaction might see it, and fails with
-`22000` on an inverted one although the queries above find nothing. Then rename the
-primary key, which PostgreSQL named
-`position_pkey` when an earlier development checkout created the table, add the
-checks, install the prerequisite, and add the exclusion:
+`22000` on an inverted one although the queries above find nothing. Then rebuild the
+primary key, which PostgreSQL named `position_pkey` over `(pos_id, thru_z, out_z)` when
+an earlier development checkout created the table, in the column order the generated
+table uses, add the checks, install the prerequisite, and add the exclusion. Building
+the key's index `concurrently` lets reads and writes continue, so the swap holds its
+`ACCESS EXCLUSIVE` lock only briefly:
 
 ```sql
-alter table position rename constraint position_pkey to pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d;
+create unique index concurrently pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9 on position (pos_id, out_z, thru_z);
+alter table position drop constraint position_pkey,
+  add constraint pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9 primary key using index pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9;
 alter table position add constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z);
 alter table position add constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z);
 create extension if not exists btree_gist;
@@ -1098,7 +1102,7 @@ alter table person validate constraint pxc_doc_person_2db8f1ac90f4b53660fcb7da91
 
 Every index you declare on a temporal Entity, unique or not, is created over its
 declared columns followed by the table's axis ends: `out_z` on a
-Transaction-Time-only table, `thru_z, out_z` on a Bitemporal one. A unique
+Transaction-Time-only table, `out_z, thru_z` on a Bitemporal one. A unique
 `code` index on a Transaction-Time-only `handle` table is therefore
 `unique (code, out_z)`, so an amend that keeps `code` can close the current row
 and insert its successor. What each shape does and does not guarantee is
@@ -1147,7 +1151,7 @@ create unique index <target_name> on handle (code, out_z);
 drop index <held_name>;
 ```
 
-On a Bitemporal table the columns are `(code, thru_z, out_z)`; for a non-unique
+On a Bitemporal table the columns are `(code, out_z, thru_z)`; for a non-unique
 index leave out `unique`. A table-per-concrete-subtype family holds the index on
 every concrete table carrying its columns, each under its own name, so repeat the
 pair on each. Creating first keeps the old index enforcing until its replacement
