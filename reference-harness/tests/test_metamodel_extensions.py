@@ -702,8 +702,8 @@ def test_unique_index_emitted_for_mariadb_too() -> None:
             (
                 "pxi_handle_parallax_compatibil_3050a88db822d2ebdbc06f00a9a2ee51",
                 "pxi_handle_parallax_compatibil_0c01e918513c9e066994b6854486dfc1",
-                "pxi_assignment_parallax_compat_63f39cbbbd84a275a919154ccc0c2271",
-                "pxi_assignment_parallax_compat_23bf850a95f200ead5f31c1dbdd216a9",
+                "pxi_assignment_parallax_compat_6b06e8886d715eaaa177c4afb66b335a",
+                "pxi_assignment_parallax_compat_d7a7868af81e8816b9fb4a46d9eba600",
             ),
         ),
         (
@@ -711,8 +711,8 @@ def test_unique_index_emitted_for_mariadb_too() -> None:
             (
                 "pxi_handle_parallax_compatibili_3050a88db822d2ebdbc06f00a9a2ee51",
                 "pxi_handle_parallax_compatibili_0c01e918513c9e066994b6854486dfc1",
-                "pxi_assignment_parallax_compati_63f39cbbbd84a275a919154ccc0c2271",
-                "pxi_assignment_parallax_compati_23bf850a95f200ead5f31c1dbdd216a9",
+                "pxi_assignment_parallax_compati_6b06e8886d715eaaa177c4afb66b335a",
+                "pxi_assignment_parallax_compati_d7a7868af81e8816b9fb4a46d9eba600",
             ),
         ),
     ],
@@ -720,14 +720,14 @@ def test_unique_index_emitted_for_mariadb_too() -> None:
 def test_authored_indices_on_temporal_tables_end_with_the_axis_ends(
     dialect: str, names: tuple[str, str, str, str]
 ) -> None:
-    # Unique and non-unique alike: the authored components, then each axis end in
-    # canonical dimension order, under a name hashing those column Attributes.
+    # Unique and non-unique alike: the authored components, then each axis end, the
+    # Transaction-Time end first, under a name hashing those column Attributes.
     model = load_model(COMPATIBILITY_ROOT, "models/temporal-authored-index.yaml")
     indices = [statement for statement in px_ddl(model, dialect) if " index " in statement]
     handle_code, handle_label, assignment_code, assignment_label = names
     assert indices == [
-        f"create unique index {assignment_code} on px.assignment (code, thru_z, out_z)",
-        f"create index {assignment_label} on px.assignment (label, thru_z, out_z)",
+        f"create unique index {assignment_code} on px.assignment (code, out_z, thru_z)",
+        f"create index {assignment_label} on px.assignment (label, out_z, thru_z)",
         f"create unique index {handle_code} on px.handle (code, out_z)",
         f"create index {handle_label} on px.handle (label, out_z)",
     ]

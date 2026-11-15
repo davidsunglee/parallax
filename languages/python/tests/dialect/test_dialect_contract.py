@@ -434,7 +434,7 @@ def test_create_table_names_a_temporal_key_and_excludes_overlap_last(dialect: Di
     statement = dialect.create_table(
         "span",
         [ColumnDdl("id", "bigint", False)],
-        ["id", "thru_z", "out_z"],
+        ["id", "out_z", "thru_z"],
         [
             IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z"),
             DocumentRootCheckDdl("pxc_doc_span_5", "payload"),
@@ -446,7 +446,7 @@ def test_create_table_names_a_temporal_key_and_excludes_overlap_last(dialect: Di
     )
     assert statement == (
         "create table span (id bigint not null, "
-        "constraint pxc_pk_span_3 primary key (id, thru_z, out_z), "
+        "constraint pxc_pk_span_3 primary key (id, out_z, thru_z), "
         "constraint pxc_tx_span_2 check (in_z < out_z), "
         "constraint pxc_doc_span_5 check (jsonb_typeof(payload) = 'object'), "
         "constraint pxc_excl_span_4 exclude using gist "

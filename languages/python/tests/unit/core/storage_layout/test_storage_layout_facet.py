@@ -286,10 +286,10 @@ def _tpcs_model() -> tuple[Any, EntityIdentity, EntityIdentity, EntityIdentity]:
     return model, root, invoice, memo
 
 
-def _ranked_temporal_model(
+def _bitemporal_model(
     mapping: Literal["standalone", "tph", "tpcs"], *, indexed: bool = False
 ) -> tuple[Any, str, EntityIdentity]:
-    """A Bitemporal family declaring its Transaction-Time axis first.
+    """A Bitemporal family declaring its Valid-Time axis first, unlike its key's ending.
 
     ``indexed`` adds a root-declared unique Index over a domain ``code``.
     """
@@ -311,14 +311,14 @@ def _ranked_temporal_model(
     )
     axes = (
         AsOfAxisMetadata(
-            TemporalDimension.TRANSACTION_TIME,
-            tx_start.identity,
-            tx_end.identity,
-        ),
-        AsOfAxisMetadata(
             TemporalDimension.VALID_TIME,
             valid_start.identity,
             valid_end.identity,
+        ),
+        AsOfAxisMetadata(
+            TemporalDimension.TRANSACTION_TIME,
+            tx_start.identity,
+            tx_end.identity,
         ),
     )
     if mapping == "standalone":
@@ -504,15 +504,15 @@ def test_physical_key_selects_existing_model_key_then_temporal_end_slots() -> No
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_order(
+def test_physical_key_ends_with_the_transaction_time_end_first_not_authored_axis_order(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping)
+    model, table, root = _bitemporal_model(mapping)
     layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "validEnd"),
         AttributeIdentity(root, "txEnd"),
+        AttributeIdentity(root, "validEnd"),
     ]
 
 
@@ -520,7 +520,7 @@ def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_orde
 def test_the_primary_key_index_leads_the_indices_over_the_physical_key(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping)
+    model, table, root = _bitemporal_model(mapping)
     layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     primary = layout.primary_key_index
     assert primary is not None
@@ -530,8 +530,8 @@ def test_the_primary_key_index_leads_the_indices_over_the_physical_key(
     assert primary.declaration.unique
     assert primary.declaration.attributes == (
         AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "validEnd"),
         AttributeIdentity(root, "txEnd"),
+        AttributeIdentity(root, "validEnd"),
     )
     assert all(
         mapped is key_slot
@@ -639,14 +639,14 @@ def test_tpcs_indices_map_onto_every_concrete_table_carrying_their_components() 
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_an_authored_index_ends_with_the_tables_axis_ends_in_dimension_rank(
+def test_an_authored_index_ends_with_the_tables_axis_ends_transaction_time_end_first(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, indexed=True)
+    model, table, root = _bitemporal_model(mapping, indexed=True)
     layout = _require_layout(storage_layout.storage_layout_facet_of(model), table)
     constraints = layout.temporal_constraints
     assert constraints is not None
-    ends = [AttributeIdentity(root, "validEnd"), AttributeIdentity(root, "txEnd")]
+    ends = [AttributeIdentity(root, "txEnd"), AttributeIdentity(root, "validEnd")]
     assert [slot.contributor for slot in constraints.axis_ends] == ends
     assert all(slot is layout.contribution(slot.contributor) for slot in constraints.axis_ends)
 
@@ -683,8 +683,8 @@ def test_unique_and_non_unique_indices_end_with_each_profiles_axis_ends() -> Non
     assignment = _require_layout(facet, "assignment")
     assert _end_keyed(handle, "handle_code") == ["code", "out_z"]
     assert _end_keyed(handle, "handle_label") == ["label", "out_z"]
-    assert _end_keyed(assignment, "assignment_code") == ["code", "thru_z", "out_z"]
-    assert _end_keyed(assignment, "assignment_label") == ["label", "thru_z", "out_z"]
+    assert _end_keyed(assignment, "assignment_code") == ["code", "out_z", "thru_z"]
+    assert _end_keyed(assignment, "assignment_label") == ["label", "out_z", "thru_z"]
     assert [index.declaration.identity.name for index in assignment.unique_keys] == [
         "assignment_pk",
         "assignment_code",
@@ -720,8 +720,8 @@ def test_a_tph_descendant_index_ends_with_the_roots_axis_ends_on_the_shared_tabl
     assert leaf_code.declaration.attributes == (AttributeIdentity(leaf, "code"),)
     assert leaf_code.column_attributes == (
         AttributeIdentity(leaf, "code"),
-        AttributeIdentity(root, "validEnd"),
         AttributeIdentity(root, "txEnd"),
+        AttributeIdentity(root, "validEnd"),
     )
 
 

@@ -223,9 +223,9 @@ class TemporalHistoryConstraints:
 
     @property
     def axis_ends(self) -> tuple[ColumnSlot, ...]:
-        """Valid-Time end, then Transaction-Time end; a slot both designate appears once."""
-        ranged = (self.valid_axis, self.transaction_axis)
-        return tuple(dict.fromkeys(axis.end for axis in ranged if axis is not None))
+        """The axis end slots in the order the primary key closes with them."""
+        ends = {axis.end for axis in (self.valid_axis, self.transaction_axis) if axis is not None}
+        return tuple(slot for slot in self.primary_key.columns if slot in ends)
 
 
 @dataclass(frozen=True, slots=True)

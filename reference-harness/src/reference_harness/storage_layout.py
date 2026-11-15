@@ -26,7 +26,7 @@ from .inheritance import (
     role_of,
 )
 from .naming import default_column_name
-from .temporality import temporal_axes
+from .temporality import INDEX_END_RANK, temporal_axes
 from .value_object_resolve import RejectionError
 
 STORAGE_LAYOUT_COLUMN_COLLISION = "storage-layout-column-collision"
@@ -292,8 +292,8 @@ class TableLayout:
 
     @property
     def axis_ends(self) -> tuple[ColumnSlot, ...]:
-        """Each axis's end slot in canonical dimension order, a shared slot once."""
-        return tuple(dict.fromkeys(axis.end for axis in self.temporal_axes))
+        """Each axis's end slot in Index-ending order, a shared slot once."""
+        return _index_ends(self.temporal_axes)
 
     def column(self, column: str) -> ColumnSlot | None:
         """Return the slot claiming ``column``, or absent."""
@@ -906,6 +906,11 @@ def _temporal_designations(
     )
 
 
+def _index_ends(axes: Sequence[PhysicalTemporalAxis]) -> tuple[ColumnSlot, ...]:
+    ranked = sorted(axes, key=lambda axis: INDEX_END_RANK[axis.dimension])
+    return tuple(dict.fromkeys(axis.end for axis in ranked))
+
+
 def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] | None:
     """One Entity's derived unique primary-key Index, or absence when it declares no key.
 
@@ -918,7 +923,7 @@ def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] |
     from every concrete table.
 
     Components are the local primary-key Attributes in declaration order followed
-    by each declared axis's END Attribute in canonical dimension rank — the
+    by each declared axis's END Attribute, the Transaction-Time end first — the
     columns a Latest predicate and a milestone close both pin. They are distinct
     by construction: each dimension derives its own endpoints, and no other
     attribute may bear one of their names. The name is the table's when the
@@ -932,7 +937,12 @@ def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] |
     ]
     if not attributes:
         return None
-    attributes.extend(axis.end.name for axis in temporal_axes(definition))
+    attributes.extend(
+        axis.end.name
+        for axis in sorted(
+            temporal_axes(definition), key=lambda axis: INDEX_END_RANK[axis.dimension]
+        )
+    )
     table = definition.get("table")
     name = definition["name"]
     stem = (
@@ -1171,7 +1181,7 @@ def _compile_layout(
         )
         for axis in temporal_axes(root)
     )
-    axis_ends = tuple(dict.fromkeys(axis.end for axis in axes))
+    axis_ends = _index_ends(axes)
     return TableLayout(
         group.mapping_owner,
         group.table,

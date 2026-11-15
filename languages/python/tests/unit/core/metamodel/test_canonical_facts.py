@@ -128,8 +128,8 @@ def test_tableless_root_owns_the_only_local_primary_key_index() -> None:
     assert root.declared_primary_key_index.identity.name == "holding_pk"
     assert [part.name for part in root.declared_primary_key_index.attributes] == [
         "id",
-        "validEnd",
         "txEnd",
+        "validEnd",
     ]
     assert child.declared_primary_key_index is None
     assert inherited.declared_primary_key_index is None

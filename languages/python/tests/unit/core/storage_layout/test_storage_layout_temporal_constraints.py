@@ -80,9 +80,9 @@ def test_a_bitemporal_table_carries_both_interval_checks() -> None:
 
 @pytest.mark.parametrize(
     ("stem", "table", "ends"),
-    [("balance", "balance", ("out_z",)), ("position", "position", ("thru_z", "out_z"))],
+    [("balance", "balance", ("out_z",)), ("position", "position", ("out_z", "thru_z"))],
 )
-def test_the_axis_ends_are_the_tables_own_end_slots_valid_time_first(
+def test_the_axis_ends_are_the_tables_own_end_slots_transaction_time_end_first(
     stem: str, table: str, ends: tuple[str, ...]
 ) -> None:
     layout = _layout(corpus()[stem], table)
@@ -222,7 +222,7 @@ def test_a_temporal_table_names_its_own_primary_key_and_exclusion() -> None:
     assert constraints.primary_key is layout.primary_key_index
     assert _keys(corpus()["position"]) == {
         "position": (
-            "pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d",
+            "pxc_pk_position_ea14d6b8bb7c5221df1de52347723ee9",
             "pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610",
             ("pos_id",),
         )
