@@ -73,9 +73,10 @@ __all__ = [
     "settle_range",
 ]
 
-_COVERAGE_WINDOWS: Final = 64
-"""The most Valid-Time windows one coverage read names (`m-sql` *Requested
-ranges*); more uncovered windows are read by several reads, all before the
+_PARTS_PER_READ: Final = 64
+"""The most uncovered parts one coverage read names (`m-sql` *Requested
+ranges*): each uncovered Valid-Time interval, and each Transaction-Time-Only
+current row, is one. More parts are read by several reads, all before the
 range binds. Past this many, one statement's cost grows faster than the round
 trip a larger statement saves."""
 
@@ -779,7 +780,7 @@ def _retained_completion(
     )
 
 
-def _missing_coverage(
+def _missing_term(
     deferred: DeferredTemporalRange, reused: PredecessorRows | None
 ) -> CoverageTerm | None:
     """The coverage ``deferred``'s window needs that nothing already holds —
@@ -789,15 +790,15 @@ def _missing_coverage(
     nothing remains to read.
 
     What remains of a Bitemporal window is its sorted, disjoint parts. A
-    Transaction-Time-Only object's term names no window: its one current row
-    is read unless a reused, known, or held row already is it.
+    Transaction-Time-Only object's one part is its current row, read unless a
+    reused, known, or held row already is it.
     """
     meaning = deferred.meaning
     known = deferred.predecessors
     key_value = cast("ManagedValue", meaning.key_value)
     window = meaning.valid_time_window
     if window is None:
-        return None if known or reused is not None else CoverageTerm(key_value, ())
+        return None if known or reused is not None else CoverageTerm(key_value, None)
     covered = [predecessor.valid_time_coverage for predecessor in known]
     if reused is not None:
         shape = meaning.facts.shape
@@ -811,25 +812,30 @@ def _missing_coverage(
     return CoverageTerm(key_value, missing) if missing else None
 
 
-def _coverage_requests(
+def _pack_reads(
     entity: CompiledEntity,
     key_attribute: AttributeIdentity,
     terms: Iterable[CoverageTerm],
     *,
     shared_lock: bool,
 ) -> Iterator[CoverageReadRequest]:
-    """Reads of every Valid-Time window ``terms`` name, in order, each naming at
-    most :data:`_COVERAGE_WINDOWS` windows; an object whose windows do not fit
-    what remains of one read continues in the next."""
+    """Reads of every uncovered part ``terms`` name, in order, each naming at
+    most :data:`_PARTS_PER_READ` parts. A current-row term is one part, placed
+    whole; an object whose Valid-Time windows do not fit what remains of one
+    read continues in the next."""
     pending: list[CoverageTerm] = []
-    room = _COVERAGE_WINDOWS
+    room = _PARTS_PER_READ
     for term in terms:
         windows = term.valid_time_windows
         first = 0
-        while first < len(windows):
+        while windows is None or first < len(windows):
             if not room:
                 yield CoverageReadRequest(entity, key_attribute, tuple(pending), shared_lock)
-                pending, room = [], _COVERAGE_WINDOWS
+                pending, room = [], _PARTS_PER_READ
+            if windows is None:
+                pending.append(term)
+                room -= 1
+                break
             part = windows[first : first + room]
             pending.append(
                 term if len(part) == len(windows) else CoverageTerm(term.key_value, part)
@@ -862,7 +868,7 @@ def _bind_range(
 @dataclass(slots=True)
 class _PendingRange:
     """One active range between its preparation and its binding: the retained
-    starting rows it reuses, the coverage it needs read until its windows are
+    starting rows it reuses, the coverage it needs read until its parts are
     packed into reads, the number of the coverage read finishing its coverage
     — 0 where it needs none — and the nonempty rows each of its coverage reads
     returned, in read order."""
@@ -891,16 +897,19 @@ class RangeBindings:
     Write Groups they execute in, in order.
 
     ``plan``'s entries ``[start, stop)`` are one deferred settled write, or an
-    acquisition span's (`m-unit-work` *Shared coverage acquisition*):
-    Bitemporal ranges of one Entity, each of a distinct object, read alike.
-    Anything else is refused before any row is read. The first advance takes
-    the ranges from ``plan``, keeping no reference to it, completes, through
-    ``acquire_rows``, every retained starting row each range holds that
-    ``current`` still judges current, and derives once the coverage nothing
-    each range holds covers. Their windows are packed, in range and Valid-Time
-    order, into reads naming at most :data:`_COVERAGE_WINDOWS` each, and a
-    range is ready once every read naming its windows succeeded, whatever the
-    reads returned. Each advance reads only while the next range is not ready,
+    acquisition span's (`m-unit-work` *Shared coverage acquisition*): ranges
+    of one Entity, each of a distinct object, read alike. Anything else is
+    refused before any row is read. The first advance takes the ranges from
+    ``plan``, keeping no reference to it, completes, through ``acquire_rows``,
+    every retained starting row each range holds that ``current`` still
+    judges current, and derives once the uncovered parts nothing each range
+    holds covers. Those parts are packed, in range order — a Bitemporal
+    range's in Valid-Time order, a Transaction-Time-Only range's one current
+    row whole — into reads naming at most :data:`_PARTS_PER_READ` each, and a
+    range is ready once every read naming its parts succeeded, whatever the
+    reads returned; a range with no uncovered part is ready at once, but never
+    binds ahead of an earlier range that is not. Each advance reads only while
+    the next range is not ready,
     each read's rows sealed as Predecessor Rows of the object whose key each
     stored row holds while its resources are live. It then binds that range
     and every ready range following it, up to the first that is not, under
@@ -1020,7 +1029,7 @@ class RangeBindings:
         self._plan = None
         entries = plan.entries
         pending = self._pending
-        windows = 0
+        parts = 0
         for position in self._positions:
             deferred = cast(
                 "DeferredTemporalRange", cast("SettledWrite", entries[position]).deferred
@@ -1033,14 +1042,10 @@ class RangeBindings:
             completion = _retained_completion(deferred, invocation.current)
             if completion is not None:
                 record.reused = invocation.acquire_rows(completion, consume_coverage)
-            term = _missing_coverage(deferred, record.reused)
+            term = _missing_term(deferred, record.reused)
             if term is not None:
-                windows += len(term.valid_time_windows)
-                # A Transaction-Time-Only range, never shared, reads its one
-                # current row in one read of its own.
-                record.ready_after_reads = (
-                    -(-windows // _COVERAGE_WINDOWS) if term.valid_time_windows else 1
-                )
+                parts += term.part_count
+                record.ready_after_reads = -(-parts // _PARTS_PER_READ)
                 record.missing_term = term
                 self._reads = record.ready_after_reads
         if len(pending) > 1:
@@ -1096,25 +1101,18 @@ def _require_deferred(plan: WritePlan, start: int, stop: int) -> None:
 
 
 def _coverage_reads(pending: deque[_PendingRange]) -> Iterator[CoverageReadRequest]:
-    """The reads of every window ``pending`` ranges need, packed in their
-    order, or a Transaction-Time-Only range's one read of its current row."""
+    """The reads of every uncovered part ``pending`` ranges need, packed in
+    their order."""
     meaning = pending[0].deferred.meaning
-    entity, key_attribute = meaning.facts.entity, meaning.key_attribute
-    shared_lock = meaning.shared_lock
-    if len(pending) > 1:
-        assert all(record.deferred.meaning.valid_time_window is not None for record in pending)
-        terms = _packed_terms(deque(pending))
-        return _coverage_requests(entity, key_attribute, terms, shared_lock=shared_lock)
-    (only,) = pending
-    term = only.missing_term
-    assert term is not None  # a range reading nothing has no read
-    only.missing_term = None
-    if meaning.valid_time_window is None:
-        return iter((CoverageReadRequest(entity, key_attribute, (term,), shared_lock),))
-    return _coverage_requests(entity, key_attribute, (term,), shared_lock=shared_lock)
+    return _pack_reads(
+        meaning.facts.entity,
+        meaning.key_attribute,
+        _take_missing_terms(deque(pending)),
+        shared_lock=meaning.shared_lock,
+    )
 
 
-def _packed_terms(unpacked: deque[_PendingRange]) -> Iterator[CoverageTerm]:
+def _take_missing_terms(unpacked: deque[_PendingRange]) -> Iterator[CoverageTerm]:
     """Each missing term of ``unpacked``, in order, released from its range
     as packing takes it; the ranges still waiting to be packed are the only
     ones held."""

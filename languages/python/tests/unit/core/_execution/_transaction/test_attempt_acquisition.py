@@ -426,10 +426,11 @@ def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> Non
     ]
 
 
-def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ran() -> None:
-    # Two Optimistic target writes are two deferred settled writes of one flush:
-    # each reads its coverage at its own turn, so the second settled write's read follows
-    # the first settled write's statements rather than being prepared alongside them.
+def test_the_deferred_ranges_of_one_span_share_one_coverage_read_of_their_flush() -> None:
+    # Two Optimistic target writes of distinct Transaction-Time objects are one
+    # acquisition span: one read call of the flush names both current rows,
+    # and both writes then run as one group, their closes one grouped effect
+    # and their successors one insert.
     recorder = RecordingLifecycleProvider()
 
     def stored(key: int) -> MappingRow:
@@ -442,7 +443,11 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ra
         }
 
     port = ScriptedAdapter(
-        Transact(Read(rows=[stored(1)]), Write(), Write(), Read(rows=[stored(2)]), Write(), Write())
+        Transact(
+            Read(rows=[stored(2), stored(1)]),
+            Read(rows=[{"v.ord": 1}, {"v.ord": 2}]),
+            Write(),
+        )
     )
     patches = [
         prepare_wire_write(
@@ -462,13 +467,16 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ra
     assert [type(call) for call in port.calls] == [
         BeginCall,
         ReadCall,
-        WriteCall,
-        WriteCall,
         ReadCall,
-        WriteCall,
         WriteCall,
         CommitCall,
     ]
+    coverage, close, insert = port.calls[1:4]
+    assert isinstance(coverage, ReadCall) and isinstance(close, ReadCall)
+    assert isinstance(insert, WriteCall)
+    assert coverage.sql.endswith("where t0.bal_id = any(cast(? as bigint[])) and t0.out_z = ?")
+    assert close.sql.startswith("update px.balance t set out_z = ")
+    assert insert.sql.startswith("insert into px.balance(")
     events = recorder.roots[-1].events
     assert sum(isinstance(event, FlushStarted) for event in events) == 1
 

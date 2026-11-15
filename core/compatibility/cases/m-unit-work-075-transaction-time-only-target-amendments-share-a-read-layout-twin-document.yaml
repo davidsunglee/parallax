@@ -1,0 +1,43 @@
+model: models/unchanged-milestone-layout-twin-document.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, document-layout, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each target write's range reads the current row the fixtures stored, so its emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: amend
+      write:
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 1, amount: 110 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: amend, entity: parallax.compatibility.KeptLog, row: { id: 2, amount: 120 }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 3
+      note: both target amendments are one acquisition span; one membership read names both current rows, after which both are ready and run as one Write Group, their gated closes one grouped effect ahead of one insert opening both successors
+      statements:
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: insert into px.kept_log(id, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 2]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ memo: { note: n5 }, amount: 110 }, { memo: { note: n6 }, amount: 120 }]
+then:
+  databaseCalls: 3
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n5 }, amount: 100 } }
+        - { id: 2, in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n6 }, amount: 100 } }
+        - { id: 1, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n5 }, amount: 110 } }
+        - { id: 2, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n6 }, amount: 120 } }

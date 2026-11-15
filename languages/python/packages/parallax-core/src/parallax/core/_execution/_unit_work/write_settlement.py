@@ -112,7 +112,7 @@ from parallax.core.internal.write_plan.steps import (
 __all__ = ["WritePlanCompiler", "require_observed_version"]
 
 
-_GROUP_WRITES: Final = 1024
+_WRITES_PER_GROUP: Final = 1024
 """The most settled writes one Write Group holds. In a group of updates or
 deletes every insert waits behind every non-insert step of the group, so this
 bounds how many settled writes' non-insert steps a failing insert wastes,
@@ -126,19 +126,19 @@ type _GroupKey = tuple[AttributeIdentity, object]
 value it holds, so two Entities of one Inheritance Family sharing a key value
 name one object and two unrelated Entities never do."""
 
-_ACQUISITION_RANGES: Final = 32
+_WRITES_PER_SPAN: Final = 32
 """The most deferred settled writes one acquisition span holds (`m-unit-work`
 *Shared coverage acquisition*): how many objects' coverage can be read ahead of
 their writes' turns. It bounds objects, not the parts or rows their reads
 return. The ready writes of a span execute as one Write Group, so it is never
-more than :data:`_GROUP_WRITES`."""
+more than :data:`_WRITES_PER_GROUP`."""
 
 
 @dataclass(frozen=True, slots=True)
 class _AcquisitionCandidate:
-    """What a deferred settled write of a Bitemporal object shares a coverage
-    read by: the concrete Entity and key Attribute it reads, whether the read
-    takes the shared lock, and the object it writes."""
+    """What a deferred settled write shares a coverage read by: the concrete
+    Entity and key Attribute it reads, whether the read takes the shared lock,
+    and the object it writes."""
 
     entity: EntityIdentity
     key_attribute: AttributeIdentity
@@ -233,7 +233,7 @@ class WritePlanCompiler:
         the rows it removes and opens, and what it leaves for the temporal
         sources it reaches. Consecutive settled writes
         of one mutation phase over distinct objects share a Write Group of at
-        most :data:`_GROUP_WRITES`, laid out as every write's effects, shape by
+        most :data:`_WRITES_PER_GROUP`, laid out as every write's effects, shape by
         shape where the model's payload preparer gives them shapes, and then
         every write's inserts, each write's own order kept. A write
         whose insert the database allocates a key for and a write naming no
@@ -241,7 +241,7 @@ class WritePlanCompiler:
         object the open group already writes starts the next group. A deferred
         write is a plan entry of its own, grouped only once execution binds it.
         Consecutive deferred writes of one mutation phase sharing a coverage
-        read and writing distinct objects, at most :data:`_ACQUISITION_RANGES`
+        read and writing distinct objects, at most :data:`_WRITES_PER_SPAN`
         of them, are recorded as one acquisition span: their coverage is read
         together, and the leading ones whose coverage is ready execute as one
         group. ``ownership`` answers which current rows
@@ -285,7 +285,7 @@ class WritePlanCompiler:
                     _close_group(entries, members, held, shape)
                     entries.append(WriteGroup((write,), steps))
                     continue
-                if len(members) == _GROUP_WRITES or not held.isdisjoint(keys):
+                if len(members) == _WRITES_PER_GROUP or not held.isdisjoint(keys):
                     _close_group(entries, members, held, shape)
                 members.append((write, steps))
                 held.update(keys)
@@ -711,15 +711,13 @@ def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupK
 def _acquisition_candidate(
     write: SettledWrite, item: OrderedWrite, families: InheritanceFacet
 ) -> _AcquisitionCandidate | None:
-    """What ``write``'s deferred range shares a coverage read by, or ``None``
-    where it reads alone: a Transaction-Time-Only range, or one naming no
+    """What ``write``'s deferred range shares a coverage read by, whatever its
+    temporal shape or verb, or ``None`` where it reads alone: one naming no
     complete key the database does not allocate."""
     deferred = write.deferred
     if not isinstance(deferred, DeferredTemporalRange):
         return None
     meaning = deferred.meaning
-    if not isinstance(meaning.facts.shape, Bitemporal):
-        return None
     keys = _group_keys(item, families)
     if keys is None:
         return None
@@ -750,7 +748,7 @@ def _extend_run(
     if run is not None and (
         candidate is None
         or position != run.stop
-        or run.stop - run.start == _ACQUISITION_RANGES
+        or run.stop - run.start == _WRITES_PER_SPAN
         or not _acquisition_compatible(run.first, candidate)
         or candidate.key in run.keys
     ):

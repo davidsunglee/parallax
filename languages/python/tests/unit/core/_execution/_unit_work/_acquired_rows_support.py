@@ -80,10 +80,11 @@ class HeldRows:
 
     def _overlaps(self, request: CoverageReadRequest, row: PredecessorRow) -> bool:
         key = row.members[request.key_attribute.name]
-        windows = [term.valid_time_windows for term in request.terms if term.key_value == key]
-        if not windows:
+        terms = [term for term in request.terms if term.key_value == key]
+        windows = [term.valid_time_windows for term in terms if term.valid_time_windows]
+        if not terms:
             return False
-        if not all(windows):
+        if len(windows) != len(terms):
             return True
         shape = temporal_read.temporal_facet_of(self.model).shape(request.entity.identity)
         assert shape is not None

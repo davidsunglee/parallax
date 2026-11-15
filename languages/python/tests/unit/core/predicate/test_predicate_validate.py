@@ -74,6 +74,7 @@ from parallax.core.internal.predicate._resolved import (
     disjunction,
     framework_comparison,
     managed_comparison,
+    managed_membership,
 )
 from parallax.descriptor._records import (
     Attribute,
@@ -1349,6 +1350,8 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
 
     with pytest.raises(ValueError, match="outside"):
         managed_comparison(op="eq", member=member, value=cast("Any", "1"))
+    with pytest.raises(ValueError, match="outside"):
+        managed_membership(member=member, values=(1, cast("Any", "2")))
     with pytest.raises(ValueError, match="at least one term"):
         conjunction(ResolvedConstant(True))
 

@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
-from ..case_assertions import CaseFailure
+from ..case_assertions import CaseFailure, write_value_equal
 from ..database_binding import PhysicalTable
+from ..temporality import temporal_axes
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
 _ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"access"})
@@ -262,7 +263,7 @@ def compile_scenario(case: Case) -> CompiledScenario:
     ]
     _assert_submission_sources(case, steps, submissions)
     if not state_graded:
-        _assert_golden_submissions(case, submissions)
+        _assert_golden_submissions(case, steps, submissions)
     units = _unit_fates(case, steps, state_graded=state_graded)
     if state_graded:
         _assert_state_graded_document(case, steps, submissions)
@@ -465,21 +466,83 @@ def _assert_submission_sources(
             )
 
 
-def _assert_golden_submissions(case: Case, submissions: list[Submission]) -> None:
+def _assert_golden_submissions(
+    case: Case, steps: tuple[_CompiledStep, ...], submissions: list[Submission]
+) -> None:
     """Refuse the forms only a state-graded case carries.
 
-    A golden-graded step's SQL is the independent lowering of its keyed buffer,
-    graded statement by statement against the find each write settles against;
-    neither a target nor a predicate submission, nor a refused one, has
-    a golden statement that grading could align it with.
+    A golden-graded step's SQL is the independent lowering of its buffer,
+    graded against the find each keyed write settles against or the revision
+    each target write states, with the reads its flush owes counted from the
+    document (`m-case-format` *Buffered keyed write instructions*). A predicate
+    or refused submission has no golden statement that grading could align it
+    with. A target submission is admitted where what it costs follows from the
+    document alone: it is the only submission of its group naming its object,
+    and no earlier find of the group returned a row of that object, so nothing
+    pending or observed stands in for its acquisition or composes with it; and
+    under Locking its Entity has no Valid Time, since the coverage a Bitemporal
+    acquisition holds is stored state the document does not state.
     """
     for submission in submissions:
+        if submission.kind == "target" and submission.refusal is None:
+            _assert_golden_target(case, steps, submissions, submission)
+            continue
         if submission.kind != "keyed" or submission.refusal is not None:
             raise CaseFailure(
                 f"{case.path.name}: {submission.pointer} is a "
                 f"{'refused' if submission.refusal is not None else submission.kind} "
                 f"submission, which only a `grading: state` scenario carries."
             )
+
+
+def _assert_golden_target(
+    case: Case,
+    steps: tuple[_CompiledStep, ...],
+    submissions: list[Submission],
+    target: Submission,
+) -> None:
+    entity, key = target.entity, target.key
+    assert entity is not None and key is not None  # a target submission names its object
+    where = f"{case.path.name}: {target.pointer}"
+    group = steps[target.step].group
+    if case.concurrency_mode == "locking" and any(
+        axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts)
+    ):
+        raise CaseFailure(
+            f"{where} is a Locking target submission of a Bitemporal Entity, whose acquired "
+            f"coverage only a `grading: state` scenario leaves unstated."
+        )
+    for other in submissions:
+        if other is not target and steps[other.step].group == group and other.names(entity, key):
+            raise CaseFailure(
+                f"{where} is a target submission of an object {other.pointer} also writes in "
+                f"its group, which only a `grading: state` scenario carries."
+            )
+    for step in steps[: target.step]:
+        if (
+            isinstance(step, _RowPublishingStep)
+            and step.group == group
+            and _observes(case, step, entity, key)
+        ):
+            raise CaseFailure(
+                f"{where} is a target submission of an object scenario[{step.index}] of its "
+                f"group observed, which only a `grading: state` scenario carries."
+            )
+
+
+def _observes(case: Case, step: _RowPublishingStep, entity: Entity, key: Mapping[str, Any]) -> bool:
+    """Whether the find *step* returned a row of the object *key* names."""
+    rows = case.scenario[step.index].get("expectRows") or ()
+    columns = {
+        attribute["column"]: key[attribute["name"]]
+        for attribute in entity.attributes
+        if attribute.get("primaryKey")
+    }
+    return any(
+        isinstance(row, Mapping)
+        and all(write_value_equal(row.get(column), value) for column, value in columns.items())
+        for row in rows
+    )
 
 
 def _unit_fates(

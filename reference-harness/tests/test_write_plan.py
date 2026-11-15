@@ -367,8 +367,8 @@ def test_a_subquerys_own_predicate_is_not_this_statements_address(dialect: str) 
 #
 # Counted from the spans `m-unit-work` *Shared coverage acquisition* defines, under
 # the corpus ceilings on a span's writes and a statement's parts, never from a
-# runtime's planner: consecutive deferred Bitemporal objects of one Entity and
-# phase share reads in runs of at most 32.
+# runtime's planner: consecutive deferred objects of one Entity and phase share
+# reads in runs of at most 32, whatever their temporal shape.
 
 
 def _object(
@@ -382,11 +382,8 @@ def _deferred(objects: list[SettledObject], parts: dict[int, int]) -> dict:
     return {item.key: parts[key] for item in objects if (key := int(item.key[1][0])) in parts}
 
 
-def _reads(objects: list[SettledObject], parts: dict[int, int], shared: bool = True) -> int:
-    deferred = _deferred(objects, parts)
-    return flush_coverage_reads(
-        _a_case(), objects, deferred, bitemporal=frozenset(deferred) if shared else frozenset()
-    )
+def _reads(objects: list[SettledObject], parts: dict[int, int]) -> int:
+    return flush_coverage_reads(_a_case(), objects, _deferred(objects, parts))
 
 
 @pytest.mark.parametrize(
@@ -417,13 +414,6 @@ def _reads(objects: list[SettledObject], parts: dict[int, int], shared: bool = T
 def test_a_span_owes_one_read_per_sixty_four_parts_it_holds(parts: list[int], reads: int) -> None:
     objects = [_object(key) for key in range(len(parts))]
     assert _reads(objects, dict(enumerate(parts))) == reads
-
-
-def test_objects_that_cannot_share_read_their_own_parts_alone() -> None:
-    # A Transaction-Time-Only object, or any other object a span cannot hold,
-    # reads alone however many deferred objects stand beside it.
-    objects = [_object(key) for key in range(3)]
-    assert _reads(objects, {0: 1, 1: 1, 2: 65}, shared=False) == 4
 
 
 @pytest.mark.parametrize(
@@ -568,12 +558,21 @@ def test_a_units_target_amendment_assigning_nothing_owes_no_coverage_and_ends_no
     )
 
 
-def test_a_units_transaction_time_only_target_writes_each_read_alone() -> None:
-    case = _target_unit("models/balance.yaml", "optimistic")
-    entries = _targets("parallax.compatibility.Balance", range(1, 3))
+@pytest.mark.parametrize(
+    ("concurrency", "objects", "reads"),
+    [("optimistic", 2, 1), ("optimistic", 33, 2), ("locking", 2, 2)],
+    ids=["two-share-one-read", "the-thirty-third-starts-another", "locking-reads-at-the-call"],
+)
+def test_a_units_transaction_time_only_target_writes_share_their_current_row_reads(
+    concurrency: str, objects: int, reads: int
+) -> None:
+    # Each object's one part is its current row; under Locking each call
+    # acquires that row, so the flush reads nothing more.
+    case = _target_unit("models/balance.yaml", concurrency)
+    entries = _targets("parallax.compatibility.Balance", range(1, objects + 1))
     for entry in entries:
         entry["mutation"] = "amend"
-    assert unit_resolving_reads(case, entries) == 2
+    assert unit_resolving_reads(case, entries) == reads
 
 
 def test_held_target_windows_join_the_span_and_read_nothing() -> None:

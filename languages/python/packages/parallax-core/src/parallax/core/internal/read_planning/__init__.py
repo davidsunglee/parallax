@@ -58,6 +58,7 @@ from parallax.core.internal.predicate._resolved import (
 from parallax.core.internal.predicate._resolved import deferred_membership as _deferred_membership
 from parallax.core.internal.predicate._resolved import disjunction as _disjunction
 from parallax.core.internal.predicate._resolved import managed_comparison as _managed_comparison
+from parallax.core.internal.predicate._resolved import managed_membership as _managed_membership
 from parallax.core.internal.relationship import RelationshipMetadata, is_back_reference
 from parallax.core.internal.temporal_read import TimeInterval
 
@@ -333,16 +334,21 @@ def plan_coverage_read(
     *,
     model: Metamodel,
     key: str,
-    terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...]]],
+    terms: Sequence[tuple[ManagedValue, tuple[TimeInterval, ...] | None]],
 ) -> PlannedEntityQuery:
     """The one flat read of the current coverage execution-bound ranges
-    transform: for each object ``terms`` names by its ``key`` value, its rows
-    overlapping any of the Valid-Time windows named beside it, each window
-    bounded by its endpoints as they are, with no upper term where it runs to
-    the open bound, and several windows read as alternatives. A
-    Transaction-Time-Only object has no Valid Time to bound, so its read
-    names one object and selects its current row. One object's read keys the
-    conjunction directly; several objects' reads are alternatives of their own.
+    transform, for each object ``terms`` names by its ``key`` value.
+
+    On an Entity with a Valid-Time axis each term names that object's
+    Valid-Time windows, and the read selects its rows overlapping any of
+    them, each window bounded by its endpoints as they are, with no upper term
+    where it runs to the open bound, and several windows read as
+    alternatives. One object's read keys the conjunction directly; several
+    objects' reads are alternatives of their own. On an Entity with no Valid
+    Time each term's windows are ``None``, and the read selects each object's
+    current row: by key equality for one object, and by membership of the key
+    in the objects' keys for several. A term inconsistent with the Entity's
+    axes is refused.
 
     Every row it selects is current on Transaction Time and is projected whole,
     every document included, because the range carries each row's unassigned
@@ -366,30 +372,39 @@ def plan_coverage_read(
             _declared_attribute(view, axis.end_attribute.name),
         )
 
-    def overlapping(intervals: tuple[TimeInterval, ...]) -> ResolvedPredicate:
-        assert valid is not None and intervals  # a Valid-Time axis bounds every range over it
-        start, end = valid
-        return _disjunction(
-            *(_overlapping(interval, start=start, end=end) for interval in intervals)
-        )
-
     def keyed(key_value: ManagedValue) -> ResolvedPredicate:
         return _managed_comparison(op="eq", member=key_member, value=key_value)
 
-    if len(terms) == 1:
-        ((key_value, intervals),) = terms
-        named = (
-            keyed(key_value)
-            if valid is None
-            else _conjunction(keyed(key_value), overlapping(intervals))
-        )
-    else:
-        named = _disjunction(
-            *(
-                _conjunction(keyed(key_value), overlapping(intervals))
-                for key_value, intervals in terms
+    named: ResolvedPredicate
+    if valid is None:
+        if any(intervals is not None for _key_value, intervals in terms):
+            raise ValueError(
+                f"{entity.identity}: a coverage read of an Entity with no Valid Time "
+                "names no window"
             )
-        )
+        if len(terms) == 1:
+            ((key_value, _intervals),) = terms
+            named = keyed(key_value)
+        else:
+            named = _managed_membership(
+                member=key_member, values=tuple(key_value for key_value, _intervals in terms)
+            )
+    else:
+        start, end = valid
+
+        def overlapping(intervals: tuple[TimeInterval, ...] | None) -> ResolvedPredicate:
+            if not intervals:
+                raise ValueError(
+                    f"{entity.identity}: a coverage read over Valid Time names a window per object"
+                )
+            return _disjunction(
+                *(_overlapping(interval, start=start, end=end) for interval in intervals)
+            )
+
+        alternatives = [
+            _conjunction(keyed(key_value), overlapping(intervals)) for key_value, intervals in terms
+        ]
+        named = alternatives[0] if len(alternatives) == 1 else _disjunction(*alternatives)
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,

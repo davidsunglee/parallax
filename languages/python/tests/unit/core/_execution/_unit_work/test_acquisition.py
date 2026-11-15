@@ -36,10 +36,12 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.uow import FlushScope
 from parallax.core.internal import inheritance
+from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.inheritance import EntityMemberSelection
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import (
     FlushTrigger,
     TargetWriteInstruction,
@@ -113,6 +115,33 @@ def _account_patch() -> PreparedTargetInstruction:
         TargetWriteInstruction("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=3),
         write_preparation_of(_ACCOUNT),
     )
+
+
+# --------------------------------------------------------------------------- #
+# A coverage term names at least one uncovered part.                          #
+# --------------------------------------------------------------------------- #
+_JAN: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize(
+    ("windows", "parts"),
+    [
+        (None, 1),
+        ((TimeInterval(_JAN, _MAR),), 1),
+        ((TimeInterval(_JAN, _MAR), TimeInterval(_MAR + dt.timedelta(days=1), INFINITY)), 2),
+    ],
+    ids=["current-row", "one-window", "two-windows"],
+)
+def test_a_coverage_term_counts_one_part_per_window_and_one_for_a_current_row(
+    windows: tuple[TimeInterval, ...] | None, parts: int
+) -> None:
+    assert CoverageTerm(1, windows).part_count == parts
+
+
+def test_a_coverage_term_naming_no_part_is_refused() -> None:
+    with pytest.raises(ValueError, match="at least one window"):
+        CoverageTerm(1, ())
 
 
 # --------------------------------------------------------------------------- #
@@ -194,7 +223,7 @@ def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_ha
     with pytest.raises(_Unjudged) as raised:
         if coverage:
             coverage_request = CoverageReadRequest(
-                request.entity, _key(request), (CoverageTerm(1, ()),), shared_lock=False
+                request.entity, _key(request), (CoverageTerm(1, None),), shared_lock=False
             )
             consume_coverage(
                 coverage_request, selection, _failing_after(rows, 1), _ABSENT, documents, 2
@@ -218,7 +247,7 @@ def _key(request: TargetReadRequest) -> AttributeIdentity:
 # --------------------------------------------------------------------------- #
 def _shared_request() -> CoverageReadRequest:
     request = _target_request()
-    terms = (CoverageTerm(1, ()), CoverageTerm(2, ()), CoverageTerm(3, ()))
+    terms = (CoverageTerm(1, None), CoverageTerm(2, None), CoverageTerm(3, None))
     return CoverageReadRequest(request.entity, _key(request), terms, shared_lock=False)
 
 

@@ -1,7 +1,8 @@
 """The deferred ranges of one acquisition span bound through one scoped
 binding (`m-unit-work` *Shared coverage acquisition*), over the in-memory
-acquisition: their coverage read in shared reads packed in range and
-Valid-Time order, each range ready once every read naming its parts
+acquisition: their uncovered parts read in shared reads packed in range order —
+a Bitemporal range's in Valid-Time order, a Transaction-Time-Only range's one
+current row whole — each range ready once every read naming its parts
 succeeded, and the leading ready ranges bound together as one Write Group only
 when the flush advances to it."""
 
@@ -9,33 +10,49 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import FrameType
 from typing import Any, cast
 
 import pytest
 
-from parallax.core import Bitemporal, InternalError
+from parallax.core import Attr, Bitemporal, DomainModel, InternalError, TxTemporal, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
+    RetainedTargetState,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import prepare_wire_write
+from parallax.core._execution._unit_work.effects import (
+    CARDINALITY_CORRUPTION,
+    WRITE_PRECONDITION_FAILED,
+    WritePreconditionError,
+)
+from parallax.core._execution._unit_work.instructions import (
+    PreparedTargetInstruction,
+    prepare_wire_write,
+)
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
-from parallax.core._execution._unit_work.write_items import AdmittedWrite
+from parallax.core._execution._unit_work.write_items import AdmittedWrite, TargetWrite, target_write
+from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_error import DatabaseError
+from parallax.core.internal.entity._construction_input import ABSENT
+from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.temporal_read import milestone_edge, temporal_facet_of
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
+    TargetWriteInstruction,
+    WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.internal.write_plan import PredecessorRow, PredecessorRows
+from parallax.core.internal.write_plan import ObjectKey, PredecessorRow, PredecessorRows
 from parallax.core.internal.write_plan import plan as plan_module
 from parallax.core.internal.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.internal.write_plan.plan import (
@@ -47,17 +64,24 @@ from parallax.core.internal.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.internal.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
+from parallax.core.internal.write_plan.steps import (
+    MilestoneTarget,
+    PlannedClose,
+    PlannedInsert,
+    PlannedStep,
+)
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of
+from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._shared_coverage_support import (
     AT,
     MODEL,
+    T0,
     ShareCols,
     covered_target,
     day,
@@ -65,7 +89,6 @@ from tests.unit.core._shared_coverage_support import (
     frag_rows,
     observation,
     plan,
-    ranges_of,
     rectangle,
 )
 
@@ -112,7 +135,7 @@ class _Traced:
         self.trace.append(
             (
                 "read",
-                tuple((term.key_value, len(term.valid_time_windows)) for term in request.terms),
+                tuple((term.key_value, term.part_count) for term in request.terms),
             )
         )
         failure = self.fail.get(self.reads)
@@ -127,10 +150,10 @@ class _Traced:
             self.answers.extend(by_key.values())
 
 
-def _bindings(written: WritePlan, acquire: AcquireRows) -> RangeBindings:
+def _bindings(written: WritePlan, acquire: AcquireRows, model: Metamodel = MODEL) -> RangeBindings:
     """The scoped binding of every entry of ``written``: its one acquisition
     span, or its one deferred write."""
-    planner = build_write_planner(bound_model(MODEL))
+    planner = build_write_planner(bound_model(model))
     return RangeBindings(
         written,
         start=0,
@@ -179,7 +202,10 @@ def _drained(bindings: RangeBindings, trace: list[tuple[str, tuple[Any, ...]]]) 
 
 def _span(written: WritePlan) -> WritePlan:
     assert written.acquisition_spans == (AcquisitionSpan(0, len(written.entries)),)
-    assert len(ranges_of(written)) == len(written.entries)
+    assert all(
+        isinstance(entry, SettledWrite) and isinstance(entry.deferred, DeferredTemporalRange)
+        for entry in written.entries
+    )
     return written
 
 
@@ -332,10 +358,10 @@ def _window(step: PlannedStep) -> tuple[object, object]:
     return cells["validStart"], cells["validEnd"]
 
 
-def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
+def test_each_ranges_missing_term_is_derived_once_before_anything_is_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    derive = ranges_module._missing_coverage  # pyright: ignore[reportPrivateUsage] - the derivation each range takes once
+    derive = ranges_module._missing_term  # pyright: ignore[reportPrivateUsage] - the derivation each range takes once
     written, stored = _fragmented(ShareCols, (33, 33, 1))
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
     derived: list[int] = []
@@ -344,7 +370,7 @@ def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
         derived.append(traced.reads)
         return derive(*arguments)
 
-    monkeypatch.setattr(ranges_module, "_missing_coverage", deriving)
+    monkeypatch.setattr(ranges_module, "_missing_term", deriving)
     _drained(_bindings(written, traced.acquire), traced.trace)
     assert derived == [0, 0, 0]
 
@@ -370,7 +396,7 @@ def test_a_row_one_read_returns_twice_reaches_its_binding_twice(recorded: _Bound
 
 
 def test_a_row_two_reads_both_return_is_bound_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ranges_module, "_COVERAGE_WINDOWS", 1)
+    monkeypatch.setattr(ranges_module, "_PARTS_PER_READ", 1)
     written, stored = _fragmented(ShareCols, (1, 2))
     traced = _Traced(_KeyedRows(stored))
     shared = _members(_drained(_bindings(written, traced.acquire), traced.trace))
@@ -646,3 +672,163 @@ def _inside_write() -> AdmittedWrite:
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
+
+
+# --------------------------------------------------------------------------- #
+# Transaction-Time-Only ranges: each one part, its current row.               #
+# --------------------------------------------------------------------------- #
+class ShareLog(TxTemporal, table="share_log", namespace="parallax.execution.shared"):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+
+
+_LOG_MODEL = model_of(DomainModel(ShareLog))
+
+
+def _log_row(key: int) -> PredecessorRow:
+    """Object ``key``'s current row, known from ``T0``."""
+    return PredecessorRow(members={"id": key, "amount": key, "txStart": T0, "txEnd": INFINITY})
+
+
+def _log_target(key: int, *, covered: bool = False) -> TargetWrite:
+    """A target write of object ``key`` stating ``T0``, beside, where
+    ``covered``, the current row its Locking acquisition retained."""
+    prepared = prepare_wire_write(
+        TargetWriteInstruction(
+            "amend", ShareLog.identity.canonical, {"id": key, "amount": 7}, if_tx_start=T0
+        ),
+        write_preparation_of(_LOG_MODEL),
+    )
+    assert isinstance(prepared, PreparedTargetInstruction)
+    families = inheritance_facet_of(_LOG_MODEL)
+    write = target_write(prepared, families)
+    if not covered:
+        return write
+    view = families.entity(ShareLog.identity)
+    shape = temporal_facet_of(_LOG_MODEL).shape(ShareLog.identity)
+    assert view is not None and shape is not None
+    stored = _log_row(key)
+    state = TemporalObjectStateKey(
+        ObjectKey(ShareLog.identity, (("id", key),)), milestone_edge(shape, stored, None)
+    )
+    row = positional_row(view.member_selection.shape, stored.members, absent=ABSENT)
+    return replace(write, retained=RetainedTargetState(state, 0, row, None))
+
+
+def _log_plan(
+    writes: Sequence[AdmittedWrite], *, concurrency: ConcurrencyPreference = "optimistic"
+) -> WritePlan:
+    return build_write_planner(bound_model(_LOG_MODEL)).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at(AT.isoformat()),
+            preference=concurrency,
+            composed_writes=admitted_writes(_LOG_MODEL, list(writes)),
+        )
+    )
+
+
+def _closed(bound: BoundRange) -> tuple[object, ...]:
+    (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
+    assert isinstance(close.target, MilestoneTarget)
+    return close.target.key_values
+
+
+def test_transaction_time_only_ranges_share_one_read_naming_each_current_row_once(
+    recorded: _Bound,
+) -> None:
+    written = _span(_log_plan([_log_target(key) for key in (1, 2, 3)]))
+    # The rows arrive in another order than the read names their objects.
+    traced = _Traced(
+        HeldRows(_LOG_MODEL, [_log_row(3), _log_row(1), _log_row(2)], overlapping=True)
+    )
+    shared = _members(_drained(_bindings(written, traced.acquire, _LOG_MODEL), traced.trace))
+    assert traced.trace == [("read", ((1, 1), (2, 1), (3, 1))), ("bind", (1, 2, 3))]
+    assert [_closed(bound) for bound in shared] == [(1,), (2,), (3,)]
+    assert [(key, len(acquired)) for key, _reused, acquired in recorded.calls] == [
+        (1, 1),
+        (2, 1),
+        (3, 1),
+    ]
+    alone = _members(
+        _drained(
+            _bindings(
+                _log_plan([_log_target(2)]),
+                HeldRows(_LOG_MODEL, [_log_row(2)], overlapping=True),
+                _LOG_MODEL,
+            ),
+            [],
+        )
+    )
+    assert shared[1].steps == alone[0].steps
+
+
+def test_a_covered_range_needs_no_read_and_never_passes_an_uncovered_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ranges_module, "_PARTS_PER_READ", 1)
+    writes = [
+        _log_target(1, covered=True),
+        _log_target(2),
+        _log_target(3, covered=True),
+        _log_target(4),
+    ]
+    written = _span(_log_plan(writes, concurrency="locking"))
+    traced = _Traced(HeldRows(_LOG_MODEL, [_log_row(2), _log_row(4)], overlapping=True))
+    _drained(_bindings(written, traced.acquire, _LOG_MODEL), traced.trace)
+    # The covered first range runs before anything is read; the covered third
+    # runs with the second once its read succeeded, before the fourth is read.
+    assert traced.trace == [
+        ("complete", (1,)),
+        ("complete", (3,)),
+        ("bind", (1,)),
+        ("read", ((2, 1),)),
+        ("bind", (2, 3)),
+        ("read", ((4, 1),)),
+        ("bind", (4,)),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("bound", "reads"),
+    [(1, [(1,), (2,), (3,)]), (2, [(1, 2), (3,)]), (3, [(1, 2, 3)])],
+    ids=["one-per-read", "two-per-read", "all-in-one-read"],
+)
+def test_each_current_row_takes_one_part_of_a_reads_bound(
+    monkeypatch: pytest.MonkeyPatch, bound: int, reads: list[tuple[int, ...]]
+) -> None:
+    monkeypatch.setattr(ranges_module, "_PARTS_PER_READ", bound)
+    written = _span(_log_plan([_log_target(key) for key in (1, 2, 3)]))
+    traced = _Traced(HeldRows(_LOG_MODEL, [_log_row(key) for key in (1, 2, 3)], overlapping=True))
+    shared = _members(_drained(_bindings(written, traced.acquire, _LOG_MODEL), traced.trace))
+    named = [terms for kind, terms in traced.trace if kind == "read"]
+    assert named == [tuple((key, 1) for key in keys) for keys in reads]
+    assert [_closed(each) for each in shared] == [(1,), (2,), (3,)]
+
+
+def test_a_range_its_read_found_nothing_for_is_ready_and_binds_to_no_row() -> None:
+    written = _span(_log_plan([_log_target(1), _log_target(2)]))
+    traced = _Traced(HeldRows(_LOG_MODEL, [_log_row(1)], overlapping=True))
+    with (
+        raises_code(WritePreconditionError, WRITE_PRECONDITION_FAILED) as failed,
+        _bindings(written, traced.acquire, _LOG_MODEL) as bindings,
+    ):
+        next(bindings)
+    # One read named both objects; the second, ready once it succeeded, bound
+    # to the absence of its row and failed as its caller's precondition.
+    assert traced.trace == [("read", ((1, 1), (2, 1)))]
+    assert "key={'id': 2}" in str(failed.value)
+
+
+def test_a_failed_read_binds_no_range_still_waiting_for_it(
+    monkeypatch: pytest.MonkeyPatch, recorded: _Bound
+) -> None:
+    monkeypatch.setattr(ranges_module, "_PARTS_PER_READ", 1)
+    written = _span(_log_plan([_log_target(1), _log_target(2)]))
+    traced = _Traced(HeldRows(_LOG_MODEL, [_log_row(1), _log_row(2)], overlapping=True))
+    traced.fail[2] = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
+    with pytest.raises(DatabaseError), _bindings(written, traced.acquire, _LOG_MODEL) as bindings:
+        for each in bindings:
+            traced.trace.append(("bind", _keys(each)))
+    assert traced.trace == [("read", ((1, 1),)), ("bind", (1,)), ("read", ((2, 1),))]
+    assert [key for key, _reused, _acquired in recorded.calls] == [1]

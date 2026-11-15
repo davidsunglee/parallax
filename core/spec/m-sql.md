@@ -1256,9 +1256,11 @@ current coverage overlapping the part of its extent no row the unit already hold
 covers. One statement selects the object's current milestones that overlap any of
 its uncovered parts.
 
-Uncovered parts are disjoint and never adjacent, each bounded by its own
-endpoints, and a statement names a bounded number of them, so many parts take
-several such reads, all before the range binds. The bound is the implementation's,
+A Bitemporal object's uncovered parts are Valid-Time intervals, disjoint and never
+adjacent, each bounded by its own endpoints. A Transaction-Time-Only object has no
+Valid Time: its one part is its current row, uncovered unless a row the unit holds
+is it. A statement names a bounded number of parts, so many parts take several
+such reads, all before the range binds. The bound is the implementation's,
 within the dialect's bind limit (`m-dialect` *Bind parameter limit*). A row
 overlapping a part is read whole however little of it the part reaches, and a row two statements both return is
 one row. Its projection is the predecessor projection (*Result form*), the
@@ -1270,17 +1272,35 @@ it names, and a case authors no golden for it (`m-case-format`).
 The writes of one acquisition span (`m-unit-work` *Shared coverage
 acquisition*) share these reads. One statement names several objects' parts,
 each object's key beside its own parts, and the bound counts the parts of every
-object it names.
+object it names: one per Valid-Time interval, and one per Transaction-Time-Only
+current row.
 
-Parts are packed in the span's write order, each object's in Valid-Time order,
-and an object's parts that do not fit continue in the next statement. A row
-belongs to the object its own stored key names, wherever it stands in the
-result. The span's reads interleave with its writes' statements: before each
-coverage read, every leading write of the span with no part left unread binds and
-runs its statements below, so no coverage read is issued while the span's next
-write could execute. A
-Transaction-Time-Only object is never part of a span, and its read names it
-alone.
+Parts are packed in the span's write order, a Bitemporal object's in Valid-Time
+order, and a Bitemporal object's parts that do not fit continue in the next
+statement; a current row is never split. A row belongs to the object its own
+stored key names, wherever it stands in the result. The span's reads interleave
+with its writes' statements: before each coverage read, every leading write of
+the span with no part left unread binds and runs its statements below, so no
+coverage read is issued while the span's next write could execute.
+
+A Transaction-Time-Only statement selects each object's current row by its key:
+equality for one object, and the key membership of *Batched insert / update* for
+several, which binds one array where the dialect binds arrays, so its text does
+not grow with the number of objects. A Bitemporal statement keys each object
+beside the overlap of its own intervals.
+
+| Objects | Transaction-Time-Only coverage read |
+|---|---|
+| One | `select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?` |
+| Several (array) | `… from px.balance t0 where t0.bal_id = any(cast(? as bigint[])) and t0.out_z = ?` |
+| Several (no array) | `… from px.balance t0 where t0.bal_id in (?, ?) and t0.out_z = ?` |
+
+| Objects | Bitemporal coverage read |
+|---|---|
+| One | `… from px.position t0 where t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or t0.thru_z > ?) and t0.out_z = ?` |
+| Several | `… from px.position t0 where ((t0.pos_id = ? and t0.thru_z > ? and t0.from_z < ?) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` |
+
+Under Locking each carries the read-lock suffix below.
 
 Once a range's rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in

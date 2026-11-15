@@ -243,6 +243,16 @@ def framework_comparison(
     return ResolvedComparison(op, member, value, framework=True)
 
 
+def managed_membership(
+    *, member: AttributeMetadata, values: tuple[ManagedValue, ...]
+) -> ResolvedMembership:
+    """Adopt already-managed generated membership operands."""
+    for value in values:
+        if not matches_neutral_type(value, member.type):
+            raise ValueError(f"{member.identity}: generated value is outside {member.type!r}")
+    return ResolvedMembership("in", member, values)
+
+
 def deferred_membership(*, member: AttributeMetadata) -> ResolvedMembership:
     """A generated membership whose key sequence is bound after compilation."""
     return ResolvedMembership("in", member, DeferredKeySet(member.type))

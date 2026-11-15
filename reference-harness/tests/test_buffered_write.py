@@ -6,8 +6,8 @@ together. It spans a single keyed write, a mixed multi-object flush (insert /
 update / delete of DIFFERENT objects), and the two-keyed same-object coalescing
 pair alike — same-object folding at flush is the RUNTIME coalescing rule, not a
 structural constraint, so no cross-entry same-entity / same-primary-key equality is
-imposed. A state-graded scenario's buffer may also carry target
-submissions and readless predicate writes; a golden-graded one stays keyed.
+imposed. A golden-graded scenario's buffer may also carry target submissions,
+and a state-graded one also readless predicate writes and refused submissions.
 
 The generality is over objects and mutations, not over PROVENANCE: an entry
 assigning a DB-computed write marker states a statement the framework issues
@@ -259,6 +259,21 @@ def test_a_golden_graded_buffer_is_keyed_and_a_state_graded_one_carries_predicat
         compileEligibility={"mode": "run-only", "reason": "query-result-dependent"},
     )
     assert next(validator.iter_errors(state), None) is None
+
+
+_TARGET_SUBMISSION = {
+    "mutation": "amend",
+    "entity": "OrderItem",
+    "row": {"id": 1, "sku": "Z"},
+    "ifVersion": 1,
+}
+
+
+def test_a_golden_graded_buffer_carries_a_target_submission_but_no_refused_one() -> None:
+    validator = Draft202012Validator({"$ref": _CASE_URL}, registry=_REGISTRY)
+    assert next(validator.iter_errors(_scenario_document([_TARGET_SUBMISSION])), None) is None
+    refused = {**_TARGET_SUBMISSION, "expectError": "write-evidence-already-claimed"}
+    assert next(validator.iter_errors(_scenario_document([refused])), None) is not None
 
 
 _STATE_FIND = {"uow": "g", "objectQuery": {"target": "OrderItem", "predicate": {"true": {}}}}

@@ -1,0 +1,67 @@
+model: models/unchanged-milestone-layout-twin-document.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-concurrency, audit-only, temporal, scenario, target-write, layout-twin, document-layout, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "each target write's range reads the current row the fixtures or an earlier unit stored, so its emissions depend on a query result"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: seed
+      write:
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 3, amount: 100, memo: { note: n7 } }], at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 4, amount: 100, memo: { note: n8 } }], at: "2024-10-01T00:00:00.000000Z" }
+      databaseCalls: 1
+      note: open logs 3 and 4 at October
+      statements:
+        - sql:
+            postgres: insert into px.kept_log(id, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [3, 4]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ amount: 100, memo: { note: n7 } }, { amount: 100, memo: { note: n8 } }]
+    - uow: replace
+      write:
+        - { mutation: replace, entity: parallax.compatibility.KeptLog, row: { id: 1, amount: 100, memo: { note: n5 } }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: replace, entity: parallax.compatibility.KeptLog, row: { id: 2, amount: 100, memo: { note: n6 } }, ifTxStart: "2023-12-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: replace, entity: parallax.compatibility.KeptLog, row: { id: 3, amount: 130, memo: { note: n7 } }, ifTxStart: "2024-10-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+        - { mutation: replace, entity: parallax.compatibility.KeptLog, row: { id: 4, amount: 140, memo: { note: n8 } }, ifTxStart: "2024-10-01T00:00:00.000000Z", at: "2024-11-01T00:00:00.000000Z" }
+      databaseCalls: 4
+      note: the four target replacements are one acquisition span read by one membership statement; logs 1 and 2 restate what they hold, so each is kept by a guard on its stated start, the two guards one grouped effect, while logs 3 and 4 close as another grouped effect, ahead of one insert opening their successors
+      statements:
+        - sql:
+            postgres: update px.kept_log t set in_z = t.in_z from unnest(cast(? as bigint[]), cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [1, 2]
+            - ["2023-12-01T00:00:00.000000Z", "2023-12-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: update px.kept_log t set out_z = v.c3 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) where t.id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+          binds:
+            - [3, 4]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - infinity
+        - sql:
+            postgres: insert into px.kept_log(id, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [3, 4]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ memo: { note: n7 }, amount: 130 }, { memo: { note: n8 }, amount: 140 }]
+then:
+  databaseCalls: 5
+  tableState:
+    px:
+      kept_log:
+        - { id: 1, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n5 }, amount: 100 } }
+        - { id: 2, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n6 }, amount: 100 } }
+        - { id: 3, in_z: "2024-10-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n7 }, amount: 100 } }
+        - { id: 4, in_z: "2024-10-01T00:00:00.000000Z", out_z: "2024-11-01T00:00:00.000000Z", payload: { memo: { note: n8 }, amount: 100 } }
+        - { id: 3, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n7 }, amount: 130 } }
+        - { id: 4, in_z: "2024-11-01T00:00:00.000000Z", out_z: infinity, payload: { memo: { note: n8 }, amount: 140 } }

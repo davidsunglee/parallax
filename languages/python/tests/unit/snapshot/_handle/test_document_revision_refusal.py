@@ -14,6 +14,7 @@ import pytest
 from parallax.core import Attr, Document, DomainModel, TxTemporal, UsageError, attr
 from parallax.core._execution._write_lowering import STORED_DOCUMENT_NOT_OBJECT
 from parallax.core.internal.base import SQL_NULL, StructuredDocument
+from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.core.internal.unit_work import TRANSACTION_ROLLBACK_ONLY
 from parallax.snapshot import TxnContext
@@ -81,16 +82,16 @@ def _kinds(calls: list[PortCall]) -> list[str]:
 def test_a_revision_patching_a_row_not_read_as_an_object_is_refused_before_its_sql(
     document: object,
 ) -> None:
-    # The first object's revision runs and completes in its own group before
-    # the second object's group is refused at its own payload demand; nothing
-    # judges the later group ahead of its turn.
+    # Both revisions share one coverage read and bind into one group; the
+    # first object's revision runs in a grouped statement of its own before
+    # the second is refused at its own payload demand, so nothing judges the
+    # later revision ahead of its turn and no statement carries it.
     port = ScriptedAdapter(
         Transact(
             Write(),
             Read(rows=[_stored(8)]),
-            Read(rows=[_stored(8)]),
-            Write(),
-            Read(rows=[_row(9, document)]),
+            Read(rows=[_stored(8), _row(9, document)]),
+            Read(rows=[{"v.ord": 1}]),
         )
     )
     reached: list[str] = []
@@ -111,19 +112,12 @@ def test_a_revision_patching_a_row_not_read_as_an_object_is_refused_before_its_s
         db_for(_MODEL, port).transact(fn)
 
     assert reached == ["buffered"]
-    assert _kinds(port.calls) == [
-        "begin",
-        "insert",
-        "read",
-        "read",
-        "update",
-        "read",
-        "rollback",
-    ]
-    (revision,) = (
-        call for call in port.calls if isinstance(call, WriteCall) and call.sql.startswith("update")
-    )
-    assert revision.binds[-3:] == (8, "infinity", FIXED)
+    assert _kinds(port.calls) == ["begin", "insert", "read", "read", "read", "rollback"]
+    revision = port.calls[-2]
+    assert isinstance(revision, ReadCall) and revision.sql.startswith("update")
+    keys, starts, _patches, current = revision.binds
+    assert isinstance(keys, ArrayBind) and isinstance(starts, ArrayBind)
+    assert (keys.values, starts.values, current) == ([8], [FIXED], "infinity")
 
 
 @pytest.mark.parametrize("document", _NON_OBJECT_DOCUMENTS.values(), ids=_NON_OBJECT_DOCUMENTS)

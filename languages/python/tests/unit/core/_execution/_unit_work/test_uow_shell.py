@@ -927,7 +927,7 @@ def test_each_settled_write_publishes_its_change_before_the_next_group_executes(
 
 
 def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
-    limit = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+    limit = write_settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
     accounts = 2 * limit + 2
     claims = [_account_claim(account_id, 1) for account_id in range(1, accounts + 1)]
     spent: list[int] = []

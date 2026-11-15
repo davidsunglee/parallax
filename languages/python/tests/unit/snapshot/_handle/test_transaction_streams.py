@@ -303,7 +303,7 @@ def test_a_default_page_delivers_1024_roots_so_a_writing_loop_flushes_1024_write
     first, second = paged_reads(rows, size=1024)
     # Each Write Group of the first page's writes applies its updates as one
     # grouped effect.
-    limit = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+    limit = write_settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
     groups = [_effects(min(limit, 1024 - start)) for start in range(0, 1024, limit)]
     port = ScriptedAdapter(Transact(first, *groups, second, Write()))
 
