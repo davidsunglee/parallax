@@ -108,8 +108,10 @@ asserts the planner's choice, and no cost workload was added.
 An audit-heavy deployment that relies on R4 or S3 reads can add an index with the
 old ending in its own migrations. On PostgreSQL 18 the reordered key plus such an
 index served every R4 read at the old speed. Parallax cannot declare it, because
-an authored component naming an axis end is refused as
-`index-temporal-attribute` and the ending is derived; a schema delta drops only
+the ending is derived and an authored component naming an axis end is refused, by
+every frontend, as `metamodel-index-temporal-attribute`
+([ADR 0095](0095-model-formation-refuses-an-authored-index-naming-an-axis-endpoint.md));
+a schema delta drops only
 indices an earlier model edition declared, so it never touches one. The Python
 binding's modeling guide documents it.
 
