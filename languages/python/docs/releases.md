@@ -1,5 +1,48 @@
 # Release notes
 
+## Unreleased
+
+A Bitemporal table's primary key now ends with `out_z` before `thru_z`, and so does every
+index you declare on a Bitemporal entity: `price` is keyed `(sku, out_z, thru_z)` rather
+than `(sku, thru_z, out_z)`. On PostgreSQL 18 the old order made the planner skip the key
+for reads at the present Transaction Time — every read a Bitemporal write depends on —
+and scan the table's temporal exclusion index instead, at several times the cost.
+[Indices on temporal entities](guide/02-modeling.md#indices-on-temporal-entities) explains
+the ending and what it costs reads at a past Transaction Time. Transaction-Time-Only
+tables, the statements Parallax runs, and what a unique index refuses are unchanged.
+
+`schema_delta` creates new tables in the new order but never changes a table that already
+exists, so an existing Bitemporal table keeps working, at the old read cost, until you
+migrate it. The key's name and each index's name are derived from their columns in
+order, so both change; the exclusion's name doesn't. Take the target names from a fresh
+provisioning of the same model under the same binding: the `create table` statement of
+`schema_delta(evolve(ABSENT, model, later_binding=binding))` names the key, and its
+`created_indices` name the indices. Then, per Bitemporal table, rebuild the key while
+holding the exclusive lock only briefly, and rebuild each index you declared:
+
+```sql
+create unique index concurrently <new_pk_name> on <schema>.price (sku, out_z, thru_z);
+alter table <schema>.price
+  drop constraint <old_pk_name>,
+  add constraint <new_pk_name> primary key using index <new_pk_name>;
+-- per declared index on the table
+create index concurrently <new_index_name> on <schema>.price (supplier_id, out_z, thru_z);
+drop index concurrently <schema>.<old_index_name>;
+```
+
+Write `create unique index` for a unique index. A table-per-concrete-subtype family holds
+the key and each index on every concrete table, each under its own name, so repeat the
+steps on each.
+
+An index can no longer name a time-tracking attribute. A class such as
+`index("price_end", "valid_end")` on a temporal entity used to be accepted and created an
+index over the end columns; `DomainModel` now raises `MetamodelValidationError` with the
+issue `metamodel-index-temporal-attribute`. A descriptor naming one fails the same way,
+rather than with `DescriptorError` code `descriptor-value-invalid` and rule
+`index-temporal-attribute`. Remove the attribute from the index. A model edition that
+declared one no longer forms, so `evolve` can't drop the index it created: drop it
+yourself, or rename it outside the `pxi_` prefix to keep it as one of your own.
+
 ## 0.2.0
 
 You now have to tell Parallax where your tables live. `connect(adapter, model)`,

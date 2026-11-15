@@ -426,6 +426,37 @@ you remove one with `terminate`, which ends its current state and keeps its hist
 rather than with `delete`.
 [Writing](04-writing.md) shows each profile's writes.
 
+### Indices on temporal entities
+
+A temporal entity's table keeps every state, so its primary key and each index you declare
+end with the time-tracking columns that close a state: `out_z` on a Transaction-Time-Only
+table, and `out_z, thru_z` on a Bitemporal one. The `Price` table above has the key
+`(sku, out_z, thru_z)`, and `index("price_amount", "amount")` becomes an index on
+`(amount, out_z, thru_z)`. A unique index therefore refuses two states sharing its values
+and their ends, not two objects sharing them over overlapping time. You declare only the
+attributes and Parallax adds the ends: an index naming a time-tracking attribute, such as
+`index("price_end", "valid_end")`, makes `DomainModel` raise `MetamodelValidationError`
+with the issue `metamodel-index-temporal-attribute`.
+
+The Transaction-Time end comes first because almost every read, and every read a write
+depends on, asks for what the database holds now, at some Valid Time: `out_z` is pinned
+to `infinity` and `thru_z` is compared against the Valid Time. Ending with `out_z, thru_z`
+lets PostgreSQL go straight to a key's current rows. Reads at a past Transaction Time, such
+as `as_of(tx_time=...)` on a Bitemporal entity, cost more through these indices and may
+use the table's temporal exclusion index instead.
+
+If your application relies on many such audit reads, add an index with the other ending
+in your own migrations, for example:
+
+```sql
+create index concurrently price_audit_tx on price (sku, thru_z, out_z);
+```
+
+Parallax can't declare this index for you, and `schema_delta` never touches it: a delta
+drops only indices an earlier model declared. Name it outside the `pxc_` and `pxi_`
+prefixes Parallax uses for its own constraints and indices, because a clash would only
+surface when a later delta runs.
+
 ## Optimistic-lock versions
 
 Parallax protects a write to a row a transaction read in one of two ways, its two
