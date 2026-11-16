@@ -9,59 +9,96 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `55aaae5de00d9b6d4d794392ce9af2b2970f4aa3` | 2026-11-14 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `0253277ec9cebb8a582b06959134324a8ed126ce` | 2026-11-16 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
 The current portfolio is one clean collection with no replacement adjustment:
 five exact member matrices and 3,263 readings, with no collector failures,
-member errors, or incomplete cells. It supersedes the November 13 capture
-because the one-object PostgreSQL Document merge changed the measured
-lowering and the write-lowering workload's executable source, which a digest
-restatement cannot cover. [Conditions](current/conditions.json) record runtime
-identities and source hashes. Snapshot delivery is authoritative under its
-embedded Budget Contract; the other members have their own protocols and are
-non-authoritative.
+member errors, or incomplete cells. It supersedes the November 14 capture
+because retiring database-computed and registry key allocation changed the
+measured flush and the write-lowering workload's executable source, which a
+digest restatement cannot cover. [Conditions](current/conditions.json) record
+runtime identities and source hashes. Snapshot delivery is authoritative under
+its embedded Budget Contract; the other members have their own protocols and
+are non-authoritative.
 
-The collection ran from 08:37:19 to 09:20:24 EST on November 14 (43m05s). The
-host was a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS 27.0.1, with CPython
-3.14.10 and 3.15.2 and PostgreSQL 18.6 for Snapshot delivery; lifecycle
-overhead ran on 3.15.2 alone. Child checkpoints and complete-member envelopes
-were saved atomically during collection; [durations](current/durations.json)
-retain collection telemetry. Verification reports four `repeated-fanout`
-publication timing advisories and seven streamed-memory scaling advisories.
+The collection ran from 13:05:47 to 13:47:22 EST on November 16 (41m35s), from
+a clean checkout. The host was a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+27.2.1, with CPython 3.14.10 and 3.15.2 and PostgreSQL 18.6 for Snapshot
+delivery; lifecycle overhead ran on 3.15.2 alone. The dependency lock is the
+outgoing capture's. The one-minute load average sampled during collection had
+a median of 4.1 (range 1.6–6.7). Child checkpoints and complete-member
+envelopes were saved atomically during collection;
+[durations](current/durations.json) retain collection telemetry. Verification
+reports `firstResult.page1` timing advisories for `duplicate-include` and
+`versioned-document`, the four `repeated-fanout` publication timing
+advisories, and eight streamed-memory scaling advisories.
 
-Write lowering changed workload and instrument inputs, and the dependency lock
-changed with the 0.2.0 workspace version, so `--compare --require-compatible`
-refuses the pair; the movement below comes from a plain `--compare` and does
-not isolate a code effect. The unchanged 1.10-headroom derivation keeps all
-410 memory-gate addresses: 15 ceilings rise, 19 fall, and 376 are unchanged.
-No fresh reading exceeds its outgoing ceiling. No write-lowering byte reading
-grows beyond the noise allowance, and every write-lowering count, including
-statements and invocations, is unchanged. Changed-Document keyed writes use
-6.8–9.2% fewer transient bytes per row across runtimes and representations,
-so their ceilings fall 7.1–8.1%; `bitemporal.interior.document.wire` retained
-bytes fall 3.3%. The largest derived rises are write-lowering `model.prepared`
-retained and transient bytes, +0.5%, and `model.prepared.family` transient
-bytes, +0.3%; every other rise is under 0.1%. The only byte readings outside
-noise that grew are ungated live-window heap: Snapshot `bitemporal-current`
-streamed retained memory, +3.2% on 3.14 and 7.8→10.8 KiB on 3.15, within its
-64 KiB budget.
+The write-lowering workload digest and control source, the Snapshot delivery
+and lifecycle-overhead instrument sources, and the operating-system version
+changed, so `--compare --require-compatible` refuses the pair; the movement
+below comes from a plain `--compare`. The instrument changes add the key
+reservation methods of the provider interface to their sole-connection
+providers and change no measured window. Every count reading in every member,
+including write-lowering statements and invocations, is unchanged. The
+unchanged 1.10-headroom derivation keeps all 410 memory-gate addresses: 37
+ceilings rise, 93 fall, and 280 are unchanged. No fresh reading exceeds its
+outgoing ceiling.
+
+Write-lowering byte movements were attributed by reading representative
+cells (`txtime.changed.columns.typed`, `geometry.many-0.columns.typed`, and
+`bitemporal.interior.document.wire`) on CPython 3.15 at every commit between the
+pre-change base `426444b65feaa34ce011e5f5fcca9a934b70a7c6` and the producing
+commit; bytes are deterministic at a commit, and the base reproduced the
+outgoing values. Transaction-time changed, Bitemporal interior, target, and
+ancestor keyed writes use 498–770 B/row (2.6–7.9%) fewer transient bytes on
+both runtimes; the representatives fall at
+`c3cde3c10fa6eea736c97e73594d8ad6dcf64cfb`, which retired MAX and registry
+allocation together with the allocated-key plumbing of write planning, lowering,
+and execution, and these ceilings fall by up to 7.9%. Thirty-five Typed keyed-write transient readings grow by 88 B/row
+(+0.2–1.6%); the representative grows at
+`f7427298c901dcac6bc7d4340ee80daf70fe1921`, which added native allocation to
+the insert path. `batch.insert.2` grows 44 B/row (+0.9%), `batch.insert.8`
+11 B/row, and the family Wire insert response 56 B/row (+0.9%), all within
+noise. The largest derived rise is `bitemporal.interior.document.wire` retained bytes, 1,056 to
+1,092 B/row (+3.4%): CPython 3.14 reads 992 B/row, as the November 13 capture
+did, where the November 14 capture read 942. Diagnostic readings at the
+pre-change base and at the outgoing producing commit both read 992 on the same
+host, so this ceiling returns to its November 13 value without a code effect.
+Snapshot delivery ceilings move by at most 0.08%.
+
+Provider-free, control, read-plan, and write-lowering timings are mostly within
+noise or faster. Live Snapshot delivery is slower on both runtimes: 69 of 70
+live and first-result `maxMs` readings, by 0.4–121% (median 58%), with
+page-32 streams and first results moving most. Alternating diagnostic runs on
+the same host reproduce the slower readings at the pre-change base and at the
+outgoing producing commit, which alternate between the outgoing values and
+this capture's from run to run with unchanged code; the live instrument reads
+through a sole-connection provider that opens no reservation pool. This is a
+host-state difference, not a code effect, and it is advisory: timing is never
+gated. Ungated live-window streamed heap moved as well, for example
+`document-heavy` page-1 peaks +8.5–13.3% and `bitemporal-current` page-1 peaks
++11.5% on 3.14 and −20.1% on 3.15. Repeated diagnostic runs of unchanged code
+vary these readings by similar amounts (`versioned-document` page-1 peak
+28.6–32.1 KiB), and the pre-change base reads the larger `document-heavy`
+values.
 
 The raw collection and checkpoints are outside Git in
-`~/.local/share/parallax/evidence/cor-287/final-canonical-cost-55aaae5de.tar.gz`,
+`~/.local/share/parallax/evidence/cor-177/final-canonical-cost-0253277ec.tar.gz`,
 1,963 files, archive SHA-256
-`d8be55c8afb24b4c28e9e395f415b901d0c897a8f53940e6c875434a2ae418f1`. The
-verification log, outgoing capture, comparisons, and gate-derivation script
-are beside it in `final-canonical-cost-55aaae5de-review/`, verified by
-`SHA256SUMS` (manifest SHA-256
-`5a540d4b6fc6c83b6f616d24938df06ff789b155fa06f25304e788ac5092c873`).
+`f45c870f3eb2bfe61c7d74ccd8f786fe387c3999ae5e27bcb408aa8878402508`. The
+collector and verification logs, load samples, outgoing capture and gates,
+comparisons, gate-derivation script, and the attribution diagnostics are beside
+it in `final-canonical-cost-0253277ec-review/`, verified by `SHA256SUMS`
+(manifest SHA-256
+`7898b8d7e69492a758405b4f7cd5e437d274ee2b2c7be16dd053a8fa046d9c4e`).
 The current portfolio SHA-256 is
-`152557ed4a888386be07eddcffa25314eb44dddb1061c297f7fa5e948b363279`,
+`e3eac920edf33f03227a559fdc613e70a97adb8d280b62243cae4e695b1c8863`,
 conditions SHA-256 is
-`f23b55555ef633ac8c19d785bb5ef384c5877a1056d6c99a920baf7b5cfc2775`,
+`0c21d80999d9f7f909d51cee4c46aac355c9aa020a820dfb4fd861752814e89d`,
 and durations SHA-256 is
-`dacdc497c11e0ea29601d0cfb6c8ac1d3a12d273d89e2ef36ee75ecb09152686`.
+`fc966dd82cce1ea5d687d024dd4a87dd7bdf6cfa561849242b85dcf18c0d16d8`.
 
 The following comparison and page-sharing sections describe the November 7
 capture. Their historical observations remain tied to its retained archive.
@@ -204,6 +241,21 @@ The index identifies accepted `paired/final-02/writes.json`,
 individual hashes and script commits. The bounded source diagnostic is in
 `diagnosis/`, with raw `timing-01/result.json` SHA-256
 `50c0e31b00691e51af03dd9746df58c9f3ad01a76e1954091ca1f3afed27fd64`.
+
+The superseded November 14 capture was one clean collection at
+`55aaae5de00d9b6d4d794392ce9af2b2970f4aa3`, taken because the one-object
+PostgreSQL Document merge changed the measured lowering and the write-lowering
+workload's executable source. Its 410 derived ceilings rose in 15 places and
+fell in 19 against its predecessor: changed-Document keyed-write transient
+ceilings fell 7.1–8.1%, the largest rise was write-lowering `model.prepared`
+at +0.5%, and no reading exceeded its previous ceiling. Its raw collection and
+checkpoints are outside Git in
+`~/.local/share/parallax/evidence/cor-287/final-canonical-cost-55aaae5de.tar.gz`,
+archive SHA-256
+`d8be55c8afb24b4c28e9e395f415b901d0c897a8f53940e6c875434a2ae418f1`; its
+review files are in `final-canonical-cost-55aaae5de-review/`, whose
+`SHA256SUMS` digest is
+`5a540d4b6fc6c83b6f616d24938df06ff789b155fa06f25304e788ac5092c873`.
 
 The superseded November 13 capture was one clean collection at
 `51243462ff1ec7ce3429677eb51b12dd12247f45`, taken because required database
