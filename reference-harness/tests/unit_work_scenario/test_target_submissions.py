@@ -120,7 +120,7 @@ def test_a_write_through_a_pending_insert_composes_with_it_and_reads_nothing(
     scenario: list[dict[str, Any]] = case.when["scenario"]
     edits = scenario.pop(2)
     scenario[0]["write"].extend(edits["write"])
-    scenario[0]["statements"][0]["binds"][1] = [130, 140]
+    scenario[1]["flush"][0]["binds"][1] = [130, 140]
     for row, amount in zip(scenario[1]["expectRows"], (130, 140), strict=True):
         row["amount"] = amount
     case.then["databaseCalls"] = 2

@@ -37,12 +37,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, owner: Grace, balance: "175.00" }
-      databaseCalls: 1
-      note: two assignment-bearing writes of one observed state merge into ONE gated UPDATE; the later 175.00 wins over 125.00
-      statements:
-        - sql:
-            postgres: update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?
-          binds: [Grace, "175.00", 2, 1, 1]
+      databaseCalls: 0
+      note: two assignment-bearing writes of one observed state merge into ONE gated UPDATE, which the find below flushes; the later 175.00 wins over 125.00
     - uow: merged-assignments
       objectQuery:
         target: parallax.compatibility.Account
@@ -50,8 +46,12 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      databaseCalls: 1
+      databaseCalls: 2
       note: the dependent find MUST observe the merged value, never the intermediate 125.00; the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: update px.account set owner = ?, balance = ?, version = ? where id = ? and version = ?
+          binds: [Grace, "175.00", 2, 1, 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?

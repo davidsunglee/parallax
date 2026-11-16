@@ -14,12 +14,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 7, owner: Newton, balance: "5.00", version: 1 }
-      databaseCalls: 1
+      databaseCalls: 0
       note: buffer an insert of a brand-new account 7 inside the group; nothing flushes yet
-      statements:
-        - sql:
-            postgres: insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)
-          binds: [7, Newton, "5.00", 1]
     - uow: dependency
       objectQuery:
         target: parallax.compatibility.Account
@@ -27,8 +23,12 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 7
-      databaseCalls: 1
+      databaseCalls: 2
       note: the dependent find forces the buffered insert out as a read-dependency flush, then observes it; the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [7, Newton, "5.00", 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ? for share of t0

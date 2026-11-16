@@ -12,6 +12,7 @@ from ..case_assertions import CaseFailure, write_value_equal
 from ..database_binding import PhysicalTable
 from ..inheritance import Family
 from ..temporality import temporal_axes
+from ..write_plan import assigns_nothing
 
 # A mutate publishes rows conditionally, only when it declares expectRows.
 _ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"access"})
@@ -74,6 +75,16 @@ class _Step:
     database_calls: Any
     statements: _Golden
 
+    def presented(self, dialect: str) -> list[str]:
+        """Every golden SQL text this step lists for *dialect*, in the order its
+        call presented them."""
+        return self.statements.sql(dialect)
+
+    @property
+    def flush_golden(self) -> _Golden:
+        """The golden of the Flush this step's call presented, where it presented one."""
+        return self.statements
+
 
 type SubmissionKind = Literal["keyed", "target", "predicate"]
 
@@ -88,9 +99,11 @@ class Submission:
     primary-key values by attribute name — and are ``None`` for a predicate
     write, which names rows only its predicate selects. ``refusal`` is the code
     the entry declares its verb refuses it with, and ``settles_on`` the find its
-    ``on`` names, resolved. ``empty`` marks a predicate write that writes
-    nothing — an amendment assigning nothing, or a replacement of an Entity
-    whose only writable member is its key — whose verb opens no flush.
+    ``on`` names, resolved. ``empty`` marks a submission that writes nothing,
+    and so leaves nothing pending: a predicate write whose verb opens no flush —
+    an amendment assigning nothing, or a replacement of an Entity whose only
+    writable member is its key — or a keyed or target amendment naming nothing
+    beside its key, which is dropped once validated.
     """
 
     pointer: str
@@ -138,12 +151,22 @@ class _GroupedWrite(_Step):
     resolved: the rows and mutations are :mod:`..write_plan`'s vocabulary, not a
     Scenario one. ``submissions`` are the same entries as this package reads
     them. ``affected_rows`` is the count a direct predicate write states its
-    verb returns, ``None`` for any other write.
+    verb returns, ``None`` for any other write. ``runs_flush`` marks a direct
+    predicate write that writes something, whose call runs a Flush of what its
+    group has pending and executes in it, its own statement last.
     """
 
     entries: tuple[dict[str, Any], ...]
     submissions: tuple[Submission, ...]
     affected_rows: int | None
+    runs_flush: bool
+
+    @property
+    def flush_golden(self) -> _Golden:
+        """The golden of the Flush this step presents: a predicate write's
+        statements before its own, or a keyed write step's whole list, which is
+        its group's commit Flush when it is the group's last step."""
+        return _Golden(self.statements.entries[:-1] if self.runs_flush else self.statements.entries)
 
 
 @dataclass(frozen=True)
@@ -174,7 +197,19 @@ class _RowPublishingStep(_Step):
 
     This includes a ``mutate`` declaring ``expectRows`` beside the read
     workflows. Its group, when it has one, selects the reader it is handed.
+    ``flush`` is the Flush a grouped find's call runs before its read, which
+    this package executes; the oracle reads ``statements`` alone.
     """
+
+    flush: _Golden
+
+    @property
+    def flush_golden(self) -> _Golden:
+        """The golden of the Flush this step's call presented, where it presented one."""
+        return self.flush
+
+    def presented(self, dialect: str) -> list[str]:
+        return [*self.flush.sql(dialect), *self.statements.sql(dialect)]
 
 
 type _CompiledStep = _GroupedWrite | _UngroupedWrite | _BoundaryAction | _RowPublishingStep
@@ -184,35 +219,53 @@ type FlushError = Literal["temporalConflict"]
 
 
 @dataclass(frozen=True)
+class GroupFlush:
+    """One nonempty Flush a group runs.
+
+    ``at`` is where it runs — a find's or a flushing predicate write's step, or
+    ``"commit"`` — and ``site`` the step whose call presented it, which lists its
+    golden (`m-case-format` *Which step a statement belongs to*): ``at`` itself,
+    or the group's last step for the commit's Flush. ``flushed`` holds the
+    pointers of the submissions it ran: those still pending when it began, and a
+    buffered predicate submission's own, which executes in the Flush its call
+    runs. A direct predicate write's own statement is its step's, not a
+    submission's.
+    """
+
+    site: int
+    at: int | Literal["commit"]
+    flushed: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FlushFailure:
     """The failure a rolled-back group's flush reports: where the flush ran — a
     step index, or ``"commit"`` — and the object it names, beside exactly one of
-    its Shortfall and an ``error`` that is no Shortfall. ``flushed`` holds the
-    pointers of the submissions that flush ran, the ones still pending when it
-    began — when several flushes run at one step, when any of them began."""
+    its Shortfall and an ``error`` that is no Shortfall. ``site`` is the step
+    whose golden lists the failing Flush, and ``flushed`` holds the pointers of
+    the submissions it ran, the ones still pending when it began — when several
+    flushes run at one step, when any of them began."""
 
     at: int | Literal["commit"]
+    site: int
     entity: Entity
     key: Mapping[str, Any]
     shortfall: Shortfall | None
     error: FlushError | None
     flushed: tuple[str, ...]
 
-    @property
-    def flushed_steps(self) -> frozenset[int]:
-        """The write steps whose submissions that flush ran."""
-        return frozenset(int(pointer.split("/")[2]) for pointer in self.flushed)
-
 
 @dataclass(frozen=True)
 class UnitFate:
     """One `uow` group as a unit of work: its own steps, in order, whether it
-    commits or rolls back after its last one, the flush failure that rolled it
-    back where one did, and the one Transaction Instant its submissions state."""
+    commits or rolls back after its last one, each Flush it runs in order, the
+    flush failure that rolled it back where one did, and the one Transaction
+    Instant its submissions state."""
 
     label: str
     steps: tuple[int, ...]
     rolls_back: bool
+    flushes: tuple[GroupFlush, ...]
     flush_failure: FlushFailure | None
     instant: str | None
 
@@ -233,7 +286,7 @@ class CompiledScenario:
 
     def has_golden(self, dialect: str) -> bool:
         """True if any step lists golden SQL for *dialect*."""
-        return any(step.statements.sql(dialect) for step in self.steps)
+        return any(step.presented(dialect) for step in self.steps)
 
     def submissions(self) -> tuple[Submission, ...]:
         """Every submission of every grouped write step, in authored order."""
@@ -268,6 +321,8 @@ def compile_scenario(case: Case) -> CompiledScenario:
     units = _unit_fates(case, steps, state_graded=state_graded)
     if state_graded:
         _assert_state_graded_document(case, steps, submissions)
+    else:
+        _assert_statement_placement(case, steps, units)
     return CompiledScenario(case=case, steps=steps, units=units, state_graded=state_graded)
 
 
@@ -289,12 +344,14 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
         entries = _write_entries(step)
         affected_rows = step.get("expectAffectedRows")
         if group is not None:
+            write = step["write"]
+            runs_flush = isinstance(write, Mapping) and not _writes_nothing(case, write)
             return _GroupedWrite(
-                *common, entries, _submissions(case, index, entries), affected_rows
+                *common, entries, _submissions(case, index, entries), affected_rows, runs_flush
             )
         return _UngroupedWrite(*common, entries, step.get("rollback") is True, affected_rows)
 
-    return _RowPublishingStep(*common)
+    return _RowPublishingStep(*common, _Golden(tuple(step.get("flush") or ())))
 
 
 def _boundary_verb(step: Mapping[str, Any]) -> str | None:
@@ -402,7 +459,9 @@ def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any])
         key=key,
         refusal=refusal if isinstance(refusal, str) else None,
         settles_on=_settled_on(case, index, entry),
-        empty=kind == "predicate" and _writes_nothing(case, entry),
+        empty=_writes_nothing(case, entry)
+        if kind == "predicate"
+        else entity is not None and assigns_nothing(entity, entry),
     )
 
 
@@ -604,26 +663,30 @@ def _unit_fates(
     fates: dict[str, UnitFate] = {}
     for label, members in groups.items():
         fate = authored.get(label) or {}
+        flushes = _group_flushes(members)
         fates[label] = UnitFate(
             label=label,
             steps=tuple(step.index for step in members),
             rolls_back=fate.get("outcome") == "rolledBack",
-            flush_failure=_flush_failure(case, label, members, fate.get("flushFailure")),
+            flushes=flushes,
+            flush_failure=_flush_failure(case, label, members, flushes, fate.get("flushFailure")),
             instant=_group_instant(case, label, members),
         )
     return fates
 
 
 def _flush_failure(
-    case: Case, label: str, members: list[_CompiledStep], authored: Any
+    case: Case,
+    label: str,
+    members: list[_CompiledStep],
+    flushes: tuple[GroupFlush, ...],
+    authored: Any,
 ) -> FlushFailure | None:
     if not isinstance(authored, Mapping):
         return None
-    flushes = _group_flushes(members)
-    candidates: dict[int | Literal["commit"], tuple[str, ...]] = {}
-    if flushes and flushes[-1][0] in ("commit", members[-1].index):
-        at, flushed = flushes[-1]
-        candidates[at] = flushed
+    candidates: dict[int | Literal["commit"], GroupFlush] = {}
+    if flushes and flushes[-1].at in ("commit", members[-1].index):
+        candidates[flushes[-1].at] = flushes[-1]
     if authored.get("at") not in candidates:
         where = (
             "nothing"
@@ -635,42 +698,92 @@ def _flush_failure(
             f"but the group's last flush runs {where} — a failed flush ends the unit of work, "
             f"so it is the last thing the group does."
         )
+    failing = candidates[authored["at"]]
     return FlushFailure(
         at=authored["at"],
+        site=failing.site,
         entity=case.model.entity(str(authored.get("entity", ""))),
         key=dict(authored.get("key") or {}),
         shortfall=authored.get("shortfall"),
         error=authored.get("error"),
-        flushed=candidates[authored["at"]],
+        flushed=failing.flushed,
     )
 
 
-def _group_flushes(
-    members: list[_CompiledStep],
-) -> list[tuple[int | Literal["commit"], tuple[str, ...]]]:
-    """Each nonempty flush a group runs, in order: where it runs — a find's or a
-    flushing predicate submission's step, or ``"commit"`` — beside the pointers
-    of the submissions it ran: those still pending when it began, and a
-    predicate submission's own, which executes in the flush its call runs. A
-    predicate submission writing nothing runs nothing and leaves what is
-    pending as it was."""
-    flushes: list[tuple[int | Literal["commit"], tuple[str, ...]]] = []
+def _group_flushes(members: list[_CompiledStep]) -> tuple[GroupFlush, ...]:
+    """Each nonempty Flush a group runs, in order.
+
+    A find flushes what is pending before it reads; a predicate write that
+    writes something — a direct one, or a buffered predicate submission —
+    flushes what is pending and executes in that Flush, so its Flush is nonempty
+    whatever was pending; one writing nothing runs nothing and leaves what is
+    pending as it was. The commit flushes what is still pending after the last
+    step, and its Flush belongs to that step.
+    """
+    flushes: list[GroupFlush] = []
     pending: list[str] = []
     for step in members:
         if isinstance(step, _GroupedWrite):
+            if step.runs_flush:
+                flushes.append(GroupFlush(step.index, step.index, tuple(pending)))
+                pending = []
             for submission in step.submissions:
                 if submission.refusal is not None or submission.empty:
                     continue
                 pending.append(submission.pointer)
                 if submission.flushes:
-                    flushes.append((step.index, tuple(pending)))
+                    flushes.append(GroupFlush(step.index, step.index, tuple(pending)))
                     pending = []
         elif isinstance(step, _RowPublishingStep) and pending:
-            flushes.append((step.index, tuple(pending)))
+            flushes.append(GroupFlush(step.index, step.index, tuple(pending)))
             pending = []
     if pending:
-        flushes.append(("commit", tuple(pending)))
-    return flushes
+        flushes.append(GroupFlush(members[-1].index, "commit", tuple(pending)))
+    return tuple(flushes)
+
+
+def _assert_statement_placement(
+    case: Case, steps: tuple[_CompiledStep, ...], units: Mapping[str, UnitFate]
+) -> None:
+    """Refuse a golden listed anywhere but at the step whose call presented it
+    (`m-case-format` *Which step a statement belongs to*).
+
+    A keyed write step that is not its group's last presents nothing of its
+    own, since its writes wait for a later step's Flush; a native key
+    reservation would be presented at its insert's own call, so a statement
+    tagged ``purpose: reservation`` is passed over. A find lists a ``flush``
+    exactly when its group has writes pending, since its call then runs one.
+    """
+    for fate in units.values():
+        flushed_at = {flush.at for flush in fate.flushes}
+        for index in fate.steps:
+            step = steps[index]
+            if isinstance(step, _GroupedWrite) and not step.runs_flush:
+                own = [
+                    entry
+                    for entry in step.statements.entries
+                    if not (isinstance(entry, Mapping) and entry.get("purpose") == "reservation")
+                ]
+                if own and index != fate.last_step:
+                    raise CaseFailure(
+                        f"{case.path.name}: scenario[{index}] lists {len(own)} golden "
+                        f"statement(s), but it is a keyed write step before its group's last, "
+                        f"whose call presents none: its writes belong to the step whose call "
+                        f"presents the Flush delivering them."
+                    )
+            elif isinstance(step, _RowPublishingStep):
+                pending = index in flushed_at
+                if bool(step.flush.entries) != pending:
+                    raise CaseFailure(
+                        f"{case.path.name}: scenario[{index}] "
+                        + (
+                            "lists a `flush`, but its group has no writes pending, so its "
+                            "call runs no Flush."
+                            if not pending
+                            else "lists no `flush`, but its group has writes pending, which "
+                            "its call flushes before it reads."
+                        )
+                    )
 
 
 def _group_instant(case: Case, label: str, members: list[_CompiledStep]) -> str | None:

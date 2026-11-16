@@ -109,6 +109,7 @@ def _lint_step_sequences(
                 read_locks=locks.read(case, step, step_key),
             )
             if step_key == "scenario":
+                _lint_golden(step.get("flush"), f"when.scenario[{index}].flush", name, errors)
                 _lint_reference_sql(
                     step.get("referenceSql"),
                     step.get("statements"),

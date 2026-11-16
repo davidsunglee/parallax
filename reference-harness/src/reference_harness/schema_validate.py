@@ -229,19 +229,20 @@ def _scenario_statement_binds_keys(step: dict[str, Any], label: str, errors: lis
     location, independently per step and per statement: binds authored for one
     dialect of a two-dialect statement would resolve to nothing on the other.
     """
-    statements = step.get("statements")
-    if not isinstance(statements, list):
-        return
-    for index, entry in enumerate(statements):
-        if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
+    for member in ("flush", "statements"):
+        statements = step.get(member)
+        if not isinstance(statements, list):
             continue
-        sql = entry.get("sql")
-        sql_keys = set(sql) if isinstance(sql, dict) else set()
-        if set(entry["binds"]) != sql_keys:
-            errors.append(
-                f"{label} statements[{index}]: binds map keys {sorted(entry['binds'])} "
-                f"!= sql map keys {sorted(sql_keys)}"
-            )
+        for index, entry in enumerate(statements):
+            if not isinstance(entry, dict) or not isinstance(entry.get("binds"), dict):
+                continue
+            sql = entry.get("sql")
+            sql_keys = set(sql) if isinstance(sql, dict) else set()
+            if set(entry["binds"]) != sql_keys:
+                errors.append(
+                    f"{label} {member}[{index}]: binds map keys {sorted(entry['binds'])} "
+                    f"!= sql map keys {sorted(sql_keys)}"
+                )
 
 
 def _validate_predicate_write(

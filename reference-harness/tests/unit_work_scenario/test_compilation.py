@@ -114,12 +114,13 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
     assert observe["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}]
     # The write step carries the structured keyed buffer: a single keyed UPDATE of
     # account 1 (no row-carried version — the advance derives from the observing
-    # find), its golden SQL unchanged.
+    # find). Its call presents nothing; the dependent find's Flush presents it.
     (instruction,) = write["write"]
     assert instruction["mutation"] == "amend"
     assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 1, "balance": "175.00"}]
-    assert write["statements"][0]["sql"]["postgres"].startswith("update px.account set")
+    assert "statements" not in write and write["databaseCalls"] == 0
+    assert find["flush"][0]["sql"]["postgres"].startswith("update px.account set")
     assert "objectQuery" in find
     # The dependent find asserts the flushed new balance/version (the RYOW observable).
     assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "175.00", "version": 2}]
@@ -140,9 +141,9 @@ def test_read_your_own_writes_delete_scenario_observes_absence(corpus_case) -> N
     assert instruction["mutation"] == "delete"
     assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 3}]
+    assert "statements" not in write and write["databaseCalls"] == 0
     assert (
-        write["statements"][0]["sql"]["postgres"]
-        == "delete from px.account where id = ? and version = ?"
+        find["flush"][0]["sql"]["postgres"] == "delete from px.account where id = ? and version = ?"
     )
     # The dependent find returns ZERO rows — the deletion is visible.
     assert find["expectRows"] == []
@@ -187,6 +188,55 @@ def test_a_case_level_database_call_mismatch_is_refused(damaged_case) -> None:
     case.then["databaseCalls"] += 1
     with pytest.raises(CaseFailure, match="scenario steps total"):
         assert_unit_work_scenario(case, RefusingProvider())
+
+
+# --- each statement at the step whose call presented it ---------------------
+#
+# m-unit-work-005 is observe find, keyed update, dependent find: the update's
+# statement belongs to the dependent find's `flush`.
+
+_PRESENTED = "m-unit-work-005-ryow-update.yaml"
+
+
+def test_a_keyed_write_before_its_groups_last_step_lists_no_statements(damaged_case) -> None:
+    case = damaged_case(_PRESENTED)
+    _observe, write, find = case.when["scenario"]
+    write["statements"] = find.pop("flush")
+    write["databaseCalls"], find["databaseCalls"] = 1, 1
+    with pytest.raises(CaseFailure, match=r"scenario\[1\] lists 1 golden statement"):
+        assert_judged(case)
+
+
+def test_a_find_its_groups_pending_writes_reach_lists_their_flush(damaged_case) -> None:
+    case = damaged_case(_PRESENTED)
+    find = case.when["scenario"][2]
+    del find["flush"]
+    find["databaseCalls"] = 1
+    case.then["databaseCalls"] = 2
+    with pytest.raises(CaseFailure, match=r"scenario\[2\] lists no `flush`"):
+        assert_judged(case)
+
+
+def test_a_find_with_nothing_pending_lists_no_flush(damaged_case) -> None:
+    case = damaged_case(_PRESENTED)
+    observe, _write, find = case.when["scenario"]
+    observe["flush"] = find["flush"]
+    observe["databaseCalls"] = 2
+    case.then["databaseCalls"] = 4
+    with pytest.raises(CaseFailure, match=r"scenario\[0\] lists a `flush`"):
+        assert_judged(case)
+
+
+def test_a_reservation_is_presented_at_its_own_writes_call(damaged_case) -> None:
+    # A native key reservation runs at the insert's own call, so placement passes
+    # over it on a keyed write step before its group's last.
+    reservation = damaged_case("m-pk-gen-004-sequence-single.yaml").then["statements"][0]
+    case = damaged_case(_PRESENTED)
+    write = case.when["scenario"][1]
+    write["statements"] = [{**reservation, "sql": {"postgres": reservation["sql"]["postgres"]}}]
+    write["databaseCalls"] = 1
+    case.then["databaseCalls"] = 4
+    assert_judged(case)
 
 
 def test_a_step_golden_must_be_canonical(damaged_case) -> None:
@@ -427,15 +477,14 @@ def test_a_settled_step_declaring_reads_its_spans_do_not_make_is_refused(
 
 
 def test_deferred_writes_one_flush_settles_from_several_steps_are_refused(damaged_case) -> None:
-    # Both steps buffer into the group's pre-commit flush, whose one shared read
-    # neither step's own Database Calls could hold.
+    # Both steps buffer into the group's pre-commit flush, which the later step
+    # presents with its one shared read, counted over each step's own buffer.
     case = _settled_step_case(damaged_case, [_reaching] * 2, 1)
     find, write = case.when["scenario"]
-    later = {**write, "write": [write["write"][1]], "statements": write["statements"][3:]}
+    later = {**write, "write": [write["write"][1]]}
     write["write"] = [write["write"][0]]
-    write["statements"] = write["statements"][:3]
-    write["databaseCalls"] = later["databaseCalls"] = 4
+    del write["statements"]
+    write["databaseCalls"] = 0
     case.when["scenario"] = [find, write, later]
-    case.then["databaseCalls"] = find["databaseCalls"] + 8
     with pytest.raises(CaseFailure, match="into one flush"):
         assert_judged(case)

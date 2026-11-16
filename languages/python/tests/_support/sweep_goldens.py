@@ -378,7 +378,9 @@ def read_golden_statements(case: case_format.Case) -> list[tuple[str, list[objec
 
 def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
     """The ordered golden DML for a write case: a writeSequence's flat `then.statements`,
-    or a scenario's per-step `when.scenario[i].statements` flattened in step order.
+    or a scenario's per-step goldens flattened in step order, a find's `flush`
+    ahead of its own `statements` (m-case-format *Which step a statement belongs
+    to*).
 
     A lifecycle **action** step (m-case-format) carries no `statements` key at
     all when it emits no SQL (a snapshot-read `mutate`'s in-memory-only change);
@@ -400,7 +402,8 @@ def _write_golden_entries(case: case_format.Case) -> list[dict[str, Any]]:
     return [
         entry
         for step in steps
-        for entry in cast("list[dict[str, Any]]", step.get("statements", []))
+        for member in ("flush", "statements")
+        for entry in cast("list[dict[str, Any]]", step.get(member, []))
     ]
 
 

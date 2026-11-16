@@ -174,7 +174,7 @@ def is_physical_case_member(path: tuple[str, ...], key: str) -> bool:
     if path == ("then",):
         return key in TOP_LEVEL_PHYSICAL_KEYS
     if path == ("when", "scenario", "[]"):
-        return key in {"statements", "referenceSql"}
+        return key in {"flush", "statements", "referenceSql"}
     return key == "statements" and path in _STEP_STATEMENT_PATHS
 
 

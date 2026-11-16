@@ -28,12 +28,8 @@ when:
           entity: parallax.compatibility.Wallet
           rows:
             - { id: 1, balance: "175.00" }
-      databaseCalls: 1
-      note: the keyed update of the locked row is ungated and advances no version; the unit of work commits at the group's last step below
-      statements:
-        - sql:
-            postgres: update px.wallet set balance = ? where id = ?
-          binds: ["175.00", 1]
+      databaseCalls: 0
+      note: buffer the keyed update of the locked row, ungated and advancing no version; the dependent find below flushes it
     - uow: fallback
       objectQuery:
         target: parallax.compatibility.Wallet
@@ -41,8 +37,12 @@ when:
           eq:
             path: parallax.compatibility.Wallet.id
             value: 1
-      databaseCalls: 1
+      databaseCalls: 2
       note: a dependent find observes the updated balance and takes the same shared lock; the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: update px.wallet set balance = ? where id = ?
+          binds: ["175.00", 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance from px.wallet t0 where t0.id = ? for share of t0

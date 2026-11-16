@@ -44,12 +44,8 @@ when:
           rows:
             - { id: 1 }
           at: "2024-10-01T00:00:00.000000Z"
-      databaseCalls: 1
-      note: the terminate supersedes the buffered update, so the close is emitted alone and no successor milestone is chained
-      statements:
-        - sql:
-            postgres: update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00.000000Z", 1, infinity, "2024-06-01T00:00:00.000000Z"]
+      databaseCalls: 0
+      note: the terminate supersedes the buffered update, so the find below flushes the close alone and no successor milestone is chained
     - uow: superseded-chain
       objectQuery:
         target: parallax.compatibility.Balance
@@ -60,8 +56,12 @@ when:
         temporal:
           transaction-time:
             asOf: latest
-      databaseCalls: 1
+      databaseCalls: 2
       note: the dependent find MUST observe no current milestone; the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: update px.balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 1, infinity, "2024-06-01T00:00:00.000000Z"]
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from px.balance t0 where t0.bal_id = ? and t0.out_z = ?

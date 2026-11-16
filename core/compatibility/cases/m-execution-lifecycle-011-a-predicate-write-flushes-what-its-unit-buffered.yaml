@@ -18,13 +18,8 @@ when:
           entity: parallax.compatibility.Wallet
           rows:
             - { id: 4, owner: Turing, balance: "50.00" }
-      databaseCalls: 1
+      databaseCalls: 0
       note: buffer an insert; nothing reads it back, so nothing flushes yet
-      statements:
-        - sql:
-            postgres: insert into px.wallet(id, owner, balance) values (?, ?, ?)
-            mariadb: insert into px.wallet(id, owner, balance) values (?, ?, ?)
-          binds: [4, Turing, "50.00"]
     - uow: counted
       write:
         mutation: amend
@@ -36,10 +31,14 @@ when:
               value: "200.00"
         assignments:
           - { attr: parallax.compatibility.Wallet.owner, value: Ada }
-      databaseCalls: 1
+      databaseCalls: 2
       expectAffectedRows: 3
       note: its Flush delivers the buffered insert first, so the update matches wallets 1, 3, and 4; wallet 1 already belongs to Ada and still counts
       statements:
+        - sql:
+            postgres: insert into px.wallet(id, owner, balance) values (?, ?, ?)
+            mariadb: insert into px.wallet(id, owner, balance) values (?, ?, ?)
+          binds: [4, Turing, "50.00"]
         - sql:
             postgres: update px.wallet set owner = ? where balance < ?
             mariadb: update px.wallet set owner = ? where balance < ?

@@ -633,13 +633,18 @@ def _preflight_statement_binds(case: Case) -> None:
     _statement_tree(case, case.when, "when")
 
 
+# The members holding statement entries: every golden or naive SQL list, and a
+# scenario find's `flush`.
+_STATEMENT_LISTS = frozenset({"statements", "flush"})
+
+
 def _statement_tree(case: Case, value: object, where: str) -> None:
     if isinstance(value, Mapping):
-        statements = value.get("statements")
-        if isinstance(statements, Sequence) and not isinstance(statements, (str, bytes)):
-            _statement_entries(case, statements, f"{where}.statements")
         for name, nested in value.items():
-            if name != "statements":
+            if name in _STATEMENT_LISTS:
+                if isinstance(nested, Sequence) and not isinstance(nested, (str, bytes)):
+                    _statement_entries(case, nested, f"{where}.{name}")
+            else:
                 _statement_tree(case, nested, f"{where}.{name}")
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         for index, nested in enumerate(value):

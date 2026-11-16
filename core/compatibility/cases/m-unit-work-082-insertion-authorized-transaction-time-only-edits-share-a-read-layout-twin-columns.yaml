@@ -15,17 +15,8 @@ when:
       write:
         - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 3, amount: 100, memo: { note: n7 } }], at: "2024-11-01T00:00:00.000000Z" }
         - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 4, amount: 100, memo: { note: n8 } }], at: "2024-11-01T00:00:00.000000Z" }
-      databaseCalls: 1
+      databaseCalls: 0
       note: open logs 3 and 4
-      statements:
-        - sql:
-            postgres: insert into px.kept_log(id, amount, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
-          binds:
-            - [3, 4]
-            - [100, 100]
-            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
-            - [infinity, infinity]
-            - [{ note: n7 }, { note: n8 }]
     - uow: own
       objectQuery:
         target: parallax.compatibility.KeptLog
@@ -34,8 +25,17 @@ when:
         orderBy:
           - { attr: parallax.compatibility.KeptLog.id, direction: asc }
         temporal: { transaction-time: { asOf: latest } }
-      databaseCalls: 1
+      databaseCalls: 2
       note: flush both openings and read them
+      flush:
+        - sql:
+            postgres: insert into px.kept_log(id, amount, in_z, out_z, memo) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [3, 4]
+            - [100, 100]
+            - ["2024-11-01T00:00:00.000000Z", "2024-11-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{ note: n7 }, { note: n8 }]
       statements:
         - sql:
             postgres: select t0.id, t0.amount, t0.in_z, t0.out_z, not t0.memo is null, t0.memo from px.kept_log t0 where t0.id > ? and t0.out_z = ? order by t0.id asc

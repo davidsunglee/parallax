@@ -70,8 +70,8 @@ def test_a_scenario_provisions_before_its_first_step(corpus_case) -> None:
 def test_a_group_shares_one_session_and_commits_after_its_last_step(corpus_case) -> None:
     # m-unit-work-005: one `uow` group spans all three steps (observe find,
     # versioned write, dependent find). Exactly ONE session opens for the whole
-    # group, every step's SQL runs on IT, and it COMMITS once, after its own last
-    # step.
+    # group, every step's SQL runs on IT — the dependent find's Flush before its
+    # read — and it COMMITS once, after its own last step.
     case = corpus_case("m-unit-work-005-ryow-update.yaml")
     observe, dependent = _observed(case)
     with ScriptedProvider(script=[observe, Affected(1), dependent]) as db:
@@ -81,7 +81,7 @@ def test_a_group_shares_one_session_and_commits_after_its_last_step(corpus_case)
     assert [call for call in db.chronology if not isinstance(call, (Reset, Ddl, Fixtures))] == [
         Opened(0),
         Queried(0, *_pair(case, 0)),
-        Executed(0, *_pair(case, 1)),
+        Executed(0, *_pair(case, 2, member="flush")),
         Queried(0, *_pair(case, 2)),
         Committed(0),
     ]
@@ -276,10 +276,15 @@ def test_a_flush_failure_is_graded_on_the_flush_that_failed(damaged_case) -> Non
     # the commit that `then.units` says failed runs only a later, successful write.
     case = damaged_case("m-concurrency-012-conflict-aborts-uow.yaml")
     steps = case.when["scenario"]
+    conflicting = steps[3]
     reread = {
         **steps[0],
+        "databaseCalls": steps[0]["databaseCalls"] + conflicting["databaseCalls"],
+        "flush": conflicting.pop("statements"),
         "expectRows": [{"id": 2, "owner": "Linus", "balance": "999.00", "version": 2}],
     }
+    case.then["databaseCalls"] -= conflicting["databaseCalls"]
+    conflicting["databaseCalls"] = 0
     later = {
         "uow": "ours",
         "write": [
@@ -388,8 +393,11 @@ def test_a_step_that_fails_an_observable_stops_the_scenario_where_it_stands(
 # --- helpers ----------------------------------------------------------------
 
 
-def _pair(case: Case, index: int, statement: int = 0) -> tuple[str, tuple[Any, ...]]:
-    """The (sql, provider binds) a step's own golden produces for postgres."""
+def _pair(
+    case: Case, index: int, statement: int = 0, *, member: str = "statements"
+) -> tuple[str, tuple[Any, ...]]:
+    """The (sql, provider binds) a step's own golden — its ``statements``, or a
+    find's ``flush`` — produces for postgres."""
     from reference_harness._case_execution import CaseExecution
     from reference_harness.case import entry_pairs
 
@@ -406,7 +414,7 @@ def _pair(case: Case, index: int, statement: int = 0) -> tuple[str, tuple[Any, .
             self.call = (sql, tuple(binds))
             return 1
 
-    sql, binds = entry_pairs(case.scenario[index].get("statements"), "postgres")[statement]
+    sql, binds = entry_pairs(case.scenario[index].get(member), "postgres")[statement]
     capture = Capture()
     CaseExecution(case, capture).execute(sql, binds)
     assert capture.call is not None
@@ -432,14 +440,14 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
             "scenario": [
                 {
                     "uow": "g",
-                    "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 2}]}],
-                    "databaseCalls": 1,
-                    "statements": [
+                    "write": [
                         {
-                            "sql": {"postgres": "update px.account set balance = ? where id = ?"},
-                            "binds": ["249.00", 2],
+                            "mutation": "amend",
+                            "entity": "Account",
+                            "rows": [{"id": 2, "balance": "249.00"}],
                         }
                     ],
+                    "databaseCalls": 0,
                 },
                 {
                     "uow": "g",
@@ -447,7 +455,13 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                         "target": "Account",
                         "predicate": {"eq": {"path": "Account.id", "value": 2}},
                     },
-                    "databaseCalls": 1,
+                    "databaseCalls": 2,
+                    "flush": [
+                        {
+                            "sql": {"postgres": "update px.account set balance = ? where id = ?"},
+                            "binds": ["249.00", 2],
+                        }
+                    ],
                     "statements": [{"sql": {"postgres": find}, "binds": [2]}],
                     "referenceSql": "select * from px.account where id = 2",
                 },

@@ -530,8 +530,10 @@ def test_a_reuse_naming_a_step_that_published_nothing_is_refused(
 ) -> None:
     """A write publishes no observation, so no later step may read one off it."""
     case = damaged_case(_STREAMED_EVIDENCE)
-    step = _steps(case)[2]
-    case.then["databaseCalls"] -= step["databaseCalls"]
+    write, step = _steps(case)[1:3]
+    # The write is now its group's last step, so the commit's Flush is its own.
+    write["statements"] = step["flush"]
+    write["databaseCalls"] = len(step["flush"])
     step.clear()
     step.update(action="access", on=1, path="items", databaseCalls=0)
     case.when["scenario"] = case.scenario[:3]

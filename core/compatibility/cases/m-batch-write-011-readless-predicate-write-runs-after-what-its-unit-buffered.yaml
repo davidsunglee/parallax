@@ -26,12 +26,8 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 12 }
-      databaseCalls: 1
+      databaseCalls: 0
       note: buffered before the predicate write, whose flush delivers it first rather than after every insert
-      statements:
-        - sql:
-            postgres: delete from px.order_item where id = ?
-          binds: [12]
     - uow: predicated
       write:
         mutation: amend
@@ -43,10 +39,13 @@ when:
               value: 3
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: Z }
-      databaseCalls: 1
+      databaseCalls: 2
       expectAffectedRows: 1
       note: the readless predicate write runs at its call, after the delete; it matches item 11 alone, because item 12 is already deleted and item 13 is not yet inserted
       statements:
+        - sql:
+            postgres: delete from px.order_item where id = ?
+          binds: [12]
         - sql:
             postgres: update px.order_item set sku = ? where quantity < ?
           binds: [Z, 3]
