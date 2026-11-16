@@ -636,9 +636,9 @@ def _write_flag_reasons(
 
     Neither flag is the contract: what invalidates a previously valid write is
     caller input the later edition no longer accepts, which a flag moving over an
-    Attribute the caller never supplied — a generated key, an axis endpoint —
-    does not, and neither does one moving over an Entity that accepted no caller
-    write to carry the input in the first place.
+    Attribute the caller never supplied, such as an axis endpoint, does not, and
+    neither does one moving over an Entity that accepted no caller write to carry
+    the input in the first place.
     """
     if _withdraws_caller_input(*surviving) and position.wrote_before:
         return {_AUTHORING}

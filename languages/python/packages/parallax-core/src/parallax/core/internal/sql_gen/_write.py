@@ -74,8 +74,7 @@ writes, or nothing for a step that stores no represented value."""
 
 
 # One rendered cell: the physical Column it occupies and the value that lands
-# there — a bind, the prepared patches a Structured Column merges, or the
-# generated-value expression the statement folds in.
+# there — a bind or the prepared patches a Structured Column merges.
 type _Cell = tuple[str, object, NeutralType | None]
 
 
@@ -159,8 +158,8 @@ def non_insert_parameter_ceiling(
 
     The address binds each key value and at most one table-per-hierarchy tag,
     and a milestone address each axis end too; a temporal or version gate binds
-    once more. Each member a revising step assigns, a version advance or
-    registry increment included, binds at most once: in a Column of its own,
+    once more. Each member a revising step assigns, a version advance
+    included, binds at most once: in a Column of its own,
     or, with every other member the shared Structured Column holds, as the one
     object its mutation expression merges (`m-dialect`). A predicate-selected
     step's binds follow its predicate rather than its shape, so it has no such
@@ -230,7 +229,7 @@ def _require_no_payload(step: PlannedStep, payload: StepPayload) -> None:
 
 
 class InsertStatementBuilder:
-    """One non-generated insert of every entry appended, in entry order, into
+    """One insert of every entry appended, in entry order, into
     `<table>(<participating columns in Table Layout order>)`.
 
     ``slots`` fix the Table and the column list; an entry omitting a nullable
@@ -238,8 +237,7 @@ class InsertStatementBuilder:
     entry's ``cells`` are the ones ``slots`` gathered from its row, which
     admission already judged, so they bind as they are. A refused entry is not
     held, so :meth:`finish` still renders exactly the entries appended before
-    it. A generated-value expression folds into its own statement and never
-    reaches this builder.
+    it.
 
     One entry renders `values (?, …)` with one bind per cell
     (:meth:`StatementBuilder.bind_managed_row`). Several render the dialect's

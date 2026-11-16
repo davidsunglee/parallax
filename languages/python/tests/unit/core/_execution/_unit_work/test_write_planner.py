@@ -1553,10 +1553,9 @@ def _derived(
     return derive_keyed_instruction(prepared, tuple(projected_row(selection, row) for row in rows))
 
 
-def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:
-    # A DB-computed marker is classified by SHAPE — a ONE-key mapping naming a
-    # recognized kind — so a mapping carrying more than one key is a value the
-    # row writes rather than an allocation the statement must express.
+def test_a_mapping_cell_is_an_ordinary_literal_the_row_writes() -> None:
+    # Planning interprets no cell: whatever keys a mapping carries, the row
+    # writes it as stated.
     document = {"computed": "maxPlusOne", "note": "not a marker"}
     carried = _derived(
         KeyedWriteInstruction(

@@ -183,7 +183,7 @@ and a milestone read twice is one piece of evidence.
 A **Predecessor Row** is the complete, immutable persisted state a Temporal
 Observation retains: every applicable scalar Attribute value, every complete
 Value Object occurrence, the complete primary key, every temporal bound, and
-every audit value, with no generated-value expression. Completeness is required
+every audit value. Completeness is required
 because temporal expansion carries members the authored mutation never mentioned,
 and because audit finalization must distinguish `m-edit`'s carried state from its
 authored assignments without a second read (ADR 0042).
@@ -229,7 +229,7 @@ A Planned Step states what a write means; what it **persists** is its payload:
 the cells a row stores and the values a revising step assigns, in Table Layout
 slot order. Each cell is identified by model identity — a member, the Table's
 shared Structured Column, or the table-per-hierarchy discriminator — never a
-physical column. A value is a planned scalar or generated-value expression, a
+physical column. A value is a planned scalar, a
 complete encoded document, the discriminator's tag, or, for a revising step's
 shared Structured Column, the ordered patches it applies. `m-write-payload` owns
 how a payload is assembled. Settlement and lowering reach preparation through an

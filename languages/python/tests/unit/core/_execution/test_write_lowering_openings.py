@@ -3,7 +3,7 @@
 execution*), taken here mostly through temporal openings.
 
 A run of contiguous single-entry inserts of one Entity that name the same
-members and hold no generated value compiles, one entry at a time, into one
+members compiles, one entry at a time, into one
 multi-row insert binding one array per Column, each holding the bind the
 inserts' own statements carry at its position, in order. The run ends untouched
 at a step that cannot join it, and at no entry count or bind limit; a later

@@ -3,8 +3,8 @@
 A Planned Step is what SQL lowering receives with every semantic question
 already settled, so the shapes that would leave one unsettled must be
 unconstructible rather than merely unusual: an insert with no entries, an entry
-row naming no member, and entries of one step disagreeing about which members or
-which generated-value cells they carry. These are pure value-type tests — no
+row naming no member, and entries of one step disagreeing about which members
+they carry. These are pure value-type tests — no
 metamodel, no dialect, no SQL — pinned against synthetic identities so the
 invariant, not a corpus model, is what fails them.
 
@@ -12,9 +12,8 @@ An addressed step's target, concurrency decision, and expected effect describe
 one row selection together, so the combinations that would describe two — a
 readless predicate carrying a gate, an exact count disagreeing with the number of
 keys addressed, a per-row gate on a multi-key target, a shortfall classified
-against what the settled gate implies — are unconstructible too. A generated
-value is likewise unconstructible at the statement position that could not
-express it.
+against what the settled gate implies — are unconstructible too, and so is an
+address naming a key value that is null or a mapping.
 
 The temporal slice adds its own: a Milestone Target belongs to a temporal step —
 a close, or an owned revision or removal — alone, each expects exactly one row,
@@ -193,10 +192,10 @@ def test_every_addressed_key_tuple_is_complete() -> None:
         KeyTarget(key_attributes=(_ID, _OWNER), key_values=((1, "Ada"), (2,)))
 
 
-@pytest.mark.parametrize("value", [None, {"computed": "maxPlusOne"}], ids=["null", "marker"])
+@pytest.mark.parametrize("value", [None, {"increment": 1}], ids=["null", "mapping"])
 def test_a_key_value_is_concrete_and_non_null(value: object) -> None:
-    # A null addresses nothing under SQL equality, and a DB-computed marker names
-    # a value that does not exist yet — neither can identify a stored row.
+    # A null addresses nothing under SQL equality, and a mapping is no scalar
+    # key value — neither can identify a stored row.
     with pytest.raises(ValueError, match="concrete and non-null"):
         KeyTarget(key_attributes=(_ID,), key_values=((value,),))
 
