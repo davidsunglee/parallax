@@ -80,7 +80,9 @@ process and close at the end. Each setting here has a section of its own:
   one more writer connection per root, opened at the first reservation and kept as the
   writer keeps its own, so a root whose routes hold up to N connections holds up to N + 1.
   The reservation runs as the adapter's login whatever scope the insert runs under, and
-  one reservation spends at most `acquire_timeout`. See the lifecycle guide on
+  one reservation spends at most `acquire_timeout` while the server answers; a server
+  that disappears mid-reservation is detected only roughly that long after. See the
+  lifecycle guide on
   [key reservations](../postgresql-lifecycle.md#key-reservations).
 - **Credentials.** The `credentials` the adapter takes are resolved each time a
   connection is made, so a rotated secret or a short-lived token reaches every new

@@ -2,12 +2,13 @@
 
 ## Unreleased
 
-`tx.insert(instance)` now returns `instance`, typed as the entity class you passed, instead
-of `None`. The returned instance is the one you passed, still carrying the insertion's
-licence, so `customer = tx.insert(Customer(...))` reads the same as Wire's
-`node = tx.wire.insert(...)`. Nothing is written into it at flush: a version or
-Transaction-Time start the database stores stays absent on it, and an ordinary `find`
-returns the stored values. Code that ignored the result is unaffected; a type annotation
+`tx.insert(instance)` now returns a value typed as the entity class you passed, instead
+of `None`, carrying the insertion's licence, so `customer = tx.insert(Customer(...))`
+reads the same as Wire's `node = tx.wire.insert(...)`. An insert of an instance that
+states its key returns that instance; one that leaves a generated key unset returns a new
+value holding the key, as described below. Nothing is written into the returned value at
+flush: a version or Transaction-Time start the database stores stays absent on it, and an
+ordinary `find` returns the stored values. Code that ignored the result is unaffected; a type annotation
 or check that expected `None` needs updating.
 
 A key can now come from a native PostgreSQL sequence: declare
@@ -39,12 +40,20 @@ one allocator that disagree are reported as `pk-gen-key-sequence-conflict`, whic
 `pk-gen-key-sequence-subtype-override`. To migrate, replace a `MAX` or registry `Sequence`
 key with `KeySequence(name, ...)` — its `batch_size` defaults to 100 where `Sequence`'s was
 1 — or with an application-assigned key. Nothing created a native sequence for either old
-strategy, so treat the entity as moving to generated keys: `coordinated_migration`, below,
-creates the sequence and positions it past every stored key, and a registry table that
+strategy, so treat the entity as moving from application-assigned to generated keys. The
+descriptor you kept as deployed still spells the old strategy, which
+`domain_model_from_yaml` now refuses, so first rewrite it as the application-assigned
+model its stored rows amount to: drop each such key's `pkGeneration`, and drop any
+`sequences` entry the deployed binding holds for a registry allocator. `evolve` from that
+rewritten model to the release then reports each move, `coordinated_migration`, below,
+creates each sequence and positions it past every stored key, and a registry table that
 only counted keys can then be dropped. A Wire value spelling `{"increment": n}` or
 `{"computed": "maxPlusOne"}` at a scalar member is no longer read as a database-computed
 marker: it is refused like any other value of the wrong type, with `InvalidValueError`
-code `neutral-literal-type-mismatch`.
+code `neutral-literal-type-mismatch`. Leave a key that sent `{"computed": "maxPlusOne"}`
+unset under a `KeySequence` declaration instead, and replace an `{"increment": n}` advance
+of any other member with a read of the row inside the transaction and an amend stating
+the advanced value.
 
 `ServingModel.publish` now refuses a candidate that changes a surviving allocator's batch
 size, increment size, or key range, as it refuses a relocation, and both refusals use the
