@@ -41,7 +41,6 @@ from parallax.core.internal.write_plan.steps import (
     Finite,
     Infinity,
     KeyTarget,
-    MaxPlusOne,
     MilestoneTarget,
     NonTemporalConcurrency,
     PlannedClose,
@@ -53,7 +52,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     ResolvedMutationSelection,
-    SelfIncrement,
     TemporalConcurrency,
     TemporalGate,
     Versioned,
@@ -130,7 +128,7 @@ def compile_write_step(
     """
     match step:
         case PlannedInsert():
-            return _lower_insert(step, _insert_payload(step, payload), resolved, dialect)
+            return _lower_insert(_insert_payload(step, payload), resolved, dialect)
         case PlannedUpdate():
             return _lower_update(step, _assignment_payload(step, payload), resolved, dialect)
         case PlannedClose() | PlannedTemporalRevision():
@@ -317,48 +315,17 @@ def _placed(slots: RowSlots, cells: tuple[object, ...]) -> tuple[object, ...]:
 
 
 def _lower_insert(
-    step: PlannedInsert, payload: InsertPayload, resolved: ResolvedBinding, dialect: Dialect
+    payload: InsertPayload, resolved: ResolvedBinding, dialect: Dialect
 ) -> LoweredStatement:
     """One logical insert's statement: every entry through one
-    :class:`InsertStatementBuilder`, or the pk-gen `max` INSERT…SELECT form when
-    a cell carries a generated-value expression, ending `returning <column>`
-    where that allocation is returned. Several entries need the dialect's
+    :class:`InsertStatementBuilder`. Several entries need the dialect's
     column-array form, so a dialect without array binds refuses them."""
     slots = payload.slots
     first, *rest = payload.rows
-    if not any(isinstance(value, MaxPlusOne) for value in first):
-        builder = InsertStatementBuilder(slots, first, resolved, dialect)
-        for cells in rest:
-            builder.append(cells)
-        return builder.finish()
-    if rest:
-        raise InternalError(
-            SQL_GENERATION_FAILED,
-            f"multi-entry insert on {step.entity.name!r}: a generated-value expression "
-            "folds into the statement itself, so it renders one row at a time (m-pk-gen)",
-        )
-    column_sql = ", ".join(dialect.quote(column) for column in slots.columns)
-    table = slots.table
-    ctx = _ctx(resolved, dialect)
-    select_parts: list[str] = []
-    returned: list[str] = []
-    for column, value, neutral_type in zip(
-        slots.columns, _bound(_placed(slots, first), slots.documents), slots.types, strict=True
-    ):
-        if isinstance(value, MaxPlusOne):
-            select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
-            ctx.bind_framework(0)
-            ctx.bind_framework(1)
-            if value.returned:
-                returned.append(dialect.quote(column))
-        else:
-            select_parts.append("?")
-            _bind(ctx, value, neutral_type)
-    returning = f" returning {', '.join(returned)}" if returned else ""
-    return ctx.finish(
-        f"insert into {table}({column_sql}) select {', '.join(select_parts)} from {table} t0"
-        f"{returning}"
-    )
+    builder = InsertStatementBuilder(slots, first, resolved, dialect)
+    for cells in rest:
+        builder.append(cells)
+    return builder.finish()
 
 
 _SOURCE = "v"
@@ -730,15 +697,12 @@ def _set_term(
 ) -> str:
     """One `set` term and the binds it contributes, in rendered order.
 
-    Three forms, each decided by what the planner settled rather than by the
-    value's shape: the registry advance self-references its own Column, a
-    Structured Column takes the dialect's document mutation expression over the
-    members this step assigns, and every other Column takes one bind.
+    Two forms, each decided by what the planner settled rather than by the
+    value's shape: a Structured Column takes the dialect's document mutation
+    expression over the members this step assigns, and every other Column takes
+    one bind.
     """
     quoted = dialect.quote(column)
-    if isinstance(value, SelfIncrement):
-        ctx.bind_framework(value.amount)
-        return f"{quoted} = {quoted} + ?"
     if isinstance(value, DocumentPatches):
         expression, binds = dialect.document_mutation(quoted, assigned_members(value.patches))
         for bind in binds:

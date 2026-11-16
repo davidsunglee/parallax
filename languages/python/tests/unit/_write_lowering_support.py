@@ -1797,24 +1797,21 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         flush: FlushActivity,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
+    ) -> None:
         regions.executing()
-        answered = execute(
+        execute(
             executor,
             steps,
             effect_spans=effect_spans,
-            allocates=allocates,
             flush=flush,
             capture_insert=capture_insert,
             capture_revision=capture_revision,
         )
         regions.executed()
-        return answered
 
     with (
         _replaced(WritePlanner, "finalize", finalized),

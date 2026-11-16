@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-from collections.abc import Mapping
 from typing import Final, cast
 
 import pytest
@@ -28,7 +27,6 @@ from parallax.core.internal.document_codec._plan import (
     AuthoringPlan,
     AuthoringRefusal,
     PreparedAuthoringRow,
-    RootPolicy,
 )
 from parallax.core.internal.metamodel import (
     AuthoringViolation,
@@ -79,10 +77,8 @@ def _plan(shape: MemberShape = _ROW) -> AuthoringPlan:
     return AuthoringCatalog(_LANES, absent=_ABSENT).plan(shape)
 
 
-def _row(
-    lane: int, raws: tuple[object, ...], *, omitted: int = 0, root: RootPolicy | None = None
-) -> PreparedAuthoringRow:
-    return _plan().complete_row(raws, lane=lane, required=_REQUIRED, omitted=omitted, root=root)
+def _row(lane: int, raws: tuple[object, ...], *, omitted: int = 0) -> PreparedAuthoringRow:
+    return _plan().complete_row(raws, lane=lane, required=_REQUIRED, omitted=omitted)
 
 
 def _refusal(lane: int, raws: tuple[object, ...]) -> AuthoringRefusal:
@@ -227,25 +223,6 @@ def test_a_wire_mismatch_carries_its_decoding_failure() -> None:
     assert is_decoding_refusal(refused.cause)
 
 
-def test_a_root_policy_authors_only_a_top_level_scalar_marker() -> None:
-    marked: list[tuple[int, Mapping[str, object]]] = []
-
-    def root(position: int, marker: Mapping[str, object]) -> object:
-        marked.append((position, marker))
-        return "planned"
-
-    row = _row(
-        _WIRE, ({"computed": "maxPlusOne"}, _ABSENT, _ABSENT, _ABSENT, _ABSENT, _ABSENT), root=root
-    )
-
-    assert row.cells == ("planned", (), ())
-    assert marked == [(0, {"computed": "maxPlusOne"})]
-    with pytest.raises(AuthoringRefusal):
-        _row(
-            _WIRE, (7, _ABSENT, _ABSENT, [{"computed": "maxPlusOne"}], _ABSENT, _ABSENT), root=root
-        )
-
-
 def test_a_row_short_of_its_shape_is_refused() -> None:
     with pytest.raises(ValueError, match="one value per member"):
         _row(_TYPED, (7,))
@@ -349,16 +326,10 @@ def test_a_partial_row_states_no_member_it_omits_and_never_a_null_collection() -
     assert refused.value.violation == AuthoringViolation("", "attribute-missing")
 
 
-def test_an_addressing_position_spells_its_marker_as_an_ordinary_value() -> None:
-    marker = {"computed": "maxPlusOne"}
-
-    planned = _plan().partial_row(((1, marker),), lane=_WIRE, root=lambda _p, _m: "planned")
+def test_a_one_key_document_at_a_top_level_scalar_is_a_decoding_refusal() -> None:
     with pytest.raises(AuthoringRefusal) as refused:
-        _plan().partial_row(
-            ((0, marker),), lane=_WIRE, root=lambda _p, _m: "planned", addressing=0b1
-        )
+        _plan().partial_row(((0, {"computed": "maxPlusOne"}),), lane=_WIRE)
 
-    assert planned.cells == ("planned",)
     assert is_decoding_refusal(refused.value.cause)
 
 

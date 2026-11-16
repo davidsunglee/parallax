@@ -862,13 +862,11 @@ CALLER_INPUT_ORDER: Final[tuple[AttributeWriteCapability, ...]] = (
 def attribute_write_capability(attribute: AttributeMetadata) -> AttributeWriteCapability:
     """What caller input one accepted Attribute admits.
 
-    Ownership is derived, not declared: a key the database computes, by ``MAX``
-    or a registry ``Sequence``, joins the framework-owned designations because
-    the framework rather than the caller supplies its value, while a
-    KeySequence key — which a caller may supply or omit — an
-    application-assigned key, and a read-only Attribute admit insert input
-    alone. Classification and the write-capability
-    impact read the contract here so a raw flag is never mistaken for it.
+    Ownership is derived, not declared: only a framework-owned designation
+    admits no caller input, while a primary key — supplied or, under a
+    KeySequence, omittable — and a read-only Attribute admit insert input
+    alone. Classification and the write-capability impact read the contract
+    here so a raw flag is never mistaken for it.
     """
     capability = attribute.write_capability
     if not capability.caller_insert:

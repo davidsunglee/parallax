@@ -1,41 +1,36 @@
-# PK generation `sequence` composed with a TEMPORAL (audit-only) insert (m-pk-gen +
-# m-temporal-write) — net-new: no existing case puts pk generation on a temporal entity.
+# A keyless insert of a Transaction-Time-Only entity takes its key from a
+# reserved block, then opens its current milestone under that key.
 model: models/pk-audit.yaml
 tags: [m-pk-gen, m-temporal-write, m-sql, sequence, write-sequence, slice-snapshot-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "sequence-strategy PK allocation - the following INSERT binds registry-read-derived id values, so emissions depend on a query result"
-given:
-  fixtures: true
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
 when:
   writeSequence:
-    - mutation: amend
-      entity: parallax.compatibility.AuditSeq
-      statements: 1
-      note: reserve a block of 1 (next_val += 1), base = 1
-      rows:
-        - { name: entry_seq, nextVal: { increment: 1 } }
     - mutation: insert
       entity: parallax.compatibility.AuditEntry
       statements: 1
-      note: open a milestone [txInstant, infinity) carrying the reserved id 1
-      rows:
-        - { id: 1, note: opened }
+      note: "open [txInstant, infinity) under the reserved key 1"
       at: "2024-05-01T00:00:00.000000Z"
+      rows:
+        - { note: opened }
 then:
   statements:
-    - sql:
-        postgres: update px.audit_seq set next_val = next_val + ? where name = ?
-      binds: [1, entry_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.entry_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.entry_seq t0
+      binds:
+        postgres: [px.entry_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.audit_entry(id, note, in_z, out_z) values (?, ?, ?, ?)
+        mariadb: insert into px.audit_entry(id, note, in_z, out_z) values (?, ?, ?, ?)
       binds: [1, opened, "2024-05-01T00:00:00.000000Z", infinity]
   tableState:
     px:
-      audit_seq:
-        - { name: entry_seq, next_val: 2 }
       audit_entry:
         - { id: 1, note: opened, in_z: "2024-05-01T00:00:00.000000Z", out_z: infinity }
   databaseCalls: 2

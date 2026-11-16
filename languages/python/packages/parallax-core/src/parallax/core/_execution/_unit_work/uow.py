@@ -16,7 +16,6 @@ from parallax.core._execution._unit_work.acquisition import (
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
-    WRITE_RESULT_INVALID,
     WritePreconditionError,
     cardinality_corruption,
 )
@@ -46,7 +45,7 @@ from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
 from parallax.core.internal import concurrency, inheritance, temporal_read
-from parallax.core.internal.base import InternalError, normalize_instant
+from parallax.core.internal.base import normalize_instant
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
@@ -287,7 +286,7 @@ class UnitOfWork:
 
     def buffer_insert(
         self, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
-    ) -> InsertionIdentity | None:
+    ) -> InsertionIdentity:
         """Admit ``insert`` and buffer it — all of it, or nothing — answering
         the identity of the insertion it opens, which a source the insertion
         was stated through carries from then on
@@ -297,9 +296,7 @@ class UnitOfWork:
         with ``write-value-already-stored`` and the advice that insertion's opener
         supplied, and ``insertion_advice`` is kept for a repeat of this one.
         Where an earlier insertion of the object is stored and a pending write
-        removes all of it, the insert executes after that removal. An insert
-        whose key the database allocates opens no insertion and answers
-        ``None``.
+        removes all of it, the insert executes after that removal.
         """
         self._ensure_open()
         return self._admission.admit_insert(insert, insertion_advice=insertion_advice)
@@ -655,46 +652,26 @@ class UnitOfWork:
 
     def _execute_write_group(self, group: WriteGroup, *, captures: bool) -> None:
         """Execute ``group``'s steps once and complete each of its writes, in
-        order, once they all succeeded and the keys the database allocated
-        are as many as its writes open with keys it allocates, with the
-        current rows its execution captured where it ``captures``.
+        order, once they all succeeded, with the current rows its execution
+        captured where it ``captures``.
 
         However it ends, what the group's capture staged is released, and
         nothing here keeps the group or a write's captured rows."""
         writes = group.writes
         steps = group.steps
-        expected = sum(len(write.opened.allocated) for write in writes)
         capture = _CurrentRowCapture.for_writes(writes) if captures else None
         write: WriteEffects | None = None
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = ()
         try:
             if capture is None:
-                allocated = self.execute_write_steps(
-                    steps, effect_spans=group.effect_spans, allocates=bool(expected)
-                )
+                self.execute_write_steps(steps, effect_spans=group.effect_spans)
             else:
-                allocated = capture.execute(
-                    self.execute_write_steps,
-                    steps,
-                    effect_spans=group.effect_spans,
-                    allocates=bool(expected),
-                )
-            if len(allocated) != expected:
-                raise InternalError(
-                    WRITE_RESULT_INVALID,
-                    f"a Write Group opening {expected} row(s) whose keys the database allocates "
-                    f"executed answering {len(allocated)} key(s)",
-                )
-            first = 0
+                capture.execute(self.execute_write_steps, steps, effect_spans=group.effect_spans)
             for write in writes:
-                stop = first + len(write.opened.allocated)
                 if capture is not None:
                     captured = capture.take_rows(write.current_outputs)
-                self.source_authority.complete_write(
-                    write, allocated[first:stop], captured=captured
-                )
+                self.source_authority.complete_write(write, captured=captured)
                 captured = ()
-                first = stop
         finally:
             if capture is not None:
                 capture.release()

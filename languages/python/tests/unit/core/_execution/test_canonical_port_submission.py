@@ -77,9 +77,9 @@ def test_core_submits_canonical_sql_through_all_four_paths(monkeypatch: pytest.M
     assert _pipelined_rows((pending, pending), port, INERT) == [[], []]
 
     with open_flush() as flush:
-        step_executor(port).execute((close(1),), allocates=False, flush=flush)
+        step_executor(port).execute((close(1),), flush=flush)
     with open_flush() as flush:
-        step_executor(port).execute((close(2), close(3)), allocates=False, flush=flush)
+        step_executor(port).execute((close(2), close(3)), flush=flush)
 
     assert read_sql.count("?") >= 2
     assert "%s" in read_sql

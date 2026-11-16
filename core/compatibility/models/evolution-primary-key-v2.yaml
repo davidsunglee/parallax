@@ -2,7 +2,7 @@
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json.
 # `Voucher`'s key is `code` instead of `id`, and `Coupon.id` is allocated from
-# the stored maximum instead of being supplied by the application.
+# the `coupon_ids` native key sequence instead of being supplied by the application.
 entities:
   - name: Voucher
     namespace: parallax.compatibility
@@ -21,6 +21,6 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: max
+        pkGeneration: { strategy: key-sequence, name: coupon_ids }
       - name: face
         type: numeric(18,2)

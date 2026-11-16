@@ -646,7 +646,6 @@ def keyed_insert(
     # allocated, so the row it buffers always names its own object here.
     assert opened is not None
     authority = uow.buffer_insert(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
-    assert authority is not None  # an insert naming its object opens an insertion of it
     return OpenedKeyedWrite(
         identity=resolved.entity.identity,
         row=prepared.rows[0],

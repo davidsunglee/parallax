@@ -32,14 +32,13 @@ from parallax.core.internal import relationship, storage_layout
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     AttributeIdentity,
     AttributeLocation,
     EntityIdentity,
+    KeySequence,
     PrimaryKey,
     RelationshipIdentity,
     RelationshipLocation,
-    Sequence,
     TablePerConcreteSubtype,
 )
 from parallax.core.internal.model_formation import MetamodelValidationError
@@ -130,15 +129,13 @@ def test_excluded_scalar_identifiers_fail_at_the_frontend_boundary(
 
 
 @pytest.mark.parametrize(("spelling", "carrier", "options"), (*_ALLOWED, *_EXCLUDED))
-@pytest.mark.parametrize("sequence", [False, True], ids=["max", "sequence"])
 def test_generated_identifiers_remain_integral(
-    spelling: str, carrier: Any, options: dict[str, Any], sequence: bool
+    spelling: str, carrier: Any, options: dict[str, Any]
 ) -> None:
-    generation = Sequence("identifiers") if sequence else MAX
-    descriptor_generation: object = (
-        {"strategy": "sequence", "name": "identifiers"} if sequence else "max"
+    generation = KeySequence("identifiers")
+    document = _descriptor(
+        spelling, pkGeneration={"strategy": "key-sequence", "name": "identifiers"}
     )
-    document = _descriptor(spelling, pkGeneration=descriptor_generation)
     if spelling in ("int32", "int64"):
         typed = DomainModel(_declared(carrier, options, generation))
         descriptor = domain_model_from_document(document)

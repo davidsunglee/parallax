@@ -15,6 +15,11 @@ from parallax.conformance.identifier_models import (
     IDENTIFIER_TPH_DOCUMENT,
     IDENTIFIER_TYPES,
 )
+from parallax.conformance.key_sequence_models import (
+    PK_AUDIT_MODEL,
+    PK_KEY_SEQUENCE_MODEL,
+    PK_SEQUENCE_MODEL,
+)
 from parallax.conformance.rate_sheet_document_models import RATE_SHEET_DOCUMENT_MODEL
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
@@ -69,6 +74,9 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "orders": ORDERS_MODEL,
         "payment": PAYMENT_MODEL,
         "person": PERSON_MODEL,
+        "pk-audit": PK_AUDIT_MODEL,
+        "pk-key-sequence": PK_KEY_SEQUENCE_MODEL,
+        "pk-sequence": PK_SEQUENCE_MODEL,
         "policy": POLICY_MODEL,
         "position": POSITION_MODEL,
         "predicate-traversal": PREDICATE_TRAVERSAL_MODEL,

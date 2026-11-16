@@ -1,47 +1,37 @@
-# PK generation `sequence` (m-pk-gen) — stride across two blocks.
+# Two units of work each reserve the next strided block: 100 and 110, then 120
+# and 130.
 model: models/pk-sequence.yaml
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "sequence-strategy PK allocation - the following INSERT binds registry-read-derived id values, so emissions depend on a query result"
-given:
-  fixtures: true
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
 when:
   writeSequence:
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: reserve block 1 (base 100)
-      rows:
-        - { name: voucher_seq, nextVal: { increment: 20 } }
     - mutation: insert
       entity: parallax.compatibility.Voucher
       statements: 1
-      note: "100,110 in one grouped insert"
+      note: "the block at 100"
       rows:
-        - { id: 100, label: spring }
-        - { id: 110, label: summer }
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: reserve block 2 (base 120)
-      rows:
-        - { name: voucher_seq, nextVal: { increment: 20 } }
+        - { label: spring }
+        - { label: summer }
     - mutation: insert
       entity: parallax.compatibility.Voucher
       statements: 1
-      note: "120,130 in one grouped insert"
+      note: "the block at 120"
       rows:
-        - { id: 120, label: autumn }
-        - { id: 130, label: winter }
+        - { label: autumn }
+        - { label: winter }
 then:
   statements:
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [20, voucher_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.voucher_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.voucher_seq t0
+      binds:
+        postgres: [px.voucher_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.voucher(id, label) select * from unnest(cast(? as bigint[]), cast(? as text[]))
         mariadb: insert into px.voucher(id, label) values (?, ?), (?, ?)
@@ -50,10 +40,13 @@ then:
           - [100, 110]
           - [spring, summer]
         mariadb: [100, spring, 110, summer]
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [20, voucher_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.voucher_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.voucher_seq t0
+      binds:
+        postgres: [px.voucher_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.voucher(id, label) select * from unnest(cast(? as bigint[]), cast(? as text[]))
         mariadb: insert into px.voucher(id, label) values (?, ?), (?, ?)

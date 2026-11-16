@@ -15,7 +15,6 @@ from parallax.core.internal import base
 from parallax.core.internal.base._neutral import ManagedValueExclusion, utc_instant
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     ApplicationAssigned,
@@ -30,7 +29,6 @@ from parallax.core.internal.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     KeySequence,
-    Max,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NotPrimaryKey,
@@ -38,7 +36,6 @@ from parallax.core.internal.metamodel import (
     RelationshipIdentity,
     RelationshipReference,
     RelativeEntityReference,
-    Sequence,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -98,9 +95,6 @@ def test_an_ill_formed_entity_name_stays_constructible_so_it_can_locate_its_issu
         ),
         pytest.param(lambda: Table(""), id="table"),
         pytest.param(lambda: Column(""), id="column"),
-        pytest.param(lambda: Sequence(""), id="sequence-name"),
-        pytest.param(lambda: Sequence("s", batch_size=0), id="sequence-batch-size"),
-        pytest.param(lambda: Sequence("s", increment_size=0), id="sequence-increment-size"),
         pytest.param(lambda: KeySequence(""), id="key-sequence-name"),
         pytest.param(lambda: KeySequence("s", batch_size=0), id="key-sequence-batch-size"),
         pytest.param(lambda: KeySequence("s", increment_size=-1), id="key-sequence-increment-size"),
@@ -212,16 +206,14 @@ def test_cardinality_carries_structured_side_multiplicities() -> None:
 
 def test_nullary_union_members_have_shared_singletons() -> None:
     assert ApplicationAssigned() == APPLICATION_ASSIGNED
-    assert Max() == MAX
-    assert MAX != APPLICATION_ASSIGNED
     assert NotPrimaryKey() == NOT_PRIMARY_KEY
     assert TablePerConcreteSubtype() == TABLE_PER_CONCRETE_SUBTYPE
 
 
 def test_a_generation_is_reachable_only_through_the_primary_key_branch() -> None:
     assert PrimaryKey().generation == APPLICATION_ASSIGNED
-    assert PrimaryKey(Sequence("order_seq")).generation == Sequence(
-        "order_seq", batch_size=1, initial_value=1, increment_size=1
+    assert PrimaryKey(KeySequence("order_seq")).generation == KeySequence(
+        "order_seq", batch_size=100, initial_value=1, increment_size=1
     )
     assert not hasattr(NOT_PRIMARY_KEY, "generation")
 
@@ -240,11 +232,9 @@ _NON_IDENTIFIERS = (
 
 
 @pytest.mark.parametrize("declared", _IDENTIFIERS)
-@pytest.mark.parametrize(
-    "generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers"), KeySequence("identifiers")]
-)
+@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, KeySequence("identifiers")])
 def test_key_construction_selects_its_generation_policy(
-    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence | KeySequence
+    declared: base.NeutralType, generation: ApplicationAssigned | KeySequence
 ) -> None:
     identity = AttributeIdentity(_ORDERS, "id")
     if generation != APPLICATION_ASSIGNED and declared not in (base.INT32, base.INT64):
@@ -261,11 +251,9 @@ def test_key_construction_selects_its_generation_policy(
 
 
 @pytest.mark.parametrize("declared", _NON_IDENTIFIERS)
-@pytest.mark.parametrize(
-    "generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers"), KeySequence("identifiers")]
-)
+@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, KeySequence("identifiers")])
 def test_ineligible_keys_fail_without_a_length_bound(
-    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence | KeySequence
+    declared: base.NeutralType, generation: ApplicationAssigned | KeySequence
 ) -> None:
     identity = AttributeIdentity(_ORDERS, "id")
     with pytest.raises(ValueError) as caught:

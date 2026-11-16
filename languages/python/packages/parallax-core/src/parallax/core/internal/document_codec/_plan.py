@@ -24,7 +24,6 @@ __all__ = [
     "DocumentAccess",
     "MemberCheck",
     "PreparedAuthoringRow",
-    "RootPolicy",
 ]
 
 
@@ -135,10 +134,6 @@ class AuthoringRefusal(Exception):
         self.cause = cause
 
 
-type RootPolicy = Callable[[int, Mapping[str, object]], object]
-"""What a top-level scalar position's marker-shaped document authors: the
-planned value it stands for, or the caller's own refusal."""
-
 type MemberCheck = Callable[[int, object], None]
 """The caller's own judgment of a stated top-level member, made at that
 member's judgment point before its value is converted; it refuses by raising."""
@@ -152,7 +147,6 @@ class _Refused(Exception):
 
 
 _UNSTATED: Final = object()
-_MARKER_KEYS: Final = frozenset({"computed", "increment"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,8 +299,6 @@ class AuthoringPlan:
         omitted: int = 0,
         nulled: int = 0,
         excluded: int = 0,
-        root: RootPolicy | None = None,
-        addressing: int = 0,
         check: MemberCheck | None = None,
         nonnull: int = 0,
     ) -> PreparedAuthoringRow:
@@ -319,9 +311,7 @@ class AuthoringPlan:
         its empty collection, an unstated member in ``nulled`` is stated as
         null, and an unstated or null member in ``required`` is refused, as is
         a null member in ``nonnull``, which may be left unstated.
-        ``check`` judges each stated member first, and ``root`` authors a
-        marker-shaped document at a top-level scalar outside ``addressing``,
-        where it is the ordinary value it spells.
+        ``check`` judges each stated member first.
 
         Raises :class:`AuthoringRefusal` for the first refused member.
         """
@@ -348,7 +338,7 @@ class AuthoringPlan:
                     raise self._missing(position)
                 cells.append(None)
             elif scalar & bit:
-                cells.append(self._top_level_scalar(base, position, raw, root, addressing))
+                cells.append(self._top_level_scalar(base, position, raw))
             else:
                 try:
                     cells.append(self._structured(lane, position, raw))
@@ -364,8 +354,6 @@ class AuthoringPlan:
         pairs: Iterable[tuple[int, object]],
         *,
         lane: int,
-        root: RootPolicy | None = None,
-        addressing: int = 0,
         check: MemberCheck | None = None,
     ) -> PreparedAuthoringRow:
         """The owned cells ``lane`` authors for a row stating only the members
@@ -373,9 +361,8 @@ class AuthoringPlan:
 
         Each stated member is judged by ``check`` first. An explicit null is a
         null cell, except at a ``many`` member, which is never null; whether
-        any other member may be null is the caller's to judge. ``root`` and
-        ``addressing`` follow :meth:`complete_row`. The cells are packed in
-        member order whatever order they were judged in.
+        any other member may be null is the caller's to judge. The cells are
+        packed in member order whatever order they were judged in.
 
         Raises :class:`AuthoringRefusal` for the first refused member.
         """
@@ -390,7 +377,7 @@ class AuthoringPlan:
                     raise self._missing(position)
                 cell = None
             elif scalar >> position & 1:
-                cell = self._top_level_scalar(base, position, raw, root, addressing)
+                cell = self._top_level_scalar(base, position, raw)
             else:
                 try:
                     cell = self._structured(lane, position, raw)
@@ -466,11 +453,7 @@ class AuthoringPlan:
                 converted.append(cells)
         return None if converted is None else tuple(converted)
 
-    def _top_level_scalar(
-        self, base: int, position: int, raw: object, root: RootPolicy | None, addressing: int
-    ) -> object:
-        if root is not None and _is_marker(raw) and not addressing >> position & 1:
-            return root(position, cast("Mapping[str, object]", raw))
+    def _top_level_scalar(self, base: int, position: int, raw: object) -> object:
         try:
             return cast("ScalarConverter", self._steps[base + position])(raw)
         except UsageError as failure:
@@ -584,10 +567,3 @@ def _mask(flags: Iterable[bool]) -> int:
         if flag:
             mask |= 1 << position
     return mask
-
-
-def _is_marker(value: object) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    document = cast("Mapping[object, object]", value)
-    return len(document) == 1 and next(iter(document)) in _MARKER_KEYS

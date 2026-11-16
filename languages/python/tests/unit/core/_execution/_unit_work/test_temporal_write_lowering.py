@@ -23,20 +23,19 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import MAX, Attr, ConflictError, DomainModel, TxTemporal, attr
+from parallax.core import ConflictError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.internal import storage_layout, temporal_read
+from parallax.core.internal import storage_layout
 from parallax.core.internal.base import INFINITY as OPEN_BOUND
 from parallax.core.internal.base import InternalError
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import POSTGRES, Dialect
-from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.temporal_read import Edge, TransactionTimeOnly
+from parallax.core.internal.temporal_read import Edge
 from parallax.core.internal.unit_work import (
     TEMPORAL_CONFLICT,
     KeyedMutation,
@@ -60,9 +59,7 @@ from parallax.core.internal.write_plan.plan import TemporalRowCoordinates
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
     INFINITY,
-    NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
-    RETURNED_MAX_PLUS_ONE,
     STALE_WRITE,
     UNGATED,
     CarriedFrom,
@@ -74,25 +71,21 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
-    WriteRow,
 )
 from parallax.descriptor._records import Metamodel
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
-from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 
-def _no_flush(
-    steps: tuple[PlannedStep, ...], /, *, allocates: bool, **capture: object
-) -> tuple[object, ...]:
+def _no_flush(steps: tuple[PlannedStep, ...], /, **capture: object) -> None:
     """Step execution for a test that never flushes."""
-    del allocates, capture
+    del capture
     raise AssertionError(f"no step executes, yet {len(steps)} step(s) were handed over")
 
 
@@ -437,47 +430,6 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
             (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), OPEN_BOUND),
         )
     ]
-
-
-class AllocatedLedger(TxTemporal, table="ledger", namespace="lowering.allocated"):
-    id: Attr[int] = attr(primary_key=MAX)
-    amount: Attr[int]
-
-
-def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_spans() -> None:
-    # The `max` form renders one row through scalar binding rather than the
-    # repeated row binder, so the open end crosses that path as a framework bind.
-    model = model_of(DomainModel(AllocatedLedger))
-    entity = model.entity(AllocatedLedger.identity)
-    shape = temporal_read.temporal_facet_of(model).shape(AllocatedLedger.identity)
-    assert entity is not None
-    assert isinstance(shape, TransactionTimeOnly)
-    opened = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    members = {member.identity.name: member.identity for member in entity.declared_attributes}
-    row = managed_row_of(
-        model,
-        {
-            members["id"]: RETURNED_MAX_PLUS_ONE,
-            members["amount"]: 100,
-            shape.transaction_time.start_attribute: opened,
-            shape.transaction_time.end_attribute: OPEN_BOUND,
-        },
-    )
-    step = PlannedInsert(entity=entity.identity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
-
-    statement = lowered(
-        step, LayoutPayloadPreparer(bound_model(model)), bound_model(model), POSTGRES
-    )
-
-    assert statement.sql == (
-        "insert into px.ledger(id, amount, in_z, out_z) "
-        "select coalesce(max(t0.id), ?) + ?, ?, ?, ? from px.ledger t0 returning id"
-    )
-    assert statement.binds == (0, 1, 100, opened, OPEN_BOUND)
-    assert statement.binds[-1] is OPEN_BOUND
-    assert statement.wire_binds() == (0, 1, 100, "2024-01-01T00:00:00.000000Z", "infinity")
-    typed = {index for span in statement.typed_bind_spans for index in span.indices()}
-    assert typed == {2, 3}
 
 
 # One materialized SpotQuote row, physical-column keyed and complete

@@ -41,7 +41,6 @@ from .case_assertions import CaseFailure, write_value_equal
 from .database_binding import PhysicalTable
 from .document_codec import encode_collection, encode_document, encode_leaf
 from .inheritance import tag_of
-from .keyed_write_validate import is_framework_marker, states_framework_marker
 from .sql_canonical import sqlglot_dialect
 from .storage_layout import DocumentMember, is_scalar_collection
 from .temporality import TEMPORAL_DIMENSION_RANK
@@ -168,8 +167,6 @@ def unit_resolving_reads(
             opened.update(keys)
             continue
         if mutation not in _KEYED_MUTATIONS:
-            continue
-        if states_framework_marker(entity, entry):
             continue
         if any(key not in opened for key in keys):
             needed.add(entity.canonical_name)
@@ -692,9 +689,7 @@ def _member_column(
 
 def _literal_scalar(entity: Entity, column: str, value: Any) -> bool:
     """Whether a scalar attribute's ① value is a literal of its declared type, rather
-    than a DB-computed write marker or a temporal end column's open bound."""
-    if is_framework_marker(value):
-        return False
+    than a temporal end column's open bound."""
     end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
     return not (value == "infinity" and column in end_columns)
 

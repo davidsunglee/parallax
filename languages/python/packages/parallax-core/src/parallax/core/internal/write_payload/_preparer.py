@@ -39,10 +39,8 @@ from parallax.core.internal.write_plan.payload import (
 )
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
-    MaxPlusOne,
     PlannedAssignments,
     PlannedStep,
-    SelfIncrement,
     WriteRow,
 )
 
@@ -103,8 +101,8 @@ class LayoutPayloadPreparer:
         values that differ are stored differently whether the member has a
         Column of its own or lives in the shared document. A scalar
         collection's managed tuple is exact element by element in order, so
-        the same holds for it. Interval members, generated values, members only
-        one row states, and occurrences decide nothing here.
+        the same holds for it. Interval members, members only one row states,
+        and occurrences decide nothing here.
         """
         # A member either row executes is where neighbours usually differ, so it
         # is compared before the rest; an executed occurrence is no scalar and
@@ -116,12 +114,7 @@ class LayoutPayloadPreparer:
                 continue
             value = left_row.cell(identity)
             other = right_row.cell(identity)
-            if (
-                value is left_row.selection.absent
-                or other is right_row.selection.absent
-                or _generated(value)
-                or _generated(other)
-            ):
+            if value is left_row.selection.absent or other is right_row.selection.absent:
                 continue
             if value != other:
                 return True
@@ -131,8 +124,8 @@ class LayoutPayloadPreparer:
         """Whether both complete prepared rows persist identical cells outside
         their temporal interval.
 
-        A row that leaves some Column to the database's default, or holds a
-        generated value, establishes no known state and so equals nothing.
+        A row that leaves some Column to the database's default establishes no
+        known state and so equals nothing.
         """
         if left.entity != right.entity:
             return False
@@ -321,15 +314,9 @@ def _stated_attributes(row: ManagedRow) -> Iterator[AttributeIdentity]:
         yield cast("AttributeIdentity", identities[position])
 
 
-def _generated(value: object) -> bool:
-    return isinstance(value, MaxPlusOne | SelfIncrement)
-
-
 def _cell_equal(kind: int, value: object, other: object) -> bool:
     if kind == _INTERVAL:
         return True
-    if _generated(value) or _generated(other):
-        return False
     if kind == _DOCUMENT:
         return persisted_document_equal(value, other)
     return value == other

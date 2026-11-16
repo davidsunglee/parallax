@@ -560,8 +560,8 @@ A binding has four parts, each keyed by what the model declares:
 - `entities`, an override per entity that owns a table, keyed by its canonical name
   (`Customer`, or `audit.Entry` for a namespaced one), which may give a schema, a
   physical table name, or both;
-- `sequences`, an override per `KeySequence(...)` or `Sequence(...)` key-generation name,
-  which entities declaring the same name share. A `KeySequence` allocates keys from the
+- `sequences`, an override per `KeySequence(...)` name, which entities declaring the
+  same name share. A `KeySequence` allocates keys from the
   native sequence placed here, which `schema_delta` creates; a binding fixes where each
   sequence belongs.
 

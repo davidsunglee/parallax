@@ -57,21 +57,18 @@ class StoredPositions:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
-        answered = self.simulated(
+    ) -> None:
+        self.simulated(
             steps,
             effect_spans=effect_spans,
-            allocates=allocates,
             capture_insert=capture_insert,
             capture_revision=capture_revision,
         )
         for step in steps:
             self._apply(step)
-        return answered
 
     def acquire[Request: RowRequest, Result](
         self, request: Request, consumer: RowConsumer[Request, Result], /

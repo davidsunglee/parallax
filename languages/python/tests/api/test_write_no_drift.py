@@ -35,6 +35,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core._execution._unit_work import instructions
 from parallax.core.internal.base import INFINITY, TemporalBound, UsageError
+from parallax.core.internal.database_binding import ResolvedBinding, sequence_ddl
 from parallax.core.internal.db_port import (
     Bind,
     Committed,
@@ -43,7 +44,7 @@ from parallax.core.internal.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.core.internal.dialect import POSTGRES, Dialect, SequenceDdl
 from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity
@@ -71,6 +72,7 @@ from tests._support.sweep_goldens import write_golden_statements
 from tests._support.write_preparation import write_preparation_of
 
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
+_RESERVE: Final = POSTGRES.reserve_sequence()
 
 # The driver-native infinity sentinel (`m-core`/`m-dialect`): a real Postgres
 # open upper bound renders through `engine.wire_value` as the literal
@@ -273,7 +275,15 @@ def _port_for(story: WriteStory) -> _KeyedSeedPort:
         rows=_seed_rows_for(story),
         reads=_READ_ROWS_BY_CASE.get(story.case_id, []),
         counts=_stated_counts(story.case_id),
+        sequences=_declared_sequences(story.model),
     )
+
+
+def _declared_sequences(model: str) -> dict[str, SequenceDdl]:
+    """Each native sequence ``model`` declares, by the name a reservation binds,
+    as its declaration defines it."""
+    resolved = ResolvedBinding(model_of(MODELS[model]), TEST_BINDING)
+    return {sequence.sql: sequence_ddl(sequence) for sequence in resolved.sequences.values()}
 
 
 def _stated_counts(case_id: str) -> list[int]:
@@ -322,7 +332,9 @@ class _KeyedSeedPort(ConnectsAsItself):
     milestones, and deciding which is a temporal query this double does not
     answer. A read past the script's end falls back to the keyed selection.
     A write reports one affected row, or the next of ``counts`` while any is
-    left.
+    left. A native reservation of one of ``sequences`` answers the block after
+    the previous one its definition steps to, from its start, with that
+    definition read back.
     """
 
     dialect: Dialect = POSTGRES
@@ -333,11 +345,14 @@ class _KeyedSeedPort(ConnectsAsItself):
         rows: Sequence[MappingRow] = (),
         reads: Sequence[Sequence[MappingRow]] = (),
         counts: Sequence[int] = (),
+        sequences: Mapping[str, SequenceDdl] | None = None,
     ) -> None:
         self.calls: list[PortCall] = []
         self._rows = [dict(row) for row in rows]
         self._scripted = [[dict(row) for row in answer] for answer in reads]
         self._counts = list(counts)
+        self._sequences = dict(sequences or {})
+        self._reserved: dict[str, int] = {}
 
     def execute(
         self,
@@ -348,6 +363,13 @@ class _KeyedSeedPort(ConnectsAsItself):
         read_only: bool = False,
     ) -> list[Row]:
         self.calls.append(ReadCall(sql, tuple(binds), read_only))
+        if sql == _RESERVE:
+            (name,) = binds
+            ddl = self._sequences[cast("str", name)]
+            reserved = self._reserved.get(cast("str", name), 0)
+            self._reserved[cast("str", name)] = reserved + 1
+            first = ddl.start + reserved * ddl.increment
+            return [(first, ddl.increment, ddl.minimum, ddl.maximum, False, ddl.data_type)]
         if self._scripted:
             return fold_mapping_rows(self._scripted.pop(0), document_reads)
         matched = [row for row in self._rows if next(iter(row.values())) in binds]
@@ -385,6 +407,15 @@ class _KeyedSeedPort(ConnectsAsItself):
         """The executed READ statements alone, in wire order (the
         writeSequence-story grading rule, below)."""
         return [(call.sql, call.binds) for call in self.calls if isinstance(call, ReadCall)]
+
+    def written(self) -> list[tuple[str, tuple[object, ...]]]:
+        """The executed WRITE statements and native reservations, in wire order
+        (the writeSequence-story grading rule, below)."""
+        return [
+            (call.sql, call.binds)
+            for call in self.calls
+            if isinstance(call, WriteCall) or (isinstance(call, ReadCall) and call.sql == _RESERVE)
+        ]
 
     @property
     def wrote(self) -> bool:
@@ -450,7 +481,7 @@ def _observed_statements(
     per-step goldens already include find steps, so nothing changes there."""
     _assert_reads_are_proper_selects(port)
     if corpus_case(case_id).shape == "writeSequence":
-        return port.writes()
+        return port.written()
     coverage = _COVERAGE_READS_BY_CASE.get(case_id, frozenset())
     return [
         statement
@@ -474,7 +505,8 @@ def _assert_statements(
         # golden is a plain YAML literal (`5.00`, a float) — `compare_binds`
         # reconciles the two in exact-Decimal space, same as row grading.
         compare_binds(binds, golden_binds)
-        assert_document_nulls(model, canonical[golden_sql], binds, golden_binds)
+        if golden_sql != _RESERVE:
+            assert_document_nulls(model, canonical[golden_sql], binds, golden_binds)
 
 
 def _db(port: _KeyedSeedPort, story: WriteStory) -> ScopedDatabase:
@@ -599,10 +631,13 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 # --------------------------------------------------------------------------- #
 REJECTED_WRITE_BUILDERS: dict[str, Callable[[TxnContext], object]] = {
     "m-inheritance-088": lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))),
+    "m-pk-gen-024": lambda tx: tx.wire.amend_if(
+        "Account", {"id": 1, "balance": {"increment": 5}}, version=1
+    ),
 }
 
 # case id -> the model `_KeyedSeedPort` connects against.
-REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
+REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment", "m-pk-gen-024": "account"}
 
 # The Contact/Shipment value-object write-input rejects, and the Wallet
 # replacement omitting a required member, that the corpus grades over a raw

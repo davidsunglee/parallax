@@ -65,7 +65,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
-    SelfIncrement,
     TemporalConcurrency,
     TemporalGate,
     TemporalUpperBound,
@@ -268,10 +267,9 @@ class EntityStorage:
 
         An update or delete of one key expecting an exact count is shaped, and
         so is every close, revision, removal, and guard of one milestone. One
-        advancing a registry (a ``SelfIncrement``) runs alone, since its
-        increment is no value a column can carry, and so does one assigning a
-        member of a unique key other than the primary key, since a value it
-        hands from one object to another must be released in authored order.
+        assigning a member of a unique key other than the primary key runs
+        alone, since a value it hands from one object to another must be
+        released in authored order.
         """
         assignments: PlannedAssignments | None = None
         ends: tuple[tuple[AttributeIdentity, bool], ...] = ()
@@ -295,9 +293,9 @@ class EntityStorage:
         if assignments is not None:
             index = self.view.member_selection.index
             unique = self._unique
-            for identity, value in assignments.attributes.items():
+            for identity in assignments.attributes:
                 position = index.get(identity)
-                if position is None or isinstance(value, SelfIncrement) or identity in unique:
+                if position is None or identity in unique:
                     return None
                 presence |= 1 << position
             for identity in assignments.value_objects:

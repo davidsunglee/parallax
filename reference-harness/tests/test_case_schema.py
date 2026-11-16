@@ -869,21 +869,20 @@ def test_schema_accepts_every_expect_error_code(code: str) -> None:
     assert _is_valid(doc)
 
 
-# --- value-object document whose content is marker-SHAPED -------------------
+# --- value-object document whatever its keys --------------------------------
 #
-# A DB-computed marker (`{computed}` / `{increment}`) vs a value-object document is
-# a MODEL-ROLE decision the model-agnostic schema cannot make, so the write-value
-# branches are NON-exclusive: a value-object column's value is ALWAYS literal
-# document content, even when the authored document happens to be shaped like a
-# marker. These documents MUST validate as a value-object write row.
+# Whether an object value is a value-object document or a type mismatch at a
+# scalar Attribute is a MODEL-ROLE decision the model-agnostic schema cannot make,
+# so the schema admits any object at a write-row field. These documents MUST
+# validate as a value-object write row.
 
 
 def _value_object_document_case(document: Any) -> dict[str, Any]:
     """A writeSequence insert whose `address` value object carries *document*.
 
     `address` is a top-level value object on the customer model, so its value is
-    the WHOLE literal document bound as one atomic document bind — the marker-shaped
-    payload rides through as document content, never a DB-computed marker."""
+    the WHOLE literal document bound as one atomic document bind, whatever keys it
+    holds."""
     return {
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
@@ -909,19 +908,19 @@ def _value_object_document_case(document: Any) -> dict[str, Any]:
     }
 
 
-MARKER_SHAPED_DOCUMENTS = {
-    "computed-maxPlusOne": {"computed": "maxPlusOne"},
+ONE_KEY_DOCUMENTS = {
+    "computed": {"computed": "maxPlusOne"},
     "increment": {"increment": 1},
     "computed-plus-street": {"computed": "x", "street": "Main"},
 }
 
 
-@pytest.mark.parametrize("label", sorted(MARKER_SHAPED_DOCUMENTS))
-def test_schema_accepts_marker_shaped_value_object_document(label: str) -> None:
-    doc = _value_object_document_case(MARKER_SHAPED_DOCUMENTS[label])
+@pytest.mark.parametrize("label", sorted(ONE_KEY_DOCUMENTS))
+def test_schema_accepts_any_value_object_document(label: str) -> None:
+    doc = _value_object_document_case(ONE_KEY_DOCUMENTS[label])
     errors = list(_validator().iter_errors(doc))
     assert errors == [], (
-        f"marker-shaped value-object document {label!r} should validate as document "
+        f"value-object document {label!r} should validate as document "
         f"content, got: {[e.message for e in errors]}"
     )
 

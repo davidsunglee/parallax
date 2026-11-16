@@ -60,7 +60,6 @@ from parallax.core.internal.write_plan.steps import (
     CarriedFrom,
     ChangedFrom,
     Finite,
-    MaxPlusOne,
     PlannedClose,
     PlannedInsert,
     PlannedStep,
@@ -1058,9 +1057,8 @@ class _Rekeying:
                 for ends in ((Finite(instant=_MAR), OPEN_END), OPEN_BITEMPORAL_ENDS)
             ),
         ),
-        (MaxPlusOne(), ()),
     ],
-    ids=["changed-key", "allocated-key"],
+    ids=["changed-key"],
 )
 def test_a_successor_opens_at_the_key_finalization_left_it_rather_than_its_predecessors(
     key: object, opened: tuple[TemporalRowCoordinates, ...]

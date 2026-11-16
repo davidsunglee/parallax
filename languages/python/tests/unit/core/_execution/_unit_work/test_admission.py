@@ -325,7 +325,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     admission.drain_planned()
     split = TemporalRowCoordinates(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
     tail = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    authority.complete_write(WriteEffects(opened=Openings(continued=(split, tail))), ())
+    authority.complete_write(WriteEffects(opened=Openings(continued=(split, tail))))
     return admission
 
 
@@ -393,7 +393,7 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothin
         if stored:
             # Stored, its coverage still repeats it.
             admission.drain_planned()
-            authority.complete_write(WriteEffects(opened=Openings(continued=stored_rows)), ())
+            authority.complete_write(WriteEffects(opened=Openings(continued=stored_rows)))
         pending = admission.composed_writes()
         with raises_code(UsageError, "write-value-already-stored") as refusal:
             admission.admit_insert(insert(), insertion_advice=_REPEATER)
@@ -458,7 +458,7 @@ def test_a_pending_reinsertion_claims_from_the_version_an_insert_stores() -> Non
     stored = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert stored is not None
     admission.drain_planned()
-    authority.complete_write(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), ())
+    authority.complete_write(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)))
     _admit(admission, _account_delete_through(stored))
     again = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert again is not None
@@ -965,7 +965,6 @@ def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_ancho
         WriteEffects(
             opened=Openings(continued=(TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS),))
         ),
-        (),
     )
     assert identity is not None
     _admit(

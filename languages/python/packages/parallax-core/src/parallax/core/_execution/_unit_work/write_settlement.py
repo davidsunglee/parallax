@@ -62,7 +62,6 @@ from parallax.core.internal.temporal_read import (
 )
 from parallax.core.internal.temporal_write.expansion import (
     TemporalFacts,
-    entry_ends,
     opening,
     openings,
 )
@@ -80,7 +79,6 @@ from parallax.core.internal.write_plan.payload import WritePayloadPreparer
 from parallax.core.internal.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AcquisitionSpan,
-    AllocatedOpening,
     BoundRange,
     EffectShapeOf,
     Openings,
@@ -98,9 +96,7 @@ from parallax.core.internal.write_plan.planned_rows import (
 from parallax.core.internal.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
-    RETURNED_MAX_PLUS_ONE,
     ExactCount,
-    MaxPlusOne,
     PlannedAssignments,
     PlannedInsert,
     PlannedStep,
@@ -235,9 +231,7 @@ class WritePlanCompiler:
         of one mutation phase over distinct objects share a Write Group of at
         most :data:`_WRITES_PER_GROUP`, laid out as every write's effects, shape by
         shape where the model's payload preparer gives them shapes, and then
-        every write's inserts, each write's own order kept. A write
-        whose insert the database allocates a key for and a write naming no
-        complete object key form a group of their own, and a write naming an
+        every write's inserts, each write's own order kept. A write naming an
         object the open group already writes starts the next group. A deferred
         write is a plan entry of its own, grouped only once execution binds it.
         Consecutive deferred writes of one mutation phase sharing a coverage
@@ -280,11 +274,7 @@ class WritePlanCompiler:
                     )
                     entries.append(write)
                     continue
-                keys = None if write.opened.allocated else _group_keys(item, families)
-                if keys is None:
-                    _close_group(entries, members, held, shape)
-                    entries.append(WriteGroup((write,), steps))
-                    continue
+                keys = _group_keys(item, families)
                 if len(members) == _WRITES_PER_GROUP or not held.isdisjoint(keys):
                     _close_group(entries, members, held, shape)
                 members.append((write, steps))
@@ -567,8 +557,7 @@ class WritePlanCompiler:
         audit: AuditDecoration,
     ) -> BoundRange:
         """One temporal insert as the new lineage it opens over its prepared
-        window, the row recorded under the key it states or, where the
-        database allocates the key, under the key its insert answers."""
+        window, the row recorded under the key it states."""
         view = entity_view(self._families, entity)
         # Reaching a surviving temporal insert is what makes the attempt
         # capture its instant; the row's fresh start derives from that value.
@@ -580,27 +569,15 @@ class WritePlanCompiler:
             instant=tx_instant.value(),
             selection=row.selection,
         )
-        allocated = _with_returned_key(facts, row)
         inserts = (
             PlannedInsert(
                 entity=entity.identity,
-                entries=(
-                    audit.finalize_row(
-                        opening(
-                            facts,
-                            row if allocated is None else allocated,
-                            instruction.valid_time_window,
-                        )
-                    ),
-                ),
+                entries=(audit.finalize_row(opening(facts, row, instruction.valid_time_window)),),
             ),
         )
         return BoundRange(
             steps=inserts,
-            opened=Openings(
-                continued=openings(facts, inserts),
-                allocated=() if allocated is None else _allocated(facts, inserts),
-            ),
+            opened=Openings(continued=openings(facts, inserts)),
         )
 
     def _opening(
@@ -687,10 +664,8 @@ class WritePlanCompiler:
         return require_observed_version(entity.identity, observation)
 
 
-def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
-    """The objects ``item`` writes, by its family's key, or ``None`` where one
-    names no complete key: an insert whose key is absent or the database
-    computes."""
+def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...]:
+    """The objects ``item`` writes, by its family's key."""
     objects = (
         item.object_keys
         if isinstance(item, InsertBatch | ObjectLockedBatch)
@@ -699,11 +674,7 @@ def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupK
     attribute = entity_view(families, item.target).primary_key.identity
     keys: list[_GroupKey] = []
     for key in objects:
-        if key is None:
-            return None
         ((_, value),) = key.primary_key
-        if value is None:
-            return None
         keys.append((attribute, value))
     return tuple(keys)
 
@@ -712,16 +683,12 @@ def _acquisition_candidate(
     write: SettledWrite, item: OrderedWrite, families: InheritanceFacet
 ) -> _AcquisitionCandidate | None:
     """What ``write``'s deferred range shares a coverage read by, whatever its
-    temporal shape or verb, or ``None`` where it reads alone: one naming no
-    complete key the database does not allocate."""
+    temporal shape or verb, or ``None`` where it reads alone."""
     deferred = write.deferred
     if not isinstance(deferred, DeferredTemporalRange):
         return None
     meaning = deferred.meaning
-    keys = _group_keys(item, families)
-    if keys is None:
-        return None
-    (key,) = keys
+    (key,) = _group_keys(item, families)
     return _AcquisitionCandidate(
         meaning.facts.entity.identity, meaning.key_attribute, meaning.shared_lock, key
     )
@@ -786,28 +753,6 @@ def _unobserved_close(entity: CompiledEntity) -> InternalError:
         f"{entity.identity.name!r}: a temporal write of existing coverage closes the "
         "current milestone, and every close requires the Temporal Observation it "
         "addresses, gates on, and carries state forward from (m-unit-work)",
-    )
-
-
-def _with_returned_key(facts: TemporalFacts, row: ManagedRow) -> ManagedRow | None:
-    """``row`` asking the insert that opens it, where the database allocates its
-    key, to answer that key, so the row is recorded by its complete address;
-    ``None`` where ``row`` states its key."""
-    position = row.selection.members.index[facts.view.primary_key.identity]
-    if not isinstance(row.at(position), MaxPlusOne):
-        return None
-    return row.with_cell(position, RETURNED_MAX_PLUS_ONE)
-
-
-def _allocated(
-    facts: TemporalFacts, inserts: Sequence[PlannedInsert]
-) -> tuple[AllocatedOpening, ...]:
-    key = facts.view.primary_key.identity
-    return tuple(
-        AllocatedOpening(facts.entity.identity, entry_ends(facts, entry.row))
-        for insert in inserts
-        for entry in insert.entries
-        if entry.row.cell(key) == RETURNED_MAX_PLUS_ONE
     )
 
 

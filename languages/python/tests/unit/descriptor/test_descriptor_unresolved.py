@@ -15,7 +15,6 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import DATE, INT64, STRING, TIMESTAMP, Numeric
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -36,7 +35,6 @@ from parallax.core.internal.metamodel import (
     RelationshipIdentity,
     RelativeEntityReference,
     ReverseRelationshipDeclaration,
-    Sequence,
     SortDirection,
     Table,
     TablePerHierarchy,
@@ -245,7 +243,7 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
             "entity Bad.attributes: unknown properties: `default`",
         ),
         (
-            _attributed({"name": "value", "type": "int64", "pkGeneration": "max"}),
+            _attributed({"name": "value", "type": "int64", "pkGeneration": "application-assigned"}),
             "entity Bad.attributes.value: `pkGeneration` requires `primaryKey: true`",
         ),
         (
@@ -253,7 +251,7 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
                 {"name": "id", "type": "int64", "primaryKey": True, "pkGeneration": "wild"}
             ),
             "entity Bad.attributes.id: `pkGeneration` must be one of "
-            "['application-assigned', 'key-sequence', 'max', 'sequence'], got 'wild'",
+            "['application-assigned', 'key-sequence'], got 'wild'",
         ),
         (
             _attributed(
@@ -261,11 +259,10 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
                     "name": "id",
                     "type": "int64",
                     "primaryKey": True,
-                    "pkGeneration": {"strategy": "max"},
+                    "pkGeneration": {"strategy": "application-assigned"},
                 }
             ),
-            "entity Bad.attributes.id: object pkGeneration requires "
-            "`strategy: key-sequence` or `sequence`",
+            "entity Bad.attributes.id: object pkGeneration requires `strategy: key-sequence`",
         ),
         (
             _attributed(
@@ -634,7 +631,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
           type: int64
           primaryKey: true
           pkGeneration:
-            strategy: sequence
+            strategy: key-sequence
             name: account_ids
             batchSize: 20
             initialValue: 7
@@ -665,7 +662,7 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
     assert identifier.type == INT64
     assert identifier.storage == Column("id")
     assert identifier.primary_key == PrimaryKey(
-        Sequence(name="account_ids", batch_size=20, initial_value=7, increment_size=1)
+        KeySequence(name="account_ids", batch_size=20, initial_value=7, increment_size=1)
     )
     assert label.type == STRING
     assert label.max_length == 40
@@ -688,10 +685,9 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
 
 
 @pytest.mark.parametrize(
-    ("spelling", "generation"),
-    [("application-assigned", APPLICATION_ASSIGNED), ("max", MAX)],
+    ("spelling", "generation"), [("application-assigned", APPLICATION_ASSIGNED)]
 )
-def test_the_nullary_generation_spellings_normalize(spelling: str, generation: object) -> None:
+def test_the_nullary_generation_spelling_normalizes(spelling: str, generation: object) -> None:
     text = f"""
     entity:
       name: Account

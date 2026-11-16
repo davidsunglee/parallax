@@ -58,7 +58,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 101
+    assert len(prose) == 100
     assert "framework-owned-member-assigned" in prose
     assert "relationship-join-type-mismatch" in prose
     assert {
@@ -101,7 +101,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
 
 def test_real_schema_enum_is_the_full_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 101
+    assert len(rules) == 100
     assert "framework-owned-member-assigned" in rules
     assert "metamodel-temporal-member-reserved" in rules
     assert "relationship-join-type-mismatch" in rules

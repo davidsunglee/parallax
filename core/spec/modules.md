@@ -103,7 +103,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-execution-authority` | Explicit actor selection, scoped authority capture, and join identity | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
-| `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
+| `m-pk-gen` | Primary-key generation (native key sequences) | active | cases |
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-storage-layout` | Canonical physical Table composition and column layout | active | cases |
 | `m-database-binding` | Deployment placement of tables and logical allocators: binding documents, their resolution against a model, and relocation between resolved bindings | active | cases |

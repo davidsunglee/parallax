@@ -1103,15 +1103,10 @@ parent keys and the suffix equals the computed expectation — so a dropped or
 wrong propagated as-of fails the case automatically. A non-temporal child has an
 empty suffix.
 
-For a writeSequence case inserting into a `sequence`-strategy entity, the
-harness derives the **PK-generation oracle**:
-it independently re-derives the allocated primary keys and the registry counter
-from the declared `pkGeneration` config (`initialValue`/`incrementSize`/
-`batchSize`) and asserts both against the post-write DB state — proving the
-golden's hand-authored ids actually follow the declared strategy (block
-reservation, gap-on-unused, stride). A `key-sequence` entity's keys follow its
-reservation statements instead (*Reservation statements*, below). `max` is pinned
-by its self-describing `coalesce(max(...),0)+1` golden and needs no oracle.
+For a writeSequence case inserting keyless rows of a `key-sequence` entity, the
+harness derives the **PK-generation oracle** from the declared `pkGeneration`
+settings alone (*Reservation statements*, below), proving the golden's
+hand-authored keys follow the declared block reservation, gaps, and stride.
 
 ### Write-sequence cases
 
@@ -1143,12 +1138,11 @@ difference — the DML golden SQL is normalized to a fixed point exactly like re
 SQL (layer 3).
 
 A **value-object** column's neutral write input (①) value is **always** the literal
-document (a JSON object, a JSON array, or `NULL`) — never a DB-computed write marker
-(`{computed: "maxPlusOne"}` / `{increment: n}`), which is a **scalar-attribute-only**
-form. A value object binds its whole document even when that document is *shaped*
-like a marker; the two are disambiguated by the field's declared metamodel role
-(resolved from the Entity Layout slot's contributor), not by the value's shape
-(`m-value-object`, `m-storage-layout`).
+document (a JSON object, a JSON array, or `NULL`), whatever members it holds, while
+an object at a **scalar** attribute is no value its codec admits; the two are
+disambiguated by the field's declared metamodel role (resolved from the Entity
+Layout slot's contributor), not by the value's shape (`m-value-object`,
+`m-storage-layout`).
 
 A step MAY instead be a **target** write: it carries one `row`
 rather than `rows`, a `mutation` of `amend` / `amendUntil` (an amendment),
@@ -1185,7 +1179,8 @@ counts toward `then.databaseCalls` and never toward a step's declared
 
 A step's keyless rows take keys, in row order, only from the blocks its own
 reservations reserve, in order, and a step reserves a block only once the one
-before it runs out. Each reservation of an allocator answers the block after the
+before it runs out: each step is a unit of work of its own, so what one step's
+block leaves unused is abandoned rather than handed to the next step. Each reservation of an allocator answers the block after the
 one its previous reservation in the case answered: the first starts at
 `initialValue`, each next one `batchSize × incrementSize` higher, and a block holds
 `batchSize` keys `incrementSize` apart, clipped to the key range. The keys a
@@ -1197,7 +1192,9 @@ the tables, where the binding places it, from the declaration alone. It derives
 every key and reservation from the declarations as above, checks each golden
 insert's binds against those keys, runs each golden reservation and requires it to
 answer its block's first key, and after the last statement requires the sequence's
-next reservation to answer the block after the case's last.
+next reservation to answer the block after the case's last, or, where that block
+lies past the key range, to fail with the dialect's exhaustion code (`m-dialect`
+*Native sequences*).
 
 #### Resolving reads a write owes
 
@@ -1229,12 +1226,6 @@ state:
 - an **insert OPENS** its row, so it owes none;
 - a row an **earlier entry of the same unit inserted** owes none: that is
   read-your-own-writes, and no read could return a row the flush has not written;
-- an entry whose row assigns a **DB-computed write marker** owes none. Such a
-  value is the framework's own bookkeeping — a pk-gen block reservation, a
-  version advance — and no public verb accepts one, so the entry states a
-  statement the framework issues rather than a write a caller authors. That
-  provenance also makes it a unit of its own, never one entry of a mixed buffer
-  (*Buffered keyed write instructions*);
 - a **target** entry resolves no source: its caller states the object
   and the revision. Under the Locking strategy its target Entity's Effective
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
@@ -1717,20 +1708,6 @@ entries). Both are model-aware, which is why neither is expressible in the JSON
 Schema. Coalescing and
 foreign-key-ordering correctness are proven where they always were — the step's
 golden SQL executed verbatim, plus `tableState` / `expectRows`.
-
-The generality is over **objects and mutations**, not over **provenance**: an
-entry assigning a **DB-computed write marker** states a statement the framework
-issues rather than a write a caller authors (*Resolving reads a write owes*), and
-is therefore a **choreography unit of its own**. Such an entry is the buffer's
-**only** entry and its step is **ungrouped** — a buffer mixing one with
-caller-authored entries would state half its DML through the write verbs and half
-around them, in a unit no verb opened, and a `uow`-grouped one would ask that
-group's held unit of work to buffer an instruction no verb accepts. A framework
-marker is not developer input, so no client can compose either form; refusing
-them is what keeps the corpus's own vocabulary from inventing a write surface.
-This is the buffer's **third** model-aware static check — the marker form is
-scalar-attribute-only and the field's declared role decides it, which the JSON
-Schema cannot see either.
 
 ```yaml
 - write:                                    # an ordered keyed buffer (here, the coalescing special case)
@@ -2712,8 +2689,8 @@ against any row's contents):
   framework-owned designation ([`m-metamodel`](m-metamodel.md)); assignment
   admissibility belongs to [`m-unit-work`](m-unit-work.md), version ownership to
   [`m-unit-work`](m-unit-work.md#version-values-are-framework-owned), and interval
-  construction to [`m-temporal-write`](m-temporal-write.md). Internal framework
-  markers and carried state are not caller assignments.
+  construction to [`m-temporal-write`](m-temporal-write.md). Carried state is
+  not a caller assignment.
 
 - `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
   carries more than one row. Each row of a milestone chain closes its own current
@@ -2756,10 +2733,8 @@ counting the derived primary-key Index a frontend hands over,
 endpoint of its Entity (see `m-metamodel`),
 `metamodel-temporal-member-reserved`: a top-level member other than an As-Of Axis
 endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
-`pk-gen-sequence-conflict`: two key declarations share a Sequence allocator key
-but disagree on its settings or key type (see `m-pk-gen`),
 `pk-gen-key-sequence-conflict`: two key declarations share a KeySequence
-allocator key but disagree on its strategy, settings, or key type (see `m-pk-gen`),
+allocator key but disagree on its settings or key type (see `m-pk-gen`),
 `pk-gen-key-sequence-subtype-override`: an inheritance subtype declares a
 KeySequence key of its own (see `m-pk-gen`),
 `inheritance-unknown-parent`, `inheritance-cycle`,
@@ -2931,11 +2906,6 @@ Reading the columns:
   resolved declaration. This module owns no widened grammar, host-parser
   exception, or carrier-specific conversion. The authored token's exact numeric
   provenance reaches the codec when the corpus came from text.
-- A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is admitted at a
-  scalar Attribute and is a value no other position can hold. The disambiguation is
-  by the position's declared metamodel ROLE, never by the value's shape, so a
-  marker-shaped value inside a value-object document is a document field like any
-  other.
 - **A value the position cannot hold** is the multiplicity and document rules: a
   non-document at a `one` occurrence, a non-list at a `many` one, a non-document
   element inside a `many` list, and a document or list at a scalar Attribute. It is a
@@ -3097,10 +3067,8 @@ executing SQL, so only `run` grades it. Two criteria make a case run-only:
   run-only **regardless** of whether its emissions happen to be statically derivable,
   because its point is a runtime interaction a single `compile` cannot represent.
 - **`query-result-dependent`** — the emissions depend on a **query result**:
-  deep-fetch fan-out binds, `sequence`-strategy PK
-  allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
-  insert folds the computation into its own SQL and stays eligible), keys a native
-  reservation answers (*Reservation statements*, below),
+  deep-fetch fan-out binds, keys a native reservation answers (*Reservation
+  statements*, below),
   framework-owned observed-version / `in_z` binds, a close whose address is read
   off the milestone a find of its own unit of work observed (*Settling against a
   grouped find*, above), or a streamed read's **keyset seek** — a page after the

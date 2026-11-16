@@ -638,7 +638,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "PreparedPredicateInstruction",
             "PreparedTargetInstruction",
             "PreparedInstruction",
-            "WriteInstruction",
         }
     ),
     (

@@ -70,14 +70,6 @@ from .value_object_resolve import (
     decode_typed_literal,
 )
 
-# A single-key mapping shaped like one of these is a DB-computed write marker
-# (`m-value-object` "Writing" -- pk-gen / the framework version advance) and is
-# exempt from type checking. The disambiguation is by the field's declared
-# metamodel ROLE, never by the value's shape, so the exemption holds at a scalar
-# Attribute alone -- never inside a document, where a value object binds its whole
-# document even when that document happens to be shaped like a marker.
-_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
-
 
 def framework_owned_names(entity: Entity) -> frozenset[str]:
     """The attribute names APPLICABLE to *entity* whose values the FRAMEWORK supplies.
@@ -140,9 +132,7 @@ def assignment_violation(
     The value itself is judged by the SAME walk a row's is: a scalar against its
     declared neutral type, `null` only where the member is nullable, and a Value
     Object occurrence as one whole document (or a list of them for a `many`),
-    because an occurrence binds atomically. A DB-computed write marker is NOT
-    exempt here as it is in a row — it names a statement the framework issues, and
-    no edit authors one.
+    because an occurrence binds atomically.
 
     The message is the refusal's own detail, member-qualified, so a caller reports
     what is wrong with the assignment rather than re-deriving it. With
@@ -163,7 +153,7 @@ def assignment_violation(
         if name in framework_owned_names(entity):
             return f"{path}: framework-owned fields may not be assigned"
         return _violation_detail(
-            lambda: _validate_attribute({name: value}, attribute, path=path, marker_exempt=False),
+            lambda: _validate_attribute({name: value}, attribute, path=path),
             keep=keep,
         )
     occurrence = next(
@@ -192,7 +182,7 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
         path = f"{entity.name}.{attribute['name']}"
         if attribute["name"] not in row:
             return f"{path}: a target write states every primary-key member"
-        judge = partial(_validate_attribute, row, attribute, path=path, marker_exempt=False)
+        judge = partial(_validate_attribute, row, attribute, path=path)
         detail = _violation_detail(judge)
         if detail is not None:
             return detail
@@ -338,7 +328,6 @@ def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]
                     row,
                     attribute,
                     path=f"{entity.name}.{name}",
-                    marker_exempt=not replacing or not attribute.get("primaryKey", False),
                 )
         for name, occurrence in occurrences.items():
             _validate_occurrence(row, occurrence, path=f"{entity.name}.{name}")
@@ -353,7 +342,6 @@ def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]
                 row,
                 attributes[name],
                 path=f"{entity.name}.{name}",
-                marker_exempt=name not in key_names,
             )
         elif name in occurrences:
             _validate_occurrence(row, occurrences[name], path=f"{entity.name}.{name}")
@@ -363,13 +351,7 @@ def _is_many(value_object: dict[str, Any]) -> bool:
     return value_object.get("multiplicity", "one") == "many"
 
 
-def _is_marker(value: Any) -> bool:
-    return isinstance(value, dict) and frozenset(value) in _MARKER_KEYS
-
-
-def _validate_attribute(
-    document: dict[str, Any], attribute: dict[str, Any], *, path: str, marker_exempt: bool = True
-) -> None:
+def _validate_attribute(document: dict[str, Any], attribute: dict[str, Any], *, path: str) -> None:
     """Validate one scalar Attribute position inside *document*."""
     name = attribute["name"]
     value = document.get(name)
@@ -382,8 +364,6 @@ def _validate_attribute(
                 WRITE_REQUIRED_ATTRIBUTE_MISSING,
                 f"{path}: required attribute (nullable:false) is absent or null",
             )
-        return
-    if marker_exempt and _is_marker(value):
         return
     decode_typed_literal(value, attribute.get("type"), path)
 
@@ -458,9 +438,7 @@ def _validate_document(value_object: dict[str, Any], document: Any, *, path: str
             f"{path}: expected a value-object document, got {type(document).__name__}",
         )
     for attribute in value_object.get("attributes", []):
-        _validate_attribute(
-            document, attribute, path=f"{path}.{attribute['name']}", marker_exempt=False
-        )
+        _validate_attribute(document, attribute, path=f"{path}.{attribute['name']}")
     for nested in value_object.get("valueObjects", []):
         _validate_occurrence(document, nested, path=f"{path}.{nested['name']}")
 

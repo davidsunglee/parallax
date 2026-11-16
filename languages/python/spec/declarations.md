@@ -70,8 +70,8 @@ Int64 and `float` means Float64; `type=Int32` and `type=Float32` narrow those
 families. Numeric requires both `precision=` and `scale=`. `parallax.core`
 publishes each Neutral Type as the class an attribute's metadata reads back, named
 as the core names it. `primary_key=True` means application-assigned;
-`KeySequence(name, *, batch_size=100, initial_value=1, increment_size=1)`, `MAX`,
-and `Sequence(...)` imply an integer primary key. A `KeySequence` key defaults to
+`KeySequence(name, *, batch_size=100, initial_value=1, increment_size=1)` implies
+an integer primary key, and `PkGeneration` names the two generations. A `KeySequence` key defaults to
 unset: constructing an instance without it reads `None` and leaves it out of
 `model_fields_set`, an explicit `None` fails the key's own `int` validation, and
 an explicit `0` is a supplied key. `edit` keeps an unset key unset. No free-form
@@ -174,7 +174,7 @@ retain their ordinary data serialization. Serialization does not transfer write
 authority. Public sentinels such as `LATEST`, `UNLOADED`, and
 `MISSING_STORED_VALUE` preserve identity through construction, copying, and
 pickling, and use their exported names in `repr`. Zero-field algebra values such
-as `MAX` have equality semantics, not singleton identity semantics.
+as `ApplicationAssigned()` have equality semantics, not singleton identity semantics.
 
 ## Descriptor and metadata boundary
 

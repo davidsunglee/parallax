@@ -1,73 +1,63 @@
-# PK generation `sequence` (m-pk-gen) — init 1000, inc 5, three inserts.
+# Each reservation of a block of one advances by the increment size: 1000,
+# 1005, then 1010.
 model: models/pk-sequence.yaml
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "sequence-strategy PK allocation - the following INSERT binds registry-read-derived id values, so emissions depend on a query result"
-given:
-  fixtures: true
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
 when:
   writeSequence:
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: base 1000
-      rows:
-        - { name: ticket_seq, nextVal: { increment: 5 } }
     - mutation: insert
       entity: parallax.compatibility.Ticket
       statements: 1
-      note: id 1000
+      note: "1000"
       rows:
-        - { id: 1000, tier: gold }
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: base 1005
-      rows:
-        - { name: ticket_seq, nextVal: { increment: 5 } }
+        - { tier: gold }
     - mutation: insert
       entity: parallax.compatibility.Ticket
       statements: 1
-      note: id 1005
+      note: "1005"
       rows:
-        - { id: 1005, tier: silver }
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: base 1010
-      rows:
-        - { name: ticket_seq, nextVal: { increment: 5 } }
+        - { tier: silver }
     - mutation: insert
       entity: parallax.compatibility.Ticket
       statements: 1
-      note: id 1010
+      note: "1010"
       rows:
-        - { id: 1010, tier: bronze }
+        - { tier: bronze }
 then:
   statements:
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [5, ticket_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.ticket_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.ticket_seq t0
+      binds:
+        postgres: [px.ticket_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.ticket(id, tier) values (?, ?)
         mariadb: insert into px.ticket(id, tier) values (?, ?)
       binds: [1000, gold]
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [5, ticket_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.ticket_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.ticket_seq t0
+      binds:
+        postgres: [px.ticket_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.ticket(id, tier) values (?, ?)
         mariadb: insert into px.ticket(id, tier) values (?, ?)
       binds: [1005, silver]
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [5, ticket_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.ticket_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.ticket_seq t0
+      binds:
+        postgres: [px.ticket_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.ticket(id, tier) values (?, ?)
         mariadb: insert into px.ticket(id, tier) values (?, ?)

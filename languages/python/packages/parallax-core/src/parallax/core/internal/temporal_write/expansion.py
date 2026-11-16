@@ -60,7 +60,6 @@ from parallax.core.internal.write_plan.steps import (
     ExactCount,
     ExecutedMembers,
     Finite,
-    MaxPlusOne,
     MilestoneTarget,
     PlannedAssignments,
     PlannedClose,
@@ -88,7 +87,6 @@ __all__ = [
     "TemporalFacts",
     "bitemporal_ends",
     "entry_endpoint",
-    "entry_ends",
     "opening",
     "openings",
 ]
@@ -1031,7 +1029,7 @@ def _unmerged_endpoint(
         return entry_endpoint(facts, row)
     state = row.row
     value = state.cell(facts.view.primary_key.identity)
-    if value is None or value is state.selection.absent or isinstance(value, MaxPlusOne):
+    if value is None or value is state.selection.absent:
         return None
     own = record.own
     if value != own.key[0]:
@@ -1435,8 +1433,7 @@ def openings(
 def entry_endpoint(facts: TemporalFacts, entry: WriteRow) -> TemporalRowCoordinates | None:
     row = entry.row
     value = row.cell(facts.view.primary_key.identity)
-    # A key the database allocates is named only once its insert answers it.
-    if value is None or value is row.selection.absent or isinstance(value, MaxPlusOne):
+    if value is None or value is row.selection.absent:
         return None
     return TemporalRowCoordinates(facts.entity.identity, (value,), entry_ends(facts, row))
 

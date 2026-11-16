@@ -1,14 +1,13 @@
 """Independent primary-key generation oracles (m-pk-gen).
 
-Every ``sequence`` key declaration names a model-wide logical allocator.
+Every ``key-sequence`` key declaration names a model-wide logical allocator.
 Declarations sharing a key must agree on the batch size, initial value,
 increment size (each with its schema default filled), and the key's declared
 type. Only each Entity's own authored attributes are read, so a family key
 declared once on its ancestor counts once however many positions inherit it.
 
-A ``key-sequence`` allocator is read off its declaration the same way, so the
-harness provisions its native sequence and derives the keys and the position its
-reservations reach from the declaration alone.
+The harness also provisions each allocator's native sequence and derives the
+keys and the position its reservations reach from the declaration alone.
 """
 
 from __future__ import annotations
@@ -19,10 +18,11 @@ from typing import Any
 
 from .value_object_resolve import RejectionError
 
-PK_GEN_SEQUENCE_CONFLICT = "pk-gen-sequence-conflict"
-MODEL_REJECTED_RULES: frozenset[str] = frozenset({PK_GEN_SEQUENCE_CONFLICT})
+KEY_SEQUENCE = "key-sequence"
+PK_GEN_KEY_SEQUENCE_CONFLICT = "pk-gen-key-sequence-conflict"
+MODEL_REJECTED_RULES: frozenset[str] = frozenset({PK_GEN_KEY_SEQUENCE_CONFLICT})
 
-_SEQUENCE_DEFAULTS = (("batchSize", 1), ("initialValue", 1), ("incrementSize", 1))
+_SEQUENCE_DEFAULTS = (("batchSize", 100), ("initialValue", 1), ("incrementSize", 1))
 
 
 def _canonical_order(definition: Mapping[str, Any]) -> tuple[str, str]:
@@ -37,7 +37,7 @@ def validate_shared_allocators(entity_defs: Sequence[Mapping[str, Any]]) -> None
         owner = f"{namespace}.{name}" if namespace else name
         for attribute in definition.get("attributes", []) or []:
             generation = attribute.get("pkGeneration") if isinstance(attribute, dict) else None
-            if not isinstance(generation, dict) or generation.get("strategy") != "sequence":
+            if not isinstance(generation, dict) or generation.get("strategy") != KEY_SEQUENCE:
                 continue
             terms = (
                 *(generation.get(key, default) for key, default in _SEQUENCE_DEFAULTS),
@@ -47,20 +47,22 @@ def validate_shared_allocators(entity_defs: Sequence[Mapping[str, Any]]) -> None
             earlier = first.setdefault(generation["name"], (declared, terms))
             if earlier[1] != terms:
                 raise RejectionError(
-                    PK_GEN_SEQUENCE_CONFLICT,
-                    f"{declared} declares Sequence {generation['name']!r} with "
+                    PK_GEN_KEY_SEQUENCE_CONFLICT,
+                    f"{declared} declares allocator {generation['name']!r} with "
                     f"(batchSize, initialValue, incrementSize, type) {terms}, but "
                     f"{earlier[0]} declares {earlier[1]}",
                 )
 
-
-KEY_SEQUENCE = "key-sequence"
 
 _SEQUENCE_BOUNDS: Mapping[str, tuple[int, int]] = {
     "postgres": (-(2**63), 2**63 - 1),
     "mariadb": (-(2**63) + 1, 2**63 - 2),
 }
 """The values each dialect's native sequences hold (m-dialect *Native sequences*)."""
+
+SEQUENCE_EXHAUSTION: Mapping[str, str] = {"postgres": "2200H", "mariadb": "4084"}
+"""The native code each dialect reports for a sequence past its bound (m-dialect
+*Native sequences*)."""
 
 _KEY_BOUNDS: Mapping[str, tuple[int, int]] = {
     "int32": (-(2**31), 2**31 - 1),

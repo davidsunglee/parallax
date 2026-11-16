@@ -8,10 +8,10 @@ when:
       - name: Badge
         table: badge
         attributes:
-          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq, incrementSize: 5 } }
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: key-sequence, name: shared_seq, incrementSize: 5 } }
       - name: Ticket
         table: ticket
         attributes:
-          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: shared_seq } }
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: key-sequence, name: shared_seq } }
 then:
-  rejectedRule: pk-gen-sequence-conflict
+  rejectedRule: pk-gen-key-sequence-conflict

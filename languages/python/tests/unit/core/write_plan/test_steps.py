@@ -42,7 +42,6 @@ from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row
 from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
     INFINITY,
-    MAX_PLUS_ONE,
     MISSING_TARGET,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -62,7 +61,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     ResolvedMutationSelection,
-    SelfIncrement,
     Shortfall,
     TemporalConcurrency,
     TemporalGate,
@@ -146,19 +144,6 @@ def test_entries_of_one_planned_insert_name_the_same_members() -> None:
         )
 
 
-def test_entries_of_one_planned_insert_share_one_generated_value_shape() -> None:
-    # Same members, different cells generated: a generated value folds into the
-    # statement while a literal binds, so the two entries cannot share one.
-    with pytest.raises(ValueError, match="generated-value shape"):
-        PlannedInsert(
-            entity=_ACCOUNT,
-            entries=(
-                _entry(_row({_ID: MAX_PLUS_ONE, _OWNER: "Ada"})),
-                _entry(_row({_ID: 2, _OWNER: "Bo"})),
-            ),
-        )
-
-
 def test_compatible_entries_form_one_planned_insert() -> None:
     step = PlannedInsert(
         entity=_ACCOUNT,
@@ -182,27 +167,6 @@ def test_planned_writes_compare_by_value() -> None:
 def test_planned_assignments_naming_no_member_are_refused() -> None:
     with pytest.raises(ValueError, match="at least one member"):
         PlannedAssignments(attributes={})
-
-
-def test_a_planned_row_refuses_the_generated_value_no_insert_can_express() -> None:
-    # The registry advance reads the stored row it is rewriting; an insert has no
-    # stored row, so the combination names an allocation nothing could render.
-    with pytest.raises(ValueError, match="never a Write Row cell"):
-        PlannedInsert(entity=_ACCOUNT, entries=(_entry(_row({_ID: SelfIncrement(amount=1)})),))
-
-
-def test_planned_assignments_refuse_the_generated_value_no_update_can_express() -> None:
-    # `max` folds into the row an insert opens; a `SET` clause has no position to
-    # fold it into, so it is refused here rather than bound as a literal object.
-    with pytest.raises(ValueError, match="never a Planned Assignment"):
-        PlannedAssignments(attributes={_ID: MAX_PLUS_ONE})
-
-
-def test_each_generated_value_is_constructible_at_its_own_statement_position() -> None:
-    opened = PlannedInsert(entity=_ACCOUNT, entries=(_entry(_row({_ID: MAX_PLUS_ONE})),))
-    assert opened.entries[0].row.cell(_ID) == MAX_PLUS_ONE
-    advance = SelfIncrement(amount=1)
-    assert PlannedAssignments(attributes={_ID: advance}).attributes[_ID] == advance
 
 
 def test_planned_assignments_span_both_scalar_and_value_object_identities() -> None:

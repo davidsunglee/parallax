@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import (
-    ApplicationAssigned,
     AttributeIdentity,
     AttributeMetadata,
     AttributePrimaryKey,
@@ -739,13 +738,12 @@ def _primary_key_reasons(
     does moving to another allocator; leaving one withdraws keyless
     construction. A surviving allocator's settings change is classified once,
     by the binding comparison, and an initial-value change places only a
-    sequence not yet created, so neither carries a reason here. Any other
-    generation change moves what the caller supplies.
+    sequence not yet created, so neither carries a reason here.
     """
     if not isinstance(earlier, PrimaryKey) or not isinstance(later, PrimaryKey):
         return {_AUTHORING, _MIGRATION}
     before, after = earlier.generation, later.generation
-    if isinstance(after, KeySequence) and isinstance(before, ApplicationAssigned | KeySequence):
+    if isinstance(after, KeySequence):
         moved = not isinstance(before, KeySequence) or before.name != after.name
         return {_MIGRATION} if moved else set()
     return {_AUTHORING}

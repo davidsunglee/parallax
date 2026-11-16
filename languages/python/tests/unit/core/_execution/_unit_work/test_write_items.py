@@ -113,6 +113,11 @@ def test_an_admitted_insert_opens_one_row() -> None:
         admitted_write(_prepared("insert", _account(1), _account(2)), None, None)
 
 
+def test_an_admitted_insert_names_the_object_it_opens() -> None:
+    with pytest.raises(ValueError, match="names no object to open"):
+        admitted_write(_prepared("insert", _account(1)), None, None)
+
+
 @pytest.mark.parametrize(
     "licence",
     ["observed", "insertion"],

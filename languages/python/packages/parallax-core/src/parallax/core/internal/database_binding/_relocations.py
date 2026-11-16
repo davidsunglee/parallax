@@ -6,7 +6,6 @@ from parallax.core.internal.database_binding._physical import (
     PhysicalSequence,
     PhysicalTable,
     ResolvedSequence,
-    sequence_physical,
 )
 from parallax.core.internal.database_binding._resolved import ResolvedBinding
 from parallax.core.internal.metamodel import EntityIdentity
@@ -62,9 +61,8 @@ def breaking_changes_between(
 
     Tables follow canonical owner order and allocators allocator-key order, a
     relocation before a settings change of the same allocator. An owner or
-    allocator only one side holds was added or removed, and an allocator one
-    side generates natively and the other through a registry changed strategy;
-    neither invalidates anything a root holds, so neither is reported.
+    allocator only one side holds was added or removed, which invalidates
+    nothing a root holds, so it is not reported.
     """
     tables = tuple(
         TableRelocated(table.mapping_owner, held.physical, table.physical)
@@ -77,13 +75,8 @@ def breaking_changes_between(
         held_sequence = earlier.sequences.get(allocator)
         if held_sequence is None:
             continue
-        before, after = sequence_physical(held_sequence), sequence_physical(current)
-        if before != after:
-            sequences.append(SequenceRelocated(allocator, before, after))
-        if (
-            isinstance(held_sequence, ResolvedSequence)
-            and isinstance(current, ResolvedSequence)
-            and held_sequence.allocation_settings != current.allocation_settings
-        ):
+        if held_sequence.physical != current.physical:
+            sequences.append(SequenceRelocated(allocator, held_sequence.physical, current.physical))
+        if held_sequence.allocation_settings != current.allocation_settings:
             sequences.append(AllocatorSettingsChanged(allocator, held_sequence, current))
     return (*tables, *sequences)

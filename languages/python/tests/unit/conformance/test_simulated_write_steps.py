@@ -1,7 +1,7 @@
 """Simulated step execution.
 
-Steps that fail to lower leave none of their statements behind, and allocating
-steps answer the next scripted keys, unchecked.
+Steps that fail to lower leave none of their statements behind, and a counted
+step answers the next scripted count.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ _ID: Final = AttributeIdentity(_ACCOUNT.identity, "id")
 _PAYLOADS: Final = build_write_planner(bound_model(_ACCOUNT_META)).payloads
 
 
-def _delete(key: int) -> PlannedStep:
+def _delete(key: int) -> PlannedDelete:
     return PlannedDelete(
         entity=_ACCOUNT.identity,
         target=KeyTarget((_ID,), ((key,),)),
@@ -51,43 +51,24 @@ def _delete(key: int) -> PlannedStep:
     )
 
 
-def _simulated(*allocated: tuple[object, ...]) -> SimulatedWriteSteps:
-    return SimulatedWriteSteps(
-        _PAYLOADS, bound_model(_ACCOUNT_META), POSTGRES, allocated_results=allocated
-    )
-
-
-def _deletes(*keys: int) -> tuple[PlannedStep, ...]:
-    return tuple(_delete(key) for key in keys)
-
-
-def test_steps_that_fail_to_lower_keep_none_of_their_statements_and_answer_no_keys() -> None:
+def test_steps_that_fail_to_lower_keep_none_of_their_statements() -> None:
     steps = (_close(1), _close(2))
     failure = ValueError("the second close cannot be prepared")
     simulated = SimulatedWriteSteps(
-        _FailingPreparer(steps[1], failure),
-        bound_model(_POSITION_META),
-        POSTGRES,
-        allocated_results=[(42,)],
+        _FailingPreparer(steps[1], failure), bound_model(_POSITION_META), POSTGRES
     )
     with pytest.raises(ValueError, match="cannot be prepared") as raised:
-        simulated(steps, allocates=True)
+        simulated(steps)
     assert raised.value is failure
     assert simulated.statements == ()
-    # The scripted keys are still the next allocating execution's.
-    assert simulated((_close(3),), allocates=True) == (42,)
+    simulated((_close(3),))
+    assert len(simulated.statements) == 1
 
 
-def test_each_allocating_execution_answers_the_next_scripted_keys_unchecked() -> None:
-    simulated = _simulated((42,), (), (7, 8))
-    assert simulated(_deletes(1), allocates=False) == ()
-    assert simulated(_deletes(2), allocates=True) == (42,)
-    assert simulated(_deletes(3), allocates=True) == ()
-    assert simulated(_deletes(4), allocates=True) == (7, 8)
-    with pytest.raises(ValueError, match="no scripted result"):
-        simulated(_deletes(5), allocates=True)
-    # A misconfigured execution records nothing either.
-    assert len(simulated.statements) == 4
+def test_each_counted_step_answers_the_next_scripted_count_then_zero() -> None:
+    simulated = SimulatedWriteSteps(_PAYLOADS, bound_model(_ACCOUNT_META), POSTGRES, counts=(3, 0))
+    assert [simulated.counted(_delete(key)) for key in (1, 2, 3)] == [3, 0, 0]
+    assert len(simulated.statements) == 3
 
 
 _POSITION_META: Final = models.load_models()["position"]

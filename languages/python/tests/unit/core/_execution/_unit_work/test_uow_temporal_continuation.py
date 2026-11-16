@@ -23,7 +23,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core import InternalError, UsageError
+from parallax.core import UsageError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
@@ -34,7 +34,6 @@ from parallax.core._execution._unit_work.acquisition import (
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.effects import WRITE_RESULT_INVALID
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
@@ -288,10 +287,10 @@ def test_a_group_holds_nothing_for_a_write_no_source_continues_from() -> None:
 def test_a_group_no_source_demands_hands_its_execution_no_capture() -> None:
     handed: list[dict[str, object]] = []
 
-    def recording(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
-        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
+    def recording(positions: StoredPositions) -> Callable[..., None]:
+        def execute(*arguments: Any, **keywords: Any) -> None:
             handed.append(keywords)
-            return positions(*arguments, **keywords)
+            positions(*arguments, **keywords)
 
         return execute
 
@@ -411,8 +410,8 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
         bound.append(bind(*arguments, **keywords))
         return bound[-1]
 
-    def failing(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
-        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
+    def failing(positions: StoredPositions) -> Callable[..., None]:
+        def execute(*arguments: Any, **keywords: Any) -> None:
             positions(*arguments, **keywords)
             raise RuntimeError("the group failed")
 
@@ -438,8 +437,8 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
 
 
 def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothing() -> None:
-    def failing(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
-        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
+    def failing(positions: StoredPositions) -> Callable[..., None]:
+        def execute(*arguments: Any, **keywords: Any) -> None:
             positions(*arguments, **keywords)
             raise RuntimeError("the group failed")
 
@@ -453,21 +452,6 @@ def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothi
     assert session.held() == []
     with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         session.uow.read(lambda: None)
-
-
-def test_a_group_answering_keys_it_did_not_allocate_holds_nothing() -> None:
-    def answering(positions: StoredPositions) -> Callable[..., tuple[object, ...]]:
-        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
-            return (*positions(*arguments, **keywords), 7)
-
-        return execute
-
-    session = _Session(execute=answering)
-    source = session.observed()
-    with raises_code(InternalError, WRITE_RESULT_INVALID):
-        session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    assert session.ownership.continues(source, _MAR) is None
-    assert session.held() == []
 
 
 def test_rows_held_for_a_source_nothing_reaches_any_longer_are_released() -> None:

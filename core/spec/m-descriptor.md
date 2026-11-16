@@ -216,14 +216,14 @@ entity's **effective inherited classification** within its family.
 | `maxLength` | for `string` (⇒ `varchar(n)`) |
 | `readOnly` | bool, default `false` — immutable after insert |
 | `optimisticLocking` | bool, default `false` — marks the version attribute (`m-concurrency`) |
-| `pkGeneration` | optional `application-assigned` \| `max` \| Sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
+| `pkGeneration` | optional `application-assigned` \| key-sequence object; legal only when `primaryKey: true`, omission on a primary key means application-assigned |
 | `multiplicity` | `one` (default) \| `many` — `many` declares a scalar collection whose elements are `type` (`m-metamodel`); it admits no `nullable: true`, `primaryKey: true`, `maxLength`, `optimisticLocking: true`, or `pkGeneration` |
 
-The Sequence object is exactly:
+The key-sequence object is exactly:
 
 ```yaml
 pkGeneration:
-  strategy: sequence
+  strategy: key-sequence
   name: order_ids
   batchSize: 20
   initialValue: 1
@@ -510,7 +510,7 @@ import, so its explicit spelling carries no information:
 | an Attribute a `temporality` profile derives | always — both endpoints of every derived axis are re-derived on import |
 | the derived primary-key `index` | always — it is derived from the declared key and the profile's axes |
 | `pkGeneration` | on a `primaryKey: true` Attribute whose normalized generation is Application Assigned |
-| Sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`1` / `1` / `1`) |
+| key-sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`100` / `1` / `1`) |
 | `primaryKey`, `nullable`, `readOnly`, `optimisticLocking`, `dependent`, `unique` | equal to the schema-declared default `false` |
 | `multiplicity` | equal to the default `one` |
 | an `orderBy` entry's `direction` | equal to the default `asc` |

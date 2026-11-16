@@ -109,11 +109,13 @@ _RETIRED_SPELLING_STEMS = (
     "schema-retired-from-column",
     "schema-retired-many-to-many",
     "schema-retired-mapping",
+    "schema-retired-max-generation",
     "schema-retired-mutability",
     "schema-retired-pk-generator",
     "schema-retired-related-entity",
     "schema-retired-reverse-name",
     "schema-retired-sequence-name",
+    "schema-retired-sequence-strategy",
     "schema-retired-to-column",
     "schema-retired-transactional",
 )

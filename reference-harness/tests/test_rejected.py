@@ -108,7 +108,6 @@ from reference_harness.value_object_resolve import (
 from reference_harness.write_validate import (
     READ_ONLY_WRITE_TARGET,
     framework_owned_names,
-    validate_keyed_row_values,
     validate_subtype_write,
     validate_write,
     validate_write_persistence,
@@ -951,13 +950,11 @@ def test_keyed_assignment_detects_the_version_by_role() -> None:
     assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
 
 
-@pytest.mark.parametrize("marker", [{"computed": "initialVersion"}, {"increment": 1}])
-def test_keyed_framework_bookkeeping_markers_remain_admissible(marker: dict[str, Any]) -> None:
+@pytest.mark.parametrize("value", [{"computed": "initialVersion"}, {"increment": 1}])
+def test_no_document_admits_a_framework_owned_assignment(value: dict[str, Any]) -> None:
     entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
-    instruction = {"mutation": "amend", "rows": [{"id": 1, "version": marker}]}
-    validate_keyed_write(entity, instruction, allow_framework_markers=True)
     with pytest.raises(RejectionError) as caught:
-        validate_keyed_write(entity, instruction)
+        validate_keyed_write(entity, {"mutation": "amend", "rows": [{"id": 1, "version": value}]})
     assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
 
 
@@ -2075,13 +2072,15 @@ def test_bare_write_row_exempts_framework_owned_attributes() -> None:
     validate_write(balance, {"id": 1, "acctNum": "A", "value": "10.00"})
 
 
-def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() -> None:
-    # A marker is disambiguated by the position's declared metamodel ROLE, never by
-    # the value's shape: it stands for a value the DB computes at a scalar Attribute
-    # column, and a value object binds its whole document even when that document
-    # happens to be shaped like one.
+def test_an_increment_document_is_refused_at_a_scalar_and_in_a_document() -> None:
+    # No write value is a DB-computed marker: a one-key `{increment: n}` or
+    # `{computed: ...}` document is a literal its scalar's codec cannot read,
+    # whether the scalar is an Attribute of the row or a leaf of a value object.
     account = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
-    validate_write(account, {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "1.00"})
+    for value in ({"increment": 5}, {"computed": "maxPlusOne"}):
+        with pytest.raises(RejectionError) as exc:
+            validate_write(account, {"id": 1, "owner": "Ada", "balance": value})
+        assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
     row = _complete_contact_row()
     row["address"]["geo"]["point"]["lat"] = {"computed": "maxPlusOne"}
@@ -2595,12 +2594,3 @@ def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
     )
     with pytest.raises(CaseFailure, match="takes no Valid-Time window"):
         run_case(case, None)
-
-
-def test_keyed_insert_values_preserve_framework_key_allocation_markers() -> None:
-    entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
-    validate_keyed_row_values(
-        entity,
-        "insert",
-        {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "100.00"},
-    )

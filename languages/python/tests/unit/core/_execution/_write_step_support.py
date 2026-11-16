@@ -284,10 +284,8 @@ def run_plan(
     completed."""
     executor = step_executor(port, meta, payloads)
 
-    def execute(
-        steps: tuple[PlannedStep, ...], /, *, allocates: bool, **capture: Any
-    ) -> tuple[object, ...]:
-        return executor.execute(steps, allocates=allocates, flush=flush, **capture)
+    def execute(steps: tuple[PlannedStep, ...], /, **capture: Any) -> None:
+        executor.execute(steps, flush=flush, **capture)
 
     planner = build_write_planner(bound_model(meta))
     uow = UnitOfWork(
@@ -312,12 +310,11 @@ def run_plan(
     def recording(
         authority: SourceAuthority,
         effects: WriteEffects,
-        allocated_keys: tuple[object, ...],
         *,
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
         completed.append(len(port.calls))
-        complete(authority, effects, allocated_keys, captured=captured)
+        complete(authority, effects, captured=captured)
 
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(SourceAuthority, "complete_write", recording)

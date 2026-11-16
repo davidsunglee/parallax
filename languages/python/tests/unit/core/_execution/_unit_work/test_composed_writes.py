@@ -530,7 +530,6 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         WriteEffects(
             opened=Openings(continued=(TemporalRowCoordinates(_ENTITY, (2,), (OPEN_END,)),))
         ),
-        (),
     )
     assert identity is not None
     observed = _balance_observation(1)

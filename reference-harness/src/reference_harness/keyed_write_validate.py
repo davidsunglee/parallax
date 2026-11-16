@@ -16,14 +16,7 @@ predicate-selected instruction's target and assignments. This one judges the
   conforming answer even when the discarded rows would each have lowered to
   well-formed SQL of their own.
 * ``framework-owned-member-assigned`` — an amendment or replacement names a
-  framework-owned member as a caller assignment. Choreography callers may admit
-  internal scalar framework markers separately from caller-authored input.
-
-It also answers one PROVENANCE question about those same members — whether the
-instruction states a DB-computed write marker, the framework's own bookkeeping
-rather than a write a caller authors (:func:`states_framework_marker`) — because
-that answer depends on the target's declared member roles just as the shape rule
-depends on its temporal profile.
+  framework-owned member as a caller assignment.
 
 The bound is model-dependent — it exists only for a temporal target — so the
 shared case schema states the general one-or-more `rows` bound and leaves this to
@@ -87,47 +80,14 @@ def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> li
     return sorted(unknown)
 
 
-_FRAMEWORK_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
-
-
-def is_framework_marker(value: Any) -> bool:
-    """Whether a scalar attribute's ① value is a DB-computed write marker rather than a
-    literal (`m-value-object` "Writing")."""
-    return isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
-
-
-def states_framework_marker(entity: Entity, instruction: Mapping[str, Any]) -> bool:
-    """Whether *instruction* assigns a DB-computed write marker AT A SCALAR
-    ATTRIBUTE — the `m-value-object` "Writing" markers (`{computed: …}` /
-    `{increment: …}`) that name the framework's own pk-gen allocation or version
-    advance rather than a value a caller authored.
-
-    The member's declared metamodel role decides, never the value's shape: a
-    value object binds its whole literal document even when that document is
-    shaped like a marker, and the marker form is scalar-attribute-only
-    (`m-case-format` *Write-sequence cases*).
-    """
-    scalars = {attribute["name"] for attribute in entity.attributes}
-    rows = instruction.get("rows")
-    return any(
-        name in scalars and is_framework_marker(value)
-        for row in (rows if isinstance(rows, list) else ())
-        if isinstance(row, Mapping)
-        for name, value in row.items()
-    )
-
-
 def validate_keyed_assignment_members(
     entity: Entity,
     mutation: str,
     row: Mapping[str, Any],
-    *,
-    allow_framework_markers: bool = False,
 ) -> None:
     """Refuse caller assignments to framework-owned members before row values.
 
-    Concrete-subtype metadata names are judged by the caller first. Only a
-    choreography caller may admit scalar framework markers as bookkeeping.
+    Concrete-subtype metadata names are judged by the caller first.
     """
     if mutation not in {"amend", "amendUntil", "replace", "replaceUntil"}:
         return
@@ -135,8 +95,8 @@ def validate_keyed_assignment_members(
     tag = tag_of(entity.runtime_facts)
     if tag is not None:
         owned -= {tag[0]}
-    for name, value in row.items():
-        if name in owned and not (allow_framework_markers and is_framework_marker(value)):
+    for name in row:
+        if name in owned:
             raise RejectionError(
                 FRAMEWORK_OWNED_MEMBER_ASSIGNED,
                 f"{entity.canonical_name}.{name}: framework-owned members may not be assigned",
@@ -202,8 +162,6 @@ def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -
 def validate_keyed_write(
     entity: Entity,
     instruction: Mapping[str, Any],
-    *,
-    allow_framework_markers: bool = False,
 ) -> None:
     """Reject *instruction* pre-SQL if inadmissible for *entity*.
 
@@ -221,6 +179,4 @@ def validate_keyed_write(
     mutation = instruction.get("mutation")
     for row in rows:
         if isinstance(row, Mapping):
-            validate_keyed_assignment_members(
-                entity, str(mutation), row, allow_framework_markers=allow_framework_markers
-            )
+            validate_keyed_assignment_members(entity, str(mutation), row)

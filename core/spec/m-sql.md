@@ -1236,17 +1236,6 @@ Under Relational Document Layout a revision patches the Structured Column at the
 assigned members exactly as a Non-Temporal update does. Each statement **MUST**
 affect exactly one row, with the same shortfall classification as a close.
 
-The address of a row whose key the database allocates (`m-pk-gen` `max`) is
-known only once its insert has run, so the insert that opens such a temporal row
-answers the key, spelled alike on both dialects:
-
-```text
-insert into <table>(<key>, …) select coalesce(max(t0.<key>), ?) + ?, ? … from <table> t0 returning <key>
-```
-
-It is row-producing DML (`m-db-port`) and answers one row holding the key alone.
-A `max` insert of a Non-Temporal row answers nothing.
-
 ### Requested ranges — coverage read and statement order
 
 An observed write whose requested extent reaches current rectangles no read of
@@ -1314,7 +1303,7 @@ been.
 
 Each successor and gap row remains its own Planned Step; the statements that
 carry them are physical realization. Contiguous openings of one Entity that
-name the same members and carry no generated value share one multi-row insert
+name the same members share one multi-row insert
 of the *Batched insert / update* form below, one row per opening in the order
 above (`m-execution` *Flush execution*). Such a statement succeeds or fails as
 a whole, and its error is the statement's own rather than any one opening's.
@@ -1434,15 +1423,14 @@ limit (`m-dialect` *Bind parameter limit*):
 ```
 
 A single-row insert keeps `values (?, …)` with one bind per cell on every
-dialect, and so does a generated-value insert, which folds its allocation into
-one row (`m-pk-gen`).
+dialect.
 
-Separate single-entry inserts of one entity naming the same members and holding
-no generated value — inserts of distinct objects one Write Group lays out
-together (`m-unit-work` *Write Group formation*) — take the same multi-row form
-when they are adjacent, each row still its own Planned Step (`m-execution`
-*Flush execution*). A `sequence`-allocated block handed to two objects
-(`m-pk-gen-008`) inserts them in one statement:
+Separate single-entry inserts of one entity naming the same members — inserts
+of distinct objects one Write Group lays out together (`m-unit-work` *Write
+Group formation*) — take the same multi-row form when they are adjacent, each
+row still its own Planned Step (`m-execution` *Flush execution*). Two keys a
+native reservation handed to two objects (`m-pk-gen-008`) insert in one
+statement:
 
 ```yaml
 - sql:

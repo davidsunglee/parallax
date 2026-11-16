@@ -4,9 +4,7 @@ from collections.abc import Callable, Sequence
 from typing import Final, cast, overload
 
 from parallax.core._execution._unit_work.effects import (
-    allocated_keys,
     enforce_affected_rows,
-    returns_allocated_keys,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.execution_lifecycle._activity import (
@@ -89,15 +87,13 @@ class WriteStepExecutor:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         flush: FlushActivity,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
+    ) -> None:
         """Lower, execute, and enforce each of ``steps`` in order as calls of
-        ``flush``, and answer the keys the database allocated, in step order,
-        where ``allocates`` asks for any. The payloads lowering demands are
+        ``flush``. The payloads lowering demands are
         handed to ``capture_insert`` and ``capture_revision`` as
         :class:`~parallax.core._execution._write_lowering.LoweringCursor`
         describes, where they are given; executing decides nothing of them.
@@ -127,13 +123,7 @@ class WriteStepExecutor:
         shortfall is judged AFTER the call it judges has already completed: the
         bracket is what lets the Flush's failure name that completed call
         instead of the enforcement being read as a failure of the Flush itself.
-
-        An insert whose key the database allocates for a row the steps record
-        answers that key: it runs as row-producing DML, core reads the key from
-        the rows it returned (:func:`~parallax.core.internal.unit_work.allocated_keys`)
-        inside the same bracket, and the keys are answered in step order.
         """
-        allocated: list[object] = []
         transport = self._ordered
         cursor = LoweringCursor(
             steps,
@@ -159,13 +149,8 @@ class WriteStepExecutor:
             if first is not None:
                 step = self._run_grouped_insert(first, cursor, flush)
                 continue
-            statement = cursor.lowered(step)
-            if allocates and returns_allocated_keys(step):
-                allocated.extend(self._run_returning_insert(step, statement, flush))
-            else:
-                self._run_single(step, statement, flush)
+            self._run_single(step, cursor.lowered(step), flush)
             step = cursor.take()
-        return tuple(allocated)
 
     def execute_with_count(
         self, step: PlannedUpdate | PlannedDelete, /, *, flush: FlushActivity
@@ -323,20 +308,6 @@ class WriteStepExecutor:
         with flush.enforcing(call):
             enforce_affected_rows(step, affected)
         return affected
-
-    def _run_returning_insert(
-        self, step: PlannedInsert, statement: LoweredStatement, flush: FlushActivity
-    ) -> tuple[object, ...]:
-        connection = self._connection
-        with flush.database_call(statement, "write", step.entity) as call:
-            try:
-                rows = connection.execute(statement.sql, statement.binds)
-            except DatabaseError as error:
-                self._recognize(step, error)
-                raise
-            call.write_rows_completed(rows)
-        with flush.enforcing(call):
-            return allocated_keys(step, rows)
 
     def _recognize(self, step: PlannedStep, error: DatabaseError) -> None:
         if recoverable_conflict(step, error, self._resolved, self._connection.dialect):

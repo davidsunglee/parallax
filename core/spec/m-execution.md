@@ -360,7 +360,7 @@ the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
 
 Execution inserts a run of contiguous single-entry inserts of one Entity naming
-the same members and holding no generated value — a range's temporal openings,
+the same members — a range's temporal openings,
 or inserts of distinct objects one Write Group lays out together — with one
 multi-row statement (`m-sql` *Requested ranges* and *Batched insert / update*),
 on every connection, whatever the Entity's temporality. Each insert remains its

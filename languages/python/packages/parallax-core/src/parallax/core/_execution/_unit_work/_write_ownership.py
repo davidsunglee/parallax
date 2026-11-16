@@ -35,7 +35,7 @@ from parallax.core.internal.write_plan.plan import (
     Openings,
     TemporalRowCoordinates,
 )
-from parallax.core.internal.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
+from parallax.core.internal.write_plan.steps import Finite
 
 __all__ = [
     "INSERTION_AUTHORITY_INVALID",
@@ -537,7 +537,6 @@ class WriteOwnership:
         for a repeat of this insertion.
         """
         target = insert.object_key
-        assert target is not None  # a key the database allocates opens no insertion
         window = insert.instruction.valid_time_window
         record = self._records.get(target)
         if record is None:
@@ -841,8 +840,6 @@ class WriteOwnership:
             if coordinates not in contributions:
                 continue
             row = output.row.row
-            if any(isinstance(value, MaxPlusOne | SelfIncrement) for value in row.cells):
-                continue
             address = (coordinates.entity, coordinates.key)
             rows = self._current_rows.get(address)
             if rows is None:

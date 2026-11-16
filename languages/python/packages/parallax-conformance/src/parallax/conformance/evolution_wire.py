@@ -42,7 +42,6 @@ from parallax.core.internal.metamodel import (
     Inheritance,
     InheritanceStrategy,
     KeySequence,
-    Max,
     Multiplicity,
     NotPrimaryKey,
     NullPlacement,
@@ -703,19 +702,9 @@ def _generation(generation: PkGeneration) -> Any:
     match generation:
         case ApplicationAssigned():
             return "application-assigned"
-        case Max():
-            return "max"
         case KeySequence():
             return {
                 "strategy": "key-sequence",
-                "name": generation.name,
-                "batchSize": generation.batch_size,
-                "initialValue": generation.initial_value,
-                "incrementSize": generation.increment_size,
-            }
-        case _:
-            return {
-                "strategy": "sequence",
                 "name": generation.name,
                 "batchSize": generation.batch_size,
                 "initialValue": generation.initial_value,

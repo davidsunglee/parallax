@@ -23,10 +23,8 @@ class ExecuteWriteSteps(Protocol):
     effects.
 
     A normal return means every step executed and its effect was enforced, in
-    order; it completes no settled write and commits nothing. With
-    ``allocates``, it answers the key the database allocated for each row a
-    row-producing insert of the steps opened, in step order, and otherwise
-    none. Nothing of the steps stays reachable from it once the call returns.
+    order; it completes no settled write and commits nothing. Nothing of the
+    steps stays reachable from it once the call returns.
 
     Where they are given, each insert entry's lowering hands
     ``capture_insert`` the entry and the Structured Column document its payload
@@ -42,11 +40,10 @@ class ExecuteWriteSteps(Protocol):
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]: ...
+    ) -> None: ...
 
 
 class ExecuteCountedStep(Protocol):
@@ -125,12 +122,10 @@ class _CurrentRowCapture:
         steps: tuple[PlannedStep, ...],
         *,
         effect_spans: tuple[EffectSpan, ...],
-        allocates: bool,
-    ) -> tuple[object, ...]:
-        return execute(
+    ) -> None:
+        execute(
             steps,
             effect_spans=effect_spans,
-            allocates=allocates,
             capture_insert=self.capture_insert,
             capture_revision=self.capture_revision,
         )

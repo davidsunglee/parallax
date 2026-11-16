@@ -1,6 +1,6 @@
-# The retired Sequence member `sequenceName` is replaced by `name` inside the
-# `pkGeneration` Sequence object. `pkGeneration` is a closed union (bare
-# strategy enum or Sequence object), so an object carrying the retired member
+# The retired member `sequenceName` is replaced by `name` inside the
+# `pkGeneration` key-sequence object. `pkGeneration` is a closed union (the bare
+# `application-assigned` token or a key-sequence object), so an object carrying the retired member
 # fails every branch and — by the branching-keyword collapse rule — reports
 # exactly one `oneOf` violation at the pkGeneration value, never per-branch
 # sub-errors.

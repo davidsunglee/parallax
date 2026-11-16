@@ -1,0 +1,8 @@
+entity:
+  name: Badge
+  table: badge
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+      pkGeneration: { strategy: sequence, name: badge_seq }

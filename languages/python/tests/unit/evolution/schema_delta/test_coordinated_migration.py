@@ -16,7 +16,6 @@ import pytest
 from parallax.core.internal.database_binding import (
     ResolvedBinding,
     SequenceRelocated,
-    sequence_physical,
 )
 from parallax.core.internal.dialect import POSTGRES, Dialect, SequenceDdl, Unsupported
 from parallax.core.internal.entity import model_of
@@ -474,7 +473,7 @@ def test_every_sequence_operation_a_dialect_refuses_is_reported_at_once() -> Non
         ("PositionSequence", "no positioning"),
     ]
     assert {refusal.location for refusal in raised.value.operations} == {
-        SchemaTarget(sequence=sequence_physical(evolution.later.sequences["ids"]))
+        SchemaTarget(sequence=evolution.later.sequences["ids"].physical)
     }
 
 

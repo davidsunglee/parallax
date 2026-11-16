@@ -524,11 +524,9 @@ def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_sh
         assert pin_of(conforming) == Pin(tx_time=_OPENED, valid_time=_VALID_FROM)
 
 
-def _no_flush(
-    steps: tuple[PlannedStep, ...], /, *, allocates: bool, **capture: object
-) -> tuple[object, ...]:
+def _no_flush(steps: tuple[PlannedStep, ...], /, **capture: object) -> None:
     """Step execution for a test that never flushes."""
-    del allocates, capture
+    del capture
     raise AssertionError(f"no step executes, yet {len(steps)} step(s) were handed over")
 
 

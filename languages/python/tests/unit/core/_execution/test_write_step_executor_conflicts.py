@@ -71,7 +71,7 @@ def _executed(
 ) -> tuple[BaseException, list[DatabaseError]]:
     recognized: list[DatabaseError] = []
     with pytest.raises(DatabaseError) as raised, open_flush() as flush:
-        step_executor(port, recognized=recognized).execute(steps, allocates=False, flush=flush)
+        step_executor(port, recognized=recognized).execute(steps, flush=flush)
     return raised.value, recognized
 
 

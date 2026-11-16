@@ -21,7 +21,6 @@ from parallax.core.internal.entity._declaration import declaration_of
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     AssignmentRestriction,
     AttributeIdentity,
@@ -32,8 +31,8 @@ from parallax.core.internal.metamodel import (
     EntityLocation,
     IndexIdentity,
     IndexMetadata,
+    KeySequence,
     PrimaryKey,
-    Sequence,
     derive_temporal_structure,
     designate_framework_owned,
     judge_assignment,
@@ -137,15 +136,14 @@ def test_tableless_root_owns_the_only_local_primary_key_index() -> None:
 
 
 @pytest.mark.parametrize(
-    ("primary_key", "read_only", "owned", "generated", "insert", "restriction"),
+    ("primary_key", "read_only", "owned", "insert", "restriction"),
     [
-        (NOT_PRIMARY_KEY, False, False, False, True, None),
-        (NOT_PRIMARY_KEY, True, False, False, True, AssignmentRestriction.READ_ONLY),
-        (NOT_PRIMARY_KEY, False, True, False, False, AssignmentRestriction.FRAMEWORK_OWNED),
-        (NOT_PRIMARY_KEY, True, True, False, False, AssignmentRestriction.READ_ONLY),
+        (NOT_PRIMARY_KEY, False, False, True, None),
+        (NOT_PRIMARY_KEY, True, False, True, AssignmentRestriction.READ_ONLY),
+        (NOT_PRIMARY_KEY, False, True, False, AssignmentRestriction.FRAMEWORK_OWNED),
+        (NOT_PRIMARY_KEY, True, True, False, AssignmentRestriction.READ_ONLY),
         (
             PrimaryKey(APPLICATION_ASSIGNED),
-            False,
             False,
             False,
             True,
@@ -156,18 +154,16 @@ def test_tableless_root_owns_the_only_local_primary_key_index() -> None:
             True,
             True,
             False,
-            False,
             AssignmentRestriction.PRIMARY_KEY,
         ),
-        (PrimaryKey(MAX), False, False, True, False, AssignmentRestriction.PRIMARY_KEY),
-        (PrimaryKey(Sequence("keys")), True, True, True, False, AssignmentRestriction.PRIMARY_KEY),
+        (PrimaryKey(KeySequence("keys")), False, False, True, AssignmentRestriction.PRIMARY_KEY),
+        (PrimaryKey(KeySequence("keys")), True, True, False, AssignmentRestriction.PRIMARY_KEY),
     ],
 )
 def test_attribute_capabilities_preserve_assignment_precedence(
     primary_key: AttributePrimaryKey,
     read_only: bool,
     owned: bool,
-    generated: bool,
     insert: bool,
     restriction: AssignmentRestriction | None,
 ) -> None:
@@ -179,7 +175,6 @@ def test_attribute_capabilities_preserve_assignment_precedence(
         read_only=read_only,
         framework_owned=owned,
     )
-    assert attribute.generated_key is generated
     capability = attribute.write_capability
     assert capability.caller_insert is insert
     assert capability.caller_update is (restriction is None)

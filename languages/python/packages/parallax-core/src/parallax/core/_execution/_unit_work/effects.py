@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Final, Literal, TypeGuard
+from collections.abc import Mapping
+from typing import Final, Literal
 
 from parallax.core.internal.base import ConflictError, InternalError
 from parallax.core.internal.metamodel import EntityIdentity
@@ -9,7 +9,6 @@ from parallax.core.internal.write_plan.steps import (
     AnyCount,
     FailedPrecondition,
     KeyTarget,
-    MaxPlusOne,
     MilestoneTarget,
     MissingTarget,
     NonTemporalConcurrency,
@@ -29,14 +28,11 @@ __all__ = [
     "OPTIMISTIC_LOCK_CONFLICT",
     "STALE_WRITE",
     "WRITE_PRECONDITION_FAILED",
-    "WRITE_RESULT_INVALID",
     "ShortfallCode",
     "WriteEffectCode",
     "WritePreconditionError",
-    "allocated_keys",
     "cardinality_corruption",
     "enforce_affected_rows",
-    "returns_allocated_keys",
     "shortfall",
 ]
 
@@ -58,7 +54,6 @@ STALE_WRITE: Final = "stale-write"
 OPTIMISTIC_LOCK_CONFLICT: Final = "optimistic-lock-conflict"
 WRITE_PRECONDITION_FAILED: Final = "write-precondition-failed"
 CARDINALITY_CORRUPTION: Final = "cardinality-corruption"
-WRITE_RESULT_INVALID: Final = "write-result-invalid"
 
 type ShortfallCode = Literal["missing-target", "stale-write", "optimistic-lock-conflict"]
 
@@ -161,65 +156,6 @@ class WritePreconditionError(ConflictError):
     @property
     def expected(self) -> object:
         return self._expected
-
-
-def _write_result_refusal(
-    entity: EntityIdentity, expected: int, actual: int, reason: str
-) -> InternalError:
-    """The invariant failure a row-producing write is refused by where it
-    answered rows its statement cannot produce: a row missing or in excess of
-    the rows it opened, a row of another width, a cell of another type, or one
-    key answered twice. The rows themselves are not retained."""
-    return InternalError(
-        WRITE_RESULT_INVALID,
-        f"{entity.name}: the write answered {actual} row(s) for {expected} it opened — {reason}",
-    )
-
-
-def returns_allocated_keys(step: PlannedStep) -> TypeGuard[PlannedInsert]:
-    """Whether ``step``'s statement answers rows: an insert whose key the
-    database allocates and returns. Every entry of one Planned Insert carries
-    the same generated-value shape, so the first answers for all."""
-    if not isinstance(step, PlannedInsert):
-        return False
-    for value in step.entries[0].row.cells:
-        if isinstance(value, MaxPlusOne) and value.returned:
-            return True
-    return False
-
-
-def allocated_keys(step: PlannedInsert, rows: Sequence[Sequence[object]]) -> tuple[object, ...]:
-    """The key the database allocated for each of ``step``'s entries, in entry
-    order, read from the rows its statement answered.
-
-    The statement answers one row per entry, each holding exactly the
-    allocated key: an integer, distinct from every other the statement
-    answered. Anything else raises the ``write-result-invalid``
-    :class:`~parallax.core.internal.base.InternalError` before any key is used.
-    """
-    expected = len(step.entries)
-    if len(rows) != expected:
-        raise _write_result_refusal(
-            step.entity,
-            expected,
-            len(rows),
-            "a missing row" if len(rows) < expected else "an excess row",
-        )
-    keys: list[object] = []
-    for row in rows:
-        if len(row) != 1:
-            raise _write_result_refusal(
-                step.entity, expected, len(rows), f"a row of {len(row)} cell(s), not the key alone"
-            )
-        (key,) = row
-        if not isinstance(key, int) or isinstance(key, bool):
-            raise _write_result_refusal(
-                step.entity, expected, len(rows), f"a key of type {type(key).__name__}"
-            )
-        if key in keys:
-            raise _write_result_refusal(step.entity, expected, len(rows), f"the key {key} twice")
-        keys.append(key)
-    return tuple(keys)
 
 
 def enforce_affected_rows(step: PlannedStep, actual_count: int) -> None:

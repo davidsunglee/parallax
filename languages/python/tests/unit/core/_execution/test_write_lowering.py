@@ -42,8 +42,6 @@ import pytest
 from parallax.core import Attr, DomainModel, TxTemporal, UnsupportedError, ValueObject, attr
 from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
-    prepare_typed_write,
-    prepare_wire_write,
 )
 from parallax.core._execution._write_lowering import (
     STORED_DOCUMENT_NOT_OBJECT,
@@ -121,7 +119,6 @@ from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup, Wri
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED, key_target
 from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
-    MAX_PLUS_ONE,
     MISSING_TARGET,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -138,7 +135,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     ResolvedMutationSelection,
-    SelfIncrement,
     Ungated,
     Versioned,
     VersionGate,
@@ -152,7 +148,6 @@ from tests._support.errors import raises_code
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
 from tests._support.row_slots import observed_slots
-from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, document_model
@@ -166,7 +161,6 @@ PAYMENT = corpus_model("payment")
 VEHICLE = corpus_model("vehicle")
 APPLIANCE = corpus_model("appliance")
 DOCUMENT = corpus_model("document")
-PK_MAX = corpus_model("pk-max")
 PK_SEQUENCE = corpus_model("pk-sequence")
 WALLET = corpus_model("wallet")
 BALANCE = corpus_model("balance")
@@ -457,86 +451,26 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
 
 
 # --------------------------------------------------------------------------- #
-# pk-gen DB-computed markers — `max` (INSERT…SELECT fold) and `increment`      #
-# (a self-referential registry advance).                                       #
+# A one-key document is no scalar value.                                      #
 # --------------------------------------------------------------------------- #
-def test_pk_gen_max_folds_into_an_insert_select() -> None:
-    # m-pk-gen-001.
-    insert = KeyedWriteInstruction(
-        "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
-    )
-    statement = _lower(insert, PK_MAX)[0]
-    assert statement.sql == (
-        "insert into px.attendee(id, name) select coalesce(max(t0.id), ?) + ?, ? from "
-        "px.attendee t0"
-    )
-    assert statement.binds == (0, 1, "Ada")
-
-
-def test_pk_gen_increment_marker_self_references_the_column() -> None:
-    update = KeyedWriteInstruction(
-        "amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
-    )
-    statement = _lower(update, PK_SEQUENCE)[0]
-    assert statement.sql == "update px.pk_sequence set next_val = next_val + ? where name = ?"
-    assert statement.binds == (1, "badge_seq")
-
-
-def _refused_at_preparation(
-    instruction: KeyedWriteInstruction, model: Metamodel, match: str
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"computed": "maxPlusOne"},
+        {"increment": 1},
+        {"computed": "maxPlusOne", "extra": True},
+        {"allocated": "maxPlusOne"},
+    ],
+    ids=["computed", "increment", "two-key", "unrecognized-key"],
+)
+@pytest.mark.parametrize("mutation", ["insert", "amend"])
+def test_a_document_at_a_scalar_member_is_not_its_declared_type(
+    document: dict[str, object], mutation: str
 ) -> None:
-    """``instruction`` is refused by both preparation lanes, before any write
-    exists to buffer, settle, or lower."""
-    preparation = write_preparation_of(model)
-    for prepare in (prepare_typed_write, prepare_wire_write):
-        with raises_code(UsageError, "write-instruction-invalid", match=match):
-            prepare(instruction, preparation)
-    with raises_code(UsageError, "write-instruction-invalid", match=match):
-        _lower(instruction, model)
-
-
-def test_increment_marker_reaching_an_insert_is_refused() -> None:
-    insert = KeyedWriteInstruction(
-        "insert", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
-    )
-    _refused_at_preparation(
-        insert,
-        PK_SEQUENCE,
-        r"unsupported DB-computed marker on 'PkSequence'\.nextVal: a 'increment' marker is "
-        r"not recognized for insert planning$",
-    )
-
-
-def test_computed_marker_reaching_an_update_is_refused() -> None:
-    update = KeyedWriteInstruction(
-        "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},)
-    )
-    _refused_at_preparation(
-        update,
-        PK_MAX,
-        r"unsupported DB-computed marker on 'Attendee'\.name: a 'computed' marker is not "
-        r"recognized for update planning$",
-    )
-
-
-def test_unrecognized_computed_strategy_is_refused() -> None:
-    insert = KeyedWriteInstruction(
-        "insert", "Attendee", ({"id": {"computed": "somethingElse"}, "name": "Ada"},)
-    )
-    _refused_at_preparation(
-        insert,
-        PK_MAX,
-        r"unsupported DB-computed marker on 'Attendee'\.id: 'somethingElse' is not a "
-        r"recognized `computed` strategy \(m-pk-gen\)$",
-    )
-
-
-def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
-    update = KeyedWriteInstruction(
-        "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
-    )
+    row = {"id": 1, "holder": document}
+    instruction = KeyedWriteInstruction(mutation, "Badge", (row,))  # pyright: ignore[reportArgumentType]
     with pytest.raises(UsageError, match="does not match the declared type"):
-        _lower(update, PK_MAX)
+        _lower(instruction, PK_SEQUENCE)
 
 
 # --------------------------------------------------------------------------- #
@@ -947,38 +881,6 @@ def test_finalization_derives_the_initial_version_the_row_never_authors() -> Non
     assert row.attributes[_attribute(ACCOUNT, "Account", "version")] == concurrency.INITIAL_VERSION
 
 
-def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> None:
-    # The authored marker document is classified ONCE, while the step is being
-    # settled; the rendered statement reads a closed generated-value expression
-    # rather than re-inspecting a mapping's shape.
-    steps = _finalize(
-        KeyedWriteInstruction(
-            "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
-        ),
-        PK_MAX,
-    )
-    assert steps is not None
-    (step,) = steps
-    assert isinstance(step, PlannedInsert)
-    row = step.entries[0].row
-    assert row.attributes[_attribute(PK_MAX, "Attendee", "id")] == MAX_PLUS_ONE
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        {"computed": "maxPlusOne", "extra": True},
-        {"allocated": "maxPlusOne"},
-    ],
-    ids=["two-key", "unrecognized-key"],
-)
-def test_a_mapping_outside_the_marker_shape_is_rejected_as_a_string(
-    value: dict[str, object],
-) -> None:
-    with pytest.raises(UsageError, match="does not match the declared type"):
-        _lower(KeyedWriteInstruction("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)
-
-
 def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> None:
     # Every member spelling must resolve to a semantic identity before a step
     # exists, so an unknown one is refused where the resolution happens — never
@@ -1089,24 +991,6 @@ def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
             (_attribute(WALLET, "Wallet", "id"),),
             (managed_row_of(WALLET, {_attribute(WALLET, "Wallet", "owner"): "Mira"}),),
         )
-
-
-def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> None:
-    # The `increment` marker is the update-position `m-pk-gen` allocation: the
-    # database computes the new value from the row being written, so the settled
-    # assignment names the allocation rather than a literal to bind.
-    steps = _finalize(
-        KeyedWriteInstruction(
-            "amend", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 3}},)
-        ),
-        PK_SEQUENCE,
-    )
-    assert steps is not None
-    (step,) = steps
-    assert isinstance(step, PlannedUpdate)
-    assert step.assignments.attributes[
-        _attribute(PK_SEQUENCE, "PkSequence", "nextVal")
-    ] == SelfIncrement(amount=3)
 
 
 def test_step_lowering_reads_column_participation_and_order_from_the_layout() -> None:
@@ -1231,29 +1115,6 @@ def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -
     )
     assert statement.sql == "update px.crate set note = ? where id = ?"
     assert statement.binds == ("fragile", 7)
-
-
-def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
-    # A generated value folds into the statement's own SELECT rather than
-    # binding, and one such statement carries exactly one row — so a step
-    # holding several is refused instead of rendered as a value list that could
-    # not express it. Batch grouping never produces one (a pk-gen-managed target
-    # does not collapse), so this is a hand-built shape.
-    row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
-    step = PlannedInsert(
-        entity=_identity(PK_MAX, "Attendee"),
-        entries=(
-            WriteRow(row=row, origin=NEW_LINEAGE),
-            WriteRow(row=row, origin=NEW_LINEAGE),
-        ),
-    )
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="one row at a time"):
-        lowered(
-            step,
-            LayoutPayloadPreparer(bound_model(PK_MAX)),
-            bound_model(PK_MAX),
-            POSTGRES,
-        )
 
 
 @pytest.mark.parametrize(
@@ -1985,19 +1846,3 @@ def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> 
 
     with raises_code(InternalError, SQL_GENERATION_FAILED, match="inconsistent row widths"):
         next(statements)
-
-
-def test_a_multi_entry_generated_value_insert_is_refused() -> None:
-    attendee = _identity(PK_MAX, "Attendee")
-    row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
-    entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
-    slots = LayoutPayloadPreparer(bound_model(PK_MAX)).row_slots(attendee, row.presence)
-    cells = tuple(slots.cells(entry) for entry in entries)
-
-    with raises_code(InternalError, SQL_GENERATION_FAILED, match="renders one row at a time"):
-        compile_write_step(
-            PlannedInsert(entity=attendee, entries=entries),
-            InsertPayload(slots, cells),
-            bound_model(PK_MAX),
-            POSTGRES,
-        )

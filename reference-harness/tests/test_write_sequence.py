@@ -26,8 +26,6 @@ from reference_harness.case_runner import (
     _assert_write_input_columns,
     _assert_write_sequence,
     _assert_write_step_count,
-    _increment_marker,
-    _is_computed_marker,
     _write_column_order,
 )
 from reference_harness.database_binding import LOCATION_KEYS, PhysicalTable, resolve_binding
@@ -106,24 +104,18 @@ def test_one_entity_spelled_two_ways_owes_one_resolving_read() -> None:
     assert unit_resolving_reads(case, entries) == 1
 
 
-def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> None:
-    # A DB-computed write marker is a scalar-attribute-only form: a value object
-    # binds its whole literal document even when that document is shaped like
-    # one, so the entry states a write a public verb accepts and owes the
-    # resolving read every such write owes.
+@pytest.mark.parametrize("member", ["address", "name"])
+def test_an_amendment_owes_its_read_whatever_document_it_states(member: str) -> None:
+    # No write value is framework bookkeeping: a one-key `{increment: n}`
+    # document is a value object's literal document, or a value a scalar refuses,
+    # and either way the entry is a write a caller authors.
     case = _synthetic_case({})
-    document_entry = {
+    entry = {
         "mutation": "amend",
         "entity": "parallax.compatibility.Customer",
-        "rows": [{"id": 1, "address": {"increment": 1}}],
+        "rows": [{"id": 1, member: {"increment": 1}}],
     }
-    assert unit_resolving_reads(case, [document_entry]) == 1
-    marker_entry = {
-        "mutation": "amend",
-        "entity": "parallax.compatibility.Customer",
-        "rows": [{"id": 1, "name": {"increment": 1}}],
-    }
-    assert unit_resolving_reads(case, [marker_entry]) == 0
+    assert unit_resolving_reads(case, [entry]) == 1
 
 
 _WALLET_COLUMN_ARRAYS = (
@@ -961,12 +953,11 @@ def test_tpcs_routing_is_read_under_each_dialects_own_quoting() -> None:
         _assert_write_input_columns(sibling, "postgres")
 
 
-# --- role-aware DB-computed marker interpretation -----------------------------
+# --- value-object documents bind whole -----------------------------------------
 #
-# A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only
-# interpretation: a value-object (document) column ALWAYS binds its WHOLE literal
-# document, even when that document is shaped like a marker. The role is resolved
-# from the entity's declared members, never from the value's shape (m-value-object).
+# A value-object (document) column ALWAYS binds its WHOLE literal document, whatever
+# keys it holds; the role is resolved from the entity's declared members, never from
+# the value's shape (m-value-object).
 
 
 def _customer_insert_case(address, sql: str, binds: list) -> Case:
@@ -1015,9 +1006,9 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
     )
 
 
-# Each marker-shaped document carries the empty `phones` array Customer's `many`
-# member always stores (m-document-codec), so ① encodes to exactly what ② authors and
-# the parametrization isolates the marker shape rather than the presence rule.
+# Each document carries the empty `phones` array Customer's `many` member always
+# stores (m-document-codec), so ① encodes to exactly what ② authors and the
+# parametrization isolates the document's keys rather than the presence rule.
 @pytest.mark.parametrize(
     "document",
     [
@@ -1026,11 +1017,10 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
         {"computed": "x", "street": "Main", "phones": []},
     ],
 )
-def test_marker_shaped_value_object_insert_binds_the_whole_document(document) -> None:
+def test_a_value_object_insert_binds_the_whole_document(document) -> None:
     # The `address` value-object column binds its whole document literally at its
     # Document-tier slot — the golden's third `?` carries it verbatim, so ① ↔ ②
-    # agrees. (Before role-aware gating, the marker-shaped document was mistaken for
-    # a DB-computed column and its literal bind was skipped, misaligning the binds.)
+    # agrees.
     case = _customer_insert_case(
         document,
         "insert into px.customer(id, name, address) values (?, ?, ?)",
@@ -1042,74 +1032,15 @@ def test_marker_shaped_value_object_insert_binds_the_whole_document(document) ->
 @pytest.mark.parametrize(
     "document", [{"increment": 1, "phones": []}, {"computed": "maxPlusOne", "phones": []}]
 )
-def test_marker_shaped_value_object_update_replaces_whole_document(document) -> None:
+def test_a_value_object_update_replaces_the_whole_document(document) -> None:
     # A whole-document UPDATE sets the value-object column exactly like a scalar
-    # (`set address = ?`), binding the literal document — never the marker's
-    # `col = col + ?` self-advance.
+    # (`set address = ?`), binding the literal document.
     case = _customer_update_case(
         document,
         "update px.customer set address = ? where id = ?",
         [document, 1],
     )
     _assert_write_input_columns(case, "postgres")
-
-
-def test_scalar_attribute_marker_still_classifies_as_computed() -> None:
-    # No regression: a SCALAR pk attribute carrying `{computed: maxPlusOne}` is still
-    # a DB-computed column — its literal bind is skipped (the golden emits
-    # `coalesce(max(id), ?) + ?`), and only the trailing literal columns (name +
-    # the address document) supply binds.
-    case = _customer_insert_case(
-        {"street": "Main", "phones": []},
-        "insert into px.customer(id, name, address) values (coalesce(max(id), ?) + ?, ?, ?)",
-        [0, 1, "Ada", {"street": "Main", "phones": []}],
-    )
-    case.raw["when"]["writeSequence"][0]["rows"][0]["id"] = {"computed": "maxPlusOne"}
-    # Must not raise: the scalar marker branch is taken (id's bind skipped), while
-    # the value-object `address` still binds as one literal document.
-    _assert_write_input_columns(case, "postgres")
-
-
-def test_marker_helpers_are_shape_predicates_over_raw_values() -> None:
-    # The low-level predicates still recognize a marker by shape; role-awareness
-    # lives in the callers, which never invoke them on a value-object column.
-    assert _is_computed_marker({"computed": "maxPlusOne"}) is True
-    assert _increment_marker({"increment": 3}) == 3
-    assert _is_computed_marker({"street": "Main"}) is False
-    assert _increment_marker({"street": "Main"}) is None
-
-
-def test_is_computed_marker_matches_exact_schema_shape() -> None:
-    # The predicate mirrors the EXACT `writeComputedMarker` schema shape: a dict
-    # with exactly one key `computed` whose value is exactly "maxPlusOne".
-    assert _is_computed_marker({"computed": "maxPlusOne"}) is True
-    # A multi-key dict is not the one-key marker shape the schema accepts.
-    assert _is_computed_marker({"computed": "maxPlusOne", "street": "Main"}) is False
-    assert _is_computed_marker({"computed": "x", "street": "Main"}) is False
-    # A different `computed` value is outside the marker's enum.
-    assert _is_computed_marker({"computed": "somethingElse"}) is False
-    # A non-dict is never a marker.
-    assert _is_computed_marker("computed") is False
-    assert _is_computed_marker(None) is False
-
-
-def test_increment_marker_matches_exact_schema_shape() -> None:
-    # The predicate mirrors the EXACT `writeComputedMarker` schema shape: a dict
-    # with exactly one key `increment` whose value is a JSON integer.
-    assert _increment_marker({"increment": 1}) == 1
-    assert _increment_marker({"increment": 0}) == 0
-    # A multi-key dict is not the one-key marker shape the schema accepts.
-    assert _increment_marker({"increment": 1, "street": "Main"}) is None
-    # A JSON boolean is schema-type `boolean`, not `integer` — and Python's bool
-    # is an int subclass, so it must be excluded explicitly.
-    assert _increment_marker({"increment": True}) is None
-    assert _increment_marker({"increment": False}) is None
-    # A string / float `increment` is not a JSON integer.
-    assert _increment_marker({"increment": "1"}) is None
-    assert _increment_marker({"increment": 1.5}) is None
-    # A non-dict is never a marker.
-    assert _increment_marker("increment") is None
-    assert _increment_marker(None) is None
 
 
 def test_temporal_ddl_primary_key_spans_the_as_of_to_column() -> None:

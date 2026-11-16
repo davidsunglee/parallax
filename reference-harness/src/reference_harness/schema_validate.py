@@ -57,7 +57,6 @@ from .inheritance import (
 )
 from .keyed_write_validate import (
     KeyedWriteApplicabilityError,
-    states_framework_marker,
     undeclared_row_members,
     validate_keyed_write,
     validate_keyed_write_shape,
@@ -321,13 +320,11 @@ def _validate_buffered_write(
     label: str,
     errors: list[str],
     registry: Registry | None = None,
-    *,
-    grouped: bool = False,
 ) -> None:
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
     The schema pins the STRUCTURAL shape (an ordered buffer of one-or-more KEYED
-    instructions; predicate-selected entries are excluded). This adds the three
+    instructions; predicate-selected entries are excluded). This adds the two
     model-aware checks JSON Schema cannot express and the wire harness would otherwise
     skip (it executes the flushed golden SQL, never the buffered instructions):
 
@@ -344,15 +341,6 @@ def _validate_buffered_write(
       :func:`~reference_harness.keyed_write_validate.validate_keyed_write` — the
       SAME function the `rejected` lane's keyed `when.write` reaches, so a buffer
       entry and a rejected instruction cannot be judged differently.
-    * **framework provenance** — an entry assigning a DB-computed write marker states a
-      statement the framework issues rather than a write a caller authors
-      (:func:`~reference_harness.keyed_write_validate.states_framework_marker`), so it
-      is a choreography unit of its own: the buffer's only entry, in an ungrouped step
-      (`m-case-format` "Buffered keyed write instructions"). No public verb accepts such
-      a value, so a mixed buffer would state half its DML through the write verbs and
-      half around them, and a grouped one would ask that group's held unit of work to
-      buffer an instruction it has no verb for.
-
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
     multi-object flush, an abort pair over distinct objects). Coalescing correctness is
@@ -361,7 +349,6 @@ def _validate_buffered_write(
     here. A predicate entry is validated as a predicate write rather than by the keyed
     member check.
     """
-    framework: list[int] = []
     for position, instruction in enumerate(instructions):
         entry_label = f"{label} buffered write[{position}]"
         if not isinstance(instruction, dict):
@@ -371,23 +358,7 @@ def _validate_buffered_write(
                 instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
             continue
-        entity = _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
-        if entity is not None and states_framework_marker(entity, instruction):
-            framework.append(position)
-    if not framework:
-        return
-    if grouped:
-        errors.append(
-            f"{label}: buffered write{framework} carries a DB-computed write marker inside a "
-            f"`uow` group. Such an entry states the framework's own bookkeeping and is a "
-            f"choreography unit of its own, which a group's held unit of work cannot buffer"
-        )
-    elif len(instructions) != 1:
-        errors.append(
-            f"{label}: buffered write{framework} carries a DB-computed write marker among "
-            f"{len(instructions)} entries. Such an entry states the framework's own bookkeeping "
-            f"and is a choreography unit of its own, so it is the buffer's only entry"
-        )
+        _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
 
 
 def _valid_keyed_entry_entity(
@@ -429,7 +400,7 @@ def _valid_keyed_entry_entity(
         errors.append(f"{entry_label}: {condition}")
         return None
     try:
-        validate_keyed_write(entity, instruction, allow_framework_markers=True)
+        validate_keyed_write(entity, instruction)
     except (RejectionError, KeyedWriteApplicabilityError) as exc:
         errors.append(f"{entry_label}: {exc}")
         return None
@@ -1250,7 +1221,6 @@ def _validate_scenario_step(
             step_label,
             errors,
             scope.registry,
-            grouped=isinstance(step.get("uow"), str),
         )
 
 

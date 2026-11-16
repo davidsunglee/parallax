@@ -155,34 +155,6 @@ cost for a shape nothing asks for. The moment a case authors one, the repair is
 the branch plus its own DB-free driver; until then the honest state is the
 refusal this entry describes.
 
-### D-78 — The framework-marker write lane runs DML no Handle opened, so its work reaches no Execution Lifecycle
-
-*Medium — it bounds which case shapes may author `then.executionLifecycle`.*
-Relates to `parallax.conformance._lanes.scenario._execute_framework_write_unit`.
-
-**What.** Every other write lane drives its DML through a real `db.transact`, so
-its statements and Database Calls are read off the delivered lifecycle. One does
-not, because the DML it runs has no public verb to be stated through: a
-`{"increment": n}` DB-computed write marker is the PK allocator's own statement.
-It therefore executes a plan of its own against `m-db-port` and STATES its
-Database Calls, exactly as `run_error_case` does for authored trigger DML. The
-consequence is bounded and real: a case reaching that shape opens no Root
-Execution for that work, so it can author no `then.executionLifecycle` — the
-stream would omit calls the run made, and the record's own count cross-check
-(`reference_harness.execution_validate`) would report the disagreement rather
-than the case grading a stream missing them.
-
-**Why it is deferred rather than fixed.** Closing it is a design choice with real
-costs on every branch, and no case needs it today. Routing the work through
-the Snapshot write facades means giving a DB-computed write marker a public
-ingress — developer surface over the framework's own bookkeeping. Adding an
-instrumented seam for the adapter alone puts a test-shaped door in production.
-Restricting the oracle instead is free but states the limit nowhere the corpus
-can see it. What holds the gap shut meanwhile is that no other lane can silently
-join it: every `handle.Database` the engine builds installs a Provider, asserted
-over the source (`tests/unit/conformance/test_lifecycle_observation.py`), so an
-unobserved lane is one that opens no Handle at all and says so.
-
 ### D-82 — A published dump builds the same presentation twice, and removing the second build needs no bracket
 
 *Medium — two identical mapping builds are 62% of a published `model_dump`, and
@@ -656,6 +628,7 @@ an unrelated obligation.
 
 ## Forwarding pointers
 
+- **D-78** → closed by COR-177. Native key reservations run through public inserts in the ordinary Execution Lifecycle, the framework-marker write lane and its `{increment}` / `{computed}` markers are retired, and no public verb reads a one-key document at a scalar member as anything but a type mismatch.
 - **D-72** → closed by [COR-223](https://linear.app/flimflam/issue/COR-223/make-predicate-writes-readless-only-and-add-replace-where). A predicate write is one readless statement and preparation refuses every target that would need its rows read (`core/spec/m-batch-write.md`), so no write stages a read that could meet an issue-bearing row.
 - **D-97** → fixed. `parallax.core.internal.base.nearest_binary32_of_spelling` rounds a decimal to binary32 once by parsing to binary64 and narrowing, reading the exact decimal only when the parse is exactly a binary32 midpoint — the only place the two roundings can differ — so `_shortest_float`'s candidates and Float32 membership no longer build an exact ratio.
 - **D-98** → closed by the COR-142 owner decision. The unsupported 10% attribution gate is withdrawn rather than replaced; Phase 2 totals and counts remain before evidence, and the same single-implementation report supplies Phase 6's clean whole-lane after deltas without paired adapters or builder-exclusive attribution.
@@ -718,3 +691,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-223-cleanup-predicate-writes-api-yhcb8e/05-deferred-ledger.md` — D-72.
 - `.humanlayer/tasks/cor-142-measure-and-remove-per-row-document-shape-derivation-in-the-flpf4g/review-loop/phase-2/round-01/remediation.md` — D-98.
 - `.humanlayer/tasks/cor-188-float32-hot-paths/deferred-ledger.md` — D-97.
+- `.humanlayer/tasks/cor-177-implement-pooled-primary-keys-blzykt/deferred-ledger.md` — D-78.

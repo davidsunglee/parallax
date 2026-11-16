@@ -79,7 +79,6 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity import (
     MANY_TO_ONE,
-    MAX,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -100,7 +99,6 @@ from parallax.core.internal.entity import (
     ObjectQuery,
     Predicate,
     Rel,
-    Sequence,
     SortKey,
     TablePerHierarchy,
     TxTemporal,
@@ -118,6 +116,7 @@ from parallax.core.internal.metamodel import (
     Columns,
     KeySequence,
     MetamodelIssue,
+    PkGeneration,
 )
 from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.core.internal.object_query import LATEST, TX_TIME, VALID_TIME
@@ -129,7 +128,6 @@ __all__ = [
     "LIFECYCLE_PROVIDER_FAILED",
     "LIFECYCLE_REENTERED",
     "MANY_TO_ONE",
-    "MAX",
     "MISSING_STORED_VALUE",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
@@ -196,6 +194,7 @@ __all__ = [
     "Password",
     "PhysicalIndexName",
     "Pin",
+    "PkGeneration",
     "PoolAvailable",
     "PoolDetached",
     "PoolMetricsObserver",
@@ -210,7 +209,6 @@ __all__ = [
     "Rel",
     "RetryPolicy",
     "RootExecution",
-    "Sequence",
     "ServingModel",
     "SortKey",
     "StoredDataIssue",

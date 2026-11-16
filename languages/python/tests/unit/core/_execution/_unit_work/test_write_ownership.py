@@ -62,7 +62,7 @@ from parallax.core.internal.write_plan.plan import (
     TemporalRowCoordinates,
 )
 from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.internal.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, WriteRow
+from parallax.core.internal.write_plan.steps import NEW_LINEAGE, Finite, WriteRow
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import source_authority
@@ -860,38 +860,6 @@ def test_fresh_and_continuing_origins_of_one_row_propagate_together_through_spli
     assert ownership.continues(second, _FEB) is False
     assert ownership.continues(second, _MAY) is True
     assert ownership.continues(second, _SEP) is True
-
-
-def test_a_row_holding_a_generated_value_is_not_held_however_a_part_reaches_it() -> None:
-    observed = _observed(_JAN)
-    ownership, _index = _observing(observed)
-    whole = _position_endpoint(None)
-    generated = WriteRow(
-        row=managed_row_of(_POSITION, {_VALUE: MaxPlusOne()}),
-        origin=NEW_LINEAGE,
-    )
-    ownership.complete(
-        (),
-        Openings(fresh=(whole,)),
-        (
-            _derived(
-                observed.key, TimeInterval(_JAN, INFINITY), (whole, TimeInterval(_JAN, INFINITY))
-            ),
-        ),
-        (
-            (
-                CurrentRowOutput(
-                    coordinates=whole,
-                    valid_time_coverage=TimeInterval(_JAN, INFINITY),
-                    row=generated,
-                    emitter=generated,
-                ),
-                None,
-            ),
-        ),
-    )
-    assert ownership.continues(observed, _JUN) is True
-    assert _values(ownership, None) == []
 
 
 def test_an_observation_collected_after_its_ownership_was_cleared_prunes_nothing(

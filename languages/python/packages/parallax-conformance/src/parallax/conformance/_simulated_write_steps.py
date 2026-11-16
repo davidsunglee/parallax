@@ -27,9 +27,7 @@ class SimulatedWriteSteps:
     Only the statements of steps that lowered whole are kept, with their
     binds; nothing of the steps themselves is.
 
-    Steps that allocate answer the next of ``allocated_results`` as their
-    keys, one tuple per such execution and unchecked; one with none left to
-    answer is a misconfigured simulation. A predicate-selected step executed
+    A predicate-selected step executed
     for its count (:meth:`counted`) answers the next of ``counts``, or zero
     once none is left: no simulated row is matched. Database gates and
     affected-row enforcement are not simulated. Lowering hands the payloads it
@@ -37,7 +35,6 @@ class SimulatedWriteSteps:
     """
 
     __slots__ = (
-        "_allocated",
         "_counts",
         "_dialect",
         "_payloads",
@@ -51,13 +48,11 @@ class SimulatedWriteSteps:
         resolved: ResolvedBinding,
         dialect: Dialect,
         *,
-        allocated_results: Iterable[tuple[object, ...]] = (),
         counts: Iterable[int] = (),
     ) -> None:
         self._payloads = payloads
         self._resolved = resolved
         self._dialect = dialect
-        self._allocated = iter(allocated_results)
         self._counts = iter(counts)
         self._statements: list[LoweredStatement] = []
 
@@ -72,11 +67,10 @@ class SimulatedWriteSteps:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
+    ) -> None:
         lowered = tuple(
             stream_physical(
                 steps,
@@ -88,20 +82,10 @@ class SimulatedWriteSteps:
                 capture_revision=capture_revision,
             )
         )
-        allocated: tuple[object, ...] = ()
-        if allocates:
-            scripted = next(self._allocated, None)
-            if scripted is None:
-                raise ValueError(
-                    "simulated steps allocating keys found no scripted result to answer: "
-                    "a simulation answers only the keys it is given"
-                )
-            allocated = scripted
         self._statements.extend(lowered)
-        return allocated
 
     def counted(self, step: PlannedUpdate | PlannedDelete, /) -> int:
         """Execute ``step`` as :meth:`__call__` executes a sequence of one,
         answering the next scripted count."""
-        self((step,), allocates=False)
+        self((step,))
         return next(self._counts, 0)

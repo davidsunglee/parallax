@@ -49,7 +49,6 @@ from parallax.core.internal.write_plan import ObjectKey, VersionObservation
 from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from parallax.core.internal.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
-    AllocatedOpening,
     Derivation,
     DerivedRow,
     Openings,
@@ -163,7 +162,7 @@ def test_an_ended_attempt_refuses_what_a_read_or_verb_asks_and_still_publishes_c
     authority.register_read_evidence(evidence, read_at=0)
     assert not authority.has_live_observation(VersionedObjectStateKey(_person(1), 1))
     assert authority.is_unchanged_since(_person(1), 0)
-    authority.complete_write(WriteEffects(changed=(_person(1),)), ())
+    authority.complete_write(WriteEffects(changed=(_person(1),)))
     assert not authority.is_unchanged_since(_person(1), 0)
 
 
@@ -176,7 +175,7 @@ def test_a_reread_answers_the_live_observation_and_a_stale_read_is_never_indexed
     assert authority.retain(_versioned(authority, _account(1), 3)) is first
     assert authority.has_live_observation(first.key)
     read_at = authority.freshness
-    authority.complete_write(WriteEffects(changed=(first.key,)), ())
+    authority.complete_write(WriteEffects(changed=(first.key,)))
     assert first.invalidated
     assert not authority.has_live_observation(first.key)
     # Built from rows read before the change, a reread is stale and not indexed;
@@ -190,9 +189,9 @@ def test_a_reread_answers_the_live_observation_and_a_stale_read_is_never_indexed
 
 def test_only_an_actual_change_advances_freshness() -> None:
     authority = _authority(_PERSON)
-    authority.complete_write(WriteEffects(), ())
+    authority.complete_write(WriteEffects())
     assert authority.freshness == 0
-    authority.complete_write(WriteEffects(changed=(_person(1), _person(2))), ())
+    authority.complete_write(WriteEffects(changed=(_person(1), _person(2))))
     assert authority.freshness == 1
     assert not authority.is_unchanged_since(_person(2), 0)
     assert authority.is_unchanged_since(_person(2), 1)
@@ -246,7 +245,6 @@ def test_a_temporal_source_continues_only_at_a_pin_its_changed_state_still_holds
                 ),
             ),
         ),
-        (),
     )
     assert observation.invalidated
     assert _resolved(authority, POSITION, kept, OBJECT) is observation
@@ -264,14 +262,6 @@ def test_a_stale_temporal_source_no_completion_recorded_reaches_nothing() -> Non
 # --------------------------------------------------------------------------- #
 # Completion, planning views, and the insertion transitions.                  #
 # --------------------------------------------------------------------------- #
-def test_completion_owns_the_rows_it_opened_under_the_keys_the_database_allocated() -> None:
-    authority = _authority(POSITION)
-    opening = AllocatedOpening(ENTITY, OPEN_BITEMPORAL_ENDS)
-    authority.complete_write(WriteEffects(opened=Openings(allocated=(opening,))), (42,))
-    live = authority.planning_ownership(concluding=False)
-    assert live.owns(TemporalRowCoordinates(ENTITY, (42,), OPEN_BITEMPORAL_ENDS))
-
-
 def test_a_flush_borrows_one_live_ownership_or_one_reusable_concluding_view_of_it() -> None:
     authority = _authority(POSITION)
     live = authority.planning_ownership(concluding=False)
@@ -283,7 +273,7 @@ def test_a_flush_borrows_one_live_ownership_or_one_reusable_concluding_view_of_i
     assert not concluding.demanded(observation.key, None)
     # The view is no snapshot: what completes later is what it answers.
     row = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    authority.complete_write(WriteEffects(opened=Openings(fresh=(row,))), ())
+    authority.complete_write(WriteEffects(opened=Openings(fresh=(row,))))
     assert concluding.owns(row)
 
 
@@ -308,7 +298,7 @@ def test_an_insertion_stands_until_a_completed_removal_of_its_rows_and_its_histo
     assert authority.insertion_authority(identity) == TimeInterval(JAN, INFINITY)
     admission.drain_planned()
     row = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    authority.complete_write(WriteEffects(opened=Openings(continued=(row,))), ())
+    authority.complete_write(WriteEffects(opened=Openings(continued=(row,))))
     termination = prepare_wire_write(
         KeyedWriteInstruction("terminate", "Position", ({"id": 1},), JAN),
         write_preparation_of(POSITION),
@@ -318,7 +308,7 @@ def test_an_insertion_stands_until_a_completed_removal_of_its_rows_and_its_histo
         InsertionAuthorizedWrite(termination, OBJECT, identity)
     )
     assert write.claim_scope is None  # a temporal write claims by object instead
-    authority.complete_write(WriteEffects(removed=(row,)), ())
+    authority.complete_write(WriteEffects(removed=(row,)))
     assert authority.insertion_authority(identity) is NO_INSERTION_AUTHORITY
     assert authority.has_admitted_insertion(OBJECT)
 
@@ -331,7 +321,7 @@ def test_clearing_forgets_every_fact_but_keeps_participation_and_freshness() -> 
     participation = authority.participation
     read_at = authority.freshness
     stale = ReadEvidence(_person(1).entity, _person(1), participation, None)
-    authority.complete_write(WriteEffects(changed=(_person(1),), destroyed=(_person(1),)), ())
+    authority.complete_write(WriteEffects(changed=(_person(1),), destroyed=(_person(1),)))
     authority.register_read_evidence(stale, read_at=read_at)
     insert = prepare_wire_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)),

@@ -71,7 +71,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     PlannedUpdate,
-    SelfIncrement,
     TemporalGate,
     Versioned,
     VersionGate,
@@ -307,7 +306,7 @@ def test_a_single_key_non_temporal_effect_promises_the_ceiling_its_statement_kee
         )
 
 
-def test_a_version_gate_and_a_registry_increment_each_fit_the_ceiling() -> None:
+def test_a_version_gate_fits_the_ceiling() -> None:
     account = entity_of(model("account"), "Account").identity
     gated = PlannedUpdate(
         entity=account,
@@ -324,22 +323,6 @@ def test_a_version_gate_and_a_registry_increment_each_fit_the_ceiling() -> None:
         affected_rows=ExactCount(1, OPTIMISTIC_CONFLICT),
     )
     assert ordered_parameter_ceiling(gated, POSTGRES) == 5
-    registry_model = model("pk-sequence")
-    registry = _planned(
-        registry_model,
-        KeyedWriteInstruction(
-            "amend", "PkSequence", ({"name": "pass_seq", "nextVal": {"increment": 3}},)
-        ),
-    )
-    assert isinstance(registry, PlannedUpdate)
-    assert any(
-        isinstance(value, SelfIncrement) for value in registry.assignments.attributes.values()
-    )
-    ceiling = ordered_parameter_ceiling(registry, POSTGRES)
-    assert ceiling == 3
-    payloads = build_write_planner(bound_model(registry_model)).payloads
-    statement = lowered_within(registry, ceiling, payloads, bound_model(registry_model), POSTGRES)
-    assert statement.binds == (3, "pass_seq")
 
 
 def test_a_multi_key_or_predicate_selected_effect_runs_alone() -> None:

@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 
 from parallax.core.internal.database_binding._authored import DatabaseBinding
 from parallax.core.internal.database_binding._physical import (
-    PhysicalSequence,
     ResolvedSequence,
     ResolvedTable,
 )
@@ -30,9 +29,7 @@ class ResolvedBinding:
     meta: Metamodel
     binding: DatabaseBinding
     _tables: Mapping[EntityIdentity, ResolvedTable] = field(init=False, compare=False, repr=False)
-    _sequences: Mapping[str, PhysicalSequence | ResolvedSequence] = field(
-        init=False, compare=False, repr=False
-    )
+    _sequences: Mapping[str, ResolvedSequence] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         tables, sequences = resolve(self.meta, self.binding)
@@ -50,12 +47,8 @@ class ResolvedBinding:
         return tuple(self._tables.values())
 
     @property
-    def sequences(self) -> Mapping[str, PhysicalSequence | ResolvedSequence]:
-        """Every logical allocator's sequence, by allocator key in codepoint order.
-
-        A native allocator resolves to its :class:`ResolvedSequence`; an
-        allocator a registry ``Sequence`` declares keeps its bare placement.
-        """
+    def sequences(self) -> Mapping[str, ResolvedSequence]:
+        """Every logical allocator's sequence, by allocator key in codepoint order."""
         return self._sequences
 
     def table(self, mapping_owner: EntityIdentity) -> ResolvedTable:
@@ -65,7 +58,7 @@ class ResolvedBinding:
         except KeyError:
             raise LookupError(f"{mapping_owner.canonical} owns no table") from None
 
-    def sequence(self, allocator: str) -> PhysicalSequence | ResolvedSequence:
+    def sequence(self, allocator: str) -> ResolvedSequence:
         """``allocator``'s sequence; an undeclared key is a :class:`LookupError`."""
         try:
             return self._sequences[allocator]

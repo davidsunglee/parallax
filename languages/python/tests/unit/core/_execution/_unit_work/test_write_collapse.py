@@ -18,10 +18,10 @@ from parallax.core.internal.base import INT64, UsageError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import (
-    MAX,
     AttributeIdentity,
     CompiledEntity,
     EntityIdentity,
+    KeySequence,
     Metamodel,
 )
 from parallax.core.internal.sql_gen import LoweredStatement
@@ -72,10 +72,8 @@ DEPOSIT_RATE = _target("rate", "DepositRate")
 
 
 def _generated_key_leaf() -> tuple[Metamodel, CompiledEntity]:
-    """A concrete subtype whose family root's key the framework allocates.
-
-    No corpus family generates its key, so this one is formed by hand.
-    """
+    """A concrete subtype whose family root's key a KeySequence generates, formed
+    by hand so the family's own key is the generated one."""
     root = _records.Entity(
         name="Ticket",
         inheritance=_records.Inheritance(role="root", strategy="table-per-concrete-subtype"),
@@ -85,7 +83,7 @@ def _generated_key_leaf() -> tuple[Metamodel, CompiledEntity]:
                 type="int64",
                 column="id",
                 primary_key=True,
-                pk_generation=MAX,
+                pk_generation=KeySequence("ticket_ids"),
             ),
             _records.Attribute(name="title", type="string", column="title"),
         ),
@@ -255,7 +253,7 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
         (BALANCE, {"acctNum": "A", "value": Decimal("5.00")}, False),
         (DOG, {"name": "Rex"}, True),
         (FRIDGE, {"name": "Chill"}, True),
-        (GENERATED_KEY_LEAF, {"title": "Crash", "severity": 1}, False),
+        (GENERATED_KEY_LEAF, {"title": "Crash", "severity": 1}, True),
     ],
     ids=["plain", "versioned", "temporal", "inherited", "inherited-version", "generated-key"],
 )

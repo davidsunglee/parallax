@@ -3,7 +3,6 @@ formation*)."""
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
@@ -11,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr
+from parallax.core import Bitemporal
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import write_settlement as settlement
 from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
@@ -24,7 +23,6 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
-from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
@@ -91,19 +89,6 @@ _LEDGERS = formed(
 # Later than every stored Transaction-Time start a test below closes.
 _INSTANT = instant_at("2024-06-01T00:00:00+00:00")
 _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-
-
-class Log(TxTemporal, table="wg_log", namespace="write.groups"):
-    id: Attr[int] = attr(primary_key=MAX)
-    amount: Attr[int]
-
-
-class Tally(Entity, table="wg_tally", namespace="write.groups"):
-    id: Attr[int] = attr(primary_key=MAX)
-    amount: Attr[int]
-
-
-_ALLOCATED = model_of(DomainModel(Log, Tally))
 
 
 def _finalize(
@@ -416,24 +401,6 @@ def test_a_deferred_write_is_an_entry_of_its_own_between_the_groups_around_it() 
     assert deferred.deferred is not None
 
 
-@pytest.mark.parametrize(
-    ("entity", "allocates"), [(Log, True), (Tally, False)], ids=["allocated", "computed"]
-)
-def test_an_insert_whose_key_the_database_decides_stands_alone(
-    entity: type[Entity], allocates: bool
-) -> None:
-    computed = prepare_typed_write(
-        KeyedWriteInstruction(
-            "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": 1},)
-        ),
-        write_preparation_of(_ALLOCATED),
-    )
-    insert = admitted_write(computed, None, object_key(computed, _ALLOCATED))
-    plan = _finalize([insert, insert], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
-    assert _sizes(plan) == [1, 1]
-    assert all(bool(group.writes[0].opened.allocated) is allocates for group in _groups(plan))
-
-
 def _entity(model: Metamodel, name: str) -> EntityIdentity:
     return next(entity.identity for entity in model.entities if entity.identity.name == name)
 
@@ -686,7 +653,7 @@ def test_a_deferred_write_joins_the_open_span_only_where_it_reads_alike_another_
     assert [(span.start, span.stop) for span in recorded] == spans
 
 
-def test_a_deferred_write_naming_no_complete_key_reads_alone() -> None:
+def test_only_a_deferred_write_reads_with_a_span() -> None:
     # Two parts' writes compose into one write naming the object's key.
     (item,) = admitted_writes(SHARED_MODEL, frag(ShareCols, 1, 2))
     assert isinstance(item, ComposedTemporalWrite)
@@ -695,11 +662,7 @@ def test_a_deferred_write_naming_no_complete_key_reads_alone() -> None:
     candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares
     families = inheritance.inheritance_facet_of(SHARED_MODEL)
     assert candidate(write, item, families) is not None
-    unkeyed = dataclasses.replace(
-        item, object_key=ObjectKey(item.object_key.entity, (("id", None),))
-    )
-    assert candidate(write, unkeyed, families) is None
-    # A settled write with no deferred range shares nothing either.
+    # A settled write with no deferred range shares nothing.
     assert candidate(SettledWrite(), item, families) is None
 
 

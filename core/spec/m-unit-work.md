@@ -982,9 +982,7 @@ Which writes share one is the implementation's, within these rules:
   order, and an insert that must follow the removal clearing its way runs after
   that removal. No group spans two phases.
 - No group holds two writes of one object under its Inheritance Family's primary
-  key, so a later write of an object observes the completion of the earlier. A
-  write whose key the database allocates, or which names no complete key, runs
-  alone.
+  key, so a later write of an object observes the completion of the earlier.
 - Within a group every effect — each step that is not an insert — precedes every
   insert, and each write's own steps keep their order.
 - On a dialect with array parameters, keyed effects of distinct objects in one
@@ -1370,10 +1368,9 @@ stays decomposed as a whole, without smaller uniform sub-batches. A collapsed
 write retains row order, each addressed object, and every distinct source
 evidence in first-occurrence order.
 
-Temporal inserts and inserts whose primary key the database computes as it
-writes the row (`max`, a registry `sequence`) remain separate; an insert whose
-`key-sequence` key was allocated at its call states that key like a supplied
-one, and collapses like one. Insert rows state their applicable member set before collapse;
+Temporal inserts remain separate; an insert whose `key-sequence` key was
+allocated at its call states that key like a supplied one, and collapses like
+one. Insert rows state their applicable member set before collapse;
 updates compare present assigned values excluding the addressing key. Deletes
 compare no non-key payload shape. Document presence remains a member-level
 shape even when several members share one physical document column.
@@ -1639,12 +1636,6 @@ empty `[T, T)` interval whose physical address collides with the row the
 earlier flush closed. The attempt therefore records, by complete physical
 address, every current row its successful settled writes open — keyed inserts,
 and temporal successors alike — and retires a row from that record when a settled write removes it. Reads record nothing.
-A row whose key the database allocates has no address until its insert
-executes, so that insert answers the key as row-producing DML (`m-db-port`) and
-the settled write records the row under it. The answer is validated before it is used:
-one row per row opened, each holding the key alone, an integer, none twice.
-Anything else is a **Write Result Error**, an invariant failure that is never
-retriable and, like any failure while executing, dooms the attempt.
 Every admitted insertion stays recorded until the attempt ends, even once
 everything it opened was removed or a pending removal cancelled it, because a
 target write of the object is refused on that admission alone

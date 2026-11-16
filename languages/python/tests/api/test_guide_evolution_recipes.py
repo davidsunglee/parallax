@@ -38,7 +38,7 @@ from parallax.conformance.guide_models import (
     Payment,
     Shipment,
 )
-from parallax.core import Attr, DomainModel, Entity, Sequence, attr
+from parallax.core import Attr, DomainModel, Entity, KeySequence, attr
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.execution import ServingModel, prepare_model
 from parallax.core.internal.metamodel import EntityIdentity
@@ -243,7 +243,7 @@ def test_a_release_that_moves_a_table_reports_the_move_and_has_no_migration() ->
 
 
 class Ticket(Entity, table="ticket"):
-    id: Attr[int] = attr(primary_key=Sequence(name="tickets"))
+    id: Attr[int] = attr(primary_key=KeySequence(name="tickets"))
 
 
 def test_a_sequence_move_is_reported_from_where_to_where() -> None:

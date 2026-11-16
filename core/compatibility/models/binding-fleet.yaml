@@ -14,7 +14,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: fleetIds }
+        pkGeneration: { strategy: key-sequence, name: fleetIds }
       - { name: name, type: string, maxLength: 32 }
   - name: Car
     namespace: parallax.compatibility
@@ -39,5 +39,5 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: fleetIds }
+        pkGeneration: { strategy: key-sequence, name: fleetIds }
       - { name: label, type: string, maxLength: 32 }
