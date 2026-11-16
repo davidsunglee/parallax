@@ -696,16 +696,21 @@ def test_a_child_takes_its_parent_s_answered_key_before_either_flushes(
 ) -> None:
     events = _Events()
     db = _db(profile_run, events)
-    parent = Order(label="order")
-    line = {"label": "line"}
+    inputs: list[Any] = []
 
     def write(tx: TxnContext) -> tuple[object, object]:
         if representation == "typed":
+            parent = Order(label="order")
             order = tx.insert(parent)
-            child = tx.insert(OrderLine(order_id=order.id, **line))
+            line = OrderLine(order_id=order.id, label="line")
+            child = tx.insert(line)
+            inputs[:] = [parent, line]
             return order.id, child.id
-        order_node = tx.wire.insert(_name(Order), {"label": "order"})
-        child_node = tx.wire.insert(_name(OrderLine), {"orderId": order_node["id"], **line})
+        parent_node = {"label": "order"}
+        order_node = tx.wire.insert(_name(Order), parent_node)
+        line_node = {"orderId": order_node["id"], "label": "line"}
+        child_node = tx.wire.insert(_name(OrderLine), line_node)
+        inputs[:] = [parent_node, line_node]
         return order_node["id"], child_node["id"]
 
     assert db.transact(write) == (1, 1)
@@ -716,8 +721,16 @@ def test_a_child_takes_its_parent_s_answered_key_before_either_flushes(
     writes = [index for index, event in enumerate(seen) if event == ("write", "insert")]
     assert len(reservations) == len(writes) == 2
     assert max(reservations) < min(writes)
-    assert parent.id is None
-    assert line == {"label": "line"}
+    if representation == "typed":
+        parent, line = inputs
+        assert parent.id is None
+        assert "id" not in parent.model_fields_set
+        assert parent.label == "order"
+        assert line.id is None
+        assert "id" not in line.model_fields_set
+        assert (line.order_id, line.label) == (1, "line")
+    else:
+        assert inputs == [{"label": "order"}, {"orderId": 1, "label": "line"}]
     assert list(profile_run.port.execute("select id, label from px.pkg_order", [])) == [
         (1, "order")
     ]

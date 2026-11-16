@@ -444,14 +444,23 @@ def test_a_stalled_reservation_holds_up_no_other_sequence() -> None:
         accept: Callable[[list[Row]], int],
     ) -> int:
         entered.set()
-        release.wait(5)
+        release.wait(10)
         return accept([_row(stalled_sequence, 1)])
 
+    handed: list[int] = []
     holder = threading.Thread(target=lambda: allocator.next_key(stalled_sequence, stalled))
+    taker = threading.Thread(
+        target=lambda: handed.extend(_keys(allocator, other, _Reservations([]), 2))
+    )
     holder.start()
     try:
         assert entered.wait(5)
-        assert _keys(allocator, other, _Reservations([]), 2) == [2, 3]
+        taker.start()
+        taker.join(5)
+        assert not taker.is_alive()
+        assert holder.is_alive()
+        assert handed == [2, 3]
     finally:
         release.set()
         holder.join(5)
+        taker.join(5)
