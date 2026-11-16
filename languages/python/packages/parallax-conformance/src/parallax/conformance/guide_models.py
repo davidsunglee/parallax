@@ -14,6 +14,7 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
+    KeySequence,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -35,7 +36,10 @@ __all__ = [
     "Price",
     "Product",
     "Shipment",
+    "Subscription",
     "Supplier",
+    "Ticket",
+    "TicketNote",
 ]
 
 
@@ -100,6 +104,25 @@ class Price(Bitemporal, table="price"):
     amount: Attr[Decimal] = attr(precision=12, scale=2)
 
 
+class Ticket(Entity, table="ticket"):
+    id: Attr[int] = attr(primary_key=KeySequence("support_ids"))
+    customer_id: Attr[int]
+    subject: Attr[str] = attr(max_length=200)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class TicketNote(Entity, table="ticket_note"):
+    id: Attr[int] = attr(primary_key=KeySequence("support_ids"))
+    ticket_id: Attr[int]
+    body: Attr[str]
+
+
+class Subscription(Bitemporal, table="subscription"):
+    id: Attr[int] = attr(primary_key=KeySequence("subscription_ids", batch_size=20))
+    customer_id: Attr[int]
+    plan: Attr[str] = attr(max_length=20)
+
+
 class Supplier(Entity, table="supplier", persistence=READ_ONLY):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=100)
@@ -122,4 +145,7 @@ SHOP_MODEL = DomainModel(
     Price,
     Product,
     Supplier,
+    Ticket,
+    TicketNote,
+    Subscription,
 )

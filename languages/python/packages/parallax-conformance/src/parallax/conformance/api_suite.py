@@ -38,7 +38,10 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Subscription,
     Supplier,
+    Ticket,
+    TicketNote,
 )
 from parallax.conformance.read_models import Balance
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
@@ -169,6 +172,7 @@ RECIPES: Final[list[Recipe]] = [
             "    DomainModel,\n"
             "    Entity,\n"
             "    Int32,\n"
+            "    KeySequence,\n"
             "    MetamodelValidationError,\n"
             "    Rel,\n"
             "    TablePerHierarchy,\n"
@@ -237,6 +241,7 @@ RECIPES: Final[list[Recipe]] = [
             "    Attr,\n"
             "    Bitemporal,\n"
             "    Edge,\n"
+            "    KeySequence,\n"
             "    NoResultFound,\n"
             "    TemporalBound,\n"
             "    TxTemporal,\n"
@@ -257,6 +262,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="declare-a-read-only-entity",
         title="Declare an entity Parallax only reads",
         snippet=_sources(Supplier, guide_recipes.rename_a_supplier),
+    ),
+    Recipe(
+        recipe_id="declare-generated-keys",
+        title="Declare keys a database sequence generates, two entities sharing one allocator",
+        snippet=_sources(Ticket, TicketNote, guide_recipes.draft_a_ticket),
     ),
     Recipe(
         recipe_id="place-the-model-with-a-binding",
@@ -407,6 +417,21 @@ RECIPES: Final[list[Recipe]] = [
         snippet=_sources(guide_recipes.register_a_customer),
     ),
     Recipe(
+        recipe_id="insert-without-a-key",
+        title="Insert a value whose generated key is unset, and receive it keyed",
+        snippet=_sources(guide_recipes.open_a_ticket),
+    ),
+    Recipe(
+        recipe_id="insert-a-parent-and-its-child",
+        title="Key a child by its parent's returned key, then read the parent as stored",
+        snippet=_sources(guide_recipes.open_a_ticket_with_a_note),
+    ),
+    Recipe(
+        recipe_id="insert-one-draft-twice",
+        title="Insert one keyless draft twice, opening two objects",
+        snippet=_sources(guide_recipes.file_one_draft_twice),
+    ),
+    Recipe(
         recipe_id="amend-or-replace-an-edited-value",
         title="Amend or replace an edited copy of a value read in the transaction",
         snippet=_sources(guide_recipes.change_an_email, guide_recipes.replace_contact_details),
@@ -442,6 +467,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="list-a-price",
         title="Insert a Bitemporal value from a Valid-Time start, with or without an end",
         snippet=_sources(Price, guide_recipes.list_a_tea, guide_recipes.list_a_seasonal_tea),
+    ),
+    Recipe(
+        recipe_id="insert-into-a-gap-under-a-generated-key",
+        title="Cover a generated-key object again after a gap by stating its key",
+        snippet=_sources(Subscription, guide_recipes.subscribe, guide_recipes.resubscribe),
     ),
     Recipe(
         recipe_id="amend-a-price-from-a-date",
@@ -707,7 +737,9 @@ RECIPES: Final[list[Recipe]] = [
             "    ABSENT,\n"
             "    CoordinatedEvolution,\n"
             "    Evolution,\n"
+            "    MigrationStatement,\n"
             "    UnilateralEvolution,\n"
+            "    coordinated_migration,\n"
             "    evolve,\n"
             "    schema_delta,\n"
             ")\n"
@@ -750,6 +782,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="report-what-a-release-moves",
         title="Report each table and sequence a binding change moves",
         snippet=_sources(guide_evolution_recipes.moves_in),
+    ),
+    Recipe(
+        recipe_id="list-a-releases-migration-steps",
+        title="List a release's migration steps, statements and manual steps in order",
+        snippet=_sources(guide_evolution_recipes.migration_steps),
     ),
     Recipe(
         recipe_id="read-through-the-overlap-window",

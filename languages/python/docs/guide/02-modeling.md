@@ -33,6 +33,7 @@ from parallax.core import (
     DomainModel,
     Entity,
     Int32,
+    KeySequence,
     MetamodelValidationError,
     Rel,
     TablePerHierarchy,
@@ -95,7 +96,9 @@ sets, such as `version`. To change a value, `edit(...)` returns a modified copy;
 `model_copy` is refused.
 
 `primary_key=True` makes `id` the key, with values your application assigns. A primary
-key is always one attribute, of type `int`, `str` or `uuid.UUID`.
+key is always one attribute, of type `int`, `str` or `uuid.UUID`. An `int` key can
+instead come from a database sequence, as
+[Keys the database generates](#keys-the-database-generates) shows.
 
 `indices=` in the class header declares database indices, each written
 `index(name, *attributes)`, and `schema_delta` creates them with the tables. The index on
@@ -165,6 +168,72 @@ table, which `schema_delta` creates with the rest, and the system that owns its 
 writes them there. In an [inheritance family](#inheritance-families) only the root
 declares `persistence=`, and its choice holds for the whole family: a write to any of its
 subtypes is refused too.
+
+### Keys the database generates
+
+Declare `primary_key=KeySequence(name)` instead of `True`, and an insert that leaves the
+key unset takes one from a database sequence:
+
+<!-- example: declare-generated-keys -->
+```python
+class Ticket(Entity, table="ticket"):
+    id: Attr[int] = attr(primary_key=KeySequence("support_ids"))
+    customer_id: Attr[int]
+    subject: Attr[str] = attr(max_length=200)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class TicketNote(Entity, table="ticket_note"):
+    id: Attr[int] = attr(primary_key=KeySequence("support_ids"))
+    ticket_id: Attr[int]
+    body: Attr[str]
+
+
+def draft_a_ticket(customer_id: int, subject: str) -> Ticket:
+    """A draft leaves its generated key unset: ``id`` reads ``None`` and stays out
+    of ``model_fields_set``, and an insert of it returns a separate keyed value."""
+    return Ticket(customer_id=customer_id, subject=subject)
+```
+<!-- /example -->
+
+The key is an `int`, stored as a 64-bit integer unless `type=Int32` narrows it.
+`KeySequence`'s name is a logical allocator, not a database object: the model says which
+entities draw their keys from one allocator, and each deployment's
+[binding](#database-bindings) says where its sequence lives, so one model can serve
+tenants whose sequences differ. Entities naming the same allocator share it on purpose,
+as `Ticket` and `TicketNote` do: their keys come from one stream, so a ticket and a note
+never share a number. Every declaration naming one allocator must agree on its settings
+and its key type, and `DomainModel` refuses a disagreement with the issue
+`pk-gen-key-sequence-conflict`.
+
+A generated key is still one you may state: construct the instance with an `id`, and an
+insert uses it as given. Leave it out, as `draft_a_ticket` does, and `id` reads `None`,
+stays out of `model_fields_set`, and is taken by the insert, as
+[Writing](04-writing.md#let-the-database-choose-the-key) shows. `id=None` is refused like
+any other `None` for an `int`.
+
+`KeySequence` takes three settings, shown here at their defaults:
+`KeySequence("support_ids", batch_size=100, initial_value=1, increment_size=1)`. Each
+`Database` root reserves `batch_size` keys at a time, the sequence advancing by
+`batch_size` × `increment_size` for each block, and hands them out `increment_size` apart
+with no statement of its own until the block runs out. `initial_value` is where a sequence
+that Parallax creates starts. So keys aren't consecutive: each root hands out its own
+block, and the keys left in a block when its root closes are never used. A larger
+`batch_size` means fewer reservations, at the cost of larger gaps;
+[Operations](09-operations.md#open-one-root-per-process) covers what a reservation costs.
+Keys never wrap: once the key type's range is used up, an insert that needs another key
+fails.
+
+In an [inheritance family](#inheritance-families), the root declares the key and its
+generation once, and every subtype takes its keys from the root's allocator. The family
+is one stream, even one stored table per concrete subtype with tables in different
+schemas. A subtype can't declare a generator of its own: `DomainModel` refuses one with
+the issue `pk-gen-key-sequence-subtype-override`.
+
+Keep keys application-assigned when the key means something outside the database, such
+as a SKU or a number another system issues; when it is a `str` or a `uuid.UUID`; or when
+your application already has its own source of unique keys. A generated key suits a
+surrogate integer key that many processes create at once.
 
 ## Relationships
 
@@ -560,10 +629,10 @@ A binding has four parts, each keyed by what the model declares:
 - `entities`, an override per entity that owns a table, keyed by its canonical name
   (`Customer`, or `audit.Entry` for a namespaced one), which may give a schema, a
   physical table name, or both;
-- `sequences`, an override per `KeySequence(...)` name, which entities declaring the
-  same name share. A `KeySequence` allocates keys from the
-  native sequence placed here, which `schema_delta` creates; a binding fixes where each
-  sequence belongs.
+- `sequences`, an override per `KeySequence(...)` name, which every entity declaring that
+  name shares: the schema of the native sequence keys come from, its name, or both.
+  `schema_delta` creates the sequence there, as
+  [Getting started](01-getting-started.md#create-the-tables) shows.
 
 A table's schema comes from its entity's own entry, then its namespace's, then the
 default, and its name from its entry, or else its `table=`. A table-per-hierarchy family
@@ -607,6 +676,8 @@ binding once you deploy it.
 
 - The [Python declarations binding](../../spec/declarations.md) records how classes,
   attributes, relationships and value objects are spelled.
+- [Primary-key generation](../../../../core/spec/m-pk-gen.md) defines generated keys,
+  their allocators and their settings.
 - [Metamodel](../../../../core/spec/m-metamodel.md) and
   [model formation](../../../../core/spec/m-model-formation.md) define what a model
   declares and how it is checked.

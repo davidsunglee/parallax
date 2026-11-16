@@ -206,9 +206,15 @@ everything it opened is removed, or a later insertion of the object supersedes i
               window; PreparedInstruction names the keyed and predicate pair
 
  PreparedKeyedInstruction
-   insert  → KeyedInsert(prepared, object_key) → UnitOfWork.buffer_insert
-           → WriteAdmission.admit_insert → the issued InsertionIdentity, which
-             the verb binds to the value it answers
+   insert  → InsertKeying (TxnAttempt._keyed): a row omitting a KeySequence key
+             takes KeyAllocator.next_key, restated into the prepared row; a
+             supplied key passes unchanged
+           → KeyedInsert(prepared, object_key) → UnitOfWork.buffer_insert
+           → WriteAdmission.admit_insert → the issued InsertionIdentity
+           → OpenedKeyedWrite (allocated_key) → the source publishes the answer:
+             TypedKeyedInsertSource.publish binds the identity to a keyed
+             instance or publishes a new one from the row (inserted_value);
+             WireKeyedInsertSource.publish renders the node from the row
    source  → licence: the standing insertion's identity, or
              SourceAuthority.resolve_read_evidence(...) → SettledEvidence
            → admitted_write(prepared, evidence, object_key, source= / authority=)
@@ -284,6 +290,17 @@ by a whole removal that buffer held, or as completed writes report the rows they
 removed (next section). A write an insertion authorized is checked against it again
 at admission, because preparation runs caller code that can retire or supersede it.
 
+A generated key is spent only once preparation has accepted the row, and before the
+row names its object, so a refused row spends none and a failed allocation buffers
+nothing. The `KeyAllocator` belongs to the root's `RootResources` and reaches each
+attempt through the `TransactionRunner`; it keeps one `_Reservation` per physical
+sequence and allocation settings, the binding's `ResolvedSequence` supplying both.
+Handing out a key the reservation holds is a locked increment. When it runs out, the
+attempt's `reservation_read` runs one reservation Read on the runtime's
+`reservation_source`, with its own acquisition, statement and release, and the
+allocator checks the live definition the statement returns before handing out the new
+block. The answered value carries no Read Evidence, and no flush writes into it.
+
 `PostRemovalInsert` is not something admission builds while composing. It is the marker
 `composed_writes` wraps around an insert, or an opening composed over one, whose
 object's earlier insertion in this attempt the pending writes remove completely, so
@@ -304,6 +321,20 @@ removed and reinserted this way.
 - `parallax.core._execution._keyed_writes:validate_source_pin`
 - `parallax.core._execution._keyed_writes:source_start`
 - `parallax.core._execution._keyed_writes:OpenedKeyedWrite`
+- `parallax.core._execution._keyed_writes:OpenedKeyedWrite.allocated_key`
+- `parallax.core._execution._keyed_writes:InsertKeying`
+- `parallax.core._execution._transaction._attempt:TxnAttempt._keyed`
+- `parallax.core._execution._key_allocation:KeyAllocator`
+- `parallax.core._execution._key_allocation:KeyAllocator.next_key`
+- `parallax.core._execution._key_allocation:_Reservation`
+- `parallax.core._execution._root:RootResources`
+- `parallax.core._execution._transaction._runner:TransactionRunner`
+- `parallax.core._execution._connection_lifecycle:reservation_read`
+- `parallax.core.internal.db_port._resources:DatabaseRuntime.reservation_source`
+- `parallax.core.internal.database_binding._physical:ResolvedSequence`
+- `parallax.snapshot._handle._typed_writes:TypedKeyedInsertSource.publish`
+- `parallax.snapshot._handle._wire_writes:WireKeyedInsertSource.publish`
+- `parallax.snapshot._publication._graph_view:inserted_value`
 - `parallax.core._execution._keyed_writes:keyed_instruction`
 - `parallax.core._execution._keyed_writes:stated_valid_from`
 - `parallax.core.execution_lifecycle._activity:refuse_reentry`

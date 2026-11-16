@@ -21,6 +21,9 @@ it and a specification seem to disagree, the specification is right.
  Prepared Instruction        judged once against the model: target, verb, window,
       │                      revision, then payload; refused before anything is buffered
       ▼
+ keying                      an insert omitting a generated key is allocated one now;
+      │                      the insert answers an immutable keyed value
+      ▼
  Admitted Write              licensed by an observation, a lock, this attempt's own
       │                      insertion, or a revision the caller states; or an insert
       ▼
@@ -71,6 +74,32 @@ judged, member by member, into managed values.
 
 What comes out is immutable, and nothing downstream decodes or judges it again. A
 refusal here happens before anything is buffered, and it leaves the transaction usable.
+
+### Keying an insert
+
+An insert opens the object its key names. When the Entity generates its key and the
+row leaves it unset, the key is allocated here, at the insert call: after preparation
+has accepted the row, and before the row is buffered under the object that key names
+([native key sequences](../../core/spec/m-pk-gen.md#native-key-sequences)). A row
+preparation refuses spends no key, and an allocation that fails buffers nothing. A key
+the caller set is used as given, whichever strategy the Entity declares, and every
+insert of a keyless value asks for a new object, even a repeated insert of one value.
+
+Allocation is usually a counter. Each Database Root reserves a block of keys from the
+native sequence the binding places, in a statement of its own that commits outside the
+application's transaction, and hands the block's keys out without another statement
+until it runs out. A rollback therefore returns no key, and keys a root reserved but
+never handed out are abandoned when it closes, so keys have gaps and say nothing about
+commit order.
+
+The insert answers an immutable value holding the key and what the row stated, with
+the insertion's licence attached
+([insertion authority](../../core/spec/m-unit-work.md#insertion-authority)). It
+records the insert, not the stored row: what the flush finalizes, such as a version or
+a Transaction-Time start, is absent from it, and no flush ever writes into it. Edits
+of it are new values carrying the same licence, and nothing manufactures a read for
+any of them. So a parent's answered key can key its children before anything is sent,
+and reading the object returns what the database stored.
 
 ### Admitted Write
 
@@ -245,7 +274,9 @@ flushes them first, inside the still-open transaction, and a rollback still eras
 A value you inserted can be written again without reading it back, because it carries
 its insertion's licence for the rest of the attempt, unless everything the insertion
 opened is removed or a later insertion of the same object takes its place
-([insertion authority](../../core/spec/m-unit-work.md#insertion-authority)). A value you read stays usable after your
+([insertion authority](../../core/spec/m-unit-work.md#insertion-authority)). It holds
+what you inserted, not what was stored: read the object to see the version or
+Transaction-Time start the flush gave it. A value you read stays usable after your
 own writes change its row: its licence follows the state your completed writes left,
 until a deletion, or a termination over the instant it was read at, leaves nothing of it
 ([observation ownership and lifetime](../../core/spec/m-unit-work.md#observation-ownership-and-lifetime)).
@@ -273,6 +304,9 @@ and leaves every other key of the stored document standing.
   the value, and amend or replace it. The read is the licence.
 - **Create, then adjust.** Insert a value and keep writing through it. The flush writes
   one row with the final values.
+- **Create a parent and its children.** Insert the parent without a key, and build each
+  child from the key its insert answered, in the same transaction. Nothing cascades: you
+  insert each child yourself.
 - **Save a form shown earlier.** The value came from an earlier read, so state the
   revision it showed in a target write. If someone changed the row since, the write
   fails as your precondition, and a retry will not paper over it.
@@ -284,6 +318,7 @@ and leaves every other key of the stored document standing.
 ## Do it →
 
 - [Non-Temporal entities](../../languages/python/docs/guide/04-writing.md#non-temporal-entities)
+- [Let the database choose the key](../../languages/python/docs/guide/04-writing.md#let-the-database-choose-the-key)
 - [Transaction-Time-Only entities](../../languages/python/docs/guide/04-writing.md#transaction-time-only-entities)
 - [Bitemporal entities](../../languages/python/docs/guide/04-writing.md#bitemporal-entities)
 - [Target writes](../../languages/python/docs/guide/04-writing.md#target-writes)

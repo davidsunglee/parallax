@@ -30,7 +30,10 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Subscription,
     Supplier,
+    Ticket,
+    TicketNote,
 )
 from parallax.conformance.guide_recipes import (
     CarrierDelivery,
@@ -83,14 +86,18 @@ from parallax.conformance.guide_recipes import (
     delete_the_shipments_of,
     deliveries_for,
     discontinue_a_tea,
+    draft_a_ticket,
     every_stored_price,
     export_customers,
+    file_one_draft_twice,
     forget_an_email_address,
     grant_a_credit_limit,
     largest_orders_since,
     list_a_seasonal_tea,
     list_a_tea,
     look_up_a_customer,
+    open_a_ticket,
+    open_a_ticket_with_a_note,
     open_an_account,
     open_an_account_even_if_the_order_fails,
     orders_of,
@@ -116,8 +123,10 @@ from parallax.conformance.guide_recipes import (
     replace_contact_details,
     reprice_a_tea_for,
     reprice_from_a_review,
+    resubscribe,
     run_a_summer_sale,
     shipments_to,
+    subscribe,
     table_statements,
     the_shops_binding,
     the_shops_binding_as_configured,
@@ -131,6 +140,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     LATEST,
     TX_TIME,
+    VALID_TIME,
     ConflictError,
     DomainModel,
     Edge,
@@ -174,7 +184,7 @@ from parallax.core.internal.unit_work import (
     WRITE_INSTRUCTION_INVALID,
     WritePreconditionError,
 )
-from parallax.postgres import PostgresAdapter, PostgresBinding
+from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresLocation
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -251,6 +261,97 @@ def test_the_generated_statements_create_tables_the_first_program_runs_against(
 
     assert type(customer) is Customer
     assert (customer.id, customer.name, customer.email) == (1, "Ada Lovelace", "ada@example.com")
+
+
+def test_a_generated_key_s_sequence_is_created_before_the_tables_that_draw_from_it() -> None:
+    statements = table_statements(
+        DomainModel(Ticket, TicketNote), PostgresBinding(default=PostgresLocation(schema="shop"))
+    )
+
+    assert statements[0] == (
+        "create sequence shop.support_ids as bigint increment by 100"
+        " minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle"
+    )
+    assert [statement.split(" (")[0] for statement in statements[1:]] == [
+        "create table shop.ticket",
+        "create table shop.ticket_note",
+    ]
+
+
+def test_a_keyless_draft_reads_its_key_as_unset() -> None:
+    draft = draft_a_ticket(1, "Broken kettle")
+
+    assert draft.id is None
+    assert "id" not in draft.model_fields_set
+
+
+def _support_ids_reserved(profile_run: Any) -> int:
+    with contextlib.closing(profile_run.control()) as control:
+        ((last_value,),) = control.execute("select last_value from px.support_ids", ())
+    return int(last_value)
+
+
+def test_a_keyless_insert_returns_a_keyed_ticket_without_its_stored_version(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+
+    ticket = open_a_ticket(db, 1, "Broken kettle")
+
+    assert type(ticket) is Ticket
+    assert (ticket.id, ticket.customer_id, ticket.subject) == (1, 1, "Broken kettle")
+    assert ticket.version is None
+    assert "version" not in ticket.model_fields_set
+    stored = db.find(Ticket.where(Ticket.id == 1)).result()
+    assert (stored.subject, stored.version) == ("Broken kettle", 1)
+
+
+def test_a_child_is_keyed_by_its_parent_s_returned_key_and_the_returned_value_stays_as_inserted(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+
+    ticket, stored = open_a_ticket_with_a_note(db, 1, "Broken kettle", "Asked for a photo")
+
+    assert (ticket.id, ticket.subject, ticket.version) == (1, "Broken kettle", None)
+    assert (stored.id, stored.subject, stored.version) == (1, "Broken kettle (noted)", 1)
+    (note,) = db.find(TicketNote.where(TicketNote.ticket_id == ticket.id)).results()
+    # One allocator keys both entities, so the note's key follows the ticket's.
+    assert (note.id, note.body) == (2, "Asked for a photo")
+    assert _support_ids_reserved(profile_run) == 1
+
+
+def test_one_draft_inserted_twice_opens_two_tickets(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    draft = draft_a_ticket(1, "Broken kettle")
+
+    first, second = file_one_draft_twice(db, draft)
+
+    assert (first, second) == (1, 2)
+    assert draft.id is None
+    stored = db.find(Ticket.where(Ticket.customer_id == 1)).results()
+    assert sorted(ticket.id for ticket in stored) == [1, 2]
+
+
+def test_a_gap_insert_stating_a_generated_key_resumes_the_same_subscription(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+
+    subscription_id = subscribe(db, 1, "monthly", _JAN, _MAR)
+    resubscribe(db, subscription_id, 1, "yearly", _JUL)
+
+    assert subscription_id == 1
+    windows = db.find(
+        Subscription.where(Subscription.id == subscription_id).history(VALID_TIME)
+    ).results()
+    assert sorted((w.valid_start, w.valid_end, w.plan) for w in windows) == [
+        (_JAN, _MAR, "monthly"),
+        (_JUL, _OPEN, "yearly"),
+    ]
+    with contextlib.closing(profile_run.control()) as control:
+        ((last_value,),) = control.execute("select last_value from px.subscription_ids", ())
+    assert last_value == 1
 
 
 def test_the_shops_binding_reads_alike_from_yaml_and_keeps_customers_in_their_own_schema(
@@ -2289,14 +2390,18 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             delete_the_shipments_of,
             deliveries_for,
             discontinue_a_tea,
+            draft_a_ticket,
             every_stored_price,
             export_customers,
+            file_one_draft_twice,
             forget_an_email_address,
             grant_a_credit_limit,
             largest_orders_since,
             list_a_seasonal_tea,
             list_a_tea,
             look_up_a_customer,
+            open_a_ticket,
+            open_a_ticket_with_a_note,
             open_an_account,
             open_an_account_even_if_the_order_fails,
             orders_of,
@@ -2322,8 +2427,10 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             replace_contact_details,
             reprice_a_tea_for,
             reprice_from_a_review,
+            resubscribe,
             run_a_summer_sale,
             shipments_to,
+            subscribe,
             table_statements,
             the_shops_binding,
             the_shops_binding_as_configured,

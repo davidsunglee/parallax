@@ -183,7 +183,14 @@ parsing messages.
 - **A model.** `DomainModel(...)` checks the classes as a whole. As
   [Modeling](02-modeling.md) explains, a model that breaks a rule raises
   `MetamodelValidationError`, which lists every problem in its `issues`. Each one is a
-  `MetamodelIssue` with a `code`, a `location` in the model and a `message`.
+  `MetamodelIssue` with a `code`, a `location` in the model and a `message`, such as
+  `pk-gen-key-sequence-conflict` for two declarations of one key allocator that disagree.
+- **A binding.** Preparing a model under a binding, connecting with one, and `evolve`
+  each resolve it first, and a binding that doesn't place the model raises
+  `BindingError` listing every problem, before anything opens.
+  `binding-sequence-unrepresentable` among them means the database can't hold a
+  `KeySequence`'s settings: a step of `batch_size` × `increment_size` beyond the key's
+  range, or an `initial_value` outside it.
 - **A descriptor.** Building a model from a YAML or JSON descriptor raises
   `DescriptorError`, whose `code` names the phase that refused it:
   `descriptor-invalid-syntax` for text that doesn't parse, with its `format`, `line`
@@ -215,7 +222,8 @@ parsing messages.
   [predicate write](04-writing.md#predicate-writes) on a versioned entity, which has to
   read each object before it writes it; and
   `"read-only-write-target"` for any write to an entity
-  [declared read-only](02-modeling.md#entities-and-keys). Caught inside the callback,
+  [declared read-only](02-modeling.md#entities-and-keys); and `"write-key-absent"` for a
+  value whose generated key is unset handed to any verb but `insert`. Caught inside the callback,
   that refusal leaves the transaction usable, and the writes buffered before and after
   it still commit. If it escapes, it reaches you from `transact`.
   `"transaction-time-pin-read-only"` means the value was read as of a past Transaction
@@ -601,6 +609,18 @@ reaches you as itself:
 - **A failed rollback.** When rolling back after a failure fails too, you get
   `TransactionRollbackError`, which holds both as `triggering_error` and
   `rollback_error`.
+- **No more keys.** An insert that leaves a
+  [generated key](04-writing.md#let-the-database-choose-the-key) unset fails at the call
+  when its root has to reserve keys and can't. The sequence's own failures are each a
+  `UsageError`: `"key-sequence-missing"` when no sequence is where the binding places
+  it, `"key-sequence-mismatch"` when its increment, bounds, cycling or type differ from
+  the declaration, and `"key-sequence-exhausted"` when the key type's range is used up.
+  A reservation that can't finish within the adapter's `acquire_timeout` fails as a
+  `ConnectionAcquisitionError` with `reason="timeout"`, or, when the statement itself
+  waited too long, such as on a sequence another session is altering, as a
+  `DatabaseError` whose `native_code` is `"57014"` and whose `category` is `None`. None
+  of them is retried, none hands out a key, and the insert buffers nothing, so a callback
+  that catches the error can carry on with the rest of its transaction.
 
 ## Trying again later
 
@@ -731,6 +751,8 @@ isn't caught: the client asked for something reasonable, so it reaches
 | A `UsageError` whose `code` is `"principal-invalid"` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
 | A `UsageError` whose `code` is `"transaction-rollback-only"` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
+| A `UsageError` whose `code` is `"publication-breaking-change-refused"` | by `publish`, before it checks which selection is held | No | Run the release's coordinated migration, which drains the old roots, and serve the release from replacement roots |
+| A `UsageError` whose `code` is `"key-sequence-missing"`, `"key-sequence-mismatch"` or `"key-sequence-exhausted"` | by `insert`, when its root reserves keys | No | Create the sequence where the binding places it or correct its definition; when keys run out, move to a wider key type |
 | A `ConflictError` whose `code` is `"optimistic-lock-conflict"`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to the Retry Policy's `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
 | A `ConflictError` whose `code` is `"temporal-conflict"` | when the transaction sends its writes | Yes, up to the Retry Policy's `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
@@ -771,6 +793,8 @@ isn't caught: the client asked for something reasonable, so it reaches
   [the errors a write's effect raises](../../../../core/spec/m-unit-work.md#affected-row-enforcement).
   [Automatic retry](../../../../core/spec/m-auto-retry.md) defines which failures are
   retried.
+- [Primary-key generation](../../../../core/spec/m-pk-gen.md#native-key-sequences)
+  defines when a reservation is refused.
 - [Database error classification](../../../../core/spec/m-db-error.md) defines the
   categories, how each database's codes map to them, and
   [the violated index name](../../../../core/spec/m-db-error.md#the-violated-constraint-name).

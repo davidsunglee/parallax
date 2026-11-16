@@ -120,7 +120,8 @@ apply them with whatever already runs your migrations:
 <!-- example: create-tables-from-the-model -->
 ```python
 def table_statements(model: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
-    """The SQL that creates the model's tables where ``binding`` places them.
+    """The SQL that creates the model's tables, and the sequences its generated
+    keys come from, where ``binding`` places them.
 
     Parallax never changes a schema itself, and never creates one: create the
     binding's schemas and run these with your migration tool.
@@ -144,6 +145,21 @@ not their schema. `PostgresBinding(default=PostgresLocation(schema="shop"))` kee
 table in schema `shop`, so the first statement creates `shop.customer`.
 [Database bindings](02-modeling.md#database-bindings) explains the rest of what a binding
 can say.
+
+A model whose keys come from a database sequence, such as the tickets in
+[Keys the database generates](02-modeling.md#keys-the-database-generates), also gets each
+sequence, created before the tables, schema-qualified like them:
+
+```text
+create sequence shop.support_ids as bigint increment by 100 minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle
+```
+
+Grant the login your adapter connects as `USAGE` on each sequence, since keys are
+reserved under that login, never under an application user's role, and Parallax grants
+nothing. To use a sequence that already exists instead of this one, leave the statement
+out and adopt it, as
+[Model evolution](07-model-evolution.md#adopting-a-sequence-that-already-exists)
+describes.
 
 When your model changes later, `evolve` compares the model you deployed before with the
 new one, so keep a copy of each model you deploy. Exporting it as a descriptor with

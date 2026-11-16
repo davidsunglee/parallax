@@ -26,6 +26,7 @@ from parallax.conformance.guide_evolution_recipes import (
     edition_of_a_transaction,
     migrate,
     migration_for,
+    migration_steps,
     moves_in,
     payments_this_edition_can_read,
 )
@@ -38,7 +39,18 @@ from parallax.conformance.guide_models import (
     Payment,
     Shipment,
 )
-from parallax.core import Attr, DomainModel, Entity, KeySequence, attr
+from parallax.core import (
+    ONE_TO_MANY,
+    Attr,
+    DomainModel,
+    Entity,
+    Int32,
+    KeySequence,
+    Rel,
+    attr,
+    index,
+    rel,
+)
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.execution import ServingModel, prepare_model
 from parallax.core.internal.metamodel import EntityIdentity
@@ -64,7 +76,7 @@ from parallax.postgres import (
     PostgresSequence,
     PostgresTable,
 )
-from parallax.snapshot import Database, TxnContext
+from parallax.snapshot import Database, TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
@@ -345,6 +357,88 @@ def test_reading_through_the_overlap_runs_through_the_shipped_surface() -> None:
     assert [(type(payment), payment.id) for payment in readable] == [(CardPayment, 1)]
 
 
+def _customers_with_generated_keys() -> tuple[DomainModel, type[Entity]]:
+    """The shop's customers and orders, with the release's one change: each
+    customer's key comes from the ``customer_ids`` allocator; and that release's
+    customer class."""
+
+    class Customer(Entity, table="customer"):
+        id: Attr[int] = attr(primary_key=KeySequence("customer_ids"))
+        name: Attr[str] = attr(max_length=100)
+        email: Attr[str | None] = attr(max_length=200)
+        orders: Rel[tuple[Order, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "customer_id"))
+
+    class Order(Entity, table="orders", indices=(index("orders_customer", "customer_id"),)):
+        id: Attr[int] = attr(primary_key=True)
+        customer_id: Attr[int]
+        placed_on: Attr[dt.date]
+        total: Attr[Decimal] = attr(precision=12, scale=2)
+        version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+        customer: Rel[Customer | None] = rel(reverse_of="orders")
+
+    return DomainModel(Customer, Order), Customer
+
+
+_SHOP_SCHEMA = PostgresBinding(default=PostgresLocation(schema="shop"))
+_ASSIGNED_CUSTOMERS = DomainModel(Customer, Order)
+
+
+def test_moving_customers_to_generated_keys_drains_then_creates_and_positions_their_sequence() -> (
+    None
+):
+    steps = migration_steps(
+        Deployed(export_yaml(_ASSIGNED_CUSTOMERS), _SHOP_SCHEMA.to_yaml()),
+        _customers_with_generated_keys()[0],
+        _SHOP_SCHEMA,
+    )
+
+    assert steps == [
+        "-- DRAIN_EARLIER_ROOTS",
+        "create sequence shop.customer_ids as bigint increment by 100"
+        " minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle",
+        "select case when t0.next_key > 9223372036854775807"
+        " then pg_catalog.setval('shop.customer_ids', 9223372036854775807, true)"
+        " else pg_catalog.setval('shop.customer_ids', cast(t0.next_key as bigint), false) end"
+        " from (select greatest((select case when t1.is_called"
+        " then cast(t1.last_value as numeric) + 100 else t1.last_value end"
+        " from shop.customer_ids t1),"
+        " (select cast(max(t2.id) as numeric) + 1 from shop.customer t2)) next_key) t0",
+    ]
+
+
+def test_a_unilateral_release_s_steps_are_its_schema_delta() -> None:
+    assert migration_steps(_DEPLOYED_1, _RELEASE_2, TEST_BINDING) == list(_ADD_THE_GIFT_CARD_COLUMN)
+
+
+def test_customers_moved_to_generated_keys_take_keys_past_every_stored_one(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_ASSIGNED_CUSTOMERS), {}, TEST_BINDING)
+    with connect(profile_run.port, _ASSIGNED_CUSTOMERS, binding=TEST_BINDING) as earlier:
+        earlier.using_database_login().transact(
+            lambda tx: (
+                tx.insert(Customer(id=41, name="Ada", email=None)),
+                tx.insert(Customer(id=7, name="Grace", email=None)),
+            )
+        )
+    release, released_customer = _customers_with_generated_keys()
+    steps = migration_steps(
+        Deployed(export_yaml(_ASSIGNED_CUSTOMERS), TEST_BINDING.to_yaml()), release, TEST_BINDING
+    )
+    assert steps[0] == "-- DRAIN_EARLIER_ROOTS"
+    role = profile_run.default_role.name
+    with contextlib.closing(profile_run.control()) as control:
+        for statement in steps[1:]:
+            control.execute_write(statement, ())
+        control.execute_write(f'grant usage on sequence px.customer_ids to "{role}"', ())
+
+    db = own_root(connect(profile_run.port, release, binding=TEST_BINDING)).using_database_login()
+    new_customer = cast("Any", released_customer)
+    key = db.transact(lambda tx: tx.insert(new_customer(name="Edsger", email=None)).id)
+
+    assert key == 42
+
+
 def test_every_recipe_the_module_exports_has_a_driver() -> None:
     assert sorted(guide_evolution_recipes.__all__) == sorted(
         recipe.__name__
@@ -358,6 +452,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             edition_of_a_transaction,
             migrate,
             migration_for,
+            migration_steps,
             moves_in,
             payments_this_edition_can_read,
         )
