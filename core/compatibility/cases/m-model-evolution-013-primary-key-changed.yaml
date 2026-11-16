@@ -1,5 +1,7 @@
 # Changing the primary key (m-model-evolution): membership and generation are two
-# facts with two reason sets.
+# facts with two reason sets. Moving a populated key to a KeySequence withdraws no
+# caller input, so it needs a migration alone: drain the earlier roots, create the
+# sequence, and position it past every stored key.
 tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
 shape: evolution
 when:
@@ -10,134 +12,228 @@ then:
   evolution:
     kind: coordinated
     operations:
-      - kind: AttributeAltered
-        attribute: parallax.compatibility.Coupon.id
-        deltas:
-          - kind: PrimaryKeyChanged
-            earlier: { generation: application-assigned }
-            later: { generation: max }
+    - kind: AttributeAltered
+      attribute: parallax.compatibility.Coupon.id
+      deltas:
+      - kind: PrimaryKeyChanged
+        earlier:
+          generation: application-assigned
+        later:
+          generation:
+            strategy: key-sequence
+            name: coupon_ids
+            batchSize: 100
+            initialValue: 1
+            incrementSize: 1
+    - kind: AttributeAltered
+      attribute: parallax.compatibility.Voucher.code
+      deltas:
+      - kind: PrimaryKeyChanged
+        earlier: false
+        later:
+          generation: application-assigned
+    - kind: AttributeAltered
+      attribute: parallax.compatibility.Voucher.id
+      deltas:
+      - kind: PrimaryKeyChanged
+        earlier:
+          generation: application-assigned
+        later: false
+    behavioralImpacts:
+    - kind: WriteCapabilityChanged
+      scope:
+        attribute: parallax.compatibility.Voucher.code
+      earlier: CallerInsertAndUpdate
+      later: CallerInsertOnly
+      causedBy:
       - kind: AttributeAltered
         attribute: parallax.compatibility.Voucher.code
         deltas:
-          - kind: PrimaryKeyChanged
-            earlier: false
-            later: { generation: application-assigned }
+        - kind: PrimaryKeyChanged
+          earlier: false
+          later:
+            generation: application-assigned
+    - kind: WriteCapabilityChanged
+      scope:
+        attribute: parallax.compatibility.Voucher.id
+      earlier: CallerInsertOnly
+      later: CallerInsertAndUpdate
+      causedBy:
       - kind: AttributeAltered
         attribute: parallax.compatibility.Voucher.id
         deltas:
-          - kind: PrimaryKeyChanged
-            earlier: { generation: application-assigned }
-            later: false
-    behavioralImpacts:
-      - kind: WriteCapabilityChanged
-        scope: { attribute: parallax.compatibility.Coupon.id }
-        earlier: CallerInsertOnly
-        later: FrameworkOwned
-        causedBy:
-          - kind: AttributeAltered
-            attribute: parallax.compatibility.Coupon.id
-            deltas:
-              - kind: PrimaryKeyChanged
-                earlier: { generation: application-assigned }
-                later: { generation: max }
-      - kind: WriteCapabilityChanged
-        scope: { attribute: parallax.compatibility.Voucher.code }
-        earlier: CallerInsertAndUpdate
-        later: CallerInsertOnly
-        causedBy:
-          - kind: AttributeAltered
-            attribute: parallax.compatibility.Voucher.code
-            deltas:
-              - kind: PrimaryKeyChanged
-                earlier: false
-                later: { generation: application-assigned }
-      - kind: WriteCapabilityChanged
-        scope: { attribute: parallax.compatibility.Voucher.id }
-        earlier: CallerInsertOnly
-        later: CallerInsertAndUpdate
-        causedBy:
-          - kind: AttributeAltered
-            attribute: parallax.compatibility.Voucher.id
-            deltas:
-              - kind: PrimaryKeyChanged
-                earlier: { generation: application-assigned }
-                later: false
+        - kind: PrimaryKeyChanged
+          earlier:
+            generation: application-assigned
+          later: false
     overlapVisibleOperations: []
     coordinationRequirements:
-      - operation:
-          kind: AttributeAltered
-          attribute: parallax.compatibility.Coupon.id
-          deltas:
-            - kind: PrimaryKeyChanged
-              earlier: { generation: application-assigned }
-              later: { generation: max }
-        reasons: [AuthoringSurfaceChangeRequired]
-      - operation:
-          kind: AttributeAltered
-          attribute: parallax.compatibility.Voucher.code
-          deltas:
-            - kind: PrimaryKeyChanged
-              earlier: false
-              later: { generation: application-assigned }
-        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
-      - operation:
-          kind: AttributeAltered
-          attribute: parallax.compatibility.Voucher.id
-          deltas:
-            - kind: PrimaryKeyChanged
-              earlier: { generation: application-assigned }
-              later: false
-        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+    - operation:
+        kind: AttributeAltered
+        attribute: parallax.compatibility.Coupon.id
+        deltas:
+        - kind: PrimaryKeyChanged
+          earlier:
+            generation: application-assigned
+          later:
+            generation:
+              strategy: key-sequence
+              name: coupon_ids
+              batchSize: 100
+              initialValue: 1
+              incrementSize: 1
+      reasons:
+      - DatabaseMigrationRequired
+    - operation:
+        kind: AttributeAltered
+        attribute: parallax.compatibility.Voucher.code
+        deltas:
+        - kind: PrimaryKeyChanged
+          earlier: false
+          later:
+            generation: application-assigned
+      reasons:
+      - AuthoringSurfaceChangeRequired
+      - DatabaseMigrationRequired
+    - operation:
+        kind: AttributeAltered
+        attribute: parallax.compatibility.Voucher.id
+        deltas:
+        - kind: PrimaryKeyChanged
+          earlier:
+            generation: application-assigned
+          later: false
+      reasons:
+      - AuthoringSurfaceChangeRequired
+      - DatabaseMigrationRequired
   migration:
     postgres:
       steps:
-        - manual: TransformStoredData
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Voucher.code
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: false
-                  later: { generation: application-assigned }
-        - manual: TransformStoredData
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Voucher.id
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: { generation: application-assigned }
-                  later: false
-        - manual: UpdateAuthoringSurface
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Coupon.id
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: { generation: application-assigned }
-                  later: { generation: max }
+      - manual: DrainEarlierRoots
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1
+      - manual: TransformStoredData
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.code
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier: false
+            later:
+              generation: application-assigned
+      - manual: TransformStoredData
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later: false
+      - statement: create sequence px.coupon_ids as bigint increment by 100 minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1
+      - statement: select case when t0.next_key > 9223372036854775807 then pg_catalog.setval('px.coupon_ids', 9223372036854775807, true) else pg_catalog.setval('px.coupon_ids', cast(t0.next_key as bigint), false) end from (select greatest((select case when t1.is_called then cast(t1.last_value as numeric) + 100 else t1.last_value end from px.coupon_ids t1), (select cast(max(t2.id) as numeric) + 1 from px.evolution_coupon t2)) next_key) t0
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1
     mariadb:
       steps:
-        - manual: TransformStoredData
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Voucher.code
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: false
-                  later: { generation: application-assigned }
-        - manual: TransformStoredData
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Voucher.id
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: { generation: application-assigned }
-                  later: false
-        - manual: UpdateAuthoringSurface
-          causedBy:
-            - kind: AttributeAltered
-              attribute: parallax.compatibility.Coupon.id
-              deltas:
-                - kind: PrimaryKeyChanged
-                  earlier: { generation: application-assigned }
-                  later: { generation: max }
+      - manual: DrainEarlierRoots
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1
+      - manual: TransformStoredData
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.code
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier: false
+            later:
+              generation: application-assigned
+      - manual: TransformStoredData
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later: false
+      - statement: create sequence px.coupon_ids as bigint increment by 100 minvalue -9223372036854775807 maxvalue 9223372036854775806 start with 1 nocache nocycle
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1
+      - statement: begin not atomic declare next_key decimal(65) default (select greatest(-9223372036854775807, coalesce((select cast(max(t1.id) as decimal(65)) + 1 from px.evolution_coupon t1), -9223372036854775807))); execute immediate concat('select setval(px.coupon_ids, ', next_key, ', 0)'); end
+        causedBy:
+        - kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: application-assigned
+            later:
+              generation:
+                strategy: key-sequence
+                name: coupon_ids
+                batchSize: 100
+                initialValue: 1
+                incrementSize: 1

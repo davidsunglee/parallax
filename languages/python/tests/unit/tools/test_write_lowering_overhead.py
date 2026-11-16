@@ -1671,11 +1671,9 @@ def test_a_requesting_deferred_flush_hands_each_write_the_rows_its_source_contin
     complete = SourceAuthority.complete_write
     handed: list[int] = []
 
-    def completing(
-        owner: SourceAuthority, effects: Any, allocated: Any, *, captured: Any = ()
-    ) -> None:
+    def completing(owner: SourceAuthority, effects: Any, *, captured: Any = ()) -> None:
         handed.append(len(captured))
-        complete(owner, effects, allocated, captured=captured)
+        complete(owner, effects, captured=captured)
 
     captured: dict[str, int] = {}
     with pytest.MonkeyPatch.context() as patched:

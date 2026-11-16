@@ -40,6 +40,14 @@ from parallax.conformance.identifier_models import (
     IDENTIFIER_TPH_DOCUMENT,
     IDENTIFIER_TYPES,
 )
+from parallax.conformance.key_sequence_models import (
+    PK_AUDIT_MODEL,
+    PK_KEY_SEQUENCE_MODEL,
+    PK_SEQUENCE_MODEL,
+    Badge,
+    KeySequencePass,
+    Ticket,
+)
 from parallax.conformance.rate_sheet_document_models import RATE_SHEET_DOCUMENT_MODEL
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
@@ -75,7 +83,6 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core import (
-    MAX,
     ONE_TO_MANY,
     AbstractRoot,
     Attr,
@@ -86,9 +93,7 @@ from parallax.core import (
     Entity,
     Float32,
     Int32,
-    KeySequence,
     Rel,
-    Sequence,
     TablePerHierarchy,
     TxTemporal,
     ValueObject,
@@ -104,7 +109,7 @@ __all__ = [
     "DOCUMENT_CODEC_MODEL",
     "DOCUMENT_LAYOUT_MODEL",
     "MIRRORED",
-    "PK_MAX_MODEL",
+    "PK_KEY_SEQUENCE_MODEL",
     "PK_SEQUENCE_MODEL",
     "SCALAR_COLLECTION_COLUMNS_MODEL",
     "SCALAR_COLLECTION_DOCUMENT_MODEL",
@@ -112,123 +117,24 @@ __all__ = [
     "UNMIRRORED",
     "WRITABLE_SCALARS_MODEL",
     "Account",
-    "Attendee",
     "Badge",
     "Balance",
     "Beacon",
     "Branch",
     "Contact",
+    "KeySequencePass",
     "Ledger",
-    "Pass",
     "Passport",
     "Payment",
     "Person",
-    "PkSequence",
     "Shipment",
     "Supplier",
     "Taxpayer",
     "Ticket",
     "Traveler",
     "Trip",
-    "Voucher",
     "WritableScalar",
 ]
-
-
-class Attendee(
-    Entity,
-    table="attendee",
-    namespace=_NS,
-):
-    """Mirror of ``models/pk-max.yaml`` (the ``max`` primary-key generation)."""
-
-    id: Attr[int] = attr(primary_key=MAX)
-    name: Attr[str] = attr(max_length=64)
-
-
-PK_MAX_MODEL = DomainModel(Attendee)
-
-
-class PkSequence(
-    Entity,
-    table="pk_sequence",
-    namespace=_NS,
-):
-    """The sequence registry of ``models/pk-sequence.yaml``: one row per named
-    sequence holding the next value to hand out. Its own key is a string, which
-    is why ``primary_key=True`` carries no generation restriction."""
-
-    name: Attr[str] = attr(primary_key=True, max_length=64)
-    next_val: Attr[int]
-
-
-class Badge(
-    Entity,
-    table="badge",
-    namespace=_NS,
-):
-    """``Sequence`` allocation on every parameter's semantic default."""
-
-    id: Attr[int] = attr(primary_key=Sequence(name="badge_seq"))
-    holder: Attr[str] = attr(max_length=64)
-
-
-class Ticket(
-    Entity,
-    table="ticket",
-    namespace=_NS,
-):
-    """``Sequence`` allocation with an offset start and a stride above one."""
-
-    id: Attr[int] = attr(
-        primary_key=Sequence(name="ticket_seq", initial_value=1000, increment_size=5)
-    )
-    tier: Attr[str] = attr(max_length=64)
-
-
-class Pass(
-    Entity,
-    table="pass",
-    namespace=_NS,
-):
-    """``Sequence`` allocation that reserves a batch per registry round trip."""
-
-    id: Attr[int] = attr(primary_key=Sequence(name="pass_seq", batch_size=3))
-    zone: Attr[str] = attr(max_length=64)
-
-
-class Voucher(
-    Entity,
-    table="voucher",
-    namespace=_NS,
-):
-    """``Sequence`` allocation with every parameter set at once."""
-
-    id: Attr[int] = attr(
-        primary_key=Sequence(name="voucher_seq", initial_value=100, increment_size=10, batch_size=2)
-    )
-    label: Attr[str] = attr(max_length=64)
-
-
-PK_SEQUENCE_MODEL = DomainModel(PkSequence, Badge, Ticket, Pass, Voucher)
-
-
-class KeySequencePass(
-    Entity,
-    name="Pass",
-    table="pass",
-    namespace=_NS,
-):
-    """Mirror of ``models/pk-key-sequence.yaml``: a native key sequence with every
-    setting stated."""
-
-    id: Attr[int] = attr(
-        primary_key=KeySequence("pass_ids", batch_size=3, initial_value=100, increment_size=10)
-    )
-    holder: Attr[str] = attr(max_length=64)
-
-
-PK_KEY_SEQUENCE_MODEL = DomainModel(KeySequencePass)
 
 
 class WritableScalar(
@@ -651,7 +557,6 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("identifier-tph-document", IDENTIFIER_TPH_DOCUMENT),
     ("identifier-tpcs-document", IDENTIFIER_TPCS_DOCUMENT),
     ("account", ACCOUNT_MODEL),
-    ("pk-max", PK_MAX_MODEL),
     ("person", PERSON_MODEL),
     ("balance", BALANCE_MODEL),
     ("payment", PAYMENT_MODEL),
@@ -672,6 +577,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("wallet", WALLET_MODEL),
     ("pk-sequence", PK_SEQUENCE_MODEL),
     ("pk-key-sequence", PK_KEY_SEQUENCE_MODEL),
+    ("pk-audit", PK_AUDIT_MODEL),
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("scalars", SCALARS_MODEL),
     ("read-only-inheritance", READ_ONLY_INHERITANCE_MODEL),
@@ -995,10 +901,6 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "orders-versioned": (
             "no mirror authored; it composes the mirrored `orders`' relationship declarations "
             "with the mirrored `account`'s optimistic-lock version, adding no declaration construct"
-        ),
-        "pk-audit": (
-            "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "
-            "the transaction-time-only axis `balance` proves"
         ),
         "predicate-collections": (
             "portable compatibility-only model for the explicit quantifier algebra: its scalar "

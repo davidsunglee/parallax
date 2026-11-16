@@ -46,9 +46,7 @@ from parallax.core.internal.write_plan.keys import (
 )
 from parallax.core.internal.write_plan.observe import PredecessorRow
 from parallax.core.internal.write_plan.plan import (
-    AllocatedOpening,
     CurrentRowOutput,
-    Openings,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
     WriteEffects,
@@ -529,7 +527,6 @@ class SourceAuthority:
     def complete_write(
         self,
         effects: WriteEffects,
-        allocated_keys: tuple[object, ...],
         *,
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
@@ -542,8 +539,7 @@ class SourceAuthority:
         sources whose state it advanced continue from the version it produced,
         which a write a standing insertion of it authorizes claims from then
         on, and those of every object it deleted end; the owned rows it removed
-        are retired before the rows it opened, completed by the keys the
-        database ``allocated_keys``, are registered; and what it left of each
+        are retired before the rows it opened are registered; and what it left of each
         observed temporal state a live source shares is recorded, with the rows
         its execution ``captured`` for them.
         """
@@ -559,13 +555,7 @@ class SourceAuthority:
         if changed_any:
             self._freshness = stamp
         self._continue_sources(effects.advanced, effects.destroyed)
-        opened = effects.opened
-        self._ownership.complete(
-            effects.removed,
-            _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
-            effects.derived,
-            captured,
-        )
+        self._ownership.complete(effects.removed, effects.opened, effects.derived, captured)
 
     def _continue_sources(
         self, advanced: Iterable[VersionedObjectStateKey], destroyed: Iterable[ObjectKey]
@@ -632,18 +622,6 @@ class _ConcludingOwnership:
         self, target: ObjectKey, valid_time_window: TimeInterval | None, /
     ) -> Sequence[PredecessorRow]:
         return self._ownership.current_rows(target, valid_time_window)
-
-
-def _resolve_allocated_openings(opened: Openings, allocated: tuple[object, ...]) -> Openings:
-    named = tuple(
-        _allocated_coordinates(opening, key)
-        for opening, key in zip(opened.allocated, allocated, strict=True)
-    )
-    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued, shared=opened.shared)
-
-
-def _allocated_coordinates(opening: AllocatedOpening, key: object) -> TemporalRowCoordinates:
-    return TemporalRowCoordinates(opening.entity, (key,), opening.ends)
 
 
 def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:

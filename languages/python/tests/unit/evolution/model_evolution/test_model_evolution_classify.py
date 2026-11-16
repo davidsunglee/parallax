@@ -28,7 +28,6 @@ from parallax.core.internal.database_binding import (
 )
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AbstractSubtype,
@@ -239,14 +238,16 @@ def _keyed(on: str, *, generation: PkGeneration = APPLICATION_ASSIGNED) -> Metam
 
 def test_key_membership_reaches_the_database_and_generation_alone_does_not() -> None:
     # Membership moves the physical key as well as the lookup and insert shape,
-    # in both the joining and the leaving direction; generation moves only what
-    # the caller supplies, so it stops at the authoring surface.
+    # in both the joining and the leaving direction; leaving a generator moves
+    # only what the caller supplies, so it stops at the authoring surface.
     moved = evolve_resolved(bound_model(_keyed("id")), bound_model(_keyed("code")))
     assert [_verdict_on(moved, operation) for operation in moved.operations] == [
         _Verdict(_BOTH, False),
         _Verdict(_BOTH, False),
     ]
-    assert _verdict(_keyed("id"), _keyed("id", generation=MAX)) == _Verdict((_AUTHORING,), False)
+    assert _verdict(_keyed("id", generation=KeySequence("widgets")), _keyed("id")) == _Verdict(
+        (_AUTHORING,), False
+    )
 
 
 @pytest.mark.parametrize(

@@ -79,14 +79,6 @@ and duplicate-free, and unlike a Planned Row it names only the members its step
 changes. Entity Layout continues to decide physical `SET` and bind order
 (`m-sql`).
 
-A **Generated Value Expression** is the closed set of cell values the *database*
-computes from the row being written rather than binding as a literal, and
-`m-pk-gen` is its only source: the `max` allocation an insert folds into its own
-statement, and the registry advance an update applies to the stored value. Each
-is legal only where the statement that renders it can express it, so a Planned
-Row and Planned Assignments admit different members of the set rather than
-different value vocabularies.
-
 ### Write Target
 
 A **Write Target** is the semantic row selection of a Planned Step. It is

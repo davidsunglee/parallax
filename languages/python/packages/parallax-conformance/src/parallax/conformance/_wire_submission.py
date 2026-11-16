@@ -10,12 +10,11 @@ from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import case_entity, family_declarer
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._unit_work import instructions
-from parallax.core.internal import concurrency, inheritance, read_delivery
+from parallax.core.internal import concurrency, read_delivery
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     PrimaryKey,
-    ScalarDefinition,
     TemporalDimension,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
@@ -50,7 +49,6 @@ class Submission:
     on: object = None
     expect_error: object = None
     declared_observation: VersionObservation | None = None
-    is_framework_marker: bool = False
     step: int | None = None
 
 
@@ -131,7 +129,6 @@ def read_submissions(
                     entry.get("on"),
                     entry.get("expectError"),
                     observations[index] if observations else None,
-                    _is_framework_write(one, model),
                     step,
                 )
             )
@@ -158,10 +155,6 @@ class WireSubmitter:
         self._held.published.extend(nodes)
 
     def submit(self, submission: Submission) -> Outcome:
-        if submission.is_framework_marker:
-            raise UnclassifiedEngineError(
-                "a DB-computed write marker is framework bookkeeping, not a Wire submission"
-            )
         try:
             instruction = submission.instruction
             if isinstance(instruction, PredicateWriteInstruction):
@@ -185,10 +178,6 @@ class WireSubmitter:
     def submit_unit(
         self, submissions: Sequence[Submission], *, before_writes: Callable[[], None] | None = None
     ) -> tuple[Outcome, ...]:
-        if any(s.is_framework_marker for s in submissions):
-            raise UnclassifiedEngineError(
-                "a DB-computed write marker is framework bookkeeping, not a Wire submission"
-            )
         translated = tuple(s.instruction for s in submissions)
         for query in _unit_source_reads(self._model, translated):
             self._held.published.extend(_published_nodes(self._tx.wire.find(query)))
@@ -249,9 +238,6 @@ _VERSION_OBSERVATION_KEY = "observedVersion"
 _TEMPORAL_GATE_KEY = "observedTxStart"
 _TEMPORAL_VALID_START_KEY = "observedValidStart"
 _ROW_OBSERVATION_KEYS = (_VERSION_OBSERVATION_KEY, _TEMPORAL_GATE_KEY, _TEMPORAL_VALID_START_KEY)
-_MARKER_KEYS: Final[frozenset[frozenset[str]]] = frozenset(
-    {frozenset({"computed"}), frozenset({"increment"})}
-)
 _LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
     TemporalDimension.VALID_TIME: "valid-time",
     TemporalDimension.TRANSACTION_TIME: "transaction-time",
@@ -323,23 +309,6 @@ def _without_observation_controls(
     durable = dict(row)
     durable.pop(_VERSION_OBSERVATION_KEY, None)
     return durable
-
-
-def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> bool:
-    if not isinstance(instruction, KeyedWriteInstruction):
-        return False
-    entity = instruction.entity
-    position = inheritance.inheritance_facet_of(model).entity(case_entity(model, entity).identity)
-    if position is None:  # pragma: no cover - accepted entities have an inheritance position
-        return False
-    shape = position.member_selection.shape
-    return any(
-        isinstance(shape.member(name), ScalarDefinition)
-        and isinstance(value, Mapping)
-        and frozenset(cast("Mapping[str, object]", value)) in _MARKER_KEYS
-        for row in instruction.rows
-        for name, value in row.items()
-    )
 
 
 def _unit_source_query(

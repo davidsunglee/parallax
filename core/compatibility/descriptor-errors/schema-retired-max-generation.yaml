@@ -1,0 +1,8 @@
+entity:
+  name: Attendee
+  table: attendee
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+      pkGeneration: max

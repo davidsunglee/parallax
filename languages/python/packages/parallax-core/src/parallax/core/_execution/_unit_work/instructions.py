@@ -30,7 +30,7 @@ from parallax.core.internal.batch_write import (
     SET_BASED_WRITE_TARGET_UNSUPPORTED,
     judge_readless_target,
 )
-from parallax.core.internal.document_codec._plan import AuthoringRefusal, RootPolicy
+from parallax.core.internal.document_codec._plan import AuthoringRefusal
 from parallax.core.internal.metamodel import (
     WRITE_ASSIGNMENT_CODES,
     WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
@@ -66,10 +66,7 @@ from parallax.core.internal.wire import (
 from parallax.core.internal.write_plan.columns import freeze_retained_value
 from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row, managed_row
 from parallax.core.internal.write_plan.steps import (
-    MAX_PLUS_ONE,
-    PlannedValue,
     ResolvedMutationSelection,
-    SelfIncrement,
 )
 
 __all__ = [
@@ -116,7 +113,6 @@ __all__ = [
     "prepare_wire_insert",
     "prepare_wire_write",
     "refuse_keyless_target",
-    "refuse_opening_registry_advance",
     "resolve_target",
     "serialize",
 ]
@@ -723,9 +719,9 @@ def _rows(node: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
                 f"keyed write: row carries forbidden observation control key(s) {forbidden} "
                 "(the transaction observation is attached at flush, never on the instruction)",
             )
-        # A neutral write-row value is opaque JSON (a scalar, a one-key DB-computed
-        # marker, or a whole value-object document); its metamodel role decides its
-        # meaning at lowering, not its shape, so the serde keeps it verbatim.
+        # A neutral write-row value is opaque JSON (a scalar or a whole value-object
+        # document); its metamodel role decides its meaning at preparation, not its
+        # shape, so the serde keeps it verbatim.
         rows.append(dict(row))
     return tuple(rows)
 
@@ -1226,7 +1222,7 @@ def prepare_typed_keyed_write(
         if target.inheritance is not None:
             values = tuple(values)
             inheritance.validate_subtype_write(model, target, _stated_names(entry, values, omitted))
-        row = _replacement_row(model, entry, target, values, lane=TYPED_LANE, omitted=omitted)
+        row = _replacement_row(entry, target, values, lane=TYPED_LANE, omitted=omitted)
     elif members is not None:
         addressed = tuple(pairs)
         assigned = members()
@@ -1238,22 +1234,14 @@ def prepare_typed_keyed_write(
             inheritance.validate_subtype_write(
                 model, target, _named_pairs(entry, (*addressed, *assigned_pairs))
             )
-        row = _assigned_row(model, entry, target, (*assigned_pairs, *addressed), lane=TYPED_LANE)
+        row = _assigned_row(entry, target, (*assigned_pairs, *addressed), lane=TYPED_LANE)
     else:
         stated_pairs = tuple(pairs)
         if target.inheritance is not None:
             inheritance.validate_subtype_write(model, target, _named_pairs(entry, stated_pairs))
         if mutation in AMEND_MUTATIONS and entry.framework_owned:
             _refuse_owned_names(entry, target, stated_pairs, entry.framework_owned)
-        row = _sparse_row(
-            entry,
-            target,
-            stated_pairs,
-            lane=TYPED_LANE,
-            context=None
-            if mutation in DESTRUCTIVE_MUTATIONS
-            else _assignment_context(model, target),
-        )
+        row = _sparse_row(entry, target, stated_pairs, lane=TYPED_LANE)
     return _prepared_keyed_instruction(mutation, _assigns(entry, (row,)), target, (row,), window)
 
 
@@ -1359,7 +1347,6 @@ def _opened_row(
             lane=lane,
             required=entry.insert_required,
             omitted=entry.framework_owned,
-            root=_marker_planning(entity, shape, "insert"),
             nonnull=0 if allocation is None else 1 << allocation.position,
         )
     except AuthoringRefusal as refusal:
@@ -1374,27 +1361,13 @@ def _sparse_row(
     pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
-    context: _MarkerContext | None,
 ) -> ManagedRow:
     """The row stating exactly the members ``pairs`` positions, judged as
     content in the order ``pairs`` states them, a refusal worded as a stated
-    row's is.
-
-    A row assigning in ``context`` plans a DB-computed marker beside its key,
-    which addresses the object and so is judged as the ordinary value it is;
-    a row assigning nothing (``context`` ``None``) states only what addresses
-    it.
-    """
+    row's is."""
     shape = entry.selection.members.shape
     try:
-        prepared = entry.plan.partial_row(
-            pairs,
-            lane=lane,
-            root=None
-            if context is None or not _marked(value for _position, value in pairs)
-            else _marker_planning(entity, shape, context),
-            addressing=1 << entry.key,
-        )
+        prepared = entry.plan.partial_row(pairs, lane=lane)
     except AuthoringRefusal as refusal:
         error = _row_refusal(entity, shape, refusal)
         raise error from error.__cause__
@@ -1402,7 +1375,6 @@ def _sparse_row(
 
 
 def _assigned_row(
-    model: AcceptedMetamodel,
     entry: EntityPreparation,
     entity: CompiledEntity,
     pairs: Sequence[tuple[int, object]],
@@ -1412,22 +1384,13 @@ def _assigned_row(
 ) -> ManagedRow:
     """The row assigning one existing object the members ``pairs`` positions,
     each beside the key judged as an assignment in that order, the key
-    addressing the object.
-
-    A DB-computed marker plans in the context the assignment writes in
-    (:func:`_assignment_context`), judged where its member is.
-    """
-    shape = entry.selection.members.shape
+    addressing the object."""
     try:
         if not owned_names_judged and entry.framework_owned:
             _refuse_owned_names(entry, entity, pairs, entry.framework_owned)
         prepared = entry.plan.partial_row(
             pairs,
             lane=lane,
-            root=_marker_planning(entity, shape, _assignment_context(model, entity))
-            if _marked(value for _position, value in pairs)
-            else None,
-            addressing=1 << entry.key,
             check=entry.assignment_rules,
         )
     except UsageError as error:
@@ -1441,7 +1404,6 @@ def _assigned_row(
 
 
 def _replacement_row(
-    model: AcceptedMetamodel,
     entry: EntityPreparation,
     entity: CompiledEntity,
     raws: Iterable[object],
@@ -1460,7 +1422,6 @@ def _replacement_row(
     framework-owned and read-only members, which are never completed, and a
     member in ``omitted`` is read as unstated.
     """
-    shape = entry.selection.members.shape
     try:
         owned = entry.framework_owned & ~omitted
         if owned:
@@ -1475,8 +1436,6 @@ def _replacement_row(
             omitted=omitted,
             nulled=entry.replace_nulled,
             excluded=entry.framework_owned | entry.read_only,
-            root=_marker_planning(entity, shape, _assignment_context(model, entity)),
-            addressing=1 << entry.key,
             check=entry.assignment_rules,
         )
     except UsageError as error:
@@ -1641,31 +1600,6 @@ def joined_path(base: str, path: str) -> str:
     return f"{base}.{path}"
 
 
-def _marker_planning(
-    entity: CompiledEntity, shape: MemberShape, context: _MarkerContext
-) -> RootPolicy:
-    """The planned value a top-level scalar's DB-computed marker stands for in
-    ``context``."""
-
-    def planned(position: int, marker: Mapping[str, object]) -> object:
-        return _planned_marker(entity, shape.members[position].name, marker, context)
-
-    return planned
-
-
-def _marked(values: Iterable[object]) -> bool:
-    """Whether some value of ``values`` is shaped as a DB-computed marker."""
-    for value in values:
-        if isinstance(value, Mapping) and len(cast("Mapping[object, object]", value)) == 1:
-            (key,) = cast("Mapping[object, object]", value)
-            if key in _MARKER_KEYS:
-                return True
-    return False
-
-
-_MARKER_KEYS: Final = frozenset({"computed", "increment"})
-
-
 def _opening_shape(entry: EntityPreparation, row: Mapping[str, object]) -> Mapping[str, object]:
     """``row`` as an opening's shape is judged: stating the key its Entity
     allocates where the caller omitted it, since the insert states that key
@@ -1729,65 +1663,6 @@ def _assigns_beside_key(
     key = position.member_selection.index[position.primary_key.identity]
     beside = ~(1 << key)
     return any(row.presence & beside for row in rows)
-
-
-type _MarkerContext = Literal["insert", "update"]
-
-
-def _assignment_context(model: AcceptedMetamodel, entity: CompiledEntity) -> _MarkerContext:
-    """The planning context an assignment to ``entity`` writes in: a temporal
-    one feeds the successor row it opens, any other revises the stored row."""
-    return (
-        "insert"
-        if _is_temporal(temporal_read.temporal_facet_of(model).shape(entity.identity))
-        else "update"
-    )
-
-
-def _planned_marker(
-    entity: CompiledEntity, name: str, marker: Mapping[str, object], context: _MarkerContext
-) -> PlannedValue:
-    """The generated-value expression ``marker`` names in ``context``.
-
-    Each `m-pk-gen` allocation is legal only where the statement that renders
-    it can express it: `max` folds into the row an insert opens, and the
-    registry advance reads the very row an update revises.
-    """
-    ((kind, payload),) = marker.items()
-    if kind == "computed" and context == "insert":
-        if payload != "maxPlusOne":
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: "
-                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)",
-            )
-        return MAX_PLUS_ONE
-    if kind == "increment" and context == "update":
-        return SelfIncrement(amount=cast("int", payload))
-    raise _unplannable_marker(entity, name, kind, context)
-
-
-def _unplannable_marker(
-    entity: CompiledEntity, name: str, kind: str, context: _MarkerContext
-) -> UsageError:
-    return UsageError(
-        WRITE_INSTRUCTION_INVALID,
-        f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
-        f"marker is not recognized for {context} planning",
-    )
-
-
-def refuse_opening_registry_advance(assigned: PreparedKeyedInstruction) -> None:
-    """Refuse ``assigned`` where it folds into an object's pending opening and
-    assigns a registry advance: the row it then writes is the one the insert
-    opens, where an ``increment`` marker plans nothing."""
-    for row in assigned.rows:
-        members = row.selection.members.shape.members
-        for position, cell in row.stated_cells():
-            if isinstance(cell, SelfIncrement):
-                raise _unplannable_marker(
-                    assigned.target, members[position].name, "increment", "insert"
-                )
 
 
 def _judge_write_persistence(
@@ -2158,16 +2033,15 @@ def _prepare_target_payload(
                 f"{entity.identity.name}: a target {mutation!r} names its "
                 f"object by its primary key alone, and this row also states {stated}",
             )
-        return _sparse_row(entry, entity, _positioned(entry, row), lane=lane, context=None)
+        return _sparse_row(entry, entity, _positioned(entry, row), lane=lane)
     if mutation in REPLACE_MUTATIONS:
         return _replacement_row(
-            model, entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
+            entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
         )
-    return _assignment_payload(model, entry, entity, row, lane=lane)
+    return _assignment_payload(entry, entity, row, lane=lane)
 
 
 def _assignment_payload(
-    model: AcceptedMetamodel,
     entry: EntityPreparation,
     entity: CompiledEntity,
     row: Mapping[str, object],
@@ -2177,7 +2051,7 @@ def _assignment_payload(
     """``row`` as the row assigning one existing object every member it
     states beside the key, in the order ``row`` states them, its key
     addressing that object."""
-    return _assigned_row(model, entry, entity, _positioned(entry, row), lane=lane)
+    return _assigned_row(entry, entity, _positioned(entry, row), lane=lane)
 
 
 def _judge_row_members(
@@ -2279,7 +2153,6 @@ def _prepare_keyed_payload(
             WRITE_INSTRUCTION_INVALID,
             "a keyed assignment set applies only to one addressed write row",
         )
-    context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
     judged: list[ManagedRow] = []
     for row in instruction.rows:
         _judge_row_members(
@@ -2293,13 +2166,12 @@ def _prepare_keyed_payload(
         if mutation in REPLACE_MUTATIONS:
             judged.append(
                 _replacement_row(
-                    model, entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
+                    entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
                 )
             )
         elif authored_members is not None:
             judged.append(
                 _assigned_row(
-                    model,
                     entry,
                     entity,
                     _positioned(entry, row),
@@ -2308,9 +2180,7 @@ def _prepare_keyed_payload(
                 )
             )
         else:
-            judged.append(
-                _sparse_row(entry, entity, _positioned(entry, row), lane=lane, context=context)
-            )
+            judged.append(_sparse_row(entry, entity, _positioned(entry, row), lane=lane))
     rows = tuple(judged)
     return _prepared_keyed_instruction(
         mutation, _assigns(entry, rows), entity, rows, valid_time_window
@@ -2359,11 +2229,11 @@ def _prepare_predicate_payload(
     row = instruction.row
     if row is None:
         assigned = _row_from_assignments(model, entity, position, instruction.assignments)
-        managed = _assignment_payload(model, entry, entity, assigned, lane=lane)
+        managed = _assignment_payload(entry, entity, assigned, lane=lane)
     else:
         _judge_row_members(model, entity, entry, row, None, "predicate")
         managed = _replacement_row(
-            model, entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
+            entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
         )
     return _prepared_predicate_instruction(
         instruction.mutation, selection, managed.without(1 << entry.key)

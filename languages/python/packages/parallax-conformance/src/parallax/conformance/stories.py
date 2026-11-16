@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Literal
 
+from parallax.conformance import key_sequence_stories
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Account, Order, OrderItem, Position, Wallet
@@ -702,6 +703,10 @@ def _value_object_032_clock() -> Clock:
     )
 
 
+def _pk_gen_014_clock() -> Clock:
+    return ScriptedClock([dt.datetime(2024, 5, 1, tzinfo=dt.UTC)])
+
+
 def _value_object_033_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 2, 15, tzinfo=dt.UTC)]
@@ -992,5 +997,97 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "commit",
         "customer",
         customer_update_nulls_the_address_document_out,
+    ),
+    WriteStory(
+        "m-pk-gen-004",
+        "A keyless insert takes the one key a block of one holds",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.a_block_of_one_holds_one_key,
+    ),
+    WriteStory(
+        "m-pk-gen-005",
+        "Each transaction reserves the next block of one",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.each_transaction_reserves_the_next_block,
+    ),
+    WriteStory(
+        "m-pk-gen-006",
+        "A first reservation answers the initial value",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.a_reservation_answers_its_initial_value,
+    ),
+    WriteStory(
+        "m-pk-gen-007",
+        "Each reservation of a block of one advances by the stride",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.each_reservation_of_a_block_of_one_advances_by_the_stride,
+    ),
+    WriteStory(
+        "m-pk-gen-008",
+        "Keyless drafts take keys from one reserved block",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.keyless_drafts_take_keys_from_one_reserved_block,
+    ),
+    WriteStory(
+        "m-pk-gen-009",
+        "The draft that exhausts a block refills the reservation",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.the_fourth_draft_refills_the_reservation,
+    ),
+    WriteStory(
+        "m-pk-gen-010",
+        "An unused remainder of a block is abandoned",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.an_unused_remainder_of_a_block_is_abandoned,
+    ),
+    WriteStory(
+        "m-pk-gen-011",
+        "A stride spaces the keys of a block",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.a_stride_spaces_the_keys_of_a_block,
+    ),
+    WriteStory(
+        "m-pk-gen-012",
+        "Each unit of work reserves the next strided block",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.each_unit_of_work_reserves_the_next_strided_block,
+    ),
+    WriteStory(
+        "m-pk-gen-014",
+        "A keyless Transaction-Time insert opens its milestone under its key",
+        "commit",
+        "pk-audit",
+        key_sequence_stories.a_keyless_transaction_time_insert_opens_its_milestone_under_its_key,
+        clock=_pk_gen_014_clock,
+    ),
+    WriteStory(
+        "m-pk-gen-020",
+        "Keyless drafts take keys ten apart from one block",
+        "commit",
+        "pk-key-sequence",
+        key_sequence_stories.keyless_drafts_take_keys_ten_apart_from_one_block,
+    ),
+    WriteStory(
+        "m-pk-gen-021",
+        "Supplied keys spend nothing beside a keyless draft",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.supplied_keys_spend_nothing_beside_a_keyless_draft,
+    ),
+    WriteStory(
+        "m-pk-gen-022",
+        "A block is clipped at the key range's end",
+        "commit",
+        "pk-sequence",
+        key_sequence_stories.a_block_is_clipped_at_the_key_range_end,
     ),
 )

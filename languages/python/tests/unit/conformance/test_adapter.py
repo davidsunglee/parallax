@@ -32,6 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.internal.base import (
     INFINITY,
+    InvalidValueError,
     UsageError,
 )
 from parallax.core.internal.db_error import DatabaseError
@@ -530,6 +531,9 @@ class _WritePort(ConnectsAsItself):
         *,
         read_only: bool = False,
     ) -> list[Row]:
+        if sql == POSTGRES.reserve_sequence():
+            # A block of three from 1, as the declaration of `pass_seq` makes it.
+            return [(1, 3, -(2**63), 2**63 - 1, False, "bigint")]
         return [
             projected_row(
                 sql,
@@ -783,30 +787,21 @@ def test_run_case_rejected_model_reports_the_classified_rule() -> None:
 # --------------------------------------------------------------------------- #
 # Run-lane routing: an ordinary write is executed through its public verb.    #
 # --------------------------------------------------------------------------- #
-def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None:
-    # m-pk-gen-008: a reachable claimed writeSequence whose SECOND entry hands
-    # out 2 of a reserved 3-id block. The engine buffers each row as its own
-    # single-row insert (m-pk-gen), which the planner never collapses, and
-    # execution inserts both rows of the distinct objects with one grouped
-    # statement. The registry UPDATE's `{increment: 3}` marker folds into a
-    # self-referential `next_val = next_val + ?` SET.
+def test_run_case_reports_a_keyless_inserts_reservation_before_its_grouped_insert() -> None:
+    # m-pk-gen-008: two keyless rows of one entry take keys from one native
+    # reservation through the public Wire insert, and execution inserts both
+    # with one grouped statement, reported after the reservation that keyed it.
     case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
-    with (
-        mock.patch.object(
-            scenario,
-            "_lower_marker_unit",
-            wraps=scenario._lower_marker_unit,  # pyright: ignore[reportPrivateUsage] - observe marker routing
-        ) as marker,
-        mock.patch.object(
-            scenario,
-            "_resolve_entries",
-            side_effect=AssertionError("ordinary writes must not use compile resolution"),
-        ) as compile_resolution,
-    ):
+    with mock.patch.object(
+        scenario,
+        "_resolve_entries",
+        side_effect=AssertionError("ordinary writes must not use compile resolution"),
+    ) as compile_resolution:
         envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
     assert envelope["status"] == "ok", envelope
-    assert len(envelope["emissions"]) == 2, envelope["emissions"]
-    marker.assert_called_once()
+    reservation, insert = envelope["emissions"]
+    assert reservation.get("purpose") == "reservation", reservation
+    assert "purpose" not in insert, insert
     compile_resolution.assert_not_called()
 
 
@@ -902,22 +897,17 @@ _LEDGER_ENTITY = model_facts.case_entity(_LEDGER, "parallax.compatibility.Ledger
 def test_case_row_decoding_keeps_stated_state_its_structure_refuses_as_stated() -> None:
     # Stated state is weighed by nothing: a member the plan refuses for its
     # structure is read where it can be, element by element, and kept as stated
-    # where it cannot, while a stored DB-computed marker keeps its document.
+    # where it cannot; only a literal its declared type cannot decode is refused,
+    # a one-key document at a scalar included.
     decoded = _case_ingress.decode_case_row(
-        {
-            "id": {"computed": "maxPlusOne"},
-            "tags": "untagged",
-            "lines": [{"sku": "a"}, "loose", {}],
-        },
+        {"id": 1, "tags": "untagged", "lines": [{"sku": "a"}, "loose", {}]},
         _LEDGER,
         _LEDGER_ENTITY,
     )
 
-    assert decoded == {
-        "id": {"computed": "maxPlusOne"},
-        "tags": "untagged",
-        "lines": ({"sku": "a"}, "loose", {}),
-    }
+    assert decoded == {"id": 1, "tags": "untagged", "lines": ({"sku": "a"}, "loose", {})}
+    with pytest.raises(InvalidValueError, match=r"Ledger\.id: <dict>"):
+        _case_ingress.decode_case_row({"id": {"computed": "maxPlusOne"}}, _LEDGER, _LEDGER_ENTITY)
 
 
 def test_case_row_decoding_reads_each_element_of_a_collection_its_structure_refuses() -> None:

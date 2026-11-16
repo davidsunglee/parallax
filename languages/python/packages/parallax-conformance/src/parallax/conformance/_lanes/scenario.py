@@ -37,10 +37,8 @@ from parallax.conformance._mechanism.model_facts import (
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
-    committed,
     transact,
     write_adapter,
-    write_connection,
 )
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance._wire_submission import (
@@ -60,7 +58,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    WriteInstruction,
 )
 from parallax.core.execution_lifecycle import (
     CausedFailure,
@@ -207,7 +204,7 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     TypeError,
 )
 
-# A non-temporal writeSequence entry (e.g. a pk-gen sequence registry advance)
+# A non-temporal writeSequence entry
 # names no `at` — its Clock value is inert (no temporal write consumes it this
 # unit), so a fixed, deterministic instant stands in (`m-temporal-write` / ADR 0010:
 # "a non-temporal entry's clock value is inert, pick something deterministic").
@@ -497,8 +494,7 @@ class _SimulatedUnit:
         identity = self._uow.buffer_insert(
             admitted_write(instruction, None, key), insertion_advice=None
         )
-        if identity is not None:
-            self._handles[identity.object_key] = identity
+        self._handles[identity.object_key] = identity
 
     def _authorized(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         handle = None if key is None else self._handles.get(key)
@@ -644,20 +640,6 @@ def _refuse_row_acquisition(request: object, consumer: object, /) -> Never:
     )
 
 
-def _lower_marker_unit(
-    instruction: WriteInstruction,
-    model: AcceptedMetamodel,
-    prepare: WirePreparer,
-    binding: DatabaseBinding,
-    concurrency: ConcurrencyPreference,
-    tx_instant: str,
-) -> tuple[LoweredStatement, ...]:
-    prepared = prepare(instruction)
-    with _simulated_unit(model, binding, concurrency, tx_instant, rollback=False) as unit:
-        unit.buffer(_ResolvedWrite(prepared, None))
-    return unit.statements
-
-
 def lower_writes(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
@@ -674,12 +656,6 @@ def lower_writes(
     are graded against (:func:`_check_statement_count_consistency`). A
     ``rollback`` transaction still flushes."""
     translated = read_submissions(model, entries)
-    if _framework_unit(translated):
-        statements = _lower_marker_unit(
-            translated[0].instruction, model, prepare, binding, concurrency, tx_instant
-        )
-        _check_statement_count_consistency(entries, len(statements))
-        return statements
     resolved = _resolve_entries(entries, model, prepare, translated)
     with _simulated_unit(model, binding, concurrency, tx_instant, rollback=rollback) as unit:
         for write in resolved:
@@ -883,7 +859,6 @@ def _lower_group(
             else:
                 entries = write_entries(raw_write)
                 submissions = read_submissions(model, entries)
-                _refuse_group_markers(submissions)
                 for write in _resolve_entries(entries, model, context.prepare, submissions):
                     unit.buffer(write)
                 state.buffered.append((index, len(unit.statements)))
@@ -1058,54 +1033,6 @@ def compile_write_sequence_case(
     return emissions, len(emissions)
 
 
-def _refuse_group_markers(submissions: Sequence[Submission]) -> None:
-    if any(s.is_framework_marker for s in submissions):
-        raise UnclassifiedEngineError(
-            "a DB-computed write marker is a choreography unit of its own; "
-            "a `uow` group's held transaction has no verb to buffer one through"
-        )
-
-
-def _execute_framework_write_unit(
-    port: DatabaseConnection,
-    statements: Sequence[LoweredStatement],
-    *,
-    rollback: bool,
-) -> int:
-    """Execute the choreography unit ONE framework-marker entry is, and report the
-    calls it cost.
-
-    The statements the caller's simulated transaction recorded, executed on the
-    port's own transaction, rather than driven through a write verb, because
-    there is no verb to drive: a
-    ``{"increment": n}`` registry advance is the PK allocator's own statement,
-    and admitting it at a public ingress would make a DB-computed write marker
-    developer surface over the framework's bookkeeping.
-
-    Executing the statements the caller reports is what keeps the two the same:
-    this unit opens no Handle, so no lifecycle observes it, and a plan of its own
-    would be a second derivation nothing could reconcile against the first. It is
-    the one write lane whose Database Calls are STATED — it reaches its last
-    statement only by having issued every one before it, the same reasoning
-    `run_error_case` carries for authored trigger DML.
-
-    A marker entry is a choreography unit of its own and the buffer's only entry
-    (`m-case-format` "Buffered keyed write instructions"), which is why this
-    takes one entry's statements rather than a buffer: the unit is the entry. It honours the
-    step's own abort contract like every other write path: a ``rollback: true``
-    step runs on the aborting port, its statements reach the wire and count their
-    Database Calls, and the provider then rolls them back.
-    """
-
-    def run(conn: DatabaseConnection) -> None:
-        for statement in statements:
-            conn.execute_write(statement.sql, envelope.driver_binds(statement.binds))
-
-    with absorbing_rollback():
-        committed(write_connection(port, rollback=rollback).transaction(run))
-    return len(statements)
-
-
 def _execute_write_unit(
     port: CaseDatabase,
     context: CaseContext,
@@ -1145,38 +1072,6 @@ def _execute_write_unit(
         return ran, observed.database_calls
 
 
-def _framework_unit(translated: Sequence[Submission]) -> bool:
-    """Whether one choreography unit states the framework's own bookkeeping,
-    which :func:`_execute_framework_write_unit` executes because no public verb
-    states it.
-
-    A marker entry is a choreography unit of its own and therefore the buffer's
-    ONLY entry (`m-case-format` "Buffered keyed write instructions"), so anything
-    beside it states a form no case may author and is refused here rather than
-    silently executed as one unit: a caller-authored entry would put half the DML
-    through a public verb and half around it, and a second marker would fold two
-    of the framework's own units into one flush, hiding whichever boundary the
-    corpus meant to grade.
-    """
-    framework = [write for write in translated if write.is_framework_marker]
-    if not framework:
-        return False
-    if len(framework) != len(translated):
-        raise UnclassifiedEngineError(
-            "a choreography unit states either the framework's own bookkeeping or the writes "
-            f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
-            f"a DB-computed write marker beside {len(translated) - len(framework)} that a "
-            "public verb states"
-        )
-    if len(translated) != 1:
-        raise UnclassifiedEngineError(
-            "an entry carrying a DB-computed write marker states the framework's own "
-            "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
-            f"entry: this one holds {len(translated)}"
-        )
-    return True
-
-
 def execute_keyed_unit(
     port: CaseDatabase,
     context: CaseContext,
@@ -1185,25 +1080,12 @@ def execute_keyed_unit(
     *,
     rollback: bool,
 ) -> tuple[tuple[envelope.UnitStatement, ...], int]:
-    """Execute one keyed choreography unit and report the lifecycle-delivered DML
-    and key reservations.
-
-    Only isolated framework markers use simulated lowering instead of public verbs."""
+    """Execute one keyed choreography unit through the public Wire verbs and
+    report the lifecycle-delivered DML and key reservations."""
     for entry in entries:
         _keyed_entry_entity(entry)
     tx_instant = entry_instant(entries[0])
     translated = read_submissions(context.model, entries)
-    if _framework_unit(translated):
-        statements = _lower_marker_unit(
-            translated[0].instruction,
-            context.model,
-            context.prepare,
-            context.binding,
-            context.concurrency,
-            tx_instant,
-        )
-        _check_statement_count_consistency(entries, len(statements))
-        return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
     ran, unit_calls = _execute_write_unit(
         port, context, translated, tx_instant, lifecycle, rollback=rollback
     )
@@ -1494,7 +1376,6 @@ def run_group_step(
     if "write" not in step:
         return _group_read(tx, context, submitter, step, index, observation)
     submissions = read_submissions(context.model, step["write"], step=index)
-    _refuse_group_markers(submissions)
     predicate = is_predicate_write_step(step["write"])
     if predicate:
         report.buffered.append((index, len(observation.writes)))

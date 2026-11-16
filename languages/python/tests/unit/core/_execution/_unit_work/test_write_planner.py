@@ -86,7 +86,6 @@ from parallax.core.internal.write_plan.managed_row import ManagedRow, projected_
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
     ANY_COUNT,
-    MAX_PLUS_ONE,
     MISSING_TARGET,
     UNVERSIONED,
     ChangedFrom,
@@ -123,7 +122,6 @@ _POSITION = corpus_model("position")
 _ORDERS = corpus_model("orders")
 _PERSON = corpus_model("person")
 _PAYMENT = corpus_model("payment")
-_PK_MAX = corpus_model("pk-max")
 _WALLET = corpus_model("wallet")
 
 
@@ -762,23 +760,6 @@ def test_object_key_resolves_the_family_effective_primary_key() -> None:
         _PAYMENT,
     )
     assert key_ == corpus_object_key("CardPayment", ("id", 1))
-
-
-def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
-    # A pk-gen `max` insert's row carries a DB-computed marker for the id, not
-    # a real value (`{computed: "maxPlusOne"}`, `m-pk-gen`): it has no
-    # coalescing identity, exactly like an absent pk.
-    marker_insert = KeyedWriteInstruction(
-        "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
-    )
-    assert object_key(marker_insert, _PK_MAX) is None
-    assert object_key(_prepared_keyed(marker_insert, _PK_MAX), _PK_MAX) is None
-    # And it must not crash any planning stage that keys off it.
-    plan = _plan([marker_insert], _PK_MAX)
-    (step,) = plan_steps(plan)
-    assert isinstance(step, PlannedInsert)
-    (row,) = _insert_rows(step)
-    assert row["id"] == MAX_PLUS_ONE
 
 
 def test_object_key_reads_the_family_key_its_owner_compiled(

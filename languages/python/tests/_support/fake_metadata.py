@@ -42,7 +42,6 @@ from parallax.core.internal.base import (
 )
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -55,6 +54,7 @@ from parallax.core.internal.metamodel import (
     IndexIdentity,
     IndexMetadata,
     InheritanceMetadata,
+    KeySequence,
     MemberShape,
     Metamodel,
     Multiplicity,
@@ -293,7 +293,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: max
+        pkGeneration: { strategy: key-sequence, name: account_ids }
       - name: ledgerLabel
         type: string
         column: ledger_label
@@ -424,7 +424,7 @@ def _account() -> CompiledEntity:
         ACCOUNT,
         declared_container=Table("account"),
         declared_attributes=(
-            _attribute(ACCOUNT, "id", INT64, key=True, generation=MAX),
+            _attribute(ACCOUNT, "id", INT64, key=True, generation=KeySequence("account_ids")),
             _attribute(ACCOUNT, "ledgerLabel", STRING, column="ledger_label", max_length=40),
             _attribute(ACCOUNT, "balance", Numeric(18, 2)),
             _attribute(ACCOUNT, "openedOn", DATE, column="opened_on", nullable=True),

@@ -33,7 +33,6 @@ from parallax.core.internal.entity._expressions import (
 from parallax.core.internal.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -42,12 +41,10 @@ from parallax.core.internal.metamodel import (
     Cardinality,
     Document,
     KeySequence,
-    Max,
     Multiplicity,
     NullPlacement,
     PersistenceMode,
     PrimaryKey,
-    Sequence,
     SortDirection,
     TablePerHierarchy,
     ValueObjectMetadata,
@@ -60,7 +57,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MANY_TO_ONE",
-    "MAX",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -81,7 +77,6 @@ __all__ = [
     "Rel",
     "RelSpec",
     "ReverseRelSpec",
-    "Sequence",
     "TablePerHierarchy",
     "asc",
     "attr",
@@ -93,8 +88,8 @@ __all__ = [
 # The authoring spellings of the closed core algebras. A header or factory
 # argument names the algebra member directly rather than a string keyword, so an
 # unspellable combination is a static error before it is a runtime one. The
-# payload-free variants owned elsewhere (`MAX`, `TABLE_PER_CONCRETE_SUBTYPE`),
-# their payload-carrying siblings (`Sequence`, `TablePerHierarchy`,
+# payload-free variant owned elsewhere (`TABLE_PER_CONCRETE_SUBTYPE`),
+# the payload-carrying siblings (`TablePerHierarchy`,
 # `AbstractRoot`, `Document`), and the two narrowable Neutral Types (`Int32`, `Float32`) are
 # re-exported from here for the same reason: the authoring surface is one import.
 ONE_TO_ONE: Final = Cardinality.ONE_TO_ONE
@@ -262,17 +257,17 @@ def _optional_positive(value: object, option: str) -> int | None:
 def _primary_key(value: object) -> AttributePrimaryKey:
     """The normalized primary-key state a ``primary_key=`` spelling denotes.
 
-    A generation is authored as the algebra member itself: the payload-free
-    ``MAX`` constant, or a ``Sequence(...)`` or ``KeySequence(...)`` instance.
+    A generated key is authored as the algebra member itself, a
+    ``KeySequence(...)`` instance.
     """
     if value is False:
         return NOT_PRIMARY_KEY
     if value is True:
         return PrimaryKey(APPLICATION_ASSIGNED)
-    if isinstance(value, Max | Sequence | KeySequence):
+    if isinstance(value, KeySequence):
         return PrimaryKey(value)
     raise _invalid(
-        f"primary_key= takes False, True, KeySequence(...), MAX, or Sequence(...), got {value!r}",
+        f"primary_key= takes False, True, or KeySequence(...), got {value!r}",
     )
 
 

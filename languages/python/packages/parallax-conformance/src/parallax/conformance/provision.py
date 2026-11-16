@@ -19,7 +19,6 @@ from parallax.core.internal.base import (
 from parallax.core.internal.database_binding import (
     DatabaseBinding,
     ResolvedBinding,
-    sequence_physical,
 )
 from parallax.core.internal.db_port import DatabaseRuntime, Password, StructuredDocument
 from parallax.core.internal.dialect import POSTGRES, Dialect
@@ -117,7 +116,7 @@ def bound_qualifiers(resolved: ResolvedBinding) -> frozenset[str]:
         component
         for physical in (
             *(table.physical for table in resolved.tables),
-            *map(sequence_physical, resolved.sequences.values()),
+            *(sequence.physical for sequence in resolved.sequences.values()),
         )
         for component in physical.qualifier
     )

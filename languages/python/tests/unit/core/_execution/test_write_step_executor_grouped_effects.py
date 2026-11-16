@@ -146,7 +146,7 @@ def _run(
     try:
         with open_flush(provider) as flush:
             _executor(port, meta, payloads, recognized).execute(
-                group.steps, effect_spans=group.effect_spans, allocates=False, flush=flush
+                group.steps, effect_spans=group.effect_spans, flush=flush
             )
     except BaseException as error:
         return error

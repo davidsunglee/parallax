@@ -12,13 +12,13 @@ when:
       - name: Fleet
         table: fleet
         attributes:
-          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: vehicle_seq } }
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: key-sequence, name: vehicle_seq } }
       - name: Vehicle
         inheritance:
           strategy: table-per-concrete-subtype
           role: root
         attributes:
-          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: sequence, name: vehicle_seq, batchSize: 4 } }
+          - { name: id, type: int64, primaryKey: true, pkGeneration: { strategy: key-sequence, name: vehicle_seq, batchSize: 4 } }
       - name: Car
         table: car
         inheritance:
@@ -34,4 +34,4 @@ when:
         attributes:
           - { name: axles, type: int32 }
 then:
-  rejectedRule: pk-gen-sequence-conflict
+  rejectedRule: pk-gen-key-sequence-conflict

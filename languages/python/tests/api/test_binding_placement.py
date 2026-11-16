@@ -15,7 +15,7 @@ from parallax.core import (
     BindingError,
     DomainModel,
     Entity,
-    Sequence,
+    KeySequence,
     ServingModel,
     UsageError,
     attr,
@@ -41,7 +41,7 @@ class PlacedLedger(Entity, table="bp_ledger", namespace="placement"):
 
 
 class PlacedTicket(Entity, table="bp_ticket", namespace="placement"):
-    id: Attr[int] = attr(primary_key=Sequence(name="ticketNumbers"))
+    id: Attr[int] = attr(primary_key=KeySequence(name="ticketNumbers"))
 
 
 class PlacedRefund(Entity, table="bp_refund", namespace="placement"):

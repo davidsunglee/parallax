@@ -84,7 +84,6 @@ from parallax.core.internal.metamodel._temporal_structure import (
 )
 from parallax.core.internal.metamodel._values import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -107,7 +106,6 @@ from parallax.core.internal.metamodel._values import (
     InheritanceStrategy,
     KeySequence,
     LocalIndices,
-    Max,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NotPrimaryKey,
@@ -119,7 +117,6 @@ from parallax.core.internal.metamodel._values import (
     RelationshipJoin,
     RelationshipOrder,
     ReverseRelationshipDeclaration,
-    Sequence,
     SortDirection,
     StorageContainer,
     StorageLayout,
@@ -144,7 +141,6 @@ from parallax.core.internal.metamodel._values import (
 
 __all__ = [
     "APPLICATION_ASSIGNED",
-    "MAX",
     "METADATA_COMPILER",
     "METAMODEL_MODULE",
     "MODEL_ROOT",
@@ -193,7 +189,6 @@ __all__ = [
     "IssueCode",
     "KeySequence",
     "LocalIndices",
-    "Max",
     "MemberDefinition",
     "MemberIdentity",
     "MemberShape",
@@ -222,7 +217,6 @@ __all__ = [
     "Resolved",
     "ReverseRelationshipDeclaration",
     "ScalarDefinition",
-    "Sequence",
     "SortDirection",
     "StorageContainer",
     "StorageLayout",

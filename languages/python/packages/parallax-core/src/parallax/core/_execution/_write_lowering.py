@@ -31,7 +31,6 @@ from parallax.core.internal.write_plan.plan import EffectSpan
 from parallax.core.internal.write_plan.steps import (
     ExactCount,
     KeyTarget,
-    MaxPlusOne,
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
@@ -229,15 +228,14 @@ class LoweringCursor:
         return cells
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
-        """``step`` where it can begin a grouped insert — a single-entry insert
-        holding no generated value, on a dialect binding the column arrays a
-        multi-row insert takes — decided before its payload is demanded;
+        """``step`` where it can begin a grouped insert — a single-entry insert,
+        on a dialect binding the column arrays a multi-row insert takes —
+        decided before its payload is demanded;
         ``None`` where it lowers alone."""
         if (
             self._dialect.binds_arrays
             and isinstance(step, PlannedInsert)
             and len(step.entries) == 1
-            and not _generates(step.entries[0])
         ):
             return step
         return None
@@ -482,17 +480,13 @@ def _document_patches(payload: AssignmentPayload) -> DocumentPatches | None:
     return None
 
 
-def _generates(entry: WriteRow) -> bool:
-    return any(isinstance(value, MaxPlusOne) for value in entry.row.cells)
-
-
 def _joining(step: PlannedStep | None, entity: EntityIdentity, presence: int) -> WriteRow | None:
     """``step``'s one entry where it can join a grouped insert of ``entity``
     whose entries state the members ``presence`` names: placement follows the
     Entity and the members stated, never the values held."""
     match step:
         case PlannedInsert(entity=other, entries=(entry,)) if (
-            other == entity and entry.row.presence == presence and not _generates(entry)
+            other == entity and entry.row.presence == presence
         ):
             return entry
         case _:

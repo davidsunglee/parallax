@@ -52,7 +52,6 @@ from parallax.core.internal.write_plan.managed_row import ManagedRow
 from parallax.core.internal.write_plan.payload import RowPayload, RowSlots
 from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.internal.write_plan.steps import (
-    MAX_PLUS_ONE,
     NEW_LINEAGE,
     STALE_WRITE,
     SUPERSEDED,
@@ -298,12 +297,9 @@ def test_any_single_entry_insert_without_generated_values_begins_a_grouped_inser
 
 def test_every_other_step_lowers_alone() -> None:
     (opening,) = _openings(1)
-    generated = _opening(
-        managed_row_of(_META, {**opening.entries[0].row.attributes, _attr("id"): MAX_PLUS_ONE})
-    )
     logical = PlannedInsert(entity=_POSITION, entries=(*opening.entries, *_openings(2)[1].entries))
     cursor = _cursor(())
-    for step in (generated, logical, _close(1)):
+    for step in (logical, _close(1)):
         assert cursor.grouped_insert_start(step) is None
 
 
@@ -375,7 +371,6 @@ def _incompatible() -> dict[str, PlannedStep]:
     return {
         "effect": _close(1),
         "other-members": _opening(managed_row_of(_META, other_members)),
-        "generated": _opening(managed_row_of(_META, {**attributes, _attr("id"): MAX_PLUS_ONE})),
         "logical-multi-entry": replace(
             other_object, entries=(*other_object.entries, *other_object.entries)
         ),

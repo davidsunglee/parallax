@@ -31,7 +31,6 @@ from parallax.core.internal.write_plan import PredecessorRow
 from parallax.core.internal.write_plan.payload import DocumentPatches, RowPayload
 from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.write_plan.steps import (
-    MAX_PLUS_ONE,
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
@@ -259,14 +258,12 @@ def test_a_row_of_unknown_complete_state_equals_nothing() -> None:
     positions = corpus_model("position")
     entity = EntityIdentity("parallax.compatibility", "Position")
     preparer = LayoutPayloadPreparer(bound_model(positions))
-    allocated = _position_row(entity, key=MAX_PLUS_ONE)
     incomplete = WriteRow(
         row=managed_row_of(positions, {AttributeIdentity(entity, "id"): 1}), origin=NEW_LINEAGE
     )
 
-    for row in (allocated, incomplete):
-        payload = preparer.row(entity, row)
-        assert not preparer.equal_non_interval(payload, payload)
+    payload = preparer.row(entity, incomplete)
+    assert not preparer.equal_non_interval(payload, payload)
 
 
 _POSITIONS: Metamodel = corpus_model("position")
@@ -318,7 +315,7 @@ def test_cheap_inequality_is_proven_only_by_a_differing_stored_scalar(
         assert preparer.equal_non_interval(preparer.row(entity, left), preparer.row(entity, right))
 
 
-def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() -> None:
+def test_cheap_inequality_decides_nothing_about_documents() -> None:
     preparer = LayoutPayloadPreparer(bound_model(_EXPEDITIONS))
     retained = _successor(CarriedFrom(_predecessor()))
     rebuilt = _successor(NEW_LINEAGE, {_ROUTE: {"name": "Elsewhere", "stops": ()}})
@@ -326,15 +323,6 @@ def test_cheap_inequality_decides_nothing_about_documents_or_generated_values() 
     assert not preparer.proven_unequal_non_interval(_EXPEDITION, retained, rebuilt)
     assert not preparer.equal_non_interval(
         preparer.row(_EXPEDITION, retained), preparer.row(_EXPEDITION, rebuilt)
-    )
-    positions = corpus_model("position")
-    entity = EntityIdentity("parallax.compatibility", "Position")
-    allocated = _position_row(entity, key=MAX_PLUS_ONE, account="B")
-    assert LayoutPayloadPreparer(bound_model(positions)).proven_unequal_non_interval(
-        entity, allocated, _position_row(entity)
-    )
-    assert not LayoutPayloadPreparer(bound_model(positions)).proven_unequal_non_interval(
-        entity, _position_row(entity, key=MAX_PLUS_ONE), _position_row(entity)
     )
 
 

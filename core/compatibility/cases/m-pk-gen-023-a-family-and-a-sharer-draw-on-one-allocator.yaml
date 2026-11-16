@@ -1,0 +1,97 @@
+# Table-per-concrete-subtype leaves the binding places in two schemas take their
+# keys from the allocator their tableless root declares, and an unrelated Entity
+# naming the same allocator draws on the same stream: each unit of work's
+# reservation answers the block after the previous one, from the one sequence
+# the binding places in a schema of its own.
+model: models/binding-fleet.yaml
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Car: { schema: px_eu }
+      parallax.compatibility.Truck: { schema: px_us }
+    sequences:
+      fleetIds: { schema: px_keys, sequence: fleet_ids }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Car: { database: px_eu }
+      parallax.compatibility.Truck: { database: px_us }
+    sequences:
+      fleetIds: { database: px_keys, sequence: fleet_ids }
+tags: [m-pk-gen, m-database-binding, m-inheritance, table-per-concrete-subtype, sequence, write-sequence, binding, slice-snapshot-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Car
+      statements: 1
+      note: "the first block, at 1"
+      rows:
+        - { name: Herbie, doors: 2 }
+    - mutation: insert
+      entity: parallax.compatibility.Truck
+      statements: 1
+      note: "the next block, at 101, from the same sequence"
+      rows:
+        - { name: Optimus, axles: 3 }
+    - mutation: insert
+      entity: parallax.compatibility.Depot
+      statements: 1
+      note: "the next block, at 201, shared by an unrelated Entity"
+      rows:
+        - { label: North }
+then:
+  statements:
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px_keys.fleet_ids) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px_keys.fleet_ids t0
+      binds:
+        postgres: [px_keys.fleet_ids]
+        mariadb: []
+    - sql:
+        postgres: insert into px_eu.car(id, name, doors) values (?, ?, ?)
+        mariadb: insert into px_eu.car(id, name, doors) values (?, ?, ?)
+      binds: [1, Herbie, 2]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px_keys.fleet_ids) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px_keys.fleet_ids t0
+      binds:
+        postgres: [px_keys.fleet_ids]
+        mariadb: []
+    - sql:
+        postgres: insert into px_us.truck(id, name, axles) values (?, ?, ?)
+        mariadb: insert into px_us.truck(id, name, axles) values (?, ?, ?)
+      binds: [101, Optimus, 3]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px_keys.fleet_ids) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px_keys.fleet_ids t0
+      binds:
+        postgres: [px_keys.fleet_ids]
+        mariadb: []
+    - sql:
+        postgres: insert into px.depot(id, label) values (?, ?)
+        mariadb: insert into px.depot(id, label) values (?, ?)
+      binds: [201, North]
+  tableState:
+    px:
+      depot:
+        - { id: 201, label: North }
+    px_eu:
+      car:
+        - { id: 1, name: Herbie, doors: 2 }
+    px_us:
+      truck:
+        - { id: 101, name: Optimus, axles: 3 }
+  databaseCalls: 6

@@ -23,7 +23,6 @@ from parallax.core.internal.entity._graph_construction import (
 from parallax.core.internal.entity._introspection import EntityMetadata, EntityProfile
 from parallax.core.internal.entity._members import (
     MANY_TO_ONE,
-    MAX,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -37,7 +36,6 @@ from parallax.core.internal.entity._members import (
     Float32,
     Int32,
     Rel,
-    Sequence,
     TablePerHierarchy,
     asc,
     attr,
@@ -51,7 +49,6 @@ from parallax.core.internal.object_query._fluent import ObjectQuery
 
 __all__ = [
     "MANY_TO_ONE",
-    "MAX",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
     "READ_ONLY",
@@ -80,7 +77,6 @@ __all__ = [
     "ObjectQuery",
     "Predicate",
     "Rel",
-    "Sequence",
     "SortKey",
     "TablePerHierarchy",
     "TxTemporal",

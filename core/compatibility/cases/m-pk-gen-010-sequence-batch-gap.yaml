@@ -1,33 +1,29 @@
-# PK generation `sequence` (m-pk-gen) — single consume of a multi-id block (gap proof).
+# One keyless row takes the first key of a block of three; the other two are
+# abandoned with the root, leaving a gap the next reservation steps over.
 model: models/pk-sequence.yaml
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1]
 shape: writeSequence
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "sequence-strategy PK allocation - the following INSERT binds registry-read-derived id values, so emissions depend on a query result"
-given:
-  fixtures: true
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
 when:
   writeSequence:
-    - mutation: amend
-      entity: parallax.compatibility.PkSequence
-      statements: 1
-      note: reserve block of 3 (base 1)
-      rows:
-        - { name: pass_seq, nextVal: { increment: 3 } }
     - mutation: insert
       entity: parallax.compatibility.Pass
       statements: 1
-      note: "hand out only id 1 (2,3 lost)"
+      note: "2 and 3 are never handed out"
       rows:
-        - { id: 1, zone: north }
+        - { zone: north }
 then:
   statements:
-    - sql:
-        postgres: update px.pk_sequence set next_val = next_val + ? where name = ?
-        mariadb: update px.pk_sequence set next_val = next_val + ? where name = ?
-      binds: [3, pass_seq]
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.pass_seq) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.pass_seq t0
+      binds:
+        postgres: [px.pass_seq]
+        mariadb: []
     - sql:
         postgres: insert into px.pass(id, zone) values (?, ?)
         mariadb: insert into px.pass(id, zone) values (?, ?)

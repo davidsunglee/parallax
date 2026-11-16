@@ -19,7 +19,6 @@ __all__ = [
     "ResolvedTable",
     "ResolvedTemporalConstraints",
     "sequence_ddl",
-    "sequence_physical",
 ]
 
 
@@ -138,9 +137,3 @@ def sequence_ddl(sequence: ResolvedSequence) -> SequenceDdl:
         maximum=high,
         start=key_sequence.initial_value,
     )
-
-
-def sequence_physical(sequence: PhysicalSequence | ResolvedSequence) -> PhysicalSequence:
-    """The physical sequence a resolved allocator entry places, whichever
-    strategy declared it."""
-    return sequence if isinstance(sequence, PhysicalSequence) else sequence.physical

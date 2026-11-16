@@ -1290,22 +1290,14 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
 
 
 # --------------------------------------------------------------------------- #
-# The pk-gen `sequence`-strategy writeSequence cases (m-pk-gen): declared      #
-# `compileEligibility: run-only` (query-result-                               #
-# dependent — the registry-read-derived allocated ids), so `run` is the ONLY  #
-# lane that ever grades them, same reasoning as the conflict cases above.     #
-# `m-pk-gen-014` (a sequence-strategy registry advance composed                #
-# with a temporal audit-only insert in ONE writeSequence, two transactions)    #
-# joins for the same query-result-dependent reason, as does `m-pk-gen-020`    #
-# (keyless inserts binding the keys a native reservation answers) —           #
-# NOT `m-pk-gen-013` (already compile-eligible, `test_compile_sweep`'s own     #
-# `_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES`).                                     #
+# The native key-sequence writeSequence cases (m-pk-gen): declared             #
+# `compileEligibility: run-only` (query-result-dependent — keyless inserts     #
+# bind the keys a native reservation answers), so `run` is the ONLY lane that #
+# ever grades them, same reasoning as the conflict cases above.                #
 # --------------------------------------------------------------------------- #
 _RUN_ONLY_WRITE_SEQUENCES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
-        *(f"m-pk-gen-{n:03d}" for n in range(4, 13)),
-        "m-pk-gen-014",
-        "m-pk-gen-020",
+        *(f"m-pk-gen-{n:03d}" for n in (*range(4, 13), 14, *range(20, 24))),
         "m-temporal-write-011",
         "m-temporal-write-012",
     }

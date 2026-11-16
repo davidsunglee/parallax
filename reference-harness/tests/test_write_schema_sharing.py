@@ -45,12 +45,12 @@ def _ref_at(schema: dict[str, Any], *path: str) -> Any:
 
 
 def test_case_schema_drops_the_duplicated_write_defs() -> None:
-    # The predicate-write / assignment / target / computed-marker vocabulary is no
-    # longer redefined in the case schema — it lives only in the canonical file.
+    # The predicate-write / assignment / target vocabulary is not redefined in the
+    # case schema — it lives only in the canonical file.
     case_defs = _CASE["$defs"]
-    for redefined in ("writeTarget", "writeAssignment", "writeComputedMarker"):
+    for redefined in ("writeTarget", "writeAssignment", "writeRowValue"):
         assert redefined not in case_defs, f"{redefined} must be referenced, not redefined"
-    for canonical in ("writeTarget", "writeAssignment", "writeComputedMarker", "writeRowValue"):
+    for canonical in ("writeTarget", "writeAssignment", "writeRowValue"):
         assert canonical in _WRITE["$defs"], f"canonical {canonical} missing"
 
 

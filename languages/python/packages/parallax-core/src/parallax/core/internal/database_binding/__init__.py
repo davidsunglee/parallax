@@ -42,7 +42,6 @@ from parallax.core.internal.database_binding._physical import (
     ResolvedTable,
     ResolvedTemporalConstraints,
     sequence_ddl,
-    sequence_physical,
 )
 from parallax.core.internal.database_binding._relocations import (
     AllocatorSettingsChanged,
@@ -117,5 +116,4 @@ __all__ = [
     "breaking_changes_between",
     "require_binding",
     "sequence_ddl",
-    "sequence_physical",
 ]

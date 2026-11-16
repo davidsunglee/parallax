@@ -3,14 +3,12 @@
 Each step of the tuple it is handed is prepared and lowered only after every
 earlier step was enforced; a step running alone is one Database Call enforced
 as itself, a run of compatible single-entry inserts — temporal openings here —
-is one multi-row insert, and an insert whose key the database allocates
-answers that key. The statements execution runs are the ones a dry traversal
+is one multi-row insert. The statements execution runs are the ones a dry traversal
 of the same steps answers.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import gc
 import sys
 from dataclasses import dataclass
@@ -21,39 +19,23 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import (
-    MAX,
-    Attr,
-    Bitemporal,
     ConflictError,
-    DomainModel,
     ExecutionLifecycleProvider,
     InternalError,
     ParallaxError,
-    attr,
 )
-from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedInstruction,
-    prepare_typed_write,
-)
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseCallStarted,
     DatabaseWriteCompleted,
 )
-from parallax.core.internal import storage_layout
 from parallax.core.internal.base import INT64
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.internal.unit_work import (
-    KeyedWriteInstruction,
-    WritePlanningRequest,
-    admitted_write,
-)
 from parallax.core.internal.write_plan import WritePlan
 from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.internal.write_plan.steps import (
@@ -64,12 +46,8 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
 )
-from tests._support.bindings import bound_model
-from tests._support.clock_probes import instant_at
-from tests._support.db_port import Read, ReadCall, ScriptedAdapter, Write, WriteCall
+from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.errors import raises_code
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
-from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT
 from tests.unit.core._execution._write_step_support import (
     POSITION,
@@ -108,7 +86,7 @@ def _execute(
     try:
         with open_flush(provider) as flush:
             executed.answered = step_executor(port, payloads=executed.preparer).execute(
-                steps, allocates=False, flush=flush
+                steps, flush=flush
             )
     except BaseException as raised:
         executed.raised = raised
@@ -137,9 +115,7 @@ def _delete(key: int) -> PlannedDelete:
 def test_a_shortfall_is_enforced_before_the_next_step_is_presented() -> None:
     port = ScriptedAdapter(Write(affected=0))
     with raises_code(ConflictError, MISSING_TARGET_CODE), open_flush() as flush:
-        step_executor(port, _ACCOUNT_META).execute(
-            (_delete(1), _delete(2)), allocates=False, flush=flush
-        )
+        step_executor(port, _ACCOUNT_META).execute((_delete(1), _delete(2)), flush=flush)
     assert len(port.calls) == 1
 
 
@@ -162,7 +138,7 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
     )
     port = ScriptedAdapter(Write(affected=affected))
     with raises_code(*refusal) as caught, open_flush() as flush:
-        step_executor(port, _ACCOUNT_META).execute((step,), allocates=False, flush=flush)
+        step_executor(port, _ACCOUNT_META).execute((step,), flush=flush)
     assert port.calls == [
         WriteCall(
             "delete from px.account where id = any(cast(? as bigint[]))",
@@ -173,74 +149,6 @@ def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_c
         f"affected {affected} row(s), expected 3 (keys=[{{'id': 1}}, {{'id': 2}}, {{'id': 3}}])"
         in str(caught.value)
     )
-
-
-class Span(Bitemporal, table="span", namespace="parallax.execution.allocated"):
-    id: Attr[int] = attr(primary_key=MAX)
-    amount: Attr[int]
-
-
-_SPANS: Final = DomainModel(Span)
-
-
-def _allocating_group() -> WriteGroup:
-    meta = model_of(_SPANS)
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction(
-            "insert",
-            Span.identity.canonical,
-            ({"id": {"computed": "maxPlusOne"}, "amount": 1},),
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-        ),
-        write_preparation_of(meta),
-    )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    plan = build_write_planner(bound_model(meta)).finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
-            preference="optimistic",
-            composed_writes=[admitted_write(prepared, None, None)],
-        )
-    )
-    (group,) = plan.entries
-    assert isinstance(group, WriteGroup)
-    (write,) = group.writes
-    assert write.opened.allocated
-    return group
-
-
-def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
-    group = _allocating_group()
-    port = ScriptedAdapter(Read(rows=[{"id": 42}]))
-    with open_flush() as flush:
-        answered = step_executor(port, model_of(_SPANS)).execute(
-            group.steps, allocates=True, flush=flush
-        )
-    assert answered == (42,)
-    # The insert ran as row-producing DML rather than as a counted write.
-    assert [type(call) for call in port.calls] == [ReadCall]
-
-
-def test_an_allocating_insert_refused_by_its_tables_exclusion_is_recognized() -> None:
-    layout = storage_layout.storage_layout_facet_of(model_of(_SPANS)).entity(Span.identity)
-    assert layout is not None
-    table = bound_model(model_of(_SPANS)).table(layout.layout.mapping_owner)
-    assert table.temporal_constraints is not None
-    refused = DatabaseError(
-        category="constraintViolation",
-        native_code="23P01",
-        message="conflicting key value violates exclusion constraint",
-        constraint_name=table.temporal_constraints.exclusion_name,
-        constraint_table=table.physical,
-    )
-    recognized: list[DatabaseError] = []
-    with pytest.raises(DatabaseError) as raised, open_flush() as flush:
-        step_executor(
-            ScriptedAdapter(Read(raises=refused)), model_of(_SPANS), recognized=recognized
-        ).execute(_allocating_group().steps, allocates=True, flush=flush)
-    assert raised.value is refused
-    assert recognized == [refused]
 
 
 # --------------------------------------------------------------------------- #

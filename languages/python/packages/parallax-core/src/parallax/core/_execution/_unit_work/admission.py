@@ -31,7 +31,6 @@ from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
-    refuse_opening_registry_advance,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (
@@ -220,7 +219,7 @@ class WriteAdmission:
 
     def admit_insert(
         self, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
-    ) -> InsertionIdentity | None:
+    ) -> InsertionIdentity:
         """Accept ``insert`` into the buffer, answering the identity of the
         insertion it opens — or refuse a repeat of an insertion still standing,
         with nothing pending changed
@@ -228,14 +227,10 @@ class WriteAdmission:
 
         ``insertion_advice`` is kept for a repeat of this insertion. Where an
         earlier insertion of the object is stored and a pending write removes
-        all of it, the insert executes after that removal. An insert whose key
-        the database allocates opens no insertion and answers ``None``.
+        all of it, the insert executes after that removal.
         """
         writes = self._writes
         key = insert.object_key
-        if key is None:
-            writes.append(insert)
-            return None
         held = self._composition(key)
         identity, follows_removal = self._authority.open_insertion(
             insert,
@@ -526,7 +521,6 @@ class WriteAdmission:
         Transaction-Time-Only insert at ``position``, which takes an
         amendment's values in place and is cancelled by any destruction, which
         removes all of it."""
-        refuse_opening_registry_advance(item.instruction)
         composition = self._authority.apply_insertion_composition(
             key, arriving=item, proposed_opening=None
         )

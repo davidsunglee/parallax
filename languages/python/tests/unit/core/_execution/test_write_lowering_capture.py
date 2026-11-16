@@ -156,15 +156,11 @@ def test_the_executor_relays_the_hooks_to_the_statements_it_executes() -> None:
         recoverable=lambda _: None,
     )
     with open_flush() as flush:
-        assert (
-            executor.execute(
-                steps,
-                allocates=False,
-                flush=flush,
-                capture_insert=captures.insert,
-                capture_revision=captures.revision,
-            )
-            == ()
+        executor.execute(
+            steps,
+            flush=flush,
+            capture_insert=captures.insert,
+            capture_revision=captures.revision,
         )
     assert [(kind, subject) for kind, subject, _payload, _ in captures.seen] == [
         ("revision", steps[0]),

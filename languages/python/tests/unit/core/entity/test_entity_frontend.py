@@ -52,15 +52,13 @@ from parallax.core.internal.entity._expressions import (
 )
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     Columns,
     EntityIdentity,
     ExactEntityReference,
-    Max,
+    KeySequence,
     NullPlacement,
     PrimaryKey,
     RelativeEntityReference,
-    Sequence,
     SortDirection,
     Table,
     UnresolvedDefiningRelationshipDeclaration,
@@ -108,13 +106,13 @@ class Order(
 
 class Ticket(Entity, table="ticket"):
     id: Attr[int] = attr(
-        primary_key=Sequence(name="ticket_seq", initial_value=1000, increment_size=5)
+        primary_key=KeySequence(name="ticket_seq", initial_value=1000, increment_size=5)
     )
     label: Attr[str] = attr(max_length=32, read_only=True)
 
 
 class Widget(Entity, table="widget", name="WIDGET"):
-    id: Attr[int] = attr(primary_key=MAX)
+    id: Attr[int] = attr(primary_key=True)
     label: Attr[str]
 
 
@@ -189,15 +187,14 @@ def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
 
 def test_the_primary_key_algebra_carries_its_generation_on_the_key_branch() -> None:
     assert Order.attributes[0].primary_key == PrimaryKey(APPLICATION_ASSIGNED)
-    assert Widget.attributes[0].primary_key == PrimaryKey(MAX)
     assert Ticket.attributes[0].primary_key == PrimaryKey(
-        Sequence(name="ticket_seq", batch_size=1, initial_value=1000, increment_size=5)
+        KeySequence(name="ticket_seq", batch_size=100, initial_value=1000, increment_size=5)
     )
 
 
 def test_a_generation_is_spelled_as_its_value_and_never_as_its_type() -> None:
     with raises_code(UsageError, "entity-option-invalid-value"):
-        attr(primary_key=Max)
+        attr(primary_key=KeySequence)
 
 
 @pytest.mark.parametrize(

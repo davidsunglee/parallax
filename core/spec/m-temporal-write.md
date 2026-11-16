@@ -798,8 +798,8 @@ state outside their Valid-Time interval is identical: every directly stored
 value, every final audit value, and every document they store, compared by
 `m-write-payload`'s persisted equality, so unknown keys, presence, array order,
 JSON kinds, and exact numeric meaning all count. A row whose state is not known
-until the database writes it — a generated value, or a Column left to its
-default — merges with nothing. Only rows one settled write produces for one
+until the database writes it — a Column left to its default — merges with
+nothing. Only rows one settled write produces for one
 object merge: a kept unchanged milestone, an untouched neighbour, a validated
 observation, another object, and a gap no replacement fills are never part of a
 merge, and nothing is read, closed, or rewritten in order to merge. There is no

@@ -979,6 +979,16 @@ EXAMPLES: Final[list[Example]] = [
         '# raises UsageError(code="abstract-write-target")',
     ),
     Example(
+        "m-pk-gen-024",
+        "A one-key increment document at a scalar member",
+        "db.transact(\n"
+        "    lambda tx: tx.wire.amend_if(\n"
+        '        "Account", {"id": 1, "balance": {"increment": 5}}, version=1\n'
+        "    )\n"
+        ")\n"
+        '# raises InvalidValueError(code="neutral-literal-type-mismatch")',
+    ),
+    Example(
         "m-value-object-039",
         "A write missing a required value-object attribute at depth 1",
         "db.transact(\n"
@@ -1321,15 +1331,6 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "(`parallax.conformance.concurrency_runner`); the neutral DatabaseError surface "
         "the developer sees "
         "is exercised through the transact abort/retry unit tests"
-    ),
-    "m-pk-gen": (
-        "write-side id allocation (`max`/`sequence`) is graded end-to-end by the "
-        "compile/run conformance lanes; no idiomatic story exists, because a "
-        "pk-generated column (`pkGenerator: max`/`sequence`) lacks the "
-        "construction-optionality treatment axis-governed columns carry (a caller cannot "
-        "honestly construct a fresh instance naming a server-computed id), and the "
-        "optional-at-construction surface covers axis columns only "
-        "(`m-pk-gen-014`'s own case-scoped entry below names the same blocker)"
     ),
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.internal.auto_retry) and proven "
@@ -1809,15 +1810,21 @@ _ISOLATION_WITNESS_REASON: Final[str] = (
     "(`parallax.conformance.concurrency_runner`) grades it against real Postgres, and "
     "the reference harness grades it on both engines"
 )
-# `m-pk-gen-014` composes a non-temporal sequence-registry update with an
-# Transaction-Time-Only insert in one write sequence and two transactions. It is graded
-# end-to-end but has no idiomatic story.
-_PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
-    "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
-    "registry UPDATE composed with a Transaction-Time-Only INSERT in one writeSequence): "
-    "graded end-to-end by the compile/run "
-    "conformance lanes; no idiomatic story exists — the SAME pk-generated-column "
-    "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"
+_PK_GEN_FORMATION_REJECT_REASON: Final[str] = (
+    "a `when.model` shared-allocator conflict Model Formation's m-pk-gen Rule Set "
+    "classifies at model construction (a `MetamodelValidationError` issue), not a query or "
+    "write the Usage Guide's statement- and verb-level examples could spell. Entity Classes "
+    "declaring one KeySequence name with different settings form into the SAME issue "
+    "(`tests/unit/core/pk_gen/test_pk_gen_rules.py` exercises that seam), but the observable "
+    "is a rejected model, which the rejected sweep grades"
+)
+_PK_GEN_UNIT_PER_ROOT_REASON: Final[str] = (
+    "a write sequence whose every entry is a unit of work of its own, so each reserves a block "
+    "of its own (m-case-format *Reservation statements*), under a case binding placing the "
+    "leaves and the allocator in schemas of their own: one developer root inserting the three "
+    "drafts would hand the second and third keys out of the first block, which is the root's "
+    "sharing the live suite proves (`tests/api/test_primary_key_generation.py`), while the "
+    "per-unit blocks are graded end-to-end by the run lane and the reference harness"
 )
 
 
@@ -2714,8 +2721,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-040": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
-    # -- m-pk-gen: temporal composition -------------------------------------- #
-    "m-pk-gen-014": _PK_GEN_TEMPORAL_INSERT_REASON,
+    # -- m-pk-gen: formation refusals and per-unit blocks ---------------------- #
+    "m-pk-gen-015": _PK_GEN_FORMATION_REJECT_REASON,
+    "m-pk-gen-016": _PK_GEN_FORMATION_REJECT_REASON,
+    "m-pk-gen-017": _PK_GEN_FORMATION_REJECT_REASON,
+    "m-pk-gen-018": _PK_GEN_FORMATION_REJECT_REASON,
+    "m-pk-gen-019": _PK_GEN_FORMATION_REJECT_REASON,
+    "m-pk-gen-023": _PK_GEN_UNIT_PER_ROOT_REASON,
     # -- m-inheritance: rows-form representative siblings ------------------- #
     "m-inheritance-002": _TPH_ROW_SIBLING_REASON,
     "m-inheritance-004": _TPH_ROW_SIBLING_REASON,

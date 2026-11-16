@@ -1,0 +1,8 @@
+# The `max` generation is retired: `pkGeneration` admits only the bare
+# `application-assigned` token or a key-sequence object, so `max` fails every
+# branch and reports exactly one `oneOf` violation at the pkGeneration value.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0, pkGeneration]
+    rule: oneOf

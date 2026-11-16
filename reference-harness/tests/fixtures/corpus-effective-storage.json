@@ -4457,14 +4457,6 @@
       },
       "documentPath": {},
       "valueObject": {}
-    },
-    "parallax.compatibility.AuditSeq": {
-      "attribute": {
-        "name": "name",
-        "nextVal": "next_val"
-      },
-      "documentPath": {},
-      "valueObject": {}
     }
   },
   "models/pk-key-sequence.yaml": {
@@ -4472,16 +4464,6 @@
       "attribute": {
         "holder": "holder",
         "id": "id"
-      },
-      "documentPath": {},
-      "valueObject": {}
-    }
-  },
-  "models/pk-max.yaml": {
-    "parallax.compatibility.Attendee": {
-      "attribute": {
-        "id": "id",
-        "name": "name"
       },
       "documentPath": {},
       "valueObject": {}
@@ -4504,14 +4486,6 @@
       "documentPath": {},
       "valueObject": {}
     },
-    "parallax.compatibility.PkSequence": {
-      "attribute": {
-        "name": "name",
-        "nextVal": "next_val"
-      },
-      "documentPath": {},
-      "valueObject": {}
-    },
     "parallax.compatibility.Ticket": {
       "attribute": {
         "id": "id",
@@ -4524,6 +4498,14 @@
       "attribute": {
         "id": "id",
         "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Wristband": {
+      "attribute": {
+        "gate": "gate",
+        "id": "id"
       },
       "documentPath": {},
       "valueObject": {}

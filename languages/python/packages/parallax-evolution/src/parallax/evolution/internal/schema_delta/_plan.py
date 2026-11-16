@@ -8,7 +8,6 @@ from parallax.core.internal import storage_layout
 from parallax.core.internal.base import JSON, STRING, NeutralType
 from parallax.core.internal.database_binding import (
     ResolvedBinding,
-    ResolvedSequence,
     ResolvedTable,
     ResolvedTemporalConstraints,
 )
@@ -203,7 +202,7 @@ def _created_sequences(
     created = tuple(
         sequence
         for allocator, sequence in evolution.later.sequences.items()
-        if isinstance(sequence, ResolvedSequence) and allocator not in held
+        if allocator not in held
     )
     if not created:
         return ()

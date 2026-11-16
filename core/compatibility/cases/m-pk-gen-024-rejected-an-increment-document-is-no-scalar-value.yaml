@@ -1,0 +1,14 @@
+# A one-key `{increment: n}` document is no write value of a scalar Attribute:
+# the member's codec reads it as the document it is and refuses it, so no public
+# verb advances a stored value by an amount.
+model: models/account.yaml
+tags: [m-pk-gen, m-unit-work, m-wire, write, rejected, negative, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Account
+    rows:
+      - { id: 1, balance: { increment: 5 } }
+then:
+  rejectedRule: neutral-literal-type-mismatch

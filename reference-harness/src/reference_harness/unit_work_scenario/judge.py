@@ -975,7 +975,7 @@ def _sole_settled_row(
     exactly one row, because the named find handed over exactly one value.
     """
     try:
-        validate_keyed_write(entity, entry, allow_framework_markers=True)
+        validate_keyed_write(entity, entry)
     except (RejectionError, KeyedWriteApplicabilityError) as exc:
         raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc}") from exc
     rows = entry.get("rows")

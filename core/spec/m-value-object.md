@@ -207,16 +207,11 @@ still refused, because the model gives a `many` no null state to name (see [One
 column](#one-column--never-extra-columns-rows-or-joins)).
 
 A value-object column's write value is **always the literal document** — the
-object, the array, or the `NULL` above — and is **never** interpreted as a
-DB-computed write marker. The `m-case-format` neutral write input (①) admits, on a
-**scalar attribute** column, a one-key DB-computed marker (the pk-generation
-`{computed: "maxPlusOne"}` and the self-advance `{increment: n}` forms) whose bind
-the database derives; those marker semantics apply **only to scalar attribute
-columns**. A value object binds its whole document even when that document is
-*shaped* like a marker (its sole field happening to be `computed` or `increment`).
-The two are disambiguated by the field's declared **metamodel role** — resolved
-from the Entity view slot's contributor (scalar Attribute vs Value Object) —
-**not** by the value's shape. This keeps the atomic-document guarantee total: a value object is
+object, the array, or the `NULL` above — whatever members it holds. An object at
+a **scalar attribute** column is no write value at all: the attribute's codec
+refuses it as a type mismatch. The two are disambiguated by the field's declared
+**metamodel role** — resolved from the Entity view slot's contributor (scalar
+Attribute vs Value Object) — **not** by the value's shape. This keeps the atomic-document guarantee total: a value object is
 bound as one document value regardless of what that value happens to look like.
 
 There are **no partial-document (path-level) writes**. A whole-document update

@@ -1,0 +1,8 @@
+# The registry `sequence` strategy is retired: its object fails the
+# key-sequence branch's `strategy` constant as surely as the bare-token branch,
+# so it reports exactly one `oneOf` violation at the pkGeneration value.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, attributes, 0, pkGeneration]
+    rule: oneOf

@@ -22,6 +22,18 @@ sequence and your application roles don't; plan for one more connection per proc
 `schema_delta` creates each new allocator's sequence where the binding places it. Every
 verb but `insert` refuses an unset key with `UsageError` code `write-key-absent`.
 
+`KeySequence` is now the only generated key: `MAX` and `Sequence(...)` are gone from
+`parallax.core`, and so are the descriptor's `pkGeneration: max` and
+`{strategy: sequence, ...}`, which the schema now refuses. `parallax.core` exports the
+two-member `PkGeneration` union, `ApplicationAssigned | KeySequence`. Replace a `MAX` or
+registry `Sequence` key with `KeySequence(name, ...)` — its `batch_size` defaults to 100
+where `Sequence`'s was 1 — or with an application-assigned key, and provision the native
+sequence: `coordinated_migration` creates and positions it past the stored keys when you
+move an existing entity, as above. A Wire value spelling `{"increment": n}` or
+`{"computed": "maxPlusOne"}` at a scalar member is no longer read as a database-computed
+marker: it is refused like any other value of the wrong type, with
+`InvalidValueError` code `neutral-literal-type-mismatch`.
+
 `ServingModel.publish` now refuses a candidate that changes a surviving allocator's batch
 size, increment size, or key range, as it refuses a relocation, and both refusals use the
 renamed code `PUBLICATION_BREAKING_CHANGE_REFUSED` (`publication-breaking-change-refused`),

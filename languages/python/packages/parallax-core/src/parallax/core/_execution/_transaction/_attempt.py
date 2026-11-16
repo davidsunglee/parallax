@@ -74,7 +74,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import ManagedValue
-from parallax.core.internal.database_binding import ResolvedSequence
 from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
@@ -620,8 +619,6 @@ class TxnAttempt(_TxnAttemptBase):
         if allocation is None or row.stated(allocation.position):
             return prepared, None
         sequence = self._write.model.resolved.sequence(allocation.allocator)
-        # Resolution places every KeySequence allocator as a native sequence.
-        assert isinstance(sequence, ResolvedSequence)
         activity = self._activity
         key = self._key_allocator.next_key(
             sequence,
@@ -862,23 +859,20 @@ class TxnAttempt(_TxnAttemptBase):
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
+    ) -> None:
         """Execute ``steps`` as calls of the current flush's Flush activity,
         presenting ``effect_spans`` as grouped effects and handing their
         demanded payloads to the capture hooks the unit of work gives."""
         executor = self._step_executor
         if capture_insert is None and capture_revision is None:
-            return executor.execute(
-                steps, effect_spans=effect_spans, allocates=allocates, flush=self._flush
-            )
-        return executor.execute(
+            executor.execute(steps, effect_spans=effect_spans, flush=self._flush)
+            return
+        executor.execute(
             steps,
             effect_spans=effect_spans,
-            allocates=allocates,
             flush=self._flush,
             capture_insert=capture_insert,
             capture_revision=capture_revision,

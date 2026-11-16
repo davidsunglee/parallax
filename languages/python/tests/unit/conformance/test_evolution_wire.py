@@ -26,7 +26,6 @@ from parallax.core.internal.database_binding import PhysicalSequence
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -39,6 +38,7 @@ from parallax.core.internal.metamodel import (
     DefiningRelationshipDeclaration,
     Document,
     IndexIdentity,
+    KeySequence,
     Multiplicity,
     NullPlacement,
     PersistenceMode,
@@ -47,7 +47,6 @@ from parallax.core.internal.metamodel import (
     RelationshipJoin,
     RelationshipOrder,
     ReverseRelationshipDeclaration,
-    Sequence,
     SortDirection,
     Table,
     TablePerHierarchy,
@@ -556,7 +555,7 @@ def test_a_plain_integer_fact_survives_the_closed_vocabulary_lookup() -> None:
 
 
 _ROOT = identity("Instrument")
-_SEQUENCE = Sequence("order_seq", batch_size=10, initial_value=5, increment_size=2)
+_SEQUENCE = KeySequence("order_seq", batch_size=10, initial_value=5, increment_size=2)
 _JOIN = RelationshipJoin(_ID, _SKU)
 _TERM = RelationshipOrder(_SKU, SortDirection.ASCENDING, NullPlacement.NULLS_LAST)
 _TERM_SPELLING = {
@@ -575,12 +574,11 @@ _JOIN_SPELLING = {"source": f"{_ORDER_SPELLING}.id", "target": f"{_ORDER_SPELLIN
         (Document("doc"), {"document": {"column": "doc"}}),
         (NOT_PRIMARY_KEY, False),
         (PrimaryKey(APPLICATION_ASSIGNED), {"generation": "application-assigned"}),
-        (PrimaryKey(MAX), {"generation": "max"}),
         (
             PrimaryKey(_SEQUENCE),
             {
                 "generation": {
-                    "strategy": "sequence",
+                    "strategy": "key-sequence",
                     "name": "order_seq",
                     "batchSize": 10,
                     "initialValue": 5,

@@ -6,7 +6,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: invoiceNumbers }
+        pkGeneration: { strategy: key-sequence, name: invoiceNumbers }
       - { name: total, type: int64 }
   - name: Entry
     namespace: audit

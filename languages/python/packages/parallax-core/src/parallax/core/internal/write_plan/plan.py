@@ -28,7 +28,6 @@ __all__ = [
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
     "AcquisitionSpan",
-    "AllocatedOpening",
     "BoundRange",
     "CurrentRowOutput",
     "DeferredRange",
@@ -212,27 +211,16 @@ NO_TEMPORAL_WRITE_OWNERSHIP: Final[TemporalWriteOwnership] = _NoTemporalWriteOwn
 
 
 @dataclass(frozen=True, slots=True)
-class AllocatedOpening:
-    """A row a settled write opens whose key the database allocates: its
-    coordinates are complete once the insert that opens it answers the key."""
-
-    entity: EntityIdentity
-    ends: tuple[TemporalUpperBound, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class Openings:
     """The owned rows a settled write opens, by what each derives from:
     ``continued`` holds an insert's row and every row an admitted insertion
     contributed whole, ``shared`` each row it contributed only some parts of,
     with those parts in order, and ``fresh`` every other row. A row the write
     revised in place into a merged extent, or whose insertion's parts it
-    narrowed, is among them again at its own coordinates. ``allocated`` holds,
-    in step order, each row whose key its insert answers."""
+    narrowed, is among them again at its own coordinates."""
 
     fresh: Iterable[TemporalRowCoordinates] = ()
     continued: Iterable[TemporalRowCoordinates] = ()
-    allocated: tuple[AllocatedOpening, ...] = ()
     shared: Iterable[tuple[TemporalRowCoordinates, tuple[TimeInterval, ...]]] = ()
 
 

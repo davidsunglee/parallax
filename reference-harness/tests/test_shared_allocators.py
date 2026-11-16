@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from reference_harness.pk_gen import PK_GEN_SEQUENCE_CONFLICT, validate_shared_allocators
+from reference_harness.pk_gen import PK_GEN_KEY_SEQUENCE_CONFLICT, validate_shared_allocators
 from reference_harness.value_object_resolve import RejectionError
 
 
@@ -21,21 +21,21 @@ def _keyed(name: str, generation: Any, key_type: str = "int64") -> dict[str, Any
 
 
 def _sequence(**settings: Any) -> dict[str, Any]:
-    return {"strategy": "sequence", "name": "shared_seq", **settings}
+    return {"strategy": "key-sequence", "name": "shared_seq", **settings}
 
 
 def test_equal_keys_with_equal_settings_share_after_defaults_are_filled() -> None:
     validate_shared_allocators(
-        [_keyed("Badge", _sequence()), _keyed("Ticket", _sequence(batchSize=1, initialValue=1))]
+        [_keyed("Badge", _sequence()), _keyed("Ticket", _sequence(batchSize=100, initialValue=1))]
     )
 
 
-def test_max_and_distinct_keys_are_never_compared() -> None:
+def test_assigned_and_distinct_keys_are_never_compared() -> None:
     validate_shared_allocators(
         [
-            _keyed("Badge", "max"),
-            _keyed("Ticket", {"strategy": "sequence", "name": "a", "batchSize": 3}),
-            _keyed("Voucher", {"strategy": "sequence", "name": "b"}, "int32"),
+            _keyed("Badge", "application-assigned"),
+            _keyed("Ticket", {"strategy": "key-sequence", "name": "a", "batchSize": 3}),
+            _keyed("Voucher", {"strategy": "key-sequence", "name": "b"}, "int32"),
         ]
     )
 
@@ -55,7 +55,7 @@ def test_each_disagreeing_term_is_refused(settings: dict[str, Any], key_type: st
         validate_shared_allocators(
             [_keyed("Badge", _sequence()), _keyed("Ticket", _sequence(**settings), key_type)]
         )
-    assert raised.value.rule == PK_GEN_SEQUENCE_CONFLICT
+    assert raised.value.rule == PK_GEN_KEY_SEQUENCE_CONFLICT
 
 
 def test_a_family_key_counts_once_on_its_declaring_root() -> None:

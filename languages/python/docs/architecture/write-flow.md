@@ -105,8 +105,7 @@ into that object's pending opening; it changes the coverage its read observed.
 admitted write            licensed by                      claim scope                     carries
 ────────────────────────  ───────────────────────────────  ──────────────────────────────  ──────────────────────────────
 KeyedInsert               nothing: it opens a row          none                            the instruction (one row),
-                                                                                           object_key (None where the
-                                                                                           database computes the key)
+                                                                                           object_key
 StateObservedWrite        a read of this attempt: its      versioned Non-Temporal: the     instruction, object_key,
                           RetainedObservation (a version   observed state, or `current`,   retained_observation,
                           or Transaction-Time start);      the later state this attempt's  current, source_evidence
@@ -380,8 +379,7 @@ removed and reinserted this way.
               │   pending Bitemporal opening    → settle_opening
               │       → BoundRange (steps now) | DeferredTemporalRange (no step yet)
               │   group: consecutive settled writes of one phase over distinct
-              │     objects, up to the group bound; a write the database allocates
-              │     a key for, or naming no complete key, alone; effects before inserts
+              │     objects, up to the group bound; effects before inserts
               │   a deferred write: an entry of its own; consecutive eligible ones
               │     are recorded as an AcquisitionSpan of at most 32
               ▼

@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -84,7 +83,6 @@ from .database_binding import (
 )
 from .ddl_builder import (
     ddl_for,
-    declared_contributors,
     qualified_table,
 )
 from .document_codec import encode_collection, encode_document, encode_leaf
@@ -114,7 +112,13 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
-from .pk_gen import KEY_SEQUENCE, NativeSequence, native_sequences, validate_shared_allocators
+from .pk_gen import (
+    KEY_SEQUENCE,
+    SEQUENCE_EXHAUSTION,
+    NativeSequence,
+    native_sequences,
+    validate_shared_allocators,
+)
 from .pk_gen import MODEL_REJECTED_RULES as PK_GEN_MODEL_REJECTED_RULES
 from .predicate_validate import validate_query_predicate
 from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_predicate_write
@@ -131,7 +135,7 @@ from .storage_layout import (
 from .storage_layout import (
     validate_storage_layout,
 )
-from .table_state import assert_table_state, read_entity_table
+from .table_state import assert_table_state
 from .temporal_selection_validate import normalize_authored_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
 from .unit_work_scenario import assert_unit_work_scenario
@@ -524,126 +528,7 @@ def _assert_database_call_count(case: Case, dialect: str) -> None:
         )
 
 
-# --- primary-key generation (m-pk-generation sequence oracle) ---------------
-
-
-def _expected_sequence_ids(initial: int, increment: int, batch: int, count: int) -> list[int]:
-    """The ids a simulated sequence hands out for *count* inserts, in order.
-
-    Within a reserved block of *batch* ids the values step by *increment*; the
-    next block's base is *batch* x *increment* higher. Inserting fewer than a
-    full block consumes the block's leading ids (the rest are reserved-and-lost).
-    """
-    ids: list[int] = []
-    for i in range(count):
-        block, offset = divmod(i, batch)
-        ids.append(initial + block * batch * increment + offset * increment)
-    return ids
-
-
-def _expected_sequence_counter(initial: int, increment: int, batch: int, count: int) -> int:
-    """The registry counter after *count* inserts: a full block is reserved per
-    allocation, so it advances by ``batch * increment`` for each block touched.
-    """
-    blocks = -(-count // batch)  # ceil division (count >= 0, batch >= 1)
-    return initial + blocks * batch * increment
-
-
-def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, Any]] | None:
-    """The ``sequence``-strategy entity this writeSequence case inserts into.
-
-    Returns ``(entity, pkGeneration, pk_attribute)`` or ``None`` when the case does
-    not insert into a sequence entity (e.g. ``max`` cases, non-pk-gen cases).
-    """
-    inserted = {step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"}
-    for entity in case.model.entities:
-        if not inserted & {entity.name, entity.canonical_name}:
-            continue
-        pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
-        if pk_attr is None:
-            continue
-        gen = pk_attr.get("pkGeneration")
-        if isinstance(gen, dict) and gen.get("strategy") == "sequence":
-            return entity, gen, pk_attr
-    return None
-
-
-def _pk_sequence_registry(model: Model, exclude: Entity) -> Entity:
-    """The simulated-sequence registry entity: the string-PK counter table."""
-    for entity in model.entities:
-        if entity.name == exclude.name:
-            continue
-        pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
-        if pk_attr is not None and pk_attr.get("type") == "string":
-            return entity
-    raise CaseFailure(
-        f"model {model.class_name!r} declares a sequence pkGeneration but has no "
-        f"string-PK registry entity"
-    )
-
-
-def _pk_sequence_counter_column(registry: Entity) -> str:
-    """The simulated-sequence registry's counter column: its int64 non-PK
-    attribute. Require exactly one so the selection is unambiguous even if the
-    registry entity ever grows another column.
-    """
-    counters = [
-        a for a in registry.attributes if not a.get("primaryKey") and a.get("type") == "int64"
-    ]
-    if len(counters) != 1:
-        raise CaseFailure(
-            f"simulated-sequence registry {registry.name!r} must have exactly one "
-            f"int64 non-PK counter column, found {len(counters)}"
-        )
-    return counters[0]["column"]
-
-
-def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
-    """PK-generation oracle (sequence strategy).
-
-    Independently re-derives, from the DECLARED pkGeneration config, the ids a
-    simulated sequence should have allocated and the value its registry counter
-    should hold, and asserts both against the real post-write DB state. ``max`` and
-    non-pk-gen writeSequence cases are a no-op (``max`` is pinned by its
-    self-describing ``coalesce(max(...),0)+1`` golden + ``then.tableState``).
-    """
-    target = _pk_sequence_target(case)
-    if target is None:
-        return
-    entity, gen, pk_attr = target
-    initial = gen.get("initialValue", 1)
-    increment = gen.get("incrementSize", 1)
-    batch = gen.get("batchSize", 1)
-    seq_name = gen["name"]
-    pk_column = pk_attr["column"]
-
-    declarations = declared_contributors(case.model)
-    actual_rows = read_entity_table(case, db, entity.canonical_name, declarations)
-    # Assumes target starts empty; row count equals ids allocated from initialValue
-    # (a pre-seeded table would mismatch loudly, not silently).
-    count = len(actual_rows)
-    expected_ids = sorted(_expected_sequence_ids(initial, increment, batch, count))
-    actual_ids = sorted(row[pk_column] for row in actual_rows)
-    if actual_ids != expected_ids:
-        raise CaseFailure(
-            f"{case.path.name}: {entity.name} allocated PKs {actual_ids} != "
-            f"config-derived {expected_ids} "
-            f"(init={initial}, inc={increment}, batch={batch}, count={count})"
-        )
-
-    registry = _pk_sequence_registry(case.model, entity)
-    name_column = next(a for a in registry.attributes if a.get("primaryKey"))["column"]
-    counter_column = _pk_sequence_counter_column(registry)
-    reg_rows = read_entity_table(case, db, registry.canonical_name, declarations)
-    reg_row = next((r for r in reg_rows if r.get(name_column) == seq_name), None)
-    if reg_row is None:
-        raise CaseFailure(f"{case.path.name}: {registry.name} has no row for sequence {seq_name!r}")
-    expected_counter = _expected_sequence_counter(initial, increment, batch, count)
-    if reg_row.get(counter_column) != expected_counter:
-        raise CaseFailure(
-            f"{case.path.name}: sequence {seq_name!r} counter "
-            f"{reg_row.get(counter_column)} != config-derived {expected_counter}"
-        )
+# --- primary-key generation (m-pk-gen native key sequence oracle) -----------
 
 
 class _NativeAllocation(NamedTuple):
@@ -788,18 +673,41 @@ def _assert_reservation(
 
 def _assert_native_positions(case: Case, db: DatabaseProvider) -> None:
     """Every allocator the sequence reserved from now answers the block after its
-    last reservation's: its native position is the declarations' too."""
+    last reservation's: its native position is the declarations' too. Where that
+    block lies past the key range the sequence is exhausted, and its next
+    reservation fails with the dialect's own exhaustion code rather than wrapping."""
     next_blocks = _native_allocation(case, db.dialect).next_blocks
+    sequences = native_sequences(case.model.entity_defs)
     placement = case.setup_placement(db.dialect)
     execution = CaseExecution(case, db)
     for allocator, expected in next_blocks.items():
         sequence = qualified_table(placement.sequences[allocator], db.dialect)
-        observed = (
-            execution.query("select nextval(cast(? as regclass))", [sequence])
-            if db.dialect == "postgres"
-            else execution.query(f"select nextval({sequence})")
-        )
+        exhausted = expected > sequences[allocator].key_range(db.dialect)[1]
+        try:
+            observed = (
+                execution.query("select nextval(cast(? as regclass))", [sequence])
+                if db.dialect == "postgres"
+                else execution.query(f"select nextval({sequence})")
+            )
+        except Exception as exc:
+            code = db.native_error_code(exc)
+            if exhausted and str(code) == SEQUENCE_EXHAUSTION[db.dialect]:
+                continue
+            raise CaseFailure(
+                f"{case.path.name}: sequence {sequence}'s next reservation failed with "
+                f"native code {code!r}, not "
+                + (
+                    f"the {db.dialect} exhaustion code {SEQUENCE_EXHAUSTION[db.dialect]!r}"
+                    if exhausted
+                    else f"the declaration-derived block {expected}"
+                )
+            ) from exc
         answered = [next(iter(row.values())) for row in observed]
+        if exhausted:
+            raise CaseFailure(
+                f"{case.path.name}: sequence {sequence} next answers {answered}, but the "
+                f"declarations leave it exhausted past {expected - 1}"
+            )
         if answered != [expected]:
             raise CaseFailure(
                 f"{case.path.name}: sequence {sequence} next answers {answered}, not the "
@@ -1250,81 +1158,6 @@ def _is_milestone_guard(entity: Entity, step: Mapping[str, Any]) -> bool:
     )
 
 
-def _is_computed_marker(value: Any) -> bool:
-    """Whether an ① value is a DB-COMPUTED pk-gen `max` marker.
-
-    ``{ computed: "maxPlusOne" }`` names a column the database derives as
-    ``coalesce(max(col), ?) + ?`` (its binds are the strategy's coalesce base +
-    increment), so the attribute carries no literal ① bind of its own — the
-    cross-check skips the bind at that position (DQ-D / R5).
-
-    Matches the EXACT ``writeComputedMarker`` schema shape: a dict with exactly
-    one key ``computed`` whose value is exactly ``"maxPlusOne"``. A multi-key
-    dict or a different ``computed`` value is not a marker the schema accepts, so
-    it is not treated as one here either (it binds as an ordinary literal ①).
-    """
-    return isinstance(value, dict) and len(value) == 1 and value.get("computed") == "maxPlusOne"
-
-
-def _increment_marker(value: Any) -> Any:
-    """The amount of a self-referential ``{ increment: <n> }`` marker, or None.
-
-    The column is emitted as ``col = col + ?`` (e.g. a sequence registry's
-    ``next_val``); the marker's integer is the value bound at that ``?``.
-
-    Matches the EXACT ``writeComputedMarker`` schema shape: a dict with exactly
-    one key ``increment`` whose value is a JSON ``integer``. A multi-key dict, a
-    non-integer ``increment`` (a string, a float), or a JSON ``boolean`` (schema
-    type ``boolean``, not ``integer`` — and Python's ``bool`` is an ``int``
-    subclass, so it is excluded explicitly) is not a marker the schema accepts,
-    so it returns ``None`` and the value binds as an ordinary literal ①.
-    """
-    if isinstance(value, dict) and len(value) == 1 and "increment" in value:
-        amount = value["increment"]
-        if isinstance(amount, int) and not isinstance(amount, bool):
-            return amount
-    return None
-
-
-def _increment_or_value(value: Any) -> Any:
-    """The bind an ① set value implies: an ``increment`` marker binds its amount."""
-    increment = _increment_marker(value)
-    return increment if increment is not None else value
-
-
-def _document_columns(entity: Entity) -> set[str]:
-    """The physical columns of *entity*'s value objects (m-value-object).
-
-    A value-object column holds the WHOLE embedded composite as one document; its
-    write value is ALWAYS literal document content (a JSON object / array / SQL
-    NULL), NEVER a DB-computed marker. DB-computed marker interpretation
-    (``computed`` / ``increment``) is gated on this set so the marker branch is only
-    ever taken for a SCALAR ATTRIBUTE column — the role is resolved from the
-    metamodel (the member's own declared role), not from the value's shape, so a
-    marker-SHAPED document (``{computed: …}`` / ``{increment: n}``) still binds as
-    one literal document.
-    """
-    return {value_object["column"] for value_object in entity.value_objects}
-
-
-def _set_bind_value(column: str, value: Any, document_columns: set[str]) -> Any:
-    """The bind a set-column's ① value implies, gated on the column's model role.
-
-    A value-object (document) column ALWAYS binds its whole literal document
-    (m-value-object), never a marker; a scalar attribute's self-referential
-    ``{increment: n}`` marker binds its amount.
-    """
-    if column in document_columns:
-        return value
-    return _increment_or_value(value)
-
-
-def _is_self_increment(statement: str, column: str) -> bool:
-    """Whether *statement* assigns *column* as a self-referential ``col = col + ?``."""
-    pattern = rf"\b{re.escape(column)}\s*=\s*{re.escape(column)}\s*\+\s*\?"
-    return re.search(pattern, statement, re.IGNORECASE) is not None
-
-
 def _document_path_bind(path: tuple[str, ...]) -> str:
     """The bind addressing *path* inside a MariaDB `json_set`: the same ``$.a.b``
     JSON-path string its `json_value` extraction takes (m-dialect). Spelled here
@@ -1525,7 +1358,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # authoring would leave a later row graded against nothing.
         try:
             instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
-            validate_keyed_write(entity, instruction, allow_framework_markers=True)
+            validate_keyed_write(entity, instruction)
         except (RejectionError, KeyedWriteApplicabilityError) as exc:
             raise CaseFailure(
                 f"{case.path.name}: writeSequence step on {step['entity']}: {exc}"
@@ -1626,7 +1459,7 @@ def _assert_insert_input(
     if not step_statements:
         return
     version_col = version_column(entity)
-    # A pk-gen `sequence` insert step emits one single-row INSERT per allocated id
+    # A step whose rows each insert alone emits one single-row INSERT per row
     # (statements == rows); a set-based batched insert (m-batch-write-001) is one multi-row INSERT.
     per_row = len(step_statements) == len(classified) and len(step_statements) > 1
     if per_row:
@@ -1678,27 +1511,6 @@ def _assert_insert_statement(
             f"{' + derived tag' if discriminator is not None else ''}"
             f"{' + derived version' if version_col is not None else ''})."
         )
-    # A DB-computed marker is a SCALAR-ATTRIBUTE-only interpretation (m-value-object):
-    # a value-object (document) column ALWAYS binds its whole literal document in
-    # Document-tier slot, so it is excluded here even when the authored document is
-    # marker-SHAPED (`{computed: …}`) — the role is resolved from the metamodel, never
-    # from the value's shape.
-    document_columns = _document_columns(entity)
-    computed = [
-        c
-        for c in domain
-        if c not in document_columns
-        and any(_is_computed_marker(cols.get(c)) for cols, *_ in classified)
-    ]
-    if computed:
-        # pk-gen `max`: a DB-COMPUTED column (`coalesce(max(id), ?) + ?`) contributes
-        # the strategy's binds (coalesce base + increment), NOT an ① literal — its bind
-        # is SKIPPED. The column still appears in the golden INSERT list (checked
-        # above); the remaining LITERAL columns' values are the trailing binds.
-        literal_columns = [c for c in domain if c not in computed]
-        expected = [cols[column] for cols, *_ in classified for column in literal_columns]
-        assert_write_values(case, expected, binds[len(binds) - len(expected) :], statement)
-        return
     expected: list[Any] = []
     for cols, *_ in classified:
         for column in emitted:
@@ -1823,20 +1635,6 @@ def _assert_update_input(
         if any(c in set_cols for _, _, set_cols, _ in classified)
         or (patches_document and c == document_column)
     ]
-    # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
-    # sequence registry's `next_val`): the golden assigns `col = col + ?` and the bind
-    # at that `?` is the increment amount, not a plain literal (DQ-D / R5). This is a
-    # SCALAR-ATTRIBUTE-only interpretation (m-value-object): a value-object (document)
-    # column ALWAYS binds its whole literal document, so a marker-SHAPED document
-    # (`{increment: n}`) is never read as a self-advance — the role is resolved from
-    # the metamodel, never from the value's shape.
-    document_columns = _document_columns(entity)
-    increment_columns = {
-        column
-        for _, _, set_cols, _ in classified
-        for column in set_cols
-        if column not in document_columns and _increment_marker(set_cols[column]) is not None
-    }
     for statement in step_statements:
         golden_set = _golden_set_columns(case, statement)
         if golden_set != set_present:
@@ -1844,13 +1642,6 @@ def _assert_update_input(
                 f"{case.path.name}: the golden SET column list {golden_set} != the domain "
                 f"columns the neutral write input resolves to {set_present}."
             )
-        for column in increment_columns:
-            if not _is_self_increment(statement, column):
-                raise CaseFailure(
-                    f"{case.path.name}: an `increment` ① on {column!r} requires the golden's "
-                    f"self-referential `set {column} = {column} + ?` shape, not found in "
-                    f"{statement!r}."
-                )
     per_key = len(step_statements) == len(classified) and len(step_statements) > 1
 
     def expected_values(
@@ -1861,7 +1652,7 @@ def _assert_update_input(
             if column == document_column and patches_document:
                 values.extend(_document_assignment_binds(patches, dialect))
                 continue
-            values.append(_set_bind_value(column, set_cols[column], document_columns))
+            values.append(set_cols[column])
         return values
 
     if per_key:
@@ -3848,7 +3639,6 @@ def _run_statement_golden(case: Case, db: DatabaseProvider, dialect: str) -> Non
         provision_empty(case, db)
         apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
-        _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
         _assert_native_positions(case, db)  # layer 5b: PK-generation oracle (key-sequence)
         return
 

@@ -86,7 +86,7 @@ _POSITION = model_of(WHERE_POSITION_META)
 
 def _uow(
     meta: Metamodel,
-    steps: Callable[..., tuple[object, ...]] | None = None,
+    steps: Callable[..., None] | None = None,
     *,
     settings: TransactionSettings | None = None,
 ) -> tuple[UnitOfWork, SimulatedWriteSteps]:

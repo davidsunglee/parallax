@@ -105,7 +105,7 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
         )
     if envelope.get("status") == "run-only":
         # Declared `compileEligibility: run-only` covers query-result-dependent
-        # reads and writes and pk-gen sequence reservations: `run` (never
+        # reads and writes and native key reservations: `run` (never
         # `compile`) is the ONLY lane that ever grades these — the
         # m-conformance-adapter envelope already answers
         # `run-only` without attempting any lowering at all, so this is classified

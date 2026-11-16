@@ -14,7 +14,6 @@ from parallax.core.internal.database_binding import (
     PhysicalSequence,
     PhysicalTable,
     ResolvedBinding,
-    ResolvedSequence,
     SequenceRelocated,
     TableRelocated,
     breaking_changes_between,
@@ -36,7 +35,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: customerIds }
+        pkGeneration: { strategy: key-sequence, name: customerIds }
   - name: Order
     namespace: commerce
     table: orders
@@ -44,7 +43,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: orderIds }
+        pkGeneration: { strategy: key-sequence, name: orderIds }
   - name: Event
     namespace: audit
     table: event
@@ -160,8 +159,8 @@ def test_an_allocator_ignores_namespace_and_table_placement() -> None:
             sequences={"orderIds": PostgresSequence(schema="keys", name="order_numbers")},
         ),
     )
-    assert resolved.sequence("customerIds") == PhysicalSequence(("app",), "customerIds")
-    assert resolved.sequence("orderIds") == PhysicalSequence(("keys",), "order_numbers")
+    assert resolved.sequence("customerIds").physical == PhysicalSequence(("app",), "customerIds")
+    assert resolved.sequence("orderIds").physical == PhysicalSequence(("keys",), "order_numbers")
 
 
 def test_every_key_must_name_something_the_model_declares() -> None:
@@ -222,7 +221,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: fleetIds }
+        pkGeneration: { strategy: key-sequence, name: fleetIds }
   - name: Car
     namespace: fleet
     table: car
@@ -242,7 +241,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: fleetIds }
+        pkGeneration: { strategy: key-sequence, name: fleetIds }
 """
     )
 )
@@ -258,14 +257,16 @@ def test_one_shared_family_allocator_resolves_once_wherever_its_tables_sit() -> 
         },
     )
     resolved = ResolvedBinding(_FLEET, placed)
-    assert dict(resolved.sequences) == {"fleetIds": PhysicalSequence(("app",), "fleetIds")}
+    assert {key: sequence.physical for key, sequence in resolved.sequences.items()} == {
+        "fleetIds": PhysicalSequence(("app",), "fleetIds")
+    }
 
 
 def test_one_model_under_two_bindings_resolves_an_allocator_to_two_sequences() -> None:
     tenant_a = ResolvedBinding(_FLEET, PostgresBinding(default=PostgresLocation(schema="a")))
     tenant_b = ResolvedBinding(_FLEET, PostgresBinding(default=PostgresLocation(schema="b")))
-    assert tenant_a.sequence("fleetIds") == PhysicalSequence(("a",), "fleetIds")
-    assert tenant_b.sequence("fleetIds") == PhysicalSequence(("b",), "fleetIds")
+    assert tenant_a.sequence("fleetIds").physical == PhysicalSequence(("a",), "fleetIds")
+    assert tenant_b.sequence("fleetIds").physical == PhysicalSequence(("b",), "fleetIds")
 
 
 @pytest.mark.parametrize(
@@ -570,13 +571,6 @@ entities:
         type: {key_type}
         primaryKey: true
         pkGeneration: {{ strategy: key-sequence, name: vehicleIds{settings} }}
-  - name: Legacy
-    table: legacy
-    attributes:
-      - name: id
-        type: int64
-        primaryKey: true
-        pkGeneration: {{ strategy: sequence, name: legacyIds }}
 """
 
 
@@ -596,7 +590,6 @@ def test_a_native_allocator_resolves_its_declaration_range_and_every_consuming_t
         ),
     )
     sequence = resolved.sequence("vehicleIds")
-    assert isinstance(sequence, ResolvedSequence)
     assert sequence.physical == PhysicalSequence(("Key.Ring",), "vehicle.ids")
     assert sequence.sql == '"Key.Ring"."vehicle.ids"'
     assert sequence.key_sequence == KeySequence("vehicleIds")
@@ -608,8 +601,6 @@ def test_a_native_allocator_resolves_its_declaration_range_and_every_consuming_t
         PhysicalTable(("haulage",), "truck"),
     ]
     assert sequence_ddl(sequence) == SequenceDdl("bigint", 100, -(2**63), 2**63 - 1, 1)
-    # A registry Sequence keeps its bare placement beside the native allocator.
-    assert resolved.sequence("legacyIds") == PhysicalSequence(("app",), "legacyIds")
 
 
 def test_an_int32_key_bounds_its_allocator_by_the_key_type() -> None:
@@ -618,7 +609,6 @@ def test_an_int32_key_bounds_its_allocator_by_the_key_type() -> None:
         PostgresBinding(default=_APP),
     )
     sequence = resolved.sequence("vehicleIds")
-    assert isinstance(sequence, ResolvedSequence)
     assert sequence_ddl(sequence) == SequenceDdl("integer", 30, -(2**31), 2**31 - 1, -7)
 
 

@@ -92,7 +92,6 @@ Declare models, configure and observe execution, and handle errors.
 - `Rel`: The annotation that declares a relationship on an Entity class.
 - `RetryPolicy`: How a transaction retries after a transient failure.
 - `RootExecution`: One top-level database operation, as a lifecycle Provider sees it.
-- `Sequence`: Key generation that allocates from a named database sequence in batches.
 - `ServingModel`: Holds the model selection a database serves, and publishes replacements.
 - `SortKey`: One ordering term in a query's sort.
 - `StoredDataIssue`: One way stored data contradicts the model; `code` says which.
@@ -137,13 +136,13 @@ Declare models, configure and observe execution, and handle errors.
 - `LIFECYCLE_PROVIDER_FAILED`: Code for an operation refused because a lifecycle Provider failed to open.
 - `LIFECYCLE_REENTERED`: Code for an operation refused because a Handler called back into the Handle it observes.
 - `MANY_TO_ONE`: Relationship cardinality: many source rows refer to one target row.
-- `MAX`: Key generation that allocates from the largest stored key.
 - `MISSING_STORED_VALUE`: Marks a member absent from stored data, as distinct from a stored null.
 - `ONE_TO_MANY`: Relationship cardinality: one source row has many target rows.
 - `ONE_TO_ONE`: Relationship cardinality: one source row has at most one target row.
 - `POSTGRES`: The PostgreSQL Dialect.
 - `PRINCIPAL_INVALID`: Code for a Principal whose subject or authorization the database runtime cannot accept.
 - `PUBLICATION_BREAKING_CHANGE_REFUSED`: `publish` refused a candidate that breaks a surviving table, sequence, or allocator.
+- `PkGeneration`: How a primary key gets its values: supplied by the application or handed out by a KeySequence.
 - `PoolSample`: One pool metrics sample: available, unavailable or detached.
 - `QUERY_TARGET_NOT_IN_MODEL`: Code for a query whose target Entity the connected model does not declare.
 - `READ_ONLY`: Persistence mode for an Entity whose rows another system writes.

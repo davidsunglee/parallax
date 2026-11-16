@@ -28,7 +28,6 @@ from parallax.core.internal.metamodel import (
     KeySequence,
     Metamodel,
     PrimaryKey,
-    Sequence,
 )
 from parallax.core.internal.storage_layout import (
     TableLayout,
@@ -78,7 +77,7 @@ value lies outside it."""
 _IDENTIFIER_INVALID: Final = "binding-identifier-invalid"
 
 
-type _Declared = tuple[Sequence | KeySequence, AttributeMetadata]
+type _Declared = tuple[KeySequence, AttributeMetadata]
 
 
 def _logical_allocators(model: Metamodel) -> Mapping[str, _Declared]:
@@ -93,7 +92,7 @@ def _logical_allocators(model: Metamodel) -> Mapping[str, _Declared]:
     for entity in sorted(model.entities, key=lambda entity: entity.identity.sort_key):
         for attribute in entity.declared_attributes:
             key = attribute.primary_key
-            if isinstance(key, PrimaryKey) and isinstance(key.generation, Sequence | KeySequence):
+            if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
                 declared.setdefault(key.generation.name, (key.generation, attribute))
     return {allocator: declared[allocator] for allocator in sorted(declared)}
 
@@ -201,22 +200,19 @@ class _Resolver:
         allocators: Mapping[str, _Declared],
         tables: Mapping[EntityIdentity, ResolvedTable],
         consumers: Mapping[str, tuple[ResolvedTable, ...]],
-    ) -> dict[str, PhysicalSequence | ResolvedSequence]:
+    ) -> dict[str, ResolvedSequence]:
         relations = {table.physical: owner for owner, table in tables.items()}
-        sequences: dict[str, PhysicalSequence | ResolvedSequence] = {}
+        sequences: dict[str, ResolvedSequence] = {}
         by_sequence: dict[PhysicalSequence, str] = {}
         for allocator, (generation, attribute) in allocators.items():
             physical = self.sequence(allocator)
             if physical is None:
                 continue
-            if isinstance(generation, KeySequence):
-                resolved = self.native(
-                    allocator, physical, generation, attribute, consumers.get(allocator, ())
-                )
-                if resolved is not None:
-                    sequences[allocator] = resolved
-            else:
-                sequences[allocator] = physical
+            resolved = self.native(
+                allocator, physical, generation, attribute, consumers.get(allocator, ())
+            )
+            if resolved is not None:
+                sequences[allocator] = resolved
             first = by_sequence.setdefault(physical, allocator)
             if first != allocator:
                 self.issue(
@@ -364,9 +360,7 @@ class _Resolver:
 
 def resolve(
     meta: Metamodel, binding: DatabaseBinding
-) -> tuple[
-    Mapping[EntityIdentity, ResolvedTable], Mapping[str, PhysicalSequence | ResolvedSequence]
-]:
+) -> tuple[Mapping[EntityIdentity, ResolvedTable], Mapping[str, ResolvedSequence]]:
     """Every mapping owner's table and every allocator's sequence ``binding`` places.
 
     Raises :class:`BindingError` with every resolution issue at once.

@@ -12907,34 +12907,6 @@
         3
       ],
       "table": "audit_entry"
-    },
-    "parallax.compatibility.AuditSeq": {
-      "columns": [
-        {
-          "applicableEntities": [
-            "parallax.compatibility.AuditSeq"
-          ],
-          "column": "name",
-          "contributor": "attribute:parallax.compatibility.AuditSeq.name",
-          "declaringOwner": "parallax.compatibility.AuditSeq",
-          "effectiveNullable": false,
-          "tier": "identity"
-        },
-        {
-          "applicableEntities": [
-            "parallax.compatibility.AuditSeq"
-          ],
-          "column": "next_val",
-          "contributor": "attribute:parallax.compatibility.AuditSeq.nextVal",
-          "declaringOwner": "parallax.compatibility.AuditSeq",
-          "effectiveNullable": false,
-          "tier": "domain"
-        }
-      ],
-      "physicalPrimaryKey": [
-        0
-      ],
-      "table": "audit_seq"
     }
   },
   "models/pk-key-sequence.yaml": {
@@ -12965,36 +12937,6 @@
         0
       ],
       "table": "pass"
-    }
-  },
-  "models/pk-max.yaml": {
-    "parallax.compatibility.Attendee": {
-      "columns": [
-        {
-          "applicableEntities": [
-            "parallax.compatibility.Attendee"
-          ],
-          "column": "id",
-          "contributor": "attribute:parallax.compatibility.Attendee.id",
-          "declaringOwner": "parallax.compatibility.Attendee",
-          "effectiveNullable": false,
-          "tier": "identity"
-        },
-        {
-          "applicableEntities": [
-            "parallax.compatibility.Attendee"
-          ],
-          "column": "name",
-          "contributor": "attribute:parallax.compatibility.Attendee.name",
-          "declaringOwner": "parallax.compatibility.Attendee",
-          "effectiveNullable": false,
-          "tier": "domain"
-        }
-      ],
-      "physicalPrimaryKey": [
-        0
-      ],
-      "table": "attendee"
     }
   },
   "models/pk-sequence.yaml": {
@@ -13054,34 +12996,6 @@
       ],
       "table": "pass"
     },
-    "parallax.compatibility.PkSequence": {
-      "columns": [
-        {
-          "applicableEntities": [
-            "parallax.compatibility.PkSequence"
-          ],
-          "column": "name",
-          "contributor": "attribute:parallax.compatibility.PkSequence.name",
-          "declaringOwner": "parallax.compatibility.PkSequence",
-          "effectiveNullable": false,
-          "tier": "identity"
-        },
-        {
-          "applicableEntities": [
-            "parallax.compatibility.PkSequence"
-          ],
-          "column": "next_val",
-          "contributor": "attribute:parallax.compatibility.PkSequence.nextVal",
-          "declaringOwner": "parallax.compatibility.PkSequence",
-          "effectiveNullable": false,
-          "tier": "domain"
-        }
-      ],
-      "physicalPrimaryKey": [
-        0
-      ],
-      "table": "pk_sequence"
-    },
     "parallax.compatibility.Ticket": {
       "columns": [
         {
@@ -13137,6 +13051,34 @@
         0
       ],
       "table": "voucher"
+    },
+    "parallax.compatibility.Wristband": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wristband"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Wristband.id",
+          "declaringOwner": "parallax.compatibility.Wristband",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Wristband"
+          ],
+          "column": "gate",
+          "contributor": "attribute:parallax.compatibility.Wristband.gate",
+          "declaringOwner": "parallax.compatibility.Wristband",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "wristband"
     }
   },
   "models/policy.yaml": {

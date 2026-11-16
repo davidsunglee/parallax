@@ -5,7 +5,6 @@ from dataclasses import replace
 
 from parallax.core.internal.database_binding import (
     AllocatorSettingsChanged,
-    PhysicalSequence,
     ResolvedBinding,
     ResolvedSequence,
     SequenceRelocated,
@@ -182,7 +181,6 @@ def _positions(
         causes.setdefault(allocator, set()).update(joining)
     for allocator in sorted(causes, key=lambda key: _physical_order(later.sequences[key])):
         sequence = later.sequences[allocator]
-        assert isinstance(sequence, ResolvedSequence)  # a joined or altered allocator is native
         yield PositionSequence(
             sequence=sequence,
             reserved_increment=reserved.get(allocator, sequence_ddl(sequence).increment),
@@ -197,7 +195,7 @@ def _drops(evolution: CoordinatedEvolution) -> tuple[DropSequence, ...]:
         (
             sequence
             for allocator, sequence in evolution.earlier.sequences.items()
-            if isinstance(sequence, ResolvedSequence) and allocator not in evolution.later.sequences
+            if allocator not in evolution.later.sequences
         ),
         key=_physical_order,
     )
@@ -239,6 +237,5 @@ def _in_order(
     return tuple(operation for operation in operations if operation in chosen)
 
 
-def _physical_order(sequence: ResolvedSequence | PhysicalSequence) -> tuple[str, tuple[str, ...]]:
-    physical = sequence.physical if isinstance(sequence, ResolvedSequence) else sequence
-    return (physical.name, physical.qualifier)
+def _physical_order(sequence: ResolvedSequence) -> tuple[str, tuple[str, ...]]:
+    return (sequence.physical.name, sequence.physical.qualifier)

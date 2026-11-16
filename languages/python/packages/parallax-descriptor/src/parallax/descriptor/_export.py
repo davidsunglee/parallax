@@ -17,7 +17,6 @@ from parallax.core.internal.metamodel import (
     IndexMetadata,
     InheritanceMetadata,
     KeySequence,
-    Max,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
@@ -27,7 +26,6 @@ from parallax.core.internal.metamodel import (
     PrimaryKey,
     RelationshipDeclaration,
     RelationshipOrder,
-    Sequence,
     SortDirection,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -194,27 +192,20 @@ def _pk_generation(generation: PkGeneration) -> object | None:
     """The ``pkGeneration`` spelling, or ``None`` when application-assigned.
 
     Application Assigned is the default a bare declared key re-derives, so it is
-    omitted; ``max`` is the bare strategy token; a Sequence or KeySequence is
-    the object form with its name and every sizing parameter that differs from
-    its strategy's default.
+    omitted; a KeySequence is the object form with its name and every sizing
+    parameter that differs from its default.
     """
     match generation:
         case ApplicationAssigned():
             return None
-        case Max():
-            return "max"
         case KeySequence():
-            return _allocator_spelling("key-sequence", generation, default_batch_size=100)
-        case Sequence():
-            return _allocator_spelling("sequence", generation, default_batch_size=1)
+            return _allocator_spelling(generation)
 
 
-def _allocator_spelling(
-    strategy: str, generation: Sequence | KeySequence, *, default_batch_size: int
-) -> dict[str, object]:
-    spelled: dict[str, object] = {"strategy": strategy, "name": generation.name}
+def _allocator_spelling(generation: KeySequence) -> dict[str, object]:
+    spelled: dict[str, object] = {"strategy": "key-sequence", "name": generation.name}
     for key, value, default in (
-        ("batchSize", generation.batch_size, default_batch_size),
+        ("batchSize", generation.batch_size, 100),
         ("initialValue", generation.initial_value, 1),
         ("incrementSize", generation.increment_size, 1),
     ):

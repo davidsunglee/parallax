@@ -500,7 +500,7 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-        pkGeneration: { strategy: sequence, name: anvilIds }
+        pkGeneration: { strategy: key-sequence, name: anvilIds }
       - { name: code, type: string, maxLength: 8 }
     indices:
       - { name: code_ix, attributes: [code] }

@@ -17,7 +17,6 @@ from parallax.core.internal.metamodel import (
     entity_by_name,
 )
 from parallax.core.internal.write_plan.keys import ObjectKey
-from parallax.core.internal.write_plan.steps import MaxPlusOne
 
 __all__ = [
     "object_key",
@@ -32,13 +31,9 @@ def object_key(
 
     Prepared input consumes its retained target Metadata; the raw authored-input utility
     resolves an entity spelling against ``model``. ``None`` results when the instruction
-    is not a single-row keyed write, that raw spelling is unresolved, or the row lacks
-    every primary-key attribute (a pk-generated insert whose key is entirely
-    DB-computed), or when a carried primary-key VALUE is itself DB-computed —
-    an authored `m-pk-gen` marker (`{computed: ...}` / `{increment: ...}`) or
-    the allocation preparation planned from it. A DB-computed pk value has no
-    coalescing identity, exactly like an absent one: an unidentifiable write is
-    never coalesced nor observation-bound, and opens no insertion.
+    is not a single-row keyed write, that raw spelling is unresolved, or the row omits
+    its primary-key attribute, as a keyless draft does before its insert allocates
+    one, or states a document there, which preparation refuses.
     """
     if isinstance(instruction, PreparedKeyedInstruction):
         return resolve_object_key(instruction, inheritance.inheritance_facet_of(model))
@@ -86,6 +81,6 @@ def _key_attribute(
 
 
 def _identity(entity: CompiledEntity, name: str, value: object) -> ObjectKey | None:
-    if value is _UNSTATED or isinstance(value, Mapping | MaxPlusOne):
+    if value is _UNSTATED or isinstance(value, Mapping):
         return None
     return ObjectKey(entity.identity, ((name, value),))

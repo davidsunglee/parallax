@@ -269,30 +269,29 @@ def test_only_the_declared_evidence_error_is_a_refused_outcome(
 
 
 @pytest.mark.parametrize("unit", [False, True])
-def test_framework_markers_are_flagged_then_refused(unit: bool) -> None:
+def test_a_one_key_document_at_a_scalar_is_refused_by_its_public_verb(unit: bool) -> None:
     port = FakeWritePort()
 
     def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
         submissions = read_submissions(
-            model, [_entry("amend", {"id": 1, "version": {"increment": 1}})]
+            model, [_entry("insert", {"id": 1, "owner": "Ada", "balance": {"increment": 1}})]
         )
-        assert submissions[0].is_framework_marker
         submitter.submit_unit(submissions) if unit else submitter.submit(submissions[0])
 
-    with pytest.raises(UnclassifiedEngineError, match="framework bookkeeping"):
+    with pytest.raises(UsageError) as refused:
         _run("account", port, body)
-    assert port.reads == [] and port.writes == []
+    assert refused.value.code == "neutral-literal-type-mismatch"
+    assert port.writes == []
 
 
 @pytest.mark.parametrize("document", [{"increment": 1}, {"computed": "maxPlusOne"}])
-def test_marker_shaped_value_objects_are_literal_submission_values(
+def test_one_key_value_objects_are_literal_submission_values(
     document: dict[str, object],
 ) -> None:
     model = models.load_models()["customer"]
     (submission,) = read_submissions(
         model, [_entry("insert", {"id": 1, "name": "Ada", "address": document}, entity="Customer")]
     )
-    assert not submission.is_framework_marker
     assert isinstance(submission.instruction, KeyedWriteInstruction)
     assert submission.instruction.rows[0]["address"] == document
 

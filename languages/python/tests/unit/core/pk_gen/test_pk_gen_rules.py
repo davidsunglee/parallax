@@ -17,7 +17,6 @@ from parallax.core.internal.metamodel import (
     KeySequence,
     MetamodelIssue,
     PrimaryKey,
-    Sequence,
     Table,
     TablePerConcreteSubtype,
     UnresolvedEntityDeclaration,
@@ -26,7 +25,6 @@ from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.core.internal.pk_gen._rules import (
     KEY_SEQUENCE_CONFLICT,
     KEY_SEQUENCE_SUBTYPE_OVERRIDE,
-    SEQUENCE_CONFLICT,
 )
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
@@ -36,7 +34,7 @@ _VOUCHER = identity("Voucher")
 
 
 def _standalone(
-    entity: EntityIdentity, sequence: Sequence | KeySequence, *, wide: bool = True
+    entity: EntityIdentity, sequence: KeySequence, *, wide: bool = True
 ) -> UnresolvedEntityDeclaration:
     return Declaration(
         identity=entity,
@@ -60,7 +58,7 @@ def _id(entity: EntityIdentity) -> AttributeLocation:
 
 
 def test_equal_keys_with_equal_settings_share_one_allocator() -> None:
-    shared = Sequence("shared_seq", batch_size=5, initial_value=100, increment_size=2)
+    shared = KeySequence("shared_seq", batch_size=5, initial_value=-7, increment_size=2)
     formed = form_metamodel(source(_standalone(_BADGE, shared), _standalone(_TICKET, shared)))
     assert {entity.identity for entity in formed.entities} == {_BADGE, _TICKET}
 
@@ -68,8 +66,8 @@ def test_equal_keys_with_equal_settings_share_one_allocator() -> None:
 def test_distinct_keys_never_compare_their_settings() -> None:
     form_metamodel(
         source(
-            _standalone(_BADGE, Sequence("badge_seq", batch_size=1)),
-            _standalone(_TICKET, Sequence("ticket_seq", batch_size=9), wide=False),
+            _standalone(_BADGE, KeySequence("badge_seq", batch_size=1)),
+            _standalone(_TICKET, KeySequence("ticket_seq", batch_size=9), wide=False),
         )
     )
 
@@ -77,37 +75,37 @@ def test_distinct_keys_never_compare_their_settings() -> None:
 @pytest.mark.parametrize(
     ("later", "wide"),
     [
-        (Sequence("shared_seq", batch_size=2), True),
-        (Sequence("shared_seq", initial_value=50), True),
-        (Sequence("shared_seq", increment_size=3), True),
-        (Sequence("shared_seq"), False),
+        (KeySequence("shared_seq", batch_size=2), True),
+        (KeySequence("shared_seq", initial_value=50), True),
+        (KeySequence("shared_seq", increment_size=3), True),
+        (KeySequence("shared_seq"), False),
     ],
     ids=["batch-size", "initial-value", "increment-size", "key-type"],
 )
 def test_one_disagreeing_term_is_a_conflict_at_the_later_declaration(
-    later: Sequence, wide: bool
+    later: KeySequence, wide: bool
 ) -> None:
     issues = _rejection(
-        _standalone(_BADGE, Sequence("shared_seq")), _standalone(_TICKET, later, wide=wide)
+        _standalone(_BADGE, KeySequence("shared_seq")), _standalone(_TICKET, later, wide=wide)
     )
-    assert issues == (MetamodelIssue(SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),)
+    assert issues == (MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),)
 
 
 def test_every_disagreeing_declaration_is_related_to_the_first_canonical_one() -> None:
     # Frontend order differs from canonical order; the first canonical
     # declaration is the reference every other declaration is judged against.
     issues = _rejection(
-        _standalone(_VOUCHER, Sequence("shared_seq", batch_size=3)),
-        _standalone(_TICKET, Sequence("shared_seq", batch_size=2)),
-        _standalone(_BADGE, Sequence("shared_seq")),
+        _standalone(_VOUCHER, KeySequence("shared_seq", batch_size=3)),
+        _standalone(_TICKET, KeySequence("shared_seq", batch_size=2)),
+        _standalone(_BADGE, KeySequence("shared_seq")),
     )
     assert issues == (
-        MetamodelIssue(SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),
-        MetamodelIssue(SEQUENCE_CONFLICT, _id(_VOUCHER), (_id(_BADGE),)),
+        MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),
+        MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(_VOUCHER), (_id(_BADGE),)),
     )
 
 
-def _tpcs_family(sequence: Sequence | KeySequence) -> tuple[UnresolvedEntityDeclaration, ...]:
+def _tpcs_family(sequence: KeySequence) -> tuple[UnresolvedEntityDeclaration, ...]:
     root, car, truck = identity("Vehicle"), identity("Car"), identity("Truck")
     return (
         Declaration(
@@ -135,41 +133,17 @@ def test_a_tableless_family_root_declaration_counts_once() -> None:
     # the root and both inheriting concrete subtypes.
     fleet = identity("Fleet")
     issues = _rejection(
-        _standalone(fleet, Sequence("vehicle_seq")),
-        *_tpcs_family(Sequence("vehicle_seq", batch_size=4)),
+        _standalone(fleet, KeySequence("vehicle_seq")),
+        *_tpcs_family(KeySequence("vehicle_seq", batch_size=4)),
     )
-    assert issues == (MetamodelIssue(SEQUENCE_CONFLICT, _id(identity("Vehicle")), (_id(fleet),)),)
+    assert issues == (
+        MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(identity("Vehicle")), (_id(fleet),)),
+    )
 
 
 def test_an_inherited_family_allocator_shares_with_an_agreeing_standalone() -> None:
-    shared = Sequence("vehicle_seq", batch_size=4)
+    shared = KeySequence("vehicle_seq", batch_size=4)
     form_metamodel(source(_standalone(identity("Fleet"), shared), *_tpcs_family(shared)))
-
-
-@pytest.mark.parametrize(
-    ("later", "wide"),
-    [
-        (KeySequence("shared_ids", batch_size=2), True),
-        (KeySequence("shared_ids", initial_value=50), True),
-        (KeySequence("shared_ids", increment_size=3), True),
-        (KeySequence("shared_ids"), False),
-        (Sequence("shared_ids", batch_size=100), True),
-    ],
-    ids=["batch-size", "initial-value", "increment-size", "key-type", "legacy-strategy"],
-)
-def test_a_key_sequence_disagreement_is_a_key_sequence_conflict(
-    later: KeySequence | Sequence, wide: bool
-) -> None:
-    issues = _rejection(
-        _standalone(_BADGE, KeySequence("shared_ids")), _standalone(_TICKET, later, wide=wide)
-    )
-    assert issues == (MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),)
-
-
-def test_unrelated_entities_naming_one_key_sequence_share_it() -> None:
-    shared = KeySequence("shared_ids", batch_size=5, initial_value=-7, increment_size=2)
-    formed = form_metamodel(source(_standalone(_BADGE, shared), _standalone(_TICKET, shared)))
-    assert {entity.identity for entity in formed.entities} == {_BADGE, _TICKET}
 
 
 def test_a_family_root_key_sequence_serves_every_subtype() -> None:

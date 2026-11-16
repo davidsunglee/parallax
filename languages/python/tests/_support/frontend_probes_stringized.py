@@ -20,7 +20,7 @@ from typing import Any, ClassVar, Optional, SupportsIndex
 
 from parallax.core import MANY_TO_ONE, Attr, Entity, Rel, ValueObject, attr, index, rel
 from parallax.core.internal.base import Int32
-from parallax.core.internal.metamodel import MAX, AbstractRoot, TablePerConcreteSubtype
+from parallax.core.internal.metamodel import AbstractRoot, KeySequence, TablePerConcreteSubtype
 
 
 class Peer(Entity, table="peer"):
@@ -166,7 +166,7 @@ def define_option_context_invalid() -> type:
     """A generating strategy on a non-integer member."""
 
     class Bad(Entity, table="bad"):
-        id: Attr[str] = attr(primary_key=MAX)
+        id: Attr[str] = attr(primary_key=KeySequence("bad_ids"))
 
     return Bad
 

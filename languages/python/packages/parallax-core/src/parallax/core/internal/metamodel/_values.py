@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "APPLICATION_ASSIGNED",
-    "MAX",
     "NOT_PRIMARY_KEY",
     "TABLE_PER_CONCRETE_SUBTYPE",
     "AbstractRoot",
@@ -47,7 +46,6 @@ __all__ = [
     "InheritanceMetadata",
     "InheritanceStrategy",
     "LocalIndices",
-    "Max",
     "Multiplicity",
     "NestedValueObjectOccurrenceDeclaration",
     "NotPrimaryKey",
@@ -59,7 +57,6 @@ __all__ = [
     "RelationshipJoin",
     "RelationshipOrder",
     "ReverseRelationshipDeclaration",
-    "Sequence",
     "SortDirection",
     "StorageContainer",
     "StorageLayout",
@@ -244,40 +241,6 @@ APPLICATION_ASSIGNED: Final[ApplicationAssigned] = ApplicationAssigned()
 
 
 @dataclass(frozen=True, slots=True)
-class Max:
-    """The framework allocates from the stored maximum key."""
-
-
-# The shared :class:`Max` instance, on the same value-object terms.
-MAX: Final[Max] = Max()
-"""Key generation that allocates from the largest stored key."""
-
-
-@dataclass(frozen=True, slots=True)
-class Sequence:
-    """Key generation that allocates from a named database sequence in batches.
-
-    Every parameter is complete at this seam: descriptor omissions are replaced
-    by their semantic defaults before acceptance. An empty name, or a
-    nonpositive batch or increment size, raises :class:`ValueError`; the initial
-    value is unconstrained.
-    """
-
-    name: str
-    batch_size: int = 1
-    initial_value: int = 1
-    increment_size: int = 1
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("a Sequence name is nonempty")
-        if self.batch_size < 1:
-            raise ValueError(f"a Sequence batch size is positive, got {self.batch_size}")
-        if self.increment_size < 1:
-            raise ValueError(f"a Sequence increment size is positive, got {self.increment_size}")
-
-
-@dataclass(frozen=True, slots=True)
 class KeySequence:
     """Key generation that hands out keys from blocks a native database sequence reserves.
 
@@ -308,8 +271,9 @@ class KeySequence:
             )
 
 
-type PkGeneration = ApplicationAssigned | Max | Sequence | KeySequence
-"""The normalized primary-key generation algebra."""
+type PkGeneration = ApplicationAssigned | KeySequence
+"""How a primary key gets its values: supplied by the application or handed out
+by a KeySequence."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,7 +438,6 @@ class AttributeMetadata:
     framework_owned: bool = False
     multiplicity: Multiplicity = Multiplicity.ONE
     definition: ScalarDefinition = field(init=False, repr=False, compare=False)
-    generated_key: bool = field(init=False)
     write_capability: AttributeWriteCapability = field(init=False)
 
     def __post_init__(self) -> None:
@@ -482,10 +445,6 @@ class AttributeMetadata:
 
         if self.multiplicity is Multiplicity.MANY:
             _check_collection_attribute(self)
-        generation = (
-            self.primary_key.generation if isinstance(self.primary_key, PrimaryKey) else None
-        )
-        generated_key = generation is not None and not isinstance(generation, ApplicationAssigned)
         restriction = (
             AssignmentRestriction.PRIMARY_KEY
             if isinstance(self.primary_key, PrimaryKey)
@@ -495,12 +454,11 @@ class AttributeMetadata:
             if self.framework_owned
             else None
         )
-        object.__setattr__(self, "generated_key", generated_key)
         object.__setattr__(
             self,
             "write_capability",
             AttributeWriteCapability(
-                caller_insert=not (self.framework_owned or isinstance(generation, Max | Sequence)),
+                caller_insert=not self.framework_owned,
                 caller_update=restriction is None,
                 assignment_restriction=restriction,
             ),
@@ -516,11 +474,11 @@ class AttributeMetadata:
             ),
         )
         if isinstance(self.primary_key, PrimaryKey):
-            if isinstance(self.primary_key.generation, Max | Sequence | KeySequence):
+            if isinstance(self.primary_key.generation, KeySequence):
                 if not isinstance(self.type, Int32 | Int64):
                     raise ValueError(
                         f"{self.identity.entity.canonical}.{self.identity.name}: "
-                        "KeySequence, Max, and Sequence generation require Int32 or Int64, "
+                        "KeySequence generation requires Int32 or Int64, "
                         f"not {self.type}"
                     )
             elif not isinstance(self.type, Int32 | Int64 | String | Uuid):

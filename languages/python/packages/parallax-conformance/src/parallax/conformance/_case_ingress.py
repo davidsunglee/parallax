@@ -130,8 +130,7 @@ def decode_case_row(
             _case_converter,
             absent=_ABSENT,
             definition_converter=_axis_end_converter(_temporal_ends(model, entity)),
-        ),
-        root=True,
+        )
     )
     return reading.document(row, entity.identity.canonical)
 
@@ -147,12 +146,10 @@ class _StateReading:
     structure is read where it can be and kept as stated where it cannot: a
     document member by member, a ``many`` member element by element, and
     anything else as the value it is. Only a value its declared type cannot
-    decode is refused. Only the root reads a stored DB-computed marker, which
-    it keeps as the document it spells.
+    decode is refused.
     """
 
     plan: AuthoringPlan
-    root: bool
 
     def document(self, source: Mapping[str, object], path: str) -> Mapping[str, object]:
         shape = self.plan.shape
@@ -166,9 +163,7 @@ class _StateReading:
     def _member(self, position: int, value: object, path: str) -> object:
         member = self.plan.shape.members[position]
         try:
-            authored = self.plan.partial_row(
-                ((position, value),), lane=0, root=_kept_marker if self.root else None
-            )
+            authored = self.plan.partial_row(((position, value),), lane=0)
         except AuthoringRefusal as refusal:
             cause = refusal.cause
             if is_decoding_refusal(cause):
@@ -181,7 +176,7 @@ class _StateReading:
         read: Callable[[object, str], object]
         if isinstance(member, OccurrenceDefinition):
             nested = _StateReading(
-                AuthoringPlan.compile(member.shape, _case_converter, absent=_ABSENT), root=False
+                AuthoringPlan.compile(member.shape, _case_converter, absent=_ABSENT)
             )
             if member.multiplicity is Multiplicity.ONE:
                 return nested._document_or_kept(value, path)
@@ -221,11 +216,6 @@ def _sequence(value: object) -> Sequence[object] | None:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray | memoryview):
         return None
     return cast("Sequence[object]", value)
-
-
-def _kept_marker(_position: int, marker: Mapping[str, object]) -> object:
-    """A stored DB-computed marker, kept as the document it spells."""
-    return retain_document_value(marker)
 
 
 def _named_member(member: MemberDefinition, cell: object) -> object:

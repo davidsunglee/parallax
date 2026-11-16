@@ -67,21 +67,19 @@ class ObservedSteps:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
         | None = None,
-    ) -> tuple[object, ...]:
+    ) -> None:
         position = self.executions
         self.executions = position + 1
         if self.observe is not None:
             self.observe(position, steps)
         if position == self.failing and self.failure is not None:
             raise self.failure
-        return self.simulated(
+        self.simulated(
             steps,
             effect_spans=effect_spans,
-            allocates=allocates,
             capture_insert=capture_insert,
             capture_revision=capture_revision,
         )

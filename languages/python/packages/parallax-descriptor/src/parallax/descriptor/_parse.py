@@ -5,10 +5,8 @@ from typing import Literal, cast
 
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     KeySequence,
     PkGeneration,
-    Sequence,
     default_column_name,
     derive_temporal_structure,
 )
@@ -42,10 +40,7 @@ from parallax.descriptor._records import (
 __all__ = ["parse_document"]
 
 _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
-_PK_STRATEGIES: frozenset[str] = frozenset(
-    {"application-assigned", "max", "sequence", "key-sequence"}
-)
-_PK_OBJECT_STRATEGIES: frozenset[str] = frozenset({"sequence", "key-sequence"})
+_PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "key-sequence"})
 _REL_CARDINALITIES: frozenset[str] = frozenset({"one-to-one", "many-to-one", "one-to-many"})
 _VO_CARDINALITIES: frozenset[str] = frozenset({"one", "many"})
 _TEMPORALITIES: frozenset[str] = frozenset({"nontemporal", "transaction-time", "bitemporal"})
@@ -124,8 +119,6 @@ def _pk_from(value: object, where: str) -> PkGeneration:
         token = _enum(value, _PK_STRATEGIES, "pkGeneration", where)
         if token == "application-assigned":
             return APPLICATION_ASSIGNED
-        if token == "max":
-            return MAX
         raise DescriptorError(
             DESCRIPTOR_SCHEMA_INVALID,
             f"{where}: pkGeneration `{token}` is the object form with `strategy: {token}`",
@@ -138,26 +131,19 @@ def _pk_from(value: object, where: str) -> PkGeneration:
     )
     raw = _str(m, "strategy", where)
     _enum(raw, _PK_STRATEGIES, "strategy", where)
-    if raw not in _PK_OBJECT_STRATEGIES:
+    if raw != "key-sequence":
         raise DescriptorError(
             DESCRIPTOR_SCHEMA_INVALID,
-            f"{where}: object pkGeneration requires `strategy: key-sequence` or `sequence`",
+            f"{where}: object pkGeneration requires `strategy: key-sequence`",
         )
     name = _str(m, "name", where)
     batch_size = _opt_int(m, "batchSize", where)
     initial_value = _opt_int(m, "initialValue", where)
     increment_size = _opt_int(m, "incrementSize", where)
     try:
-        if raw == "key-sequence":
-            return KeySequence(
-                name,
-                batch_size=100 if batch_size is None else batch_size,
-                initial_value=1 if initial_value is None else initial_value,
-                increment_size=1 if increment_size is None else increment_size,
-            )
-        return Sequence(
-            name=name,
-            batch_size=1 if batch_size is None else batch_size,
+        return KeySequence(
+            name,
+            batch_size=100 if batch_size is None else batch_size,
             initial_value=1 if initial_value is None else initial_value,
             increment_size=1 if increment_size is None else increment_size,
         )

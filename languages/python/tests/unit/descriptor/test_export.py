@@ -143,10 +143,14 @@ def test_export_applies_the_omission_set() -> None:
         a["name"]: a for a in cast("list[dict[str, object]]", account["attributes"])
     }
     # Application-assigned generation is the default a bare declared key
-    # re-derives, so `pkGeneration` is omitted; `max` is the bare strategy token.
+    # re-derives, so `pkGeneration` is omitted; a key sequence states only its
+    # settings that differ from their defaults.
     assert ledger_attributes["id"]["primaryKey"] is True
     assert "pkGeneration" not in ledger_attributes["id"]
-    assert account_attributes["id"]["pkGeneration"] == "max"
+    assert account_attributes["id"]["pkGeneration"] == {
+        "strategy": "key-sequence",
+        "name": "account_ids",
+    }
     # A column equal to the portable derived default is omitted; an override is written.
     assert "column" not in account_attributes["balance"]
     assert "column" not in account_attributes["ledgerLabel"]

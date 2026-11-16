@@ -1,36 +1,17 @@
-# PK generation composed with a TEMPORAL (audit-only) entity (m-pk-gen +
-# m-temporal-write) — net-new: no existing model puts a pkGeneration on a temporal
-# entity.
-#
-# `AuditSeq` is the simulated-sequence registry (Reladomo SimulatedSequence): one
-# row per named sequence (`name` PK) holding the next value (`next_val`) to hand
-# out. `AuditEntry` is an audit-only (Transaction-Time-Only) entity whose primary
-# key is allocated by that sequence (`pkGeneration: { strategy: sequence, ... }`):
-# an insert first reserves a block from the registry (`next_val += 1`), then opens
-# a milestone `[in_z = txInstant, out_z = infinity)` carrying the reserved id.
-#
-# The two disciplines compose without conflict: the reserved id is a plain domain
-# value on the milestone (the sequence oracle re-derives it from the config), and
-# the in_z/out_z bookkeeping is the ordinary txtime-write milestone open. The
-# interval columns are `timestamp` (instants are UTC); the open upper bound is the
-# database-native infinity (m-core/m-dialect). Row data (the registry seed) lives
-# in fixtures/pk-audit.yaml; the AuditEntry milestone is built by the case's DML.
-entities:
-  - name: AuditSeq
-    namespace: parallax.compatibility
-    table: audit_seq
-    attributes:
-      - { name: name, type: string, primaryKey: true, maxLength: 64 }
-      - { name: nextVal, type: int64 }
-  - name: AuditEntry
-    namespace: parallax.compatibility
-    table: audit_entry
-    temporality: transaction-time
-    attributes:
-      - name: id
-        type: int64
-        primaryKey: true
-        pkGeneration: { strategy: sequence, name: entry_seq }
-      - name: note
-        type: string
-        maxLength: 64
+# A native key sequence on a Transaction-Time-Only entity (m-pk-gen +
+# m-temporal-write): an insert takes its key from a reserved block, then opens a
+# milestone `[in_z = txInstant, out_z = infinity)` carrying it. Temporal
+# successors keep the key the insert allocated.
+entity:
+  name: AuditEntry
+  namespace: parallax.compatibility
+  table: audit_entry
+  temporality: transaction-time
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+      pkGeneration: { strategy: key-sequence, name: entry_seq }
+    - name: note
+      type: string
+      maxLength: 64

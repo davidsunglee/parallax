@@ -5,16 +5,14 @@ execution.
 Each Write Group's own steps execute, and every settled write of the group
 completes before any step of a later group executes, a write with no step
 included; a deferred range binds at its write's turn on what earlier writes
-published, reusing the starting rows it retained that are still current; and a
-group whose steps answer another number of allocated keys than the rows its
-writes open completes nothing. Against simulated stored rows, each execution
+published, reusing the starting rows it retained that are still current.
+Against simulated stored rows, each execution
 changes them, so a later write reads what earlier ones left, while what the
 attempt owns changes only as each write completes.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -26,9 +24,7 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import (
-    MAX,
     Attr,
-    Bitemporal,
     DomainModel,
     Entity,
     InternalError,
@@ -46,17 +42,16 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
-from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION, WRITE_RESULT_INVALID
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    prepare_typed_write,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import AuditDecoration
-from parallax.core._execution._unit_work.write_items import KeyedInsert, StateObservedWrite
+from parallax.core._execution._unit_work.write_items import StateObservedWrite
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal import temporal_read
@@ -82,10 +77,8 @@ from parallax.core.internal.unit_work import (
     WritePlanner,
     WritePlanningRequest,
     admitted_write,
-    object_key,
 )
 from parallax.core.internal.write_plan import (
-    ObjectKey,
     PredecessorRow,
     TemporalObservation,
     object_state_key_from_observation,
@@ -103,7 +96,6 @@ from parallax.core.internal.write_plan.plan import (
 from parallax.core.internal.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.internal.write_plan.steps import Finite, PlannedStep
 from tests._support.bindings import bound_model
-from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
@@ -162,12 +154,9 @@ def _uow(
     )
 
 
-def _simulated(meta: Metamodel, *allocated: tuple[object, ...]) -> SimulatedWriteSteps:
+def _simulated(meta: Metamodel) -> SimulatedWriteSteps:
     return SimulatedWriteSteps(
-        build_write_planner(bound_model(meta)).payloads,
-        bound_model(meta),
-        POSTGRES,
-        allocated_results=allocated,
+        build_write_planner(bound_model(meta)).payloads, bound_model(meta), POSTGRES
     )
 
 
@@ -287,109 +276,6 @@ def test_a_deferred_description_no_planner_finalized_is_refused_before_anything_
     with pytest.raises(TypeError, match="did not finalize"):
         _run(_uow(POSITION_META, simulated, rows=held), plan)
     assert held.requests == []
-
-
-# --------------------------------------------------------------------------- #
-# A settled write opening rows whose keys the database allocates.             #
-# --------------------------------------------------------------------------- #
-class Span(Bitemporal, table="span", namespace="parallax.runner.allocated"):
-    id: Attr[int] = attr(primary_key=MAX)
-    amount: Attr[int]
-
-
-_SPANS: Final = model_of(DomainModel(Span))
-_MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-
-
-def _span_insert() -> KeyedInsert:
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction(
-            "insert",
-            Span.identity.canonical,
-            ({"id": {"computed": "maxPlusOne"}, "amount": 1},),
-            valid_from=_MAR,
-        ),
-        write_preparation_of(_SPANS),
-    )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None, object_key(prepared, _SPANS))
-
-
-def _span_amend(key: int) -> ReadAuthorizedWrite:
-    members = {
-        "id": key,
-        "amount": 1,
-        "validStart": _MAR,
-        "validEnd": INFINITY,
-        "txStart": _FIXED,
-        "txEnd": INFINITY,
-    }
-    observation = TemporalObservation(predecessor=PredecessorRow(members))
-    shape = temporal_read.temporal_facet_of(_SPANS).shape(Span.identity)
-    assert shape is not None
-    state = object_state_key_from_observation(
-        ObjectKey(Span.identity, (("id", key),)), observation, shape
-    )
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction("amend", Span.identity.canonical, ({"id": key, "amount": 2},), _MAR),
-        write_preparation_of(_SPANS),
-    )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, RetainedObservation(state, observation, None), state.object)
-
-
-def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answered() -> None:
-    simulated = _simulated(_SPANS, (42,))
-    uow = _uow(_SPANS, simulated)
-    uow.buffer_insert(_span_insert(), insertion_advice=None)
-    uow.read(lambda: None)
-    uow.buffer(_span_amend(42))
-    uow.flush(trigger="pre_commit")
-    # The row opened under key 42 is the attempt's own, so it is revised in
-    # place rather than closed and succeeded.
-    assert statement_kinds(simulated.statements) == ["insert", "update"]
-
-
-@pytest.mark.parametrize("answered", [(), (41, 42)], ids=["none", "too-many"])
-def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing(
-    answered: tuple[object, ...],
-) -> None:
-    plan = build_write_planner(bound_model(_SPANS)).finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
-            preference="optimistic",
-            composed_writes=[_span_insert()],
-        )
-    )
-    (group,) = _groups(plan)
-    (write,) = group.writes
-    assert isinstance(write, SettledWrite)
-    assert len(write.opened.allocated) == 1
-    changing = WritePlan(
-        (
-            WriteGroup(
-                (dataclasses.replace(write, changed=(ObjectKey(Span.identity, (("id", 1),)),)),),
-                group.steps,
-            ),
-        )
-    )
-    simulated = _simulated(_SPANS, answered)
-    uow = _uow(_SPANS, simulated)
-    with raises_code(
-        InternalError, WRITE_RESULT_INVALID, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"
-    ):
-        _run(uow, changing)
-    assert uow.source_authority.is_unchanged_since(ObjectKey(Span.identity, (("id", 1),)), 0)
-
-
-def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
-    uow = _uow(_SPANS, _simulated(_SPANS, ()))
-    uow.buffer_insert(_span_insert(), insertion_advice=None)
-    with raises_code(InternalError, WRITE_RESULT_INVALID, match="key"):
-        uow.read(lambda: None)
-    with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
-        uow.read(lambda: None)
 
 
 # --------------------------------------------------------------------------- #

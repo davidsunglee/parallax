@@ -53,7 +53,6 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
     PlannedUpdate,
-    SelfIncrement,
 )
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
@@ -319,31 +318,6 @@ def test_a_lone_effect_of_its_shape_lowers_as_it_would_alone() -> None:
     group, statements = grouped(WALLET, steps)
     assert len(group.effect_spans) == 1
     assert statements[1].sql == "update px.wallet set owner = ? where id = ?"
-
-
-def test_a_registry_advance_runs_alone_beside_grouped_updates() -> None:
-    preparer = LayoutPayloadPreparer(bound_model(WALLET))
-    advance = dataclasses.replace(
-        update(WALLET, "Wallet", 2, {"balance": Decimal("2.00")}),
-        assignments=PlannedAssignments(
-            attributes={attribute_identity(WALLET, "Wallet", "balance"): SelfIncrement(5)}
-        ),
-    )
-    assert preparer.effect_shape(advance) is None
-    steps = [
-        update(WALLET, "Wallet", 1, {"balance": Decimal("1.00")}),
-        advance,
-        update(WALLET, "Wallet", 3, {"balance": Decimal("3.00")}),
-        update(WALLET, "Wallet", 4, {"balance": Decimal("4.00")}),
-    ]
-    group, statements = grouped(WALLET, steps, payloads=preparer)
-    assert [statement.sql.startswith("update px.wallet t") for statement in statements] == [
-        False,
-        False,
-        True,
-    ]
-    assert statements[1].sql == "update px.wallet set balance = balance + ? where id = ?"
-    assert group.effect_spans == (EffectSpan(2, 4, group.effect_spans[0].shape),)
 
 
 def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:

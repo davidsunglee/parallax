@@ -122,7 +122,6 @@ def _lost() -> DatabaseError:
 @dataclass
 class _Executed:
     preparer: RecordingPreparer
-    answered: tuple[object, ...] | None = None
     raised: BaseException | None = None
 
 
@@ -138,9 +137,7 @@ def _execute(
     executed = _Executed(RecordingPreparer(port, steps, failing=failing, failure=failure))
     try:
         with open_flush(provider) as flush:
-            executed.answered = step_executor(port, payloads=executed.preparer).execute(
-                steps, allocates=False, flush=flush
-            )
+            step_executor(port, payloads=executed.preparer).execute(steps, flush=flush)
     except BaseException as raised:
         executed.raised = raised
     return executed
@@ -159,7 +156,6 @@ def test_a_run_of_mixed_effects_crosses_the_port_once_as_canonical_statements() 
     # The adapter converted each canonical statement itself, once: execution
     # converting first would have doubled every placeholder's percent sign.
     assert port.calls == [ordered(*steps)]
-    assert executed.answered == ()
 
 
 def test_single_key_non_temporal_effects_share_an_invocation_and_a_batch_runs_alone() -> None:
@@ -196,7 +192,7 @@ def test_single_key_non_temporal_effects_share_an_invocation_and_a_batch_runs_al
         ordered=True,
     )
     with open_flush() as flush:
-        step_executor(port, meta).execute(steps, allocates=False, flush=flush)
+        step_executor(port, meta).execute(steps, flush=flush)
     payloads = build_write_planner(bound_model(meta)).payloads
 
     def call(step: PlannedStep) -> WriteCall:

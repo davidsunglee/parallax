@@ -22,9 +22,7 @@ __all__ = [
     "ANY_COUNT",
     "FAILED_PRECONDITION",
     "INFINITY",
-    "MAX_PLUS_ONE",
     "NEW_LINEAGE",
-    "RETURNED_MAX_PLUS_ONE",
     "SUPERSEDED",
     "TERMINATED",
     "UNGATED",
@@ -38,7 +36,6 @@ __all__ = [
     "FailedPrecondition",
     "Finite",
     "KeyTarget",
-    "MaxPlusOne",
     "MilestoneTarget",
     "MissingTarget",
     "NewLineage",
@@ -56,7 +53,6 @@ __all__ = [
     "PlannedValue",
     "ResolvedMutationSelection",
     "RowOrigin",
-    "SelfIncrement",
     "Shortfall",
     "StaleWrite",
     "TemporalConcurrency",
@@ -73,56 +69,11 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class MaxPlusOne:
-    """The `max` primary-key allocation (m-pk-gen), as a planned cell value.
-
-    The allocation folds into the emitted statement rather than binding a
-    literal, so the planner decides *that* a cell is allocated this way and
-    lowering decides how that reads in one dialect. A ``returned`` allocation
-    is one the statement also answers, because the row it opens is recorded by
-    its complete address and nothing else names the key.
-    """
-
-    returned: bool = False
-
-
-MAX_PLUS_ONE: Final[MaxPlusOne] = MaxPlusOne()
-RETURNED_MAX_PLUS_ONE: Final[MaxPlusOne] = MaxPlusOne(returned=True)
-
-
-@dataclass(frozen=True, slots=True)
-class SelfIncrement:
-    """The `sequence` registry advance (m-pk-gen), as a planned cell value.
-
-    The new value is the stored one plus ``amount``, computed by the database
-    from the row it is advancing, so no reader supplies a prior value and no
-    literal is bound for the result.
-    """
-
-    amount: int
-
-
-type GeneratedValueExpression = MaxPlusOne | SelfIncrement
-"""The closed set of database-computed cell values a planned cell may carry.
-
-A generated value is decided during planning, from the target's declared
-primary-key generation strategy, so no consumer re-classifies an authored
-marker document by its shape. Both variants are `m-pk-gen` allocations: one
-allocates at the position an insert opens, the other advances the registry an
-update maintains. Each is legal only where the statement that renders it can
-express it, and the two carriers enforce that between them: a Write Row's
-cells admit only :class:`MaxPlusOne`, Planned Assignments only
-:class:`SelfIncrement`.
-"""
-
 type PlannedValue = object
-"""One planned cell: a neutral value, an explicit null, or a
-:data:`GeneratedValueExpression`.
+"""One planned cell: a neutral value or an explicit null.
 
 Python carries every neutral value natively, so the alias names the position
-rather than narrowing it; the generated-value case is the only one a consumer
-distinguishes structurally.
+rather than narrowing it.
 """
 
 
@@ -184,8 +135,7 @@ class WriteRow:
 
     ``row`` holds every member the row writes — including the framework-owned
     values the planner derived, which no caller authors — and at least one,
-    since a row naming nothing writes nothing. The only generated value an
-    opening statement can express is the `max` allocation it folds in.
+    since a row naming nothing writes nothing.
 
     ``prepared`` is persisted backing a payload preparer already derived from
     this row, which lowering reuses. It is not part of the row's meaning, so
@@ -221,8 +171,8 @@ class PlannedInsert:
     """One or more new rows of one Entity, planned as a single execution step.
 
     Membership *is* the batching decision, so there is no batch flag and no
-    group identifier: every entry of one step names the same members and the
-    same generated-value shape, and incompatible entries form separate steps.
+    group identifier: every entry of one step names the same members, and
+    incompatible entries form separate steps.
     A Planned Insert carries no Write Target, no gate, and no Affected Rows
     Policy.
     """
@@ -236,7 +186,6 @@ class PlannedInsert:
                 f"{self.entity.canonical}: a Planned Insert carries at least one entry"
             )
         first = self.entries[0].row
-        generated = _generated_values(self.entity, first)
         for entry in self.entries[1:]:
             row = entry.row
             if row.presence != first.presence or row.selection != first.selection:
@@ -244,29 +193,6 @@ class PlannedInsert:
                     f"{self.entity.canonical}: every entry of one Planned Insert names the "
                     "same members, and these differ"
                 )
-            if _generated_values(self.entity, row) != generated:
-                raise ValueError(
-                    f"{self.entity.canonical}: every entry of one Planned Insert carries the "
-                    "same generated-value shape, and these differ"
-                )
-
-
-def _generated_values(
-    entity: EntityIdentity, row: ManagedRow
-) -> tuple[tuple[int, GeneratedValueExpression], ...]:
-    """The generated values ``row`` holds, by position; the registry advance a
-    revising statement computes is refused, since no opened row can hold it."""
-    generated: list[tuple[int, GeneratedValueExpression]] = []
-    for position, value in row.stated_cells():
-        if isinstance(value, SelfIncrement):
-            name = row.selection.members.shape.members[position].name
-            raise ValueError(
-                f"{entity.canonical}.{name}: the registry advance is computed from the stored "
-                "row it revises, so it is a Planned Assignment and never a Write Row cell"
-            )
-        if isinstance(value, MaxPlusOne):
-            generated.append((position, value))
-    return tuple(generated)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,10 +201,8 @@ class PlannedAssignments:
 
     Unlike a Write Row's row this names only the members the step changes, including
     the framework-owned advance a versioned update derives; the members it does
-    not name keep their stored values. It carries no authored assignment
-    expression — nothing a caller composes out of the Predicate algebra — and the
-    only expression it admits at all is the `m-pk-gen` registry advance, which a
-    revising statement computes from the very row it is rewriting.
+    not name keep their stored values. It carries values only, never an
+    assignment expression.
     """
 
     attributes: Mapping[AttributeIdentity, PlannedValue]
@@ -315,12 +239,6 @@ def _validate_planned_assignments(
 ) -> None:
     if not attributes and not value_objects:
         raise ValueError("Planned Assignments name at least one member to write")
-    for identity, value in attributes.items():
-        if isinstance(value, MaxPlusOne):
-            raise ValueError(
-                f"{identity.name}: the `max` allocation folds into the row an insert "
-                "opens, so it is a Write Row cell and never a Planned Assignment"
-            )
 
 
 _EMPTY_MAPPING: Final[Mapping[object, object]] = MappingProxyType({})

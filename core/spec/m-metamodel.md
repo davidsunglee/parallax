@@ -450,11 +450,6 @@ PrimaryKeyGeneration =
                 batch_size: positive integer,
                 initial_value: integer,
                 increment_size: positive integer)
-  | Max
-  | Sequence(name: nonempty string,
-             batch_size: positive integer,
-             initial_value: integer,
-             increment_size: positive integer)
 
 PrimaryKey =
     NotPrimaryKey
@@ -475,14 +470,14 @@ AttributeMetadata
 
 Primary-key
 generation is available only through the `PrimaryKey` branch; a
-non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
-KeySequence, Max, or Sequence value. Frontends normalize an omitted generator on
+non-primary-key attribute cannot carry a meaningless ApplicationAssigned or
+KeySequence value. Frontends normalize an omitted generator on
 a declared primary key to `PrimaryKey(ApplicationAssigned)`.
 
 A KeySequence key is caller-omittable rather than framework-owned: a caller may
 supply it or leave it unset for an insert to allocate (`m-pk-gen`), so it keeps
 `framework_owned` false and admits caller insert input as an application-assigned
-key does. A Max or Sequence key admits none, because the database computes it.
+key does.
 
 `multiplicity` defaults to `One`. A `Many` Attribute is a **scalar
 collection**: an ordered, duplicate-preserving sequence of non-null values whose

@@ -90,32 +90,37 @@ def _revision_phase(instruction: PreparedKeyedInstruction) -> WritePhase:
     return "update" if instruction.mutation in ASSIGNMENT_MUTATIONS else "delete"
 
 
+def _check_unlicensed(instruction: PreparedKeyedInstruction) -> None:
+    """Refuse ``instruction`` as an admitted insert unless it is an insert
+    opening one row."""
+    if instruction.mutation not in INSERT_MUTATIONS:
+        raise ValueError(
+            f"only an insert is admitted unlicensed: `{instruction.mutation}` on "
+            f"{instruction.target.identity.canonical!r} writes existing state, which "
+            "a read's evidence or an insertion's authority must license"
+        )
+    if len(instruction.rows) != 1:
+        raise ValueError(
+            "an admitted insert opens one row: "
+            f"`{instruction.mutation}` on "
+            f"{instruction.target.identity.canonical!r} opens "
+            f"{len(instruction.rows)} rows"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class KeyedInsert:
     """An insert admitted through its own verb: the one row it opens needs no
     licence beyond the insert itself.
 
-    ``object_key`` is the object its row names, or ``None`` where the database
-    computes that key.
+    ``object_key`` is the object its row names.
     """
 
     instruction: PreparedKeyedInstruction
-    object_key: ObjectKey | None
+    object_key: ObjectKey
 
     def __post_init__(self) -> None:
-        if self.instruction.mutation not in INSERT_MUTATIONS:
-            raise ValueError(
-                f"only an insert is admitted unlicensed: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} writes existing state, which "
-                "a read's evidence or an insertion's authority must license"
-            )
-        if len(self.instruction.rows) != 1:
-            raise ValueError(
-                "an admitted insert opens one row: "
-                f"`{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} opens "
-                f"{len(self.instruction.rows)} rows"
-            )
+        _check_unlicensed(self.instruction)
 
     @property
     def phase(self) -> WritePhase:
@@ -138,7 +143,7 @@ class InsertBatch:
     """
 
     instruction: PreparedKeyedInstruction
-    object_keys: tuple[ObjectKey | None, ...]
+    object_keys: tuple[ObjectKey, ...]
 
     @property
     def phase(self) -> WritePhase:
@@ -509,9 +514,15 @@ def admitted_write(
     with its ``source``'s observation. An object key requires ``source`` in
     place of an observation. With no evidence, the instruction carries the
     insertion ``authority`` that licenses it, or is an insert, which needs no
-    licence. Only an insert may name no object.
+    licence. Every write names the object it writes, an insert the one it opens.
     """
     if evidence is None and authority is None:
+        _check_unlicensed(instruction)
+        if object_key is None:
+            raise ValueError(
+                f"`{instruction.mutation}` on {instruction.target.identity.canonical!r} "
+                "names no object to open"
+            )
         return KeyedInsert(instruction, object_key)
     if object_key is None:
         raise ValueError(
@@ -772,7 +783,7 @@ class ComposedBitemporalOpening:
     intents: tuple[WriteIntent, ...]
 
     @property
-    def object_key(self) -> ObjectKey | None:
+    def object_key(self) -> ObjectKey:
         return self.insert.object_key
 
     @property

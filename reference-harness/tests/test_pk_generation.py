@@ -1,204 +1,34 @@
-"""Unit tests for the PK-generation oracle (case_runner._assert_pk_allocation).
+"""Unit tests for the native key-sequence oracle (m-case-format *Reservation
+statements*).
 
-The oracle re-derives the allocated primary keys and the advanced sequence
-counter from the DECLARED pkGeneration config and asserts them against the real
-DB state. These tests pin the pure derivation math and the failure path.
+The oracle derives every reservation's first key, every keyless row's key, and
+each allocator's final position from the declared ``key-sequence`` settings
+alone, and asserts them against the golden binds and the real database. These
+tests pin the derivation and every failure path.
 """
 
 from __future__ import annotations
 
 import copy
-import re
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from reference_harness._case_execution import CaseExecution
-from reference_harness.case import discover_cases, load_model
+from reference_harness.case import discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_native_positions,
-    _assert_pk_allocation,
     _assert_reservation,
     _assert_write_input_columns,
-    _expected_sequence_counter,
-    _expected_sequence_ids,
     _native_allocation,
-    _pk_sequence_counter_column,
-    _pk_sequence_target,
 )
-from reference_harness.database_binding import resolve_binding
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.pk_gen import NativeSequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
-
-
-def _case_id(stem: str) -> str:
-    """The per-module id prefix of a case stem (`m-pk-gen-001-max-empty` → `m-pk-gen-001`)."""
-    return re.match(r"(m-[a-z0-9-]+-\d{3})", stem).group(1)
-
-
-# --- pure derivation -------------------------------------------------------
-
-
-def test_sequence_ids_basic() -> None:
-    # init 1, inc 1, batch 1 -> 1,2,3
-    assert _expected_sequence_ids(1, 1, 1, 3) == [1, 2, 3]
-
-
-def test_sequence_ids_initial_and_increment() -> None:
-    # init 1000, inc 5, batch 1 -> 1000,1005,1010
-    assert _expected_sequence_ids(1000, 5, 1, 3) == [1000, 1005, 1010]
-
-
-def test_sequence_ids_batch_partial_and_full() -> None:
-    # init 1, inc 1, batch 3
-    assert _expected_sequence_ids(1, 1, 3, 2) == [1, 2]  # 2 of a block of 3
-    assert _expected_sequence_ids(1, 1, 3, 4) == [1, 2, 3, 4]  # full block + 1
-
-
-def test_sequence_ids_stride() -> None:
-    # init 100, inc 10, batch 2 -> 100,110 | 120,130
-    assert _expected_sequence_ids(100, 10, 2, 4) == [100, 110, 120, 130]
-
-
-def test_sequence_counter_reserves_full_blocks() -> None:
-    assert _expected_sequence_counter(1, 1, 1, 3) == 4  # 3 single-id blocks
-    assert _expected_sequence_counter(1000, 5, 1, 3) == 1015  # 3 blocks of stride 5
-    assert _expected_sequence_counter(1, 1, 3, 2) == 4  # 1 block of 3 reserved
-    assert _expected_sequence_counter(1, 1, 3, 4) == 7  # 2 blocks of 3 reserved
-    assert _expected_sequence_counter(100, 10, 2, 4) == 140  # 2 blocks of stride 20
-    assert _expected_sequence_counter(1, 1, 3, 0) == 1  # nothing allocated
-
-
-# --- oracle against a fake DB ----------------------------------------------
-
-
-class _FakePkDb:
-    """Returns canned rows for `_read_table`'s `select ... from <table> t0`."""
-
-    dialect = "postgres"
-
-    def __init__(self, rows_by_table: dict[str, list[dict[str, Any]]]) -> None:
-        self._rows = rows_by_table
-
-    def query(self, sql: str, binds: list[Any] | None = None) -> list[dict[str, Any]]:
-        for table, rows in self._rows.items():
-            if f" from {table} " in f"{sql} ":
-                return rows
-        return []
-
-
-def _pass_case() -> SimpleNamespace:
-    model = load_model(COMPATIBILITY_ROOT, "models/pk-sequence.yaml")
-    placement = resolve_binding(model, {"default": {"schema": "px"}}, "postgres")
-    return SimpleNamespace(
-        model=model,
-        placement=lambda dialect: placement,
-        write_sequence=[
-            {"mutation": "amend", "entity": "parallax.compatibility.PkSequence"},
-            {"mutation": "insert", "entity": "parallax.compatibility.Pass"},
-        ],
-        path=Path("m-pk-gen-008-unit.yaml"),
-    )
-
-
-def test_oracle_passes_for_correct_allocation() -> None:
-    case = _pass_case()
-    db = _FakePkDb(
-        {
-            "px.pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
-            "px.pk_sequence": [{"name": "pass_seq", "next_val": 4}],
-        }
-    )
-    _assert_pk_allocation(case, db)  # no raise
-
-
-def test_oracle_rejects_wrong_ids() -> None:
-    case = _pass_case()
-    db = _FakePkDb(
-        {
-            "px.pass": [{"id": 1, "zone": "A"}, {"id": 3, "zone": "B"}],  # gap-skipped wrongly
-            "px.pk_sequence": [{"name": "pass_seq", "next_val": 4}],
-        }
-    )
-    with pytest.raises(CaseFailure):
-        _assert_pk_allocation(case, db)
-
-
-def test_oracle_rejects_wrong_counter() -> None:
-    case = _pass_case()
-    db = _FakePkDb(
-        {
-            "px.pass": [{"id": 1, "zone": "A"}, {"id": 2, "zone": "B"}],
-            "px.pk_sequence": [{"name": "pass_seq", "next_val": 3}],  # should be 4
-        }
-    )
-    with pytest.raises(CaseFailure):
-        _assert_pk_allocation(case, db)
-
-
-# --- _pk_sequence_counter_column guard tests ----------------------------------
-
-
-def _fake_registry(name: str, attributes: list[dict]) -> SimpleNamespace:
-    """Lightweight fake registry: the helper reads only .name and .attributes."""
-    return SimpleNamespace(name=name, attributes=attributes)
-
-
-def test_counter_column_returns_single_int64_non_pk_column() -> None:
-    reg = _fake_registry(
-        "PkSequence",
-        [
-            {"name": "name", "type": "string", "column": "name", "primaryKey": True},
-            {"name": "nextVal", "type": "int64", "column": "next_val"},
-        ],
-    )
-    assert _pk_sequence_counter_column(reg) == "next_val"
-
-
-def test_counter_column_raises_for_two_int64_non_pk_columns() -> None:
-    reg = _fake_registry(
-        "PkSequence",
-        [
-            {"name": "name", "type": "string", "column": "name", "primaryKey": True},
-            {"name": "nextVal", "type": "int64", "column": "next_val"},
-            {"name": "extra", "type": "int64", "column": "extra_val"},
-        ],
-    )
-    with pytest.raises(CaseFailure, match="exactly one"):
-        _pk_sequence_counter_column(reg)
-
-
-def test_counter_column_raises_for_zero_int64_non_pk_columns() -> None:
-    reg = _fake_registry(
-        "PkSequence",
-        [
-            {"name": "name", "type": "string", "column": "name", "primaryKey": True},
-            {"name": "label", "type": "string", "column": "label"},
-        ],
-    )
-    with pytest.raises(CaseFailure, match="exactly one"):
-        _pk_sequence_counter_column(reg)
-
-
-# --- ① write-input gate over the pk-gen corpus (DQ-D markers) ------------------
-
-
-def _pkgen_write_input_cases() -> list:
-    """pk-gen write-sequence cases carrying a neutral write input (① ``rows``)."""
-    return [
-        case
-        for case in discover_cases(COMPATIBILITY_ROOT)
-        if case.is_write_sequence
-        and "postgres" in case.golden_dialects
-        and "m-pk-gen" in case.tags
-        and any(step.get("rows") for step in case.write_sequence)
-    ]
 
 
 def _pkgen_case(stem_prefix: str):
@@ -207,82 +37,20 @@ def _pkgen_case(stem_prefix: str):
     )
 
 
-def test_pkgen_write_input_holds_for_authored_cases() -> None:
-    cases = _pkgen_write_input_cases()
-    # The `max` (computed) and `sequence` (increment) families both carry ①.
-    assert {_case_id(case.path.stem) for case in cases} >= {"m-pk-gen-001", "m-pk-gen-004"}
+def _reserving_cases() -> list:
+    return [
+        case
+        for case in discover_cases(COMPATIBILITY_ROOT)
+        if case.is_write_sequence and case.reservations
+    ]
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_every_reserving_case_binds_the_keys_its_declarations_derive(dialect: str) -> None:
+    cases = _reserving_cases()
+    assert {case.path.stem[:12] for case in cases} >= {"m-pk-gen-004", "m-pk-gen-023"}
     for case in cases:
-        # Must not raise: a `computed` pk column appears in the golden INSERT list
-        # (its DB-derived bind skipped), an `increment` registry advance matches the
-        # golden's `col = col + ?` shape plus its amount bind, and every allocated
-        # insert's literal columns match their golden binds.
-        _assert_write_input_columns(case, "postgres")
-
-
-def test_pkgen_max_computed_literal_corruption_is_rejected() -> None:
-    # `m-pk-gen-001` is a pk-gen `max` insert: `{ id: { computed: maxPlusOne }, name: Ada }`.
-    # The DB-computed `id` bind is skipped, but the LITERAL `name` is still cross-
-    # checked — corrupt it so its ① value no longer matches the golden bind.
-    case = copy.deepcopy(_pkgen_case("m-pk-gen-001"))
-    step = next(s for s in case.write_sequence if s.get("rows"))
-    step["rows"][0]["name"] = "NotAda"
-    with pytest.raises(CaseFailure):
-        _assert_write_input_columns(case, "postgres")
-
-
-def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
-    # `m-pk-gen-004` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
-    # the `{ increment: <n> }` amount so the DERIVED bind no longer matches the golden.
-    case = copy.deepcopy(_pkgen_case("m-pk-gen-004"))
-    step = next(
-        s for s in case.write_sequence if s["entity"] == "parallax.compatibility.PkSequence"
-    )
-    step["rows"][0]["nextVal"] = {"increment": 99}
-    with pytest.raises(CaseFailure):
-        _assert_write_input_columns(case, "postgres")
-
-
-# --- pk-gen x temporal composition (m-pk-gen-014) -----------------------------
-
-
-def test_pkgen_temporal_composition_targets_the_temporal_entity() -> None:
-    """The sequence oracle resolves the Transaction-Time-Only entity as its target.
-
-    `m-pk-gen-014` composes a `sequence`-strategy PK with an audit-only temporal
-    entity: the registry advance (AuditSeq, a Family-A `increment`) and the
-    milestone insert (AuditEntry, a Family-B full-row temporal write) both
-    cross-check against the golden, and `_pk_sequence_target` selects the temporal
-    AuditEntry (not the string-PK registry) as the sequence target.
-    """
-    case = _pkgen_case("m-pk-gen-014")
-    _assert_write_input_columns(case, "postgres")  # must not raise (Family A + Family B)
-    target = _pk_sequence_target(case)
-    assert target is not None
-    entity, gen, pk_attr = target
-    assert entity.name == "AuditEntry"
-    # The target is transaction-time-only temporal: it carries a Transaction-Time as-of axis.
-    assert any(axis["dimension"] == "transaction-time" for axis in entity.temporal_runtime_axes)
-    assert gen["name"] == "entry_seq"
-    assert pk_attr["column"] == "id"
-
-
-def test_pkgen_temporal_composition_allocation_oracle_passes() -> None:
-    """The single milestone allocates id 1 and advances the registry 1 -> 2."""
-    case = _pkgen_case("m-pk-gen-014")
-    db = _FakePkDb(
-        {
-            "px.audit_entry": [
-                {
-                    "id": 1,
-                    "note": "opened",
-                    "in_z": "2024-05-01T00:00:00+00:00",
-                    "out_z": "infinity",
-                }
-            ],
-            "px.audit_seq": [{"name": "entry_seq", "next_val": 2}],
-        }
-    )
-    _assert_pk_allocation(case, db)  # no raise
+        _assert_write_input_columns(case, dialect)
 
 
 # --- native key sequences (m-pk-gen-020) ----------------------------------------
@@ -390,3 +158,87 @@ def test_a_reserved_sequence_must_stand_at_the_declared_next_block(
         with pytest.raises(CaseFailure, match=r"next answers \[120\]"):
             _assert_native_positions(case, db)
     assert len(db.queries) == 1
+
+
+@pytest.mark.parametrize(
+    ("prefix", "first_keys", "step_keys", "next_blocks"),
+    [
+        ("m-pk-gen-009", {0: 1, 1: 4}, {0: [1, 2, 3, 4]}, {"pass_seq": 7}),
+        ("m-pk-gen-012", {0: 100, 2: 120}, {0: [100, 110], 1: [120, 130]}, {"voucher_seq": 140}),
+        ("m-pk-gen-021", {0: 1}, {0: [1]}, {"badge_seq": 2}),
+        (
+            "m-pk-gen-023",
+            {0: 1, 2: 101, 4: 201},
+            {0: [1], 1: [101], 2: [201]},
+            {"fleetIds": 301},
+        ),
+    ],
+    ids=["refill-within-a-step", "a-block-per-step", "supplied-keys-spend-none", "one-stream"],
+)
+def test_the_declarations_derive_each_reservation_and_key(
+    prefix: str, first_keys: dict, step_keys: dict, next_blocks: dict
+) -> None:
+    allocation = _native_allocation(_pkgen_case(prefix), "postgres")
+    assert allocation.first_keys == first_keys
+    assert allocation.step_keys == step_keys
+    assert allocation.next_blocks == next_blocks
+
+
+@pytest.mark.parametrize(("dialect", "integer"), [("postgres", "integer"), ("mariadb", "int")])
+def test_an_int32_allocator_is_provisioned_within_the_int32_range(
+    dialect: str, integer: str
+) -> None:
+    case = _pkgen_case("m-pk-gen-022")
+    no_cycle = "no cycle" if dialect == "postgres" else "nocache nocycle"
+    assert (
+        f"create sequence px.wristband_seq as {integer} increment by 3 "
+        f"minvalue {-(2**31)} maxvalue {2**31 - 1} start with {2**31 - 2} {no_cycle}"
+    ) in ddl_for(case.setup_model, case.setup_placement(dialect))
+    allocation = _native_allocation(case, dialect)
+    assert allocation.step_keys == {0: [2**31 - 2, 2**31 - 1]}
+    assert allocation.next_blocks == {"wristband_seq": 2**31 + 1}
+
+
+def test_a_family_allocator_is_provisioned_where_its_binding_places_it() -> None:
+    case = _pkgen_case("m-pk-gen-023")
+    assert ddl_for(case.setup_model, case.setup_placement("postgres"))[-1].startswith(
+        "create sequence px_keys.fleet_ids as bigint increment by 100 "
+    )
+
+
+def test_a_clipped_block_binding_a_key_past_the_range_is_rejected() -> None:
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-022"))
+    case.when["writeSequence"][0]["rows"].append({"gate": "north"})
+    with pytest.raises(CaseFailure, match="reservation"):
+        _native_allocation(case, "postgres")
+
+
+class _ExhaustedDb:
+    """Refuses every query with *code*, as a sequence past its bound does."""
+
+    def __init__(self, dialect: str, code: str | int) -> None:
+        self.dialect = dialect
+        self.code = code
+
+    def query(self, sql: str, binds: Any = ()) -> list[dict[str, Any]]:
+        raise RuntimeError(sql)
+
+    def native_error_code(self, exc: Exception) -> str | int:
+        return self.code
+
+
+@pytest.mark.parametrize(("dialect", "code"), [("postgres", "2200H"), ("mariadb", 4084)])
+def test_an_exhausted_sequence_must_refuse_its_next_reservation_natively(
+    dialect: str, code: str | int
+) -> None:
+    case = _pkgen_case("m-pk-gen-022")
+    _assert_native_positions(case, _ExhaustedDb(dialect, code))
+    with pytest.raises(CaseFailure, match="exhaustion code"):
+        _assert_native_positions(case, _ExhaustedDb(dialect, "42501"))
+    with pytest.raises(CaseFailure, match="leave it exhausted"):
+        _assert_native_positions(case, _AnsweringDb(dialect, 2**31 + 1))
+
+
+def test_a_sequence_short_of_exhaustion_must_answer_rather_than_fail() -> None:
+    with pytest.raises(CaseFailure, match="the declaration-derived block 130"):
+        _assert_native_positions(_pkgen_case("m-pk-gen-020"), _ExhaustedDb("postgres", "2200H"))

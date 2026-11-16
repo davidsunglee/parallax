@@ -189,7 +189,7 @@ _NULL_VALUE_OBJECT_SCENARIOS: Final[frozenset[str]] = frozenset(
 _OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-unit-work-026", "m-unit-work-027"}
 )
-_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+_OPT_LOCK_AND_INHERITANCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-concurrency-002",
         "m-concurrency-026",
@@ -207,10 +207,6 @@ _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-084",
         "m-inheritance-085",
         "m-inheritance-104",
-        "m-pk-gen-001",
-        "m-pk-gen-002",
-        "m-pk-gen-003",
-        "m-pk-gen-013",
         "m-batch-write-004",
     }
 )
@@ -256,7 +252,7 @@ _FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
-    | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
+    | _OPT_LOCK_AND_INHERITANCE_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
