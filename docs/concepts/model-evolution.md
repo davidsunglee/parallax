@@ -88,14 +88,19 @@ Every Evolution is one of two kinds
 | Stored data and schema | no destructive transformation | needs authoring, data or rollout coordination |
 | Can be applied while the earlier edition runs | yes | no |
 | Schema Delta | generated from it | none: it is not an input to schema generation |
+| Coordinated Migration | none | generated from it: ordered statements and manual steps |
 | Carries | Behavioral Impacts and Overlap-Visible Operations | Behavioral Impacts and one Coordination Requirement per operation that needs it |
 
 A Coordination Requirement names its operation and the reasons it needs coordination:
 **an authoring surface change**, when a previously valid query or write shape has to
 change, and **a database migration**, when no prefix-safe schema change can carry the
 database across without destroying data or staging compatibility. One operation can need
-both. A Coordinated Evolution is a complete, valid description, not a refusal; it
-prescribes no procedure, because how to coordinate is the application's decision.
+both. A Coordinated Evolution is a complete, valid description, not a refusal. It
+prescribes no procedure itself; a
+[Coordinated Migration](../../core/spec/m-schema-delta.md#coordinated-migration) derived
+from it orders the statements Parallax can generate and the manual steps — draining
+earlier roots, relocating, transforming stored data, updating code — only the
+application can perform.
 
 Some boundaries in the specification, in brief: adding a nullable member, an index, a
 relationship or a concrete subtype is unilateral; removing a model-facing declaration,
@@ -160,8 +165,8 @@ A rollout therefore runs in one order: describe, generate, apply, then publish.
  deployment (once per database)      database                each running process
  ──────────────────────────────      ────────                ────────────────────
  Evolution: deployed → release
-   ├ Coordinated → no Schema Delta;
-   │   the application coordinates
+   ├ Coordinated → no Schema Delta; a Coordinated
+   │   Migration the application performs
    └ Unilateral
         │ Schema Delta
         ▼
