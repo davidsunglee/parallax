@@ -302,7 +302,7 @@ def _resolved_source(row: _Row, value: object) -> ResolvedKeyedWriteSource:
 def _resolved_insert(row: _Row, value: object) -> ResolvedKeyedInsert:
     meta = cataloged_for(row.model).meta
     if row.representation == "typed":
-        typed = TypedKeyedInsertSource(cast("EntityBase", value))
+        typed = TypedKeyedInsertSource(cast("EntityBase", value), None)
         return typed.resolve(meta, "insert")
     wire = WireKeyedInsertSource(_ENTITY_NAMES[row.model], cast("dict[str, object]", value))
     wire.capture("insert")

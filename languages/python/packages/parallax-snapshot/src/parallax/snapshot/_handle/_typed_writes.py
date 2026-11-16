@@ -27,7 +27,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.preparation import EntityPreparation, WritePreparation
 from parallax.core.internal.base import UsageError
-from parallax.core.internal.entity import AttributeAssignment
+from parallax.core.internal.entity import AttributeAssignment, EntityGraphConstruction
 from parallax.core.internal.entity import Entity as EntityBase
 from parallax.core.internal.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.internal.entity._declaration import declaration_of
@@ -39,6 +39,7 @@ from parallax.core.internal.object_query._fluent import ObjectQuery, mutation_se
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot._handle._errors import SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED
 from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,
@@ -162,10 +163,8 @@ class TypedKeyedWriteSource:
     runs before the ingress refuses re-entry. A Typed value's shape is fixed by
     its class, and ``edit()`` has already judged every assignment its Change
     Record holds, which is why the authoring refusals the Wire lane raises at its
-    own capture reach a Typed caller before a verb ever receives a value.
-    :meth:`capture` judges the one authoring fact a Typed amendment can still
-    get wrong: explicit ``assignments`` beside a value whose edit chain already
-    authored history, which would give one write two authors.
+    own capture reach a Typed caller before a verb ever receives a value, and
+    :meth:`capture` judges nothing.
     """
 
     __slots__ = ("_assignments", "_value")
@@ -179,13 +178,7 @@ class TypedKeyedWriteSource:
         self._assignments = assignments
 
     def capture(self, mutation: KeyedMutation, /) -> None:
-        if self._assignments and self._value.__parallax_edit_history__():
-            raise UsageError(
-                instructions.WRITE_INSTRUCTION_INVALID,
-                f"`{mutation}` was handed explicit assignments beside a value whose edit chain "
-                "already authored changes, and one write has one author: pass the edited value "
-                "alone, or a value with no edit history and the complete list of assignments",
-            )
+        return None
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
         """The facts this value states about the state the write revises,
@@ -193,7 +186,10 @@ class TypedKeyedWriteSource:
 
         Only a value no source published and no insertion authorizes can lack
         its key, so only such a value, which the provenance rule refuses
-        anyway, has its key asked after.
+        anyway, has its key asked after. Then comes the one authoring fact a
+        Typed amendment can still get wrong: explicit ``assignments`` beside a
+        value whose edit chain already authored history, which would give one
+        write two authors.
         """
         value = self._value
         entity = metadata_of_instance(model, value)
@@ -204,6 +200,13 @@ class TypedKeyedWriteSource:
             and not states_key(model, entity, value)
         ):
             raise instructions.key_absent_refusal(entity.identity, mutation)
+        if self._assignments and value.__parallax_edit_history__():
+            raise UsageError(
+                instructions.WRITE_INSTRUCTION_INVALID,
+                f"`{mutation}` was handed explicit assignments beside a value whose edit chain "
+                "already authored changes, and one write has one author: pass the edited value "
+                "alone, or a value with no edit history and the complete list of assignments",
+            )
         return resolved
 
     def prepare(
@@ -289,10 +292,11 @@ class TypedKeyedInsertSource[E: EntityBase]:
     against.
     """
 
-    __slots__ = ("_instance",)
+    __slots__ = ("_construction", "_instance")
 
-    def __init__(self, instance: E) -> None:
+    def __init__(self, instance: E, construction: EntityGraphConstruction | None) -> None:
         self._instance = instance
+        self._construction = construction
 
     def publish(self, attempt: TxnAttempt, opened: OpenedKeyedWrite) -> E:
         """The value the insert answers.
@@ -306,13 +310,12 @@ class TypedKeyedInsertSource[E: EntityBase]:
         if opened.allocated_key is None:
             bind_insertion(self._instance, opened.authority)
             return self._instance
-        construction = attempt.selected.construction
-        # An instance's class was composed into the model, so the model publishes instances.
-        assert construction is not None
+        # Preparation refused an allocating row the selection cannot publish.
+        assert self._construction is not None
         return cast(
             "E",
             inserted_value(
-                construction,
+                self._construction,
                 attempt.model.layouts.entity(opened.identity),
                 opened.row,
                 opened.authority,
@@ -335,12 +338,28 @@ class TypedKeyedInsertSource[E: EntityBase]:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
-        """The row this instance opens (:func:`declared_values`)."""
+        """The row this instance opens (:func:`declared_values`), refused
+        before any key is allocated where it omits a key its Entity allocates
+        and the selection composed no class to answer the allocated value in."""
         entity = resolved.entity
-        values = declared_values(preparation.entity(entity.identity), entity, self._instance)
-        return instructions.prepare_typed_insert(
+        prepared = preparation.entity(entity.identity)
+        values = declared_values(prepared, entity, self._instance)
+        instruction = instructions.prepare_typed_insert(
             preparation, mutation, entity, values, valid_from=valid_from, until=until
         )
+        allocation = prepared.key_allocation
+        if (
+            self._construction is None
+            and allocation is not None
+            and not instruction.rows[0].stated(allocation.position)
+        ):
+            raise UsageError(
+                SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
+                f"{entity.identity.canonical}: this insert omits the key the Entity allocates, "
+                "and the model it is served under composed no Entity Class to answer the "
+                "allocated value as; supply the key, or insert through tx.wire",
+            )
+        return instruction
 
 
 class TypedPredicateWriteAdapter:

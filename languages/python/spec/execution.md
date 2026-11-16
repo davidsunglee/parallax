@@ -315,8 +315,10 @@ insertion was stated through, typed as its argument; for a supplied key that is
 insert allocated (`m-unit-work` *Keyless drafts*) it is a new instance of the
 class the selection composed for that Entity, holding the allocated key and the
 instance's stated members; the instance passed in is left unchanged and carries
-no authority, and a Wire payload omitting the key answers a node holding the
-allocated one. What a flush
+no authority. A descriptor-backed selection composed no such class, so it
+refuses a Typed insert omitting an allocated key
+(`snapshot-class-backed-model-required`) before allocating or buffering. A Wire
+payload omitting the key answers a node holding the allocated one. What a flush
 leaves on that value and the insertion's authority it carries are
 `m-unit-work`'s (*Insertion authority*); the authority rides its source
 privately. `tx.insert` binds it to the instance it returns,

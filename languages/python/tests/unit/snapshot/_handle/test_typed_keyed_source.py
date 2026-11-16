@@ -238,14 +238,14 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
 def test_an_insert_source_answers_the_entity_the_value_is_of() -> None:
     meta = _accounts()
 
-    resolved = TypedKeyedInsertSource(new_account()).resolve(meta, "insert")
+    resolved = TypedKeyedInsertSource(new_account(), None).resolve(meta, "insert")
 
     assert resolved.entity.identity == mm.Account.identity
 
 
 def test_an_insert_source_authors_the_whole_create_payload() -> None:
     meta = _accounts()
-    source = TypedKeyedInsertSource(new_account())
+    source = TypedKeyedInsertSource(new_account(), None)
 
     prepared = source.prepare(
         preparation_for(meta), "insert", source.resolve(meta, "insert"), valid_from=None, until=None
@@ -282,7 +282,7 @@ def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name
         prepare_model(ACCOUNT, edition="e1", binding=TEST_BINDING)
     ).preparation
     for preparation in (proven, preparation_for(meta)):
-        source = TypedKeyedInsertSource(new_account())
+        source = TypedKeyedInsertSource(new_account(), None)
         prepared = source.prepare(
             preparation, "insert", source.resolve(meta, "insert"), valid_from=None, until=None
         )
@@ -299,7 +299,7 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     # judges them against the target and normalizes what it admits.
     meta = cataloged_for(WHERE_POSITION_META).meta
     position = WherePosition(id=9, acct_num="A", value=Decimal("1.00"))
-    source = TypedKeyedInsertSource(position)
+    source = TypedKeyedInsertSource(position, None)
     resolved = source.resolve(meta, "insert")
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
@@ -324,4 +324,4 @@ def test_construction_and_capture_refuse_nothing_a_verb_would() -> None:
     # refuses re-entry before either runs.
     rekeyed = _RekeyedTwin(id_elsewhere=1, only="x")
     assert TypedKeyedWriteSource(rekeyed).capture("amend") is None
-    assert TypedKeyedInsertSource(rekeyed).capture("insert") is None
+    assert TypedKeyedInsertSource(rekeyed, None).capture("insert") is None

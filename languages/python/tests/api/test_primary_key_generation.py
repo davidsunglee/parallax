@@ -39,6 +39,7 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
 )
 from parallax.core.internal.entity._model import model_of
+from parallax.descriptor import domain_model_from_document, export_document
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.errors import raises_code
@@ -299,6 +300,7 @@ def test_a_stated_null_key_is_refused_and_allocates_nothing(profile_run: Any) ->
 # Only an insert accepts a keyless draft, and nothing else spends a key.       #
 # --------------------------------------------------------------------------- #
 
+_NO_START = cast("dt.datetime", None)
 _KEYLESS_WRITES: dict[str, Callable[[TxnContext, ColumnsTicket], object]] = {
     "amend": lambda tx, draft: tx.amend(draft.edit(label="edited")),
     "replace": lambda tx, draft: tx.replace(draft),
@@ -311,6 +313,19 @@ _KEYLESS_WRITES: dict[str, Callable[[TxnContext, ColumnsTicket], object]] = {
         _name(ColumnsTicket), {"label": "x"}, version=1
     ),
     "wire.delete_if": lambda tx, _draft: tx.wire.delete_if(_name(ColumnsTicket), {}, version=1),
+    # Absence outranks the payload and the window each call also gets wrong.
+    "amend-two-authors": lambda tx, draft: tx.amend(
+        draft.edit(label="edited"), ColumnsTicket.label.set("other")
+    ),
+    "replace_if-none-start": lambda tx, draft: tx.replace_if(
+        draft, version=1, valid_from=_NO_START
+    ),
+    "wire.replace_if-none-start": lambda tx, _draft: tx.wire.replace_if(
+        _name(ColumnsTicket), {"label": "x"}, version=1, valid_from=_NO_START
+    ),
+    "wire.amend_if-observation-key": lambda tx, _draft: tx.wire.amend_if(
+        _name(ColumnsTicket), {"label": "x", "observedVersion": 1}, version=1
+    ),
 }
 
 
@@ -347,6 +362,29 @@ def test_an_opening_its_preparation_refuses_spends_no_key(
     assert events.reservations() == 0
 
     assert db.transact(lambda tx: _key(_insert(tx, ColumnsTicket, representation, label="ok"))) == 1
+
+
+def test_a_classless_model_refuses_a_typed_keyless_insert_before_it_spends_a_key(
+    profile_run: Any,
+) -> None:
+    events = _Events()
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    classless = domain_model_from_document(export_document(_MODEL))
+    db = own_root(
+        connect(profile_run.port, classless, binding=TEST_BINDING, lifecycle_provider=events)
+    ).using_database_login()
+    supplied = ColumnsTicket(id=40, label="given", spec=_SPEC)
+
+    def insert(tx: TxnContext) -> object:
+        # Answering an allocated key needs an instance the model cannot construct.
+        with raises_code(UsageError, "snapshot-class-backed-model-required"):
+            tx.insert(ColumnsTicket(label="keyless", spec=_SPEC))
+        assert events.reservations() == 0
+        assert tx.insert(supplied) is supplied
+        return tx.wire.insert(_name(ColumnsTicket), {"label": "wired"})["id"]
+
+    assert db.transact(insert) == 1
+    assert _stored(profile_run, ColumnsTicket) == [(1, "wired", 1), (40, "given", 1)]
 
 
 # --------------------------------------------------------------------------- #
