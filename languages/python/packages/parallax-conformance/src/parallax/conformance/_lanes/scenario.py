@@ -240,7 +240,7 @@ class LoweredStep:
     """One lowered scenario step: its emission pointer and DML, and how to run it."""
 
     pointer: str
-    statements: tuple[LoweredStatement, ...]
+    statements: tuple[envelope.UnitStatement, ...]
     is_write: bool
     rollback: bool
 
@@ -1114,8 +1114,9 @@ def _execute_write_unit(
     lifecycle: LifecycleRun,
     *,
     rollback: bool,
-) -> tuple[tuple[LoweredStatement, ...], int]:
-    """Execute unprepared writes through production, resolving all sources before buffering."""
+) -> tuple[tuple[envelope.UnitStatement, ...], int]:
+    """Execute unprepared writes through production, resolving all sources before
+    buffering, and report the DML and key reservations the unit ran, in order."""
     model = context.model
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -1135,7 +1136,13 @@ def _execute_write_unit(
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
-        return observed.writes, observed.database_calls
+        ran = tuple(
+            envelope.Reservation(call.statement)
+            if call.purpose == "reservation"
+            else call.statement
+            for call in observed.write_unit_calls
+        )
+        return ran, observed.database_calls
 
 
 def _framework_unit(translated: Sequence[Submission]) -> bool:
@@ -1177,8 +1184,9 @@ def execute_keyed_unit(
     lifecycle: LifecycleRun,
     *,
     rollback: bool,
-) -> tuple[tuple[LoweredStatement, ...], int]:
-    """Execute one keyed choreography unit and report the lifecycle-delivered DML.
+) -> tuple[tuple[envelope.UnitStatement, ...], int]:
+    """Execute one keyed choreography unit and report the lifecycle-delivered DML
+    and key reservations.
 
     Only isolated framework markers use simulated lowering instead of public verbs."""
     for entry in entries:
@@ -1199,7 +1207,9 @@ def execute_keyed_unit(
     ran, unit_calls = _execute_write_unit(
         port, context, translated, tx_instant, lifecycle, rollback=rollback
     )
-    _check_statement_count_consistency(entries, len(ran))
+    _check_statement_count_consistency(
+        entries, sum(not isinstance(statement, envelope.Reservation) for statement in ran)
+    )
     return ran, unit_calls
 
 
@@ -1958,7 +1968,7 @@ def run_write_sequence_case(
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
-    lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
+    lowered: list[tuple[str, tuple[envelope.UnitStatement, ...]]] = []
     database_calls = 0
     try:
         apply_given_apply(case, port)

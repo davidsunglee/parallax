@@ -760,16 +760,21 @@ Every sequence statement is the dialect's, taking a rendered sequence reference
   its start. Postgres spells
   `create sequence <name> as <type> increment by <n> minvalue <min> maxvalue <max>
   start with <start> no cycle`, which leaves the server-side cache at one value.
-- **Reserving** from one is a single row-returning statement with one bind, the
-  rendered name, answering one row — the reservation's first value, then the live
-  increment, minimum, maximum, whether the sequence cycles, and its data type — or
-  no row where the name resolves to no sequence. Postgres spells
-  `select pg_catalog.nextval(s.seqrelid) as first_key, s.seqincrement as increment,
-  s.seqmin as minimum, s.seqmax as maximum, s.seqcycle as cycles,
-  pg_catalog.format_type(s.seqtypid, null) as data_type from pg_catalog.pg_sequence s
-  where s.seqrelid = pg_catalog.to_regclass(?)`. Every catalog name is qualified
+- **Reserving** from one is a single row-returning statement answering one row —
+  the reservation's first value, then the live definition the sequence holds —
+  or no row where the name resolves to no sequence. Postgres binds the rendered
+  name and reads back the increment, minimum, maximum, whether the sequence
+  cycles, and its data type:
+  `select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment,
+  t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles,
+  pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0
+  where t0.seqrelid = pg_catalog.to_regclass(?)`. Every catalog name is qualified
   and the bind is resolved as written, so neither the session's search path nor
-  its role redirects which sequence it reserves from or reads back.
+  its role redirects which sequence it reserves from or reads back. MariaDB's
+  `nextval` takes no bound name, so it renders the name into the statement and
+  reads the sequence's own settings columns, which hold no data type:
+  `select nextval(<name>) first_key, t0.increment, t0.minimum_value minimum,
+  t0.maximum_value maximum, t0.cycle_option cycles from <name> t0`.
 
 ### Identifier byte limit
 

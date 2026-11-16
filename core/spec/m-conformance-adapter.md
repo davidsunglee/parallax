@@ -314,6 +314,9 @@ Example:
 For deep-fetch and write-sequence cases, `emissions` contains one item per
 statement in execution order — per physical statement, not per Planned Step, so
 openings one multi-row insert carries are one item (`m-sql` *Requested ranges*).
+A native key reservation a write makes is an item too, in that order, carrying
+`purpose: reservation` exactly as its golden statement does (`m-case-format`
+*Reservation statements*); no other emission carries a `purpose`.
 
 ## `run`
 

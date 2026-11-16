@@ -85,6 +85,7 @@ from .database_binding import (
 from .ddl_builder import (
     ddl_for,
     declared_contributors,
+    qualified_table,
 )
 from .document_codec import encode_collection, encode_document, encode_leaf
 from .evolution_validate import validate_evolution
@@ -113,8 +114,8 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
+from .pk_gen import KEY_SEQUENCE, NativeSequence, native_sequences, validate_shared_allocators
 from .pk_gen import MODEL_REJECTED_RULES as PK_GEN_MODEL_REJECTED_RULES
-from .pk_gen import validate_shared_allocators
 from .predicate_validate import validate_query_predicate
 from .predicate_write_validate import PREDICATE_WRITE_REJECTED_RULES, validate_predicate_write
 from .providers import Catalog, DatabaseProvider
@@ -234,6 +235,10 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
+    if case.reservations and not case.is_write_sequence:
+        raise CaseFailure(
+            f"{case.path.name}: only a writeSequence's then.statements may hold a reservation"
+        )
 
 
 def _assert_write_sequence_shape(case: Case) -> None:
@@ -645,6 +650,160 @@ def _assert_pk_allocation(case: Case, db: DatabaseProvider) -> None:
         )
 
 
+class _NativeAllocation(NamedTuple):
+    """What a write sequence's native reservations reach, derived from the
+    ``key-sequence`` declarations rather than from any allocator's answer.
+
+    ``first_keys`` holds each reservation's first key by golden statement index,
+    ``step_keys`` the keys each step's keyless rows take, in row order, and
+    ``next_blocks`` the first key each reserved allocator's next reservation
+    answers.
+    """
+
+    first_keys: Mapping[int, int]
+    step_keys: Mapping[int, list[int]]
+    next_blocks: Mapping[str, int]
+
+
+def _key_sequence_key(entity: Entity) -> tuple[str, str] | None:
+    """*entity*'s key attribute and allocator when a ``key-sequence`` declares it."""
+    for attribute in entity.attributes:
+        generation = attribute.get("pkGeneration")
+        if attribute.get("primaryKey") and isinstance(generation, Mapping):
+            if generation.get("strategy") == KEY_SEQUENCE:
+                return attribute["name"], generation["name"]
+    return None
+
+
+def _keyless_rows(case: Case, step: Mapping[str, Any]) -> int:
+    key = _key_sequence_key(case.model.entity(step["entity"]))
+    if key is None or step["mutation"] not in OPENING_MUTATIONS:
+        return 0
+    return sum(1 for row in step.get("rows") or [] if key[0] not in row)
+
+
+def _reservation_steps(case: Case) -> dict[int, int]:
+    """Each reservation's golden statement index to the step whose writes follow
+    it: a step's keys are allocated at its calls, before its flush writes them."""
+    steps = case.write_sequence
+    owners: dict[int, int] = {}
+    step, written = 0, 0
+    for index in range(len(case.golden_entries())):
+        if index in case.reservations:
+            if step >= len(steps):
+                raise CaseFailure(
+                    f"{case.path.name}: then.statements[{index}] reserves keys after the "
+                    "sequence's last write, so no keyless row takes them"
+                )
+            owners[index] = step
+            continue
+        written += 1
+        if step < len(steps) and written == steps[step].get("statements", 1):
+            step, written = step + 1, 0
+    return owners
+
+
+def _native_allocation(case: Case, dialect: str) -> _NativeAllocation:
+    """The native key sequence oracle (m-case-format *Reservation statements*).
+
+    Each reservation of an allocator answers the block after the one its
+    previous reservation answered, starting at ``initialValue`` and stepping by
+    ``batchSize × incrementSize``; a block holds ``batchSize`` keys
+    ``incrementSize`` apart, clipped to the key range. A step's keyless rows take
+    keys only from the blocks its own reservations reserve, in order, and it
+    reserves exactly as many as they need.
+    """
+    owners = _reservation_steps(case)
+    sequences = native_sequences(case.model.entity_defs)
+    reserved: dict[str, int] = {}
+    first_keys: dict[int, int] = {}
+    step_keys: dict[int, list[int]] = {}
+    for position, step in enumerate(case.write_sequence):
+        indices = sorted(index for index, owner in owners.items() if owner == position)
+        keyless = _keyless_rows(case, step)
+        if not indices and not keyless:
+            continue
+        key = _key_sequence_key(case.model.entity(step["entity"]))
+        if key is None:
+            raise CaseFailure(
+                f"{case.path.name}: writeSequence step {position} reserves keys, but "
+                f"{step['entity']}'s key is no key-sequence key"
+            )
+        sequence: NativeSequence = sequences[key[1]]
+        blocks: list[list[int]] = []
+        for index in indices:
+            first = sequence.block_start(reserved.get(sequence.allocator, 0))
+            reserved[sequence.allocator] = reserved.get(sequence.allocator, 0) + 1
+            first_keys[index] = first
+            blocks.append(sequence.block(first, dialect))
+        keys = [allocated for block in blocks for allocated in block]
+        if len(keys) < keyless or (blocks and len(keys) - len(blocks[-1]) >= keyless):
+            raise CaseFailure(
+                f"{case.path.name}: writeSequence step {position} authors {len(indices)} "
+                f"reservation(s) for {keyless} keyless row(s) of {sequence.allocator!r}, whose "
+                f"blocks hold {[len(block) for block in blocks]} key(s); a step reserves a "
+                "block only when the one before it runs out"
+            )
+        step_keys[position] = keys[:keyless]
+    next_blocks = {
+        allocator: sequences[allocator].block_start(count) for allocator, count in reserved.items()
+    }
+    return _NativeAllocation(first_keys, step_keys, next_blocks)
+
+
+def _with_allocated_keys(
+    entity: Entity, rows: list[dict[str, Any]], keys: list[int]
+) -> list[dict[str, Any]]:
+    """*rows* with each keyless row stating, in order, the key the oracle derives
+    for it, so the golden binds are cross-checked against those keys."""
+    if not keys:
+        return rows
+    key = _key_sequence_key(entity)
+    assert key is not None  # only a key-sequence step derives keys
+    pending = iter(keys)
+    return [row if key[0] in row else {key[0]: next(pending), **row} for row in rows]
+
+
+def _assert_reservation(
+    case: Case,
+    execution: CaseExecution,
+    index: int,
+    statement: str,
+    binds: list[Any],
+    first_key: int,
+) -> None:
+    """Run golden reservation *index* and require the one row it answers to
+    start with the block's first key the declarations derive."""
+    rows = execution.query(statement, binds)
+    answered = [next(iter(row.values())) for row in rows]
+    if answered != [first_key]:
+        raise CaseFailure(
+            f"{case.path.name}: the reservation then.statements[{index}] answered first "
+            f"key(s) {answered}, not the declaration-derived {[first_key]}"
+        )
+
+
+def _assert_native_positions(case: Case, db: DatabaseProvider) -> None:
+    """Every allocator the sequence reserved from now answers the block after its
+    last reservation's: its native position is the declarations' too."""
+    next_blocks = _native_allocation(case, db.dialect).next_blocks
+    placement = case.setup_placement(db.dialect)
+    execution = CaseExecution(case, db)
+    for allocator, expected in next_blocks.items():
+        sequence = qualified_table(placement.sequences[allocator], db.dialect)
+        observed = (
+            execution.query("select nextval(cast(? as regclass))", [sequence])
+            if db.dialect == "postgres"
+            else execution.query(f"select nextval({sequence})")
+        )
+        answered = [next(iter(row.values())) for row in observed]
+        if answered != [expected]:
+            raise CaseFailure(
+                f"{case.path.name}: sequence {sequence} next answers {answered}, not the "
+                f"declaration-derived {[expected]} after the case's reservations"
+            )
+
+
 # --- the model facts every lane reads ---------------------------------------
 
 
@@ -1010,12 +1169,14 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
 
 def _assert_write_step_count(case: Case, dialect: str) -> None:
     """The DML statement count MUST equal the sum of the steps' declared counts,
-    and the Database Calls MUST be that plus every resolving read the sequence owes.
+    and the Database Calls MUST be that plus every reservation and resolving read
+    the sequence owes.
 
     Each ``writeSequence`` step declares how many golden DML statements it emits
     (default 1); the total over the sequence is the DML statement count, which
-    MUST equal the number of then.statements for the dialect. ``databaseCalls``
-    counts every call that reached the database, so it is that total plus one
+    MUST equal the number of then.statements for the dialect that are not
+    reservations. ``databaseCalls`` counts every call that reached the database,
+    so it is that total plus every reservation plus one
     resolving read per entry writing against existing state
     (:func:`write_plan.unit_resolving_reads`) — the read a keyed write verb's source
     requires, which is work the framework genuinely does. A Locking
@@ -1025,10 +1186,12 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
     coverage beyond it.
     """
     statements = case.golden_statements(dialect)
+    reservations = len(case.reservations)
+    written = len(statements) - reservations
     step_total = sum(step.get("statements", 1) for step in case.write_sequence)
-    if len(statements) != step_total:
+    if written != step_total:
         raise CaseFailure(
-            f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
+            f"{case.path.name}: then.statements ({dialect}) has {written} DML "
             f"statement(s) but the writeSequence declares {step_total} "
             f"(sum of per-step statement counts). They MUST be equal."
         )
@@ -1040,9 +1203,9 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
     )
     if len(statements) + reads != case.database_calls:
         raise CaseFailure(
-            f"{case.path.name}: then.statements ({dialect}) has {len(statements)} DML "
-            f"statement(s) and the sequence owes {reads} resolving read(s), but databaseCalls "
-            f"is {case.database_calls}."
+            f"{case.path.name}: then.statements ({dialect}) has {written} DML "
+            f"statement(s) and {reservations} reservation(s), and the sequence owes {reads} "
+            f"resolving read(s), but databaseCalls is {case.database_calls}."
         )
 
 
@@ -1318,8 +1481,12 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     boundary cases — carries no writeSequence, so it is exempt by construction.
     """
     statements = case.golden_statements(dialect)
+    written = [index for index in range(len(statements)) if index not in case.reservations]
+    allocated = _native_allocation(case, dialect).step_keys
     stmt_index = 0
-    for step, authored in zip(case.write_sequence, case.when.get("writeSequence", []), strict=True):
+    for position, (step, authored) in enumerate(
+        zip(case.write_sequence, case.when.get("writeSequence", []), strict=True)
+    ):
         count = step.get("statements", 1)
         rows = step.get("rows")
         entity = case.model.entity(step["entity"])
@@ -1328,6 +1495,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
                 f"{case.path.name}: writeSequence step on {step['entity']} carries no "
                 f"neutral write input (① `rows`) — required on every writeSequence step."
             )
+        rows = _with_allocated_keys(entity, rows, allocated.get(position, []))
         mutation = step["mutation"]
         # Whether ① describes a row being OPENED whole or a sparse revision. The
         # mutation decides it for a non-temporal step; a TEMPORAL step's every
@@ -1359,10 +1527,11 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             raise CaseFailure(
                 f"{case.path.name}: writeSequence step on {step['entity']}: {exc}"
             ) from exc
+        indices = written[stmt_index : stmt_index + count]
         step_statements, step_binds = _ungrouped_effects(
             case,
-            statements[stmt_index : stmt_index + count],
-            [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)],
+            [statements[index] for index in indices],
+            [case.statement_binds(index, dialect) for index in indices],
         )
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
@@ -2662,9 +2831,13 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     statements = case.golden_statements(dialect)
 
     guards = set(_milestone_guard_indices(case))
+    first_keys = _native_allocation(case, dialect).first_keys
 
     for index, statement in enumerate(statements):
         binds = case.statement_binds(index, dialect)
+        if index in first_keys:
+            _assert_reservation(case, execution, index, statement, binds, first_keys[index])
+            continue
         affected = execution.execute(statement, binds)
         if index in guards and affected != 1:
             raise CaseFailure(
@@ -2677,10 +2850,13 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
 
 
 def _milestone_guard_indices(case: Case) -> Iterator[int]:
+    written = [
+        index for index in range(len(case.golden_entries())) if index not in case.reservations
+    ]
     index = 0
     for step in case.write_sequence:
         if _is_milestone_guard(case.model.entity(step["entity"]), step):
-            yield index
+            yield written[index]
         index += step.get("statements", 1)
 
 
@@ -3605,6 +3781,7 @@ def _run_statement_golden(case: Case, db: DatabaseProvider, dialect: str) -> Non
         apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
+        _assert_native_positions(case, db)  # layer 5b: PK-generation oracle (key-sequence)
         return
 
     if case.is_conflict:

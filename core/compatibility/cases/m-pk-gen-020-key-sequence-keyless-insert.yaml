@@ -1,0 +1,39 @@
+model: models/pk-key-sequence.yaml
+tags: [m-pk-gen, m-unit-work, write-sequence, slice-snapshot-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the insert binds the keys a native reservation answers, so its emissions depend on a query result"
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Pass
+      statements: 1
+      note: "two keyless rows take 100 and 110 from one reserved block of three; 120 is abandoned"
+      rows:
+        - { holder: Bo }
+        - { holder: Cy }
+then:
+  statements:
+    - purpose: reservation
+      sql:
+        postgres: select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, pg_catalog.format_type(t0.seqtypid, null) data_type from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)
+        mariadb: select nextval(px.pass_ids) first_key, t0.increment, t0.minimum_value minimum, t0.maximum_value maximum, t0.cycle_option cycles from px.pass_ids t0
+      binds:
+        postgres: [px.pass_ids]
+        mariadb: []
+    - sql:
+        postgres: insert into px.pass(id, holder) select * from unnest(cast(? as bigint[]), cast(? as text[]))
+        mariadb: insert into px.pass(id, holder) values (?, ?), (?, ?)
+      binds:
+        postgres:
+          - [100, 110]
+          - [Bo, Cy]
+        mariadb: [100, Bo, 110, Cy]
+  tableState:
+    px:
+      pass:
+        - { id: 100, holder: Bo }
+        - { id: 110, holder: Cy }
+  databaseCalls: 2

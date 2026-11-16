@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Literal, cast
 
 from parallax.core.internal import read_delivery
 from parallax.core.internal.base import InternalError, UnsupportedError, UsageError
@@ -14,8 +14,10 @@ from parallax.core.internal.sql_gen import LoweredStatement
 __all__ = [
     "READ_ERRORS",
     "Emission",
+    "Reservation",
     "ScenarioRun",
     "UnclassifiedEngineError",
+    "UnitStatement",
     "driver_binds",
     "emissions",
     "graph_root",
@@ -39,11 +41,23 @@ READ_ERRORS = (
 
 
 @dataclass(frozen=True, slots=True)
+class Reservation:
+    """A native key sequence's reservation a write unit ran beside its DML."""
+
+    statement: LoweredStatement
+
+
+type UnitStatement = LoweredStatement | Reservation
+"""A statement a write unit reports: its DML, or a reservation its inserts made."""
+
+
+@dataclass(frozen=True, slots=True)
 class Emission:
     """One compiled statement emission (an entry of the adapter ``emissions`` array)."""
 
     case_pointer: str
     statement: LoweredStatement
+    purpose: Literal["reservation"] | None = None
 
     @property
     def sql(self) -> str:
@@ -54,11 +68,14 @@ class Emission:
         return self.statement.binds
 
     def to_json(self) -> dict[str, object]:
-        return {
+        spelled: dict[str, object] = {
             "casePointer": self.case_pointer,
             "sql": self.statement.sql,
             "binds": list(self.statement.wire_binds()),
         }
+        if self.purpose is not None:
+            spelled["purpose"] = self.purpose
+        return spelled
 
 
 def _no_counts() -> list[dict[str, object]]:
@@ -100,10 +117,12 @@ def driver_binds(binds: Sequence[object]) -> list[object]:
 
 
 def emissions(
-    pointer_statements: Sequence[tuple[str, Sequence[LoweredStatement]]],
+    pointer_statements: Sequence[tuple[str, Sequence[UnitStatement]]],
 ) -> list[Emission]:
     return [
-        Emission(pointer, statement)
+        Emission(pointer, statement.statement, "reservation")
+        if isinstance(statement, Reservation)
+        else Emission(pointer, statement)
         for pointer, statements in pointer_statements
         for statement in statements
     ]

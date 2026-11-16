@@ -86,6 +86,7 @@ from parallax.core import (
     Entity,
     Float32,
     Int32,
+    KeySequence,
     Rel,
     Sequence,
     TablePerHierarchy,
@@ -210,6 +211,24 @@ class Voucher(
 
 
 PK_SEQUENCE_MODEL = DomainModel(PkSequence, Badge, Ticket, Pass, Voucher)
+
+
+class KeySequencePass(
+    Entity,
+    name="Pass",
+    table="pass",
+    namespace=_NS,
+):
+    """Mirror of ``models/pk-key-sequence.yaml``: a native key sequence with every
+    setting stated."""
+
+    id: Attr[int] = attr(
+        primary_key=KeySequence("pass_ids", batch_size=3, initial_value=100, increment_size=10)
+    )
+    holder: Attr[str] = attr(max_length=64)
+
+
+PK_KEY_SEQUENCE_MODEL = DomainModel(KeySequencePass)
 
 
 class WritableScalar(
@@ -652,6 +671,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("rate-sheet-document", RATE_SHEET_DOCUMENT_MODEL),
     ("wallet", WALLET_MODEL),
     ("pk-sequence", PK_SEQUENCE_MODEL),
+    ("pk-key-sequence", PK_KEY_SEQUENCE_MODEL),
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("scalars", SCALARS_MODEL),
     ("read-only-inheritance", READ_ONLY_INHERITANCE_MODEL),

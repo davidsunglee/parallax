@@ -15,17 +15,23 @@ from typing import Any
 
 import pytest
 
+from reference_harness._case_execution import CaseExecution
 from reference_harness.case import discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
+    _assert_native_positions,
     _assert_pk_allocation,
+    _assert_reservation,
     _assert_write_input_columns,
     _expected_sequence_counter,
     _expected_sequence_ids,
+    _native_allocation,
     _pk_sequence_counter_column,
     _pk_sequence_target,
 )
 from reference_harness.database_binding import resolve_binding
+from reference_harness.ddl_builder import ddl_for
+from reference_harness.pk_gen import NativeSequence
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -277,3 +283,101 @@ def test_pkgen_temporal_composition_allocation_oracle_passes() -> None:
         }
     )
     _assert_pk_allocation(case, db)  # no raise
+
+
+# --- native key sequences (m-pk-gen-020) ----------------------------------------
+
+
+def test_a_native_block_steps_by_the_stride_and_stops_at_the_key_range() -> None:
+    sequence = NativeSequence("ids", "int32", batch_size=4, initial_value=1, increment_size=10)
+    assert sequence.step == 40
+    assert sequence.block_start(2) == 81
+    assert sequence.block(81, "postgres") == [81, 91, 101, 111]
+    assert sequence.block(2**31 - 25, "mariadb") == [2**31 - 25, 2**31 - 15, 2**31 - 5]
+    wide = NativeSequence("ids", "int64", batch_size=1, initial_value=1, increment_size=1)
+    assert wide.key_range("postgres") == (-(2**63), 2**63 - 1)
+    assert wide.key_range("mariadb") == (-(2**63) + 1, 2**63 - 2)
+
+
+def test_the_harness_provisions_each_native_sequence_where_its_binding_places_it() -> None:
+    case = _pkgen_case("m-pk-gen-020")
+    assert ddl_for(case.setup_model, case.setup_placement("postgres"))[-1] == (
+        "create sequence px.pass_ids as bigint increment by 30 "
+        f"minvalue {-(2**63)} maxvalue {2**63 - 1} start with 100 no cycle"
+    )
+    assert ddl_for(case.setup_model, case.setup_placement("mariadb"))[-1] == (
+        "create sequence px.pass_ids as bigint increment by 30 "
+        f"minvalue {-(2**63) + 1} maxvalue {2**63 - 2} start with 100 nocache nocycle"
+    )
+
+
+def test_keyless_rows_take_the_keys_their_steps_reservations_reserve() -> None:
+    case = _pkgen_case("m-pk-gen-020")
+    allocation = _native_allocation(case, "postgres")
+    assert allocation.first_keys == {0: 100}
+    assert allocation.step_keys == {0: [100, 110]}
+    assert allocation.next_blocks == {"pass_ids": 130}
+    _assert_write_input_columns(case, "postgres")
+
+
+def test_a_keyless_insert_binding_another_key_is_rejected() -> None:
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-020"))
+    case.then["statements"][1]["binds"]["postgres"][0] = [100, 120]
+    with pytest.raises(CaseFailure, match="110 != golden bind 120"):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize(
+    ("statements", "message"),
+    [
+        (lambda entries: entries[1:], r"authors 0 reservation\(s\) for 2 keyless row\(s\)"),
+        (lambda entries: [entries[0], *entries], r"authors 2 reservation\(s\) for 2 keyless"),
+        (lambda entries: [entries[1], entries[0]], "after the sequence's last write"),
+    ],
+)
+def test_reservations_a_steps_keyless_rows_do_not_need_are_rejected(
+    statements: Any, message: str
+) -> None:
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-020"))
+    case.then["statements"] = statements(case.then["statements"])
+    with pytest.raises(CaseFailure, match=message):
+        _native_allocation(case, "postgres")
+
+
+class _AnsweringDb:
+    """Answers every query with one row holding *value*, recording what it ran."""
+
+    def __init__(self, dialect: str, value: int) -> None:
+        self.dialect = dialect
+        self.value = value
+        self.queries: list[tuple[str, tuple[Any, ...]]] = []
+
+    def query(self, sql: str, binds: Any = ()) -> list[dict[str, Any]]:
+        self.queries.append((sql, tuple(binds)))
+        return [{"first_key": self.value}]
+
+
+@pytest.mark.parametrize(("answer", "passes"), [(100, True), (130, False)])
+def test_a_reservation_must_answer_the_declared_blocks_first_key(answer: int, passes: bool) -> None:
+    case = _pkgen_case("m-pk-gen-020")
+    execution = CaseExecution(case, _AnsweringDb("postgres", answer))
+    if passes:
+        _assert_reservation(case, execution, 0, "select 1", [], 100)
+    else:
+        with pytest.raises(CaseFailure, match=r"answered first key\(s\) \[130\]"):
+            _assert_reservation(case, execution, 0, "select 1", [], 100)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+@pytest.mark.parametrize(("answer", "passes"), [(130, True), (120, False)])
+def test_a_reserved_sequence_must_stand_at_the_declared_next_block(
+    dialect: str, answer: int, passes: bool
+) -> None:
+    case = _pkgen_case("m-pk-gen-020")
+    db = _AnsweringDb(dialect, answer)
+    if passes:
+        _assert_native_positions(case, db)
+    else:
+        with pytest.raises(CaseFailure, match=r"next answers \[120\]"):
+            _assert_native_positions(case, db)
+    assert len(db.queries) == 1

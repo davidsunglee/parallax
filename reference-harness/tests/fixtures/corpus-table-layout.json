@@ -12451,6 +12451,36 @@
       "table": "audit_seq"
     }
   },
+  "models/pk-key-sequence.yaml": {
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
   "models/pk-max.yaml": {
     "parallax.compatibility.Attendee": {
       "columns": [

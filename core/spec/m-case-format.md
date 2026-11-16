@@ -227,6 +227,10 @@ then:
       binds: [5]
 ```
 
+A golden statement that serves something other than its step's own read or
+write names it in `purpose`: a native key reservation is `purpose: reservation`
+(*Reservation statements*).
+
 **`binds` follows the same scalar-or-dialect-keyed form as `sql`.** The flat array
 above is the authored form wherever the bind holes are shared across dialects.
 Where the hole structure *diverges* — the structured-document extraction, where
@@ -430,7 +434,7 @@ in decimal space under any authored `tolerance`.
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level, at a level whose target position has no concrete subtype, and at a back-reference level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
+| `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level, at a level whose target position has no concrete subtype, and at a back-reference level); for a write sequence it MUST equal the ordered DML statement count PLUS its reservation statements PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare only where an inexact numeric representation requires it |
 
 #### How a case spells an Entity
@@ -1102,8 +1106,9 @@ it independently re-derives the allocated primary keys and the registry counter
 from the declared `pkGeneration` config (`initialValue`/`incrementSize`/
 `batchSize`) and asserts both against the post-write DB state — proving the
 golden's hand-authored ids actually follow the declared strategy (block
-reservation, gap-on-unused, stride). `max` is pinned by its self-describing
-`coalesce(max(...),0)+1` golden and needs no oracle.
+reservation, gap-on-unused, stride). A `key-sequence` entity's keys follow its
+reservation statements instead (*Reservation statements*, below). `max` is pinned
+by its self-describing `coalesce(max(...),0)+1` golden and needs no oracle.
 
 ### Write-sequence cases
 
@@ -1112,10 +1117,11 @@ introspection. The harness provisions a table, **applies the ordered DML golden
 SQL in order** (each `then.statements` entry with its own `binds`), then asserts
 the resulting rows equal `then.tableState`. This covers milestone-chaining
 temporal writes (`insert` / `amend` / `terminate` and the bitemporal `*Until`
-trio), batched non-temporal writes, and ordinary `delete`. The DML statement count MUST
-equal the sum of the `when.writeSequence` steps' declared statement counts, and
-`then.databaseCalls` MUST equal that total plus the resolving reads the sequence owes
-(*Resolving reads a write owes*, below). A grouped effect is one statement and
+trio), batched non-temporal writes, and ordinary `delete`. The DML statement count —
+every `then.statements` entry but a reservation (*Reservation statements*, below) —
+MUST equal the sum of the `when.writeSequence` steps' declared statement counts, and
+`then.databaseCalls` MUST equal that total plus the reservations plus the resolving
+reads the sequence owes (*Resolving reads a write owes*, below). A grouped effect is one statement and
 one Database Call however many keyed effects it applies, so where PostgreSQL
 groups effects that MariaDB runs one statement each, the dialects' counts
 differ and the case is authored once per dialect. A step on a **temporal** entity carries **exactly one**
@@ -1162,6 +1168,33 @@ fixtures **before** the ordered DML (instead of starting empty) — so a sequenc
 can mutate a *pre-existing* persisted row. The original rows exist, the ordered
 DML mutates them, and the asserted table state shows which rows changed or
 were removed.
+
+#### Reservation statements
+
+An insert row omitting a `key-sequence` key (`m-pk-gen` *Native key sequences*)
+is **keyless**: the key is allocated at the insert's call, from a block a native
+reservation holds. A reservation is one of the case's Database Calls, so its
+statement is golden, tagged **`purpose: reservation`**, and listed in
+`then.statements` in execution order, before the write that binds its keys. Its
+own acquisition runs it and it commits on its own (`m-execution-lifecycle`), so it
+counts toward `then.databaseCalls` and never toward a step's declared
+`statements`. Only a writeSequence's `then.statements` carries one.
+
+A step's keyless rows take keys, in row order, only from the blocks its own
+reservations reserve, in order, and a step reserves a block only once the one
+before it runs out. Each reservation of an allocator answers the block after the
+one its previous reservation in the case answered: the first starts at
+`initialValue`, each next one `batchSize × incrementSize` higher, and a block holds
+`batchSize` keys `incrementSize` apart, clipped to the key range. The keys a
+keyless row binds and stores are authored as literals.
+
+The harness grades a reservation independently of any implementation's
+allocator. It provisions each `key-sequence` allocator's native sequence beside
+the tables, where the binding places it, from the declaration alone. It derives
+every key and reservation from the declarations as above, checks each golden
+insert's binds against those keys, runs each golden reservation and requires it to
+answer its block's first key, and after the last statement requires the sequence's
+next reservation to answer the block after the case's last.
 
 #### Resolving reads a write owes
 
@@ -3044,7 +3077,8 @@ executing SQL, so only `run` grades it. Two criteria make a case run-only:
 - **`query-result-dependent`** — the emissions depend on a **query result**:
   deep-fetch fan-out binds, `sequence`-strategy PK
   allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
-  insert folds the computation into its own SQL and stays eligible),
+  insert folds the computation into its own SQL and stays eligible), keys a native
+  reservation answers (*Reservation statements*, below),
   framework-owned observed-version / `in_z` binds, a close whose address is read
   off the milestone a find of its own unit of work observed (*Settling against a
   grouped find*, above), or a streamed read's **keyset seek** — a page after the

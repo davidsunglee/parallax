@@ -49,7 +49,6 @@ from parallax.core.internal.metamodel import (
     Multiplicity,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot import Snapshot, WireEntity
 
@@ -150,9 +149,7 @@ def compile_scenario(
                         entry_instant(entries[0]),
                         rollback=step.get("rollback") is True,
                     )
-                    emissions.extend(
-                        Emission(f"/scenario/{index}/write", statement) for statement in statements
-                    )
+                    emissions.extend(envelope.emissions([(f"/scenario/{index}/write", statements)]))
                 case "find":
                     emissions.extend(
                         Emission(f"/scenario/{index}/objectQuery", statement)
@@ -285,9 +282,7 @@ def run_scenario(
                     statements, unit_calls = _run_snapshot_write_step(
                         case, context, port, step, lifecycle
                     )
-                    emissions.extend(
-                        Emission(f"/scenario/{index}/write", statement) for statement in statements
-                    )
+                    emissions.extend(envelope.emissions([(f"/scenario/{index}/write", statements)]))
                     database_calls += unit_calls
                     results.append(_NO_SCENARIO_RESULT)
                 case "find":
@@ -341,7 +336,7 @@ def _run_snapshot_write_step(
     port: CaseDatabase,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
-) -> tuple[tuple[LoweredStatement, ...], int]:
+) -> tuple[tuple[envelope.UnitStatement, ...], int]:
     """Execute one `write:` step of a snapshot-read scenario and report the DML
     it emitted beside the Database Calls it cost.
 

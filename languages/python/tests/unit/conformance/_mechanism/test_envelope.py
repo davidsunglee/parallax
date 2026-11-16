@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 
-from parallax.conformance._mechanism.envelope import Emission
+from parallax.conformance._mechanism.envelope import Emission, Reservation, emissions
 from parallax.core.internal.base import STRING, InternalError, NeutralType, Numeric
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.sql_gen._context import (
@@ -35,6 +35,23 @@ def test_a_delivered_statement_is_reported_through_its_wire_projection() -> None
         "sql": _UPDATE,
         "binds": ["250.00"],
     }
+
+
+def test_a_units_reservation_is_reported_in_order_beside_its_dml_with_its_purpose() -> None:
+    reserved = LoweredStatement("select nextval(?)", ("px.pass_ids",), ())
+    written = _balance(decimal.Decimal("250.00"))
+    assert [
+        emission.to_json()
+        for emission in emissions([("/writeSequence/0", (Reservation(reserved), written))])
+    ] == [
+        {
+            "casePointer": "/writeSequence/0",
+            "sql": "select nextval(?)",
+            "binds": ["px.pass_ids"],
+            "purpose": "reservation",
+        },
+        {"casePointer": "/writeSequence/0", "sql": _UPDATE, "binds": ["250.00"]},
+    ]
 
 
 def test_the_projection_follows_the_statements_own_type_metadata() -> None:
