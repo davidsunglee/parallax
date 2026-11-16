@@ -1,11 +1,13 @@
 # The write flow
 
 A write in Parallax is a request to change one object, or the rows a predicate
-selects, inside a read-write transaction. A keyed write sends no statement when you
+selects, inside a read-write transaction. A keyed write sends none of its rows when you
 call the verb: it is judged, licensed and buffered, and later, at a flush, every
 buffered write is combined, ordered and turned into a fixed sequence of statements. Two
 writes reach the database at the call instead: a predicate-selected write runs there,
-and a target write under Locking may first read and lock the row it states. This page
+and a target write under Locking may first read and lock the row it states. An insert
+that leaves a generated key unset may also reserve keys at the call, in a statement of
+its own, while its row waits for the flush like any other. This page
 follows a write through those stages, names what licenses each kind of write, and
 explains why a keyed write that cannot show what it overwrites is refused.
 
@@ -98,7 +100,7 @@ the insertion's licence attached
 records the insert, not the stored row: what the flush finalizes, such as a version or
 a Transaction-Time start, is absent from it, and no flush ever writes into it. Edits
 of it are new values carrying the same licence, and nothing manufactures a read for
-any of them. So a parent's answered key can key its children before anything is sent,
+any of them. So a parent's answered key can key its children before any row is sent,
 and reading the object returns what the database stored.
 
 ### Admitted Write

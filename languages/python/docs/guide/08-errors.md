@@ -618,8 +618,10 @@ reaches you as itself:
   A reservation that can't finish within the adapter's `acquire_timeout` fails as a
   `ConnectionAcquisitionError` with `reason="timeout"`, or, when the statement itself
   waited too long, such as on a sequence another session is altering, as a
-  `DatabaseError` whose `native_code` is `"57014"` and whose `category` is `None`. None
-  of them is retried, none hands out a key, and the insert buffers nothing, so a callback
+  `DatabaseError` whose `native_code` is `"57014"` and whose `category` is `None`. A
+  server that disappears mid-reservation is not bound by that budget: the operating
+  system ends the connection only roughly `acquire_timeout` after, and the insert fails
+  with the `DatabaseError` the lost connection raises. None of them is retried, none hands out a key, and the insert buffers nothing, so a callback
   that catches the error can carry on with the rest of its transaction.
 
 ## Trying again later

@@ -141,7 +141,7 @@ def open_a_ticket_with_a_note(
 Three values take part here. The draft, `Ticket(customer_id=..., subject=...)`, has no
 key and licenses nothing. `ticket`, what the insert returned, has the key and the
 insertion's licence, but only the members you stated. `stored`, what the `find` returned,
-holds what the database stored. The note is built from `ticket.id` before anything has
+holds what the database stored. The note is built from `ticket.id` before either row has
 been sent, so a parent's key can key its children in the same transaction; Parallax
 inserts no child for you and changes no draft. The `amend` writes through `ticket`
 without reading it first, and folds into the pending insert, so one ticket row is sent,
