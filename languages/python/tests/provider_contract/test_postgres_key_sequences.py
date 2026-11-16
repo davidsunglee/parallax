@@ -146,6 +146,20 @@ def test_a_reservation_finding_no_sequence_is_refused_and_keeps_nothing(
     assert _stored(profile_run) == []
 
 
+def test_a_sequence_the_server_reports_exhausted_is_refused_and_stores_nothing(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    with closing(profile_run.control()) as control:
+        control.execute_write(f"alter sequence {_SEQUENCE} maxvalue 1", [])
+        control.execute(f"select nextval('{_SEQUENCE}')", [])
+    db = own_root(connect(profile_run.port, _MODEL, binding=TEST_BINDING)).using_database_login()
+
+    with raises_code(UsageError, "key-sequence-exhausted"):
+        db.transact(_keyless("exhausted"))
+    assert _stored(profile_run) == []
+
+
 @pytest.mark.parametrize(
     ("alteration", "detail"),
     [

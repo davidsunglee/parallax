@@ -268,6 +268,17 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
             "`strategy: key-sequence` or `sequence`",
         ),
         (
+            _attributed(
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "primaryKey": True,
+                    "pkGeneration": {"strategy": "key-sequence", "name": "ids", "batchSize": 0},
+                }
+            ),
+            "entity Bad.attributes.id: a KeySequence batch size is a positive integer, got 0",
+        ),
+        (
             _entity_with(indices=[{"name": "i", "attributes": "id"}]),
             "entity Bad.indices.i: expected a list, got str",
         ),
@@ -322,6 +333,7 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
         "pk-generation-without-a-primary-key",
         "pk-generation-outside-its-vocabulary",
         "pk-generation-object-without-sequence",
+        "key-sequence-nonpositive-batch-size",
         "index-attributes-not-a-list",
         "value-object-multiplicity-not-a-string",
         "retired-value-object-mapping",
