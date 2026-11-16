@@ -5,10 +5,8 @@ stated through, while the row stays buffered until a flush (`m-unit-work`
 *Insertion authority*). Python's Typed verb is `insert[E](instance: E) -> E`; for
 a supplied key the answer is `instance` itself, carrying the insertion's
 authority exactly as before. A Wire insert already answered the frozen node it
-opened, and is unchanged. No flush writes into an answered value: a version or
-temporal endpoint the flush stores stays absent on it, and a caller that needs
-the stored state reads it through an ordinary participating read, which flushes
-first.
+opened, and is unchanged. An answered value is final at the call: no flush
+writes back into it.
 
 Before this, Typed `insert` answered `None`, and only Wire handed its caller a
 carrier. The two interfaces therefore differed in shape at exactly the verb that
