@@ -36,12 +36,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1 }
-      databaseCalls: 1
-      note: the second delete says what the first already said, so ONE gated DELETE is emitted
-      statements:
-        - sql:
-            postgres: delete from px.account where id = ? and version = ?
-          binds: [1, 1]
+      databaseCalls: 0
+      note: the second delete says what the first already said, so the find below flushes ONE gated DELETE
     - uow: duplicate-delete
       objectQuery:
         target: parallax.compatibility.Account
@@ -49,8 +45,12 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      databaseCalls: 1
+      databaseCalls: 2
       note: the dependent find MUST observe no rows; the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: delete from px.account where id = ? and version = ?
+          binds: [1, 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?

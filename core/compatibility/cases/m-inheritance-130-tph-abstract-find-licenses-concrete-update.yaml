@@ -32,12 +32,8 @@ when:
           entity: parallax.compatibility.Car
           rows:
             - { id: 1, name: Coupe }
-      databaseCalls: 1
-      note: no authored observedVersion - the gate binds the version step 0 observed
-      statements:
-        - sql:
-            postgres: update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
-          binds: [Coupe, 6, 1, car, 5]
+      databaseCalls: 0
+      note: no authored observedVersion - the gate binds the version step 0 observed; the find below flushes the update
     - uow: observe-and-update
       objectQuery:
         target: parallax.compatibility.Car
@@ -45,8 +41,12 @@ when:
           eq:
             path: parallax.compatibility.Car.id
             value: 1
-      databaseCalls: 1
-      note: read the renamed row back as the concrete the write named; the group COMMITS after this
+      databaseCalls: 2
+      note: flush the update, then read the renamed row back as the concrete the write named; the group COMMITS after this
+      flush:
+        - sql:
+            postgres: update px.vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+          binds: [Coupe, 6, 1, car, 5]
       statements:
         - sql:
             postgres: select t0.id, t0.name, t0.version, t0.doors from px.vehicle t0 where t0.id = ? and t0.kind = ?

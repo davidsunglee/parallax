@@ -78,8 +78,8 @@ class GroupSession:
 
     The session is ``None`` until the group's FIRST step lazily opens it and again
     once the group has closed. ``executed`` accumulates each ``(step, statement,
-    binds, affected)`` the group's writes produced, which is what a flush failure
-    is graded on.
+    binds, affected)`` the group's Flushes produced, keyed by the step that
+    presented them, which is what a flush failure is graded on.
     """
 
     fate: UnitFate
@@ -128,8 +128,11 @@ def _assert_flush_failure(
 ) -> None:
     """Assert the failing flush's golden carries the shortfall it reports.
 
-    Exactly one statement of the write steps that flush ran, addressing the
-    object the failure names, affected no row; it is gated where the Shortfall is
+    The failing Flush's statements are the ones its presenting step executed
+    (`m-case-format` *Which step a statement belongs to*): a find's ``flush``, a
+    predicate write's statements, or the group's last step's for the commit.
+    Exactly one of them, addressing the object the failure names, affected no
+    row; it is gated where the Shortfall is
     a gate's — an optimistic conflict or a failed precondition, both of which only
     the Optimistic strategy gates — and ungated otherwise. A rollback that merely
     discarded writes that all succeeded therefore fails the case rather than
@@ -148,8 +151,7 @@ def _assert_flush_failure(
         reached = [
             statement
             for step, statement, binds, _affected in executed
-            if step in failure.flushed_steps
-            and _addresses(statement, binds, dialect, entity, table, key)
+            if step == failure.site and _addresses(statement, binds, dialect, entity, table, key)
         ]
         if reached:
             raise CaseFailure(
@@ -161,7 +163,7 @@ def _assert_flush_failure(
     short = [
         statement
         for step, statement, binds, affected in executed
-        if step in failure.flushed_steps
+        if step == failure.site
         and affected == 0
         and _addresses(statement, binds, dialect, entity, table, key)
     ]

@@ -30,12 +30,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 3 }
-      databaseCalls: 1
-      note: "apply a gated delete of the OBSERVED account 3; the group's fate is rolledBack"
-      statements:
-        - sql:
-            postgres: delete from px.account where id = ? and version = ?
-          binds: [3, 1]
+      databaseCalls: 0
+      note: "buffer a gated delete of the OBSERVED account 3, which the find below flushes; the group's fate is rolledBack"
     - uow: doomed-delete
       objectQuery:
         target: parallax.compatibility.Account
@@ -43,8 +39,12 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 3
-      databaseCalls: 1
-      note: the SAME find re-issued INSIDE the still-open doomed transaction (mirrors the story's forced-flush find) — it MUST observe the deletion; the group ROLLS BACK after this, its last step
+      databaseCalls: 2
+      note: the SAME find re-issued INSIDE the still-open doomed transaction (mirrors the story's forced-flush find) — it flushes the delete and MUST observe the deletion; the group ROLLS BACK after this, its last step
+      flush:
+        - sql:
+            postgres: delete from px.account where id = ? and version = ?
+          binds: [3, 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?

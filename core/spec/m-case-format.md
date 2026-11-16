@@ -400,7 +400,7 @@ in decimal space under any authored `tolerance`.
 | `given.databaseOptions` | `given` | no | the transaction option defaults the Database Root every unit of work of the case runs through is CONFIGURED with at connect — the same three fields as `when.uow` (`retry`, `concurrency`, `isolation`) under the same definitions; a field the case omits is the root's built-in default (the built-in Retry Policy / `optimistic` / `read-committed`), and no field may be `null`. Configuration, not a request: an outer invocation resolves each option as its explicit `when.uow` value, else this root value, and a joining call compares against the ACTIVE transaction's resolved values, never against this record (see *Root configuration*, below) |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `amend` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, plus `insertUntil` / `amendUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectRows` / `expectError` / `sameObjectAs`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`, and a `uow`-grouped find the Flush its call ran as its `flush` (see *Which step a statement belongs to*, below); a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and each submission of a `uow`-grouped write step MAY carry `on`, naming the read step it settles against or the insert whose value it writes through (see *Settling against a grouped find*, below) |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit. A statement step MAY declare `blocks`, and a `write` step MAY state `affectedRows` (see *Error cases*, below) |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `amend`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `accessMode` its entrypoint selects and any of the three transaction options — `retry`, `concurrency`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
@@ -1248,10 +1248,12 @@ state:
 
 A **grouped** scenario write step owes no resolving read of its own: its group's
 find steps are what publish the values it settles against, and those finds already
-declare their own `databaseCalls`. What it owes is what its target submissions
-cost and the coverage reads its flush makes. Under the Locking strategy each object
-its target submissions write owes one acquisition at its call, as a target entry's
-does above; under Optimistic none. An empty amendment owes nothing, being dropped
+declare their own `databaseCalls`. What it owes at its own call is what its target
+submissions cost: under the Locking strategy each object its target submissions
+write owes one acquisition at its call, as a target entry's does above; under
+Optimistic none. The coverage reads its writes' Flush makes are owed by the step
+that presents that Flush (*Which step a statement belongs to*), which is the
+write step itself only when it is its group's last. An empty amendment owes nothing, being dropped
 with no database work (`m-unit-work` *Target writes*). A temporal object whose
 write defers owes its uncovered parts to the flush's coverage reads, counted as
 below:
@@ -1287,7 +1289,8 @@ read per Entity becomes one per Entity and pin.
 
 A unit whose observed write reaches current coverage its sources did not observe
 also owes the **coverage reads** its flush makes (`m-sql` *Requested ranges*),
-counted in the Database Calls of the step or entry that flushes it. Where a
+counted in the Database Calls of the entry that flushes it, or of the scenario step
+whose call presented that flush (*Which step a statement belongs to*). Where a
 case's own fixtures and earlier entries leave that coverage known, the count is
 derivable like every other. Coverage reads are the statements the flush
 actually issues, not one per object: `m-unit-work` *Shared coverage acquisition*
@@ -1383,7 +1386,9 @@ own: its group's is stated once, in `then.units` (*Unit fates*, below).
 
 A write step with **`databaseCalls: 0`** and no golden SQL is a **no-op** write —
 a versioned `UPDATE` whose `set` changes no attribute issues no DML
-(`m-unit-work` *Empty updates issue no DML*). Rolled-back DML still executes and
+(`m-unit-work` *Empty updates issue no DML*), unless it is a grouped step whose
+writes a later step's Flush presents (*Which step a statement belongs to*, below).
+Rolled-back DML still executes and
 counts its statements as Database Calls. The harness checks per-step call /
 golden-SQL count consistency and executes each step; it never compiles a query
 to SQL. A scenario authoring `then.tableState` also grades the final table state.
@@ -1430,6 +1435,42 @@ pre-transaction rows. A **read step inside a group** reads THROUGH the group's
 own transaction (read-your-own-writes): its `expectRows` are what THAT
 connection observes mid-transaction, never the post-commit / post-rollback
 state a later, ungrouped find would see.
+
+#### Which step a statement belongs to
+
+A golden-graded scenario lists each statement at **the step whose call presented
+it to the database**. An ungrouped step presents its own statements, its commit's
+included. Inside a `uow` group a keyed write step's call queues its writes rather
+than presenting them: they reach the database in the next Flush its group runs
+(`m-execution-lifecycle`), and that Flush belongs to the step whose call ran it.
+
+- A **find** runs a Flush of what its group has pending before it reads, and
+  lists that Flush in its **`flush`** member. Its `statements` stay its read: the
+  root statement and its include levels, or its delivery's pages. A find whose
+  group has writes pending carries `flush`, and one whose group has none carries
+  no `flush`; an empty amendment issues no DML (`m-unit-work` *Empty updates
+  issue no DML*) and leaves nothing pending.
+- A **predicate write** step runs a Flush of what its group has pending and
+  executes in it, so its `statements` list that whole Flush: the statements of
+  the writes its group had pending first, then its own statement, last.
+- The group's **commit** flushes what is still pending after its last step, and
+  that Flush belongs to the last step, as an ungrouped step's commit belongs to
+  it.
+
+A **keyed write** step of a group therefore lists what its own call presents and,
+when it is its group's last step, its commit's Flush. A keyed write step that is
+not its group's last lists no statements, since its call presents none: what a
+Locking target submission acquires at its call is counted and never authored
+(*Resolving reads a write owes*). A step's `databaseCalls` counts everything its
+call presented — its `flush`, its `statements`, and the reads it owes. Wherever a
+scenario's statements are read as one sequence, a step's `flush` precedes its
+`statements`.
+
+Attribution follows presentation, not queuing: admission folds, merges, and moves
+the writes a group queues, and Write Group formation (`m-unit-work`) orders and
+merges them further, so one statement of a Flush may carry writes several steps
+queued. Every Flush sits wholly inside one step, so no statement is ever split
+between steps.
 
 #### Settling against a grouped find
 
@@ -1543,8 +1584,8 @@ case's `when` does, with the same sole field `batchSize` and the same meaning
 time in the Continuation Order over keyset-paged root statements rather than
 resolved eagerly. Its own `statements` are that delivery's pages, in delivery
 order, exactly as a streamed `read` case's `then.statements` are — so its
-declared `databaseCalls` is the length of that list and the per-step count rule
-needs no clause of its own. The three properties graded independently of the SQL
+declared `databaseCalls` is the length of that list plus its `flush` (*Which step
+a statement belongs to*), and the per-step count rule needs no clause of its own. The three properties graded independently of the SQL
 text are the same three, derived the same way: the size each page asks for, the
 Continuation Order coordinates each page after the first seeks from, and the
 page that came back short of what it asked for and so ended the delivery. Its `expectRows` are the
@@ -1635,7 +1676,10 @@ matched — an updated row whose values it left unchanged included — or delete
 no other step carries it, a predicate submission inside a buffer included. An
 adapter reports the count as the step's `stepAffectedRows` observation
 (`m-conformance-adapter`), and a statement's own affected rows in the execution
-lifecycle are a separate observation.
+lifecycle are a separate observation. Inside a `uow` group the step's `statements`
+are the whole Flush its call ran — the writes its group had pending first, its own
+statement last (*Which step a statement belongs to*) — so the count is its last
+statement's.
 
 A delete carries **no** assignments and no row, and a replace carries a row and
 no assignments. Neither assignment list order nor row member order is SQL
@@ -1682,8 +1726,11 @@ buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, any other target submission, a submission its verb refuses, and a
 **predicate** write (*State-graded scenarios*, below). A predicate write executes
 at its submission, after a Flush of the entries buffered before it, so a later
-entry flushes after it. The step's golden SQL (`statements`) is the **independent expected
-lowering of that flush**, never the source an adapter deduces the writes from, so
+entry flushes after it. The golden SQL of the Flush that delivers the buffer is the
+**independent expected lowering of that flush**, listed at the step whose call
+presented it (*Which step a statement belongs to*) — the buffer's own step when it
+is ungrouped or its group's last, else the find or predicate write step that next
+flushes its group — and never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
 the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
 `until`; the Transaction-Time instant rides as Clock-context `at`, never an
@@ -1750,11 +1797,12 @@ adapter's, and the harness provider's, own work.
 
 #### State-graded scenarios (`grading: state`)
 
-Golden SQL per step is not defined for a unit of work that composes several
-submissions into one flush: which statements a flush issues, and in what order, is
-the implementation's, within `m-unit-work` *Write Group formation*, as long as the
-effects are the ones that module specifies.
-A scenario declaring top-level **`grading: state`** is therefore graded on the state
+A golden-graded group pins one lowering of every Flush it runs, each at the step
+that presented it (*Which step a statement belongs to*). Where `m-unit-work`
+*Write Group formation* leaves which statements a flush issues, or their order, to
+the implementation in a way a case cannot pin, any lowering producing the effects
+that module specifies conforms, so the case is graded on its state instead.
+A scenario declaring top-level **`grading: state`** is graded on the state
 it states. Such a case states its inputs — its steps and their submissions — the
 refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
 the **complete** final `then.tableState`: every row, current and history, of every
@@ -1764,7 +1812,7 @@ one value an insert answers. A step carries only what such a step is run by or
 graded on — a find its `objectQuery`, `equivalentEncodings`, `stream` and
 `expectRows`, a write step its `write`, and either its `uow` — beside `databaseCalls`,
 which MAY be stated and is not graded, and `note`. Any other step member is refused:
-an action, golden SQL (`statements`, `referenceSql`), a graph or identity
+an action, golden SQL (`flush`, `statements`, `referenceSql`), a graph or identity
 observable, and a step-level `on` or `expectError`, which belong to a submission,
 are all things nothing a state-graded run reports could grade. `then` states no
 `executionLifecycle`, whose events name golden statements. The case is
@@ -1841,8 +1889,10 @@ recoverable conflict, replayed within the case's resolved bound (`m-auto-retry`)
 each replay runs at the group's same `at` and refuses again, so the group reports
 the failure once the bound is exhausted.
 
-A golden-graded group's flush failure is graded on the golden of the write steps
-that flush ran, the ones still pending when it began, a grouped effect read as
+A golden-graded group's flush failure is graded on the golden of the step that
+presented the failing flush (*Which step a statement belongs to*): the step `at`
+names — a find's `flush`, or a predicate write step's `statements` — or, where
+`at` is `commit`, the group's last step. A grouped effect is read as
 the lone statement each of its source rows stands for, affecting the rows the
 effect returns that row's ordinal for (`m-sql` *Grouped effects*). For a
 Shortfall, exactly one statement addressing the object it names affected no row,
@@ -2396,7 +2446,8 @@ timing identities calls share, implementation type names, messages, stack
 traces, and native database codes. A code a language binding authors for its
 own errors is no more portable than its type name, so the projection retains a
 binding error's code only when it is one the core spec authors. A Database Call names its statement by
-zero-based index into the case's flattened authored golden statement order.
+zero-based index into the case's flattened authored golden statement order (for
+a scenario, as *Which step a statement belongs to* reads it).
 Three calls name none: every call on the `api-conformance` lane, where a case
 authors no golden SQL at all, a **resolving read** a write owes
 (*Resolving reads a write owes*), and a **coverage read** a flush makes, a read

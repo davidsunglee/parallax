@@ -1,6 +1,7 @@
 # Read Committed forbids a dirty read (m-unit-work / m-db-port): a unit of work
 # opened at `when.uow.isolation: read-committed` never observes another unit of
-# work's uncommitted write.
+# work's uncommitted write, flushed to the database while that unit of work
+# stays open.
 model: models/account.yaml
 tags: [m-unit-work, isolation, read-committed, dirty-read, scenario, slice-snapshot-1]
 shape: scenario
@@ -34,13 +35,29 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 2, balance: "999.00" }
-      databaseCalls: 1
-      note: the gated update advancing the OBSERVED version 1 -> 2; the group does not close here, so the write stays uncommitted across the reader's find below
-      statements:
+      databaseCalls: 0
+      note: buffer the gated update advancing the OBSERVED version 1 -> 2; the writer's next find flushes it
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            path: parallax.compatibility.Account.id
+            value: 2
+      databaseCalls: 2
+      note: the writer's find flushes its update and reads it back inside its own transaction; the group does not close here, so the flushed write stays uncommitted across the reader's find below
+      flush:
         - sql:
             postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
             mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
           binds: ["999.00", 2, 2, 1]
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
     - uow: reader
       objectQuery:
         target: parallax.compatibility.Account
@@ -49,7 +66,7 @@ when:
             path: parallax.compatibility.Account.id
             value: 2
       databaseCalls: 1
-      note: the reading unit of work MUST observe the COMMITTED 250.00 at version 1, never the peer's uncommitted 999.00; the group COMMITS after this, its last step
+      note: the reading unit of work MUST observe the COMMITTED 250.00 at version 1, never the peer's flushed but uncommitted 999.00; the group COMMITS after this, its last step
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
@@ -65,7 +82,7 @@ when:
             path: parallax.compatibility.Account.id
             value: 2
       databaseCalls: 1
-      note: the writer reads its OWN write back inside its own transaction; the group COMMITS after this, its last step
+      note: the writer reads its OWN write back again, which keeps its group open across the reader's find; the group COMMITS after this, its last step
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?
@@ -89,4 +106,4 @@ when:
       expectRows:
         - { id: 2, owner: Linus, balance: "999.00", version: 2 }
 then:
-  databaseCalls: 5
+  databaseCalls: 6

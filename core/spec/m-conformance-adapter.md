@@ -310,6 +310,15 @@ Example:
 - `/writeSequence/0`
 - `/scenario/0/objectQuery`
 - `/scenario/1/write`
+- `/scenario/2/flush`
+
+A scenario emission's `casePointer` names the step whose call presented the
+statement, the step where its golden is authored (`m-case-format` *Which step a
+statement belongs to*): `/scenario/<n>/flush` for a statement of the Flush a find
+ran before it read, `/scenario/<n>/objectQuery` for that find's own read, and
+`/scenario/<n>/write` for a write step's statements — the whole Flush a predicate
+write ran, and the commit's Flush its group's last step presents. A runner compares
+each emission's pointer exactly against that step.
 
 For deep-fetch and write-sequence cases, `emissions` contains one item per
 statement in execution order — per physical statement, not per Planned Step, so
@@ -411,6 +420,8 @@ assert different things:
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `databaseCalls`, plus
+  `stepDatabaseCalls` for each step of a golden-graded scenario (see *Per-step
+  Database Calls*, below),
   `stepRows` for the values their read steps and row-observing `mutate` steps published,
   `stepAffectedRows` for the count each direct predicate-write step's verb returned,
   `errors` for any step or submission declaring
@@ -656,6 +667,26 @@ that states none is a mismatch.
 It is additive and optional in the same sense as `errors`: a run reporting no such
 step omits it, and every existing `run` output stays valid unchanged.
 
+### Per-step Database Calls (`stepDatabaseCalls`)
+
+A golden-graded scenario declares what each step costs, which the total alone
+cannot grade: a run presenting a Flush at the wrong step costs the same total.
+`stepDatabaseCalls` is the `observations` array carrying it — one
+`{ at, databaseCalls }` entry per step of a golden-graded scenario, `at` the JSON
+Pointer naming the step, in step order — compared exactly against each step's
+declared `databaseCalls`. A step's count is every Database Call its call presented,
+counted as the total `databaseCalls` is, so the entries sum to it. A Flush's calls
+belong to the step that presented it (`m-case-format` *Which step a statement
+belongs to*), its coverage reads included, and a resolving or acquisition read to
+the step whose call made it. Those reads have no emission, so the counts are
+reported from the run's own execution rather than derived from `emissions`. A
+golden-graded scenario run missing an entry for a step is an unanswered oracle
+rather than a pass. A state-graded scenario, whose per-step counts are not graded,
+reports none.
+
+It is additive and optional in the same sense as `errors`: a run of any other case
+omits it, and every existing `run` output stays valid unchanged.
+
 ### Per-step graph observations (`stepGraphs`)
 
 A scenario has no single whole-read graph, so a step's relationship contents
@@ -708,8 +739,9 @@ same rules as `m-case-format`:
   each observation's `pin` and `graph` compared to the corresponding oracle entry
 - write table state compares to `then.tableState`
 - conflict affected rows compare to `then.affectedRows`
-- Database Calls compare to the case's declared `then.databaseCalls` or scenario
-  step counts
+- Database Calls compare to the case's declared `then.databaseCalls`, and for a
+  golden-graded scenario each `stepDatabaseCalls` entry compares to its step's
+  declared `databaseCalls`
 - a rejected case's `rejectedRule` compares **string-equal** to `then.rejectedRule`;
   accepting the input, omitting the observation, or naming a different rule all
   fail

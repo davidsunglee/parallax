@@ -1159,6 +1159,14 @@
                 "not": { "required": ["expectRows", "expectGraph"] }
               },
               {
+                "description": "`flush` is the Flush a `uow`-grouped FIND's call ran before it read (m-case-format *Which step a statement belongs to*): the statements of the writes its group had pending. Only a find carries one. A predicate write executes in the Flush its call runs, so its `statements` hold that whole Flush; a keyed write's call presents no Flush but its group's commit, which belongs to its group's last step; and an ungrouped find has nothing pending to flush.",
+                "if": { "required": ["flush"] },
+                "then": {
+                  "required": ["objectQuery", "uow"],
+                  "not": { "required": ["action"] }
+                }
+              },
+              {
                 "description": "A scenario-step `equivalentEncodings` list supplies alternate authoring forms of that step's canonical `objectQuery`, so it is legal only on a read step.",
                 "if": { "required": ["equivalentEncodings"] },
                 "then": { "required": ["objectQuery"] }
@@ -1236,7 +1244,7 @@
                 "minLength": 1
               },
               "databaseCalls": {
-                "description": "The Database Calls this step costs, equal to the number of golden SQL statements it lists for each dialect. A snapshot `mutate` or `access` issues none. A write counts every statement it executes, including statements later rolled back.",
+                "description": "The Database Calls this step's call presented (m-case-format *Which step a statement belongs to*): the golden statements it lists for each dialect, its `flush` and its `statements`, plus the reads it owes, which are counted and never authored. A snapshot `mutate` or `access` issues none, and neither does a grouped keyed write step that is not its group's last, whose writes a later step's Flush presents. A write counts every statement it executes, including statements later rolled back.",
                 "type": "integer",
                 "minimum": 0
               },
@@ -1245,8 +1253,12 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "flush": {
+                "description": "The golden SQL of the Flush a `uow`-grouped find's call ran before its read, as an ordered list of `{sql, binds}` entries with dialect-keyed SQL: the statements of the writes its group had pending (m-case-format *Which step a statement belongs to*). Present exactly when the group has writes pending at the find. Flattened ahead of the step's `statements`.",
+                "$ref": "#/$defs/goldenStatements"
+              },
               "statements": {
-                "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` entries with dialect-keyed SQL. A step that emits no statements omits this list and declares `databaseCalls: 0`.",
+                "description": "The golden SQL this step's call presented, as an ordered list of `{sql, binds}` entries with dialect-keyed SQL (m-case-format *Which step a statement belongs to*): a find's own read, a predicate write's whole Flush with its own statement last, or a write step's own statements and, on its group's last step, the commit's Flush. A step presenting no statements omits this list.",
                 "$ref": "#/$defs/goldenStatements"
               },
               "expectRows": {

@@ -11,21 +11,20 @@ when:
           entity: parallax.compatibility.Order
           rows:
             - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: "12.50", active: true, orderedOn: "2024-08-01" }
-      databaseCalls: 1
+      databaseCalls: 0
       note: buffer the parent Order; nothing reads it back, so nothing flushes yet
-      statements:
-        - sql:
-            postgres: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [300, Lovelace, E-1, 2, "12.50", true, 2024-08-01]
     - uow: batch
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
-      databaseCalls: 1
-      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit flush
+      databaseCalls: 2
+      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one pre-commit flush, which belongs to this, the group's last step
       statements:
+        - sql:
+            postgres: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [300, Lovelace, E-1, 2, "12.50", true, 2024-08-01]
         - sql:
             postgres: insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
           binds: [301, 300, E-1, 4]

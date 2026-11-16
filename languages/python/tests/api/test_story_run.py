@@ -914,15 +914,15 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
     # In total, and step by step. The group's own steps run inside ONE
     # transaction, so what separates them at the wire is which port method ran
     # each statement: two reads for the first find, two writes for the group's
-    # own insert and update, two reads for the dependent find — no resolving
-    # read for the write, because the group's own find already published the row
-    # its update settles against.
+    # own insert and update, which the dependent find's Flush presents, then
+    # that find's two reads — no resolving read for the write, because the
+    # group's own find already published the row its update settles against.
     steps = _scenario_steps(story.case_id)
     assert db.database_calls == [case_document(corpus_case(story.case_id))["then"]["databaseCalls"]]
     assert _kind_runs(db) == [
         ("read", steps[0]["databaseCalls"]),
-        ("write", steps[1]["databaseCalls"]),
-        ("read", steps[2]["databaseCalls"]),
+        ("write", len(steps[2]["flush"])),
+        ("read", len(steps[2]["statements"])),
     ]
     # The group really committed: a fresh read outside it observes what the
     # dependent find observed inside it.

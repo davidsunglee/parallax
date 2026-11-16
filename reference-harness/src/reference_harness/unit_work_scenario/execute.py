@@ -15,7 +15,8 @@ is one statement and takes the server's own default.
 A step carrying the OPTIONAL `uow` grouping key (`m-case-format`) executes on a
 HELD session shared with every other step of the SAME label: a grouped write
 applies through the session (never committed per-step) and a grouped find reads
-THROUGH the session (read-your-own-writes, mid-transaction). Two groups MAY
+THROUGH the session (read-your-own-writes, mid-transaction), after first
+presenting the Flush its ``flush`` lists. Two groups MAY
 interleave (non-contiguous in authored order): each group's own session, once
 opened, stays open across the OTHER group's steps in between, closing only at ITS
 OWN last step, as its fate states (:mod:`.settlement`). An UNGROUPED step keeps
@@ -41,6 +42,7 @@ from ..table_state import assert_table_state
 from .compile import (
     CompiledScenario,
     _BoundaryAction,
+    _Golden,
     _GroupedWrite,
     _RowPublishingStep,
     _UngroupedWrite,
@@ -82,6 +84,8 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
                     case _BoundaryAction():
                         _apply_boundary_action(step, execution, dialect)
                     case _RowPublishingStep():
+                        if state is not None:
+                            _present(step.index, step.flush, state, session, dialect)
                         row_observations.assert_step(
                             step.index, session if session is not None else execution
                         )
@@ -99,23 +103,35 @@ def _apply_grouped_write(
 
     The GROUP commits or rolls back as ONE unit at its last step
     (:func:`.settlement.finish_group`), never this step alone, so what the step
-    contributes is the executed statements the group's fate is graded on. A
-    grouped effect contributes the lone statement each of its source rows
-    stands for (:func:`ungrouped_effect`), each affecting the rows the effect
-    returned its ordinal for, so a shortfall is graded on the row it struck.
+    contributes is the executed statements the group's fate is graded on.
+    """
+    _assert_affected_rows(step, _present(step.index, step.statements, state, session, dialect))
+
+
+def _present(
+    index: int, golden: _Golden, state: GroupSession, session: CaseExecution, dialect: str
+) -> list[int]:
+    """Execute the statements step *index* presents on its group's held session,
+    record each against that step, and return each one's affected-row count.
+
+    A grouped find's ``flush`` runs here, before its read: the read is the
+    observation oracle's, the Flush its group's. A grouped effect contributes
+    the lone statement each of its source rows stands for
+    (:func:`ungrouped_effect`), each affecting the rows the effect returned its
+    ordinal for, so a shortfall is graded on the row it struck.
     """
     counts: list[int] = []
-    for statement, binds in step.statements.pairs(dialect):
+    for statement, binds in golden.pairs(dialect):
         lone = ungrouped_effect(statement, binds) if dialect == "postgres" else None
         if lone is None:
             counts.append(session.execute(statement, binds))
-            state.executed.append((step.index, statement, binds, counts[-1]))
+            state.executed.append((index, statement, binds, counts[-1]))
             continue
         returned = Counter(row["ord"] for row in session.query(statement, binds))
         counts.append(returned.total())
         for ordinal, (each, each_binds) in enumerate(lone, start=1):
-            state.executed.append((step.index, each, each_binds, returned[ordinal]))
-    _assert_affected_rows(step, counts)
+            state.executed.append((index, each, each_binds, returned[ordinal]))
+    return counts
 
 
 def _apply_ungrouped_write(

@@ -56,9 +56,18 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 3 }
-      databaseCalls: 3
-      note: one flush, combined order — insert account 9, update the observed account 1, delete the observed account 3; the unit of work commits at the group's last step below
-      statements:
+      databaseCalls: 0
+      note: buffer an insert of account 9, an update of the observed account 1, and a delete of the observed account 3; the find below flushes all three
+    - uow: mixed-flush
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            path: parallax.compatibility.Account.balance
+            value: "50.00"
+      databaseCalls: 4
+      note: one flush, combined order — insert account 9, update account 1, delete account 3 — then the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded. The group COMMITS after this, its last step.
+      flush:
         - sql:
             postgres: insert into px.account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [9, Noether, "5.00", 1]
@@ -68,15 +77,6 @@ when:
         - sql:
             postgres: delete from px.account where id = ? and version = ?
           binds: [3, 1]
-    - uow: mixed-flush
-      objectQuery:
-        target: parallax.compatibility.Account
-        predicate:
-          lessThan:
-            path: parallax.compatibility.Account.balance
-            value: "50.00"
-      databaseCalls: 1
-      note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded. The group COMMITS after this, its last step.
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.balance < ?

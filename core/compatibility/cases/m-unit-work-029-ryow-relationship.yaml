@@ -51,15 +51,8 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 11, sku: Rewritten }
-      databaseCalls: 2
-      note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read
-      statements:
-        - sql:
-            postgres: insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
-          binds: [13, 1, D-130, 6]
-        - sql:
-            postgres: update px.order_item set sku = ? where id = ?
-          binds: [Rewritten, 11]
+      databaseCalls: 0
+      note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read, and the find below flushes both
     - uow: observed-items
       objectQuery:
         target: parallax.compatibility.Order
@@ -70,7 +63,7 @@ when:
         includes:
           - segments:
               - rel: parallax.compatibility.Order.items
-      databaseCalls: 2
+      databaseCalls: 4
       note: the SAME read again, still inside the group - it MUST observe its own writes across the relationship; the group COMMITS after this, its last step
       expectGraph:
         Order:
@@ -85,6 +78,13 @@ when:
               - { id: 13, orderId: 1, sku: D-130, quantity: 6, shippedOn: null }
               - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
               - { id: 11, orderId: 1, sku: Rewritten, quantity: 2, shippedOn: null }
+      flush:
+        - sql:
+            postgres: insert into px.order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [13, 1, D-130, 6]
+        - sql:
+            postgres: update px.order_item set sku = ? where id = ?
+          binds: [Rewritten, 11]
       statements:
         - sql:
             postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from px.orders t0 where t0.id = ? for share of t0

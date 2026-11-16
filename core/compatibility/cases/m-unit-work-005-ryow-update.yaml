@@ -30,12 +30,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "175.00" }
-      databaseCalls: 1
-      note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the unit of work commits at the group's last step below
-      statements:
-        - sql:
-            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
-          binds: ["175.00", 2, 1, 1]
+      databaseCalls: 0
+      note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the dependent find below flushes it
     - uow: observed-update
       objectQuery:
         target: parallax.compatibility.Account
@@ -43,8 +39,12 @@ when:
           eq:
             path: parallax.compatibility.Account.id
             value: 1
-      databaseCalls: 1
-      note: a dependent find MUST observe the flushed update (read-your-own-writes); the group COMMITS after this, its last step
+      databaseCalls: 2
+      note: a dependent find flushes the update and MUST observe it (read-your-own-writes); the group COMMITS after this, its last step
+      flush:
+        - sql:
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["175.00", 2, 1, 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from px.account t0 where t0.id = ?

@@ -1859,10 +1859,11 @@ find stating only what both engines have committed: what the level permits is no
 what it requires, so no step may assert a phantom or a write skew.
 
 A scenario's declared Database Call counts **MUST** be internally consistent with
-the golden SQL it lists: each step's `databaseCalls` equals the number of golden SQL
-statements that step emits. A scenario whose groups compose several submissions
-into one flush is graded on the state it states instead, because the statements a
-composed flush issues are the implementation's, within *Write Group formation*
+the golden SQL it lists: each step's `databaseCalls` counts the calls that step
+presents, a group's Flush listed at the step whose call ran it (`m-case-format`
+*Which step a statement belongs to*). A scenario whose groups compose submissions
+into a flush whose statements *Write Group formation* leaves to the implementation
+in a way its golden cannot pin is graded on the state it states instead
 (`m-case-format` *State-graded scenarios*). The harness asserts this consistency without ever
 compiling a query to SQL — proving the Database Call contract from the fixture
 itself — and executes the listed golden SQL against the real database to confirm

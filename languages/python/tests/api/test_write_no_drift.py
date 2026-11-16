@@ -437,7 +437,8 @@ def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[objec
 def _scenario_goldens(
     case_id: str, *, skip_rollback: bool = False
 ) -> list[tuple[str, list[object]]]:
-    """The case's flattened per-step golden statements in canonical form."""
+    """The case's flattened per-step golden statements in canonical form, a
+    find's ``flush`` ahead of its own ``statements``."""
     doc = case_document(corpus_case(case_id))
     if corpus_case(case_id).shape == "writeSequence":
         return _driver_goldens(cast("list[dict[str, Any]]", doc["then"]["statements"]))
@@ -450,7 +451,8 @@ def _scenario_goldens(
         )
         if skip_rollback and rolls_back:
             continue
-        out.extend(_driver_goldens(cast("list[dict[str, Any]]", step["statements"])))
+        for member in ("flush", "statements"):
+            out.extend(_driver_goldens(cast("list[dict[str, Any]]", step.get(member, []))))
     return out
 
 

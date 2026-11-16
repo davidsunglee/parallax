@@ -46,13 +46,8 @@ when:
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 12 }
-      databaseCalls: 1
+      databaseCalls: 0
       note: buffered, then delivered first by the predicate write's flush
-      statements:
-        - sql:
-            postgres: delete from px_crm.order_item where id = ?
-            mariadb: delete from px_crm.order_item where id = ?
-          binds: [12]
     - uow: kept
       write:
         mutation: amend
@@ -65,10 +60,14 @@ when:
                 - eq: { path: parallax.compatibility.OrderItem.order.name, value: Linus }
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: Z }
-      databaseCalls: 1
+      databaseCalls: 2
       expectAffectedRows: 1
       note: the readless predicate write selects its keys in `px_crm` through a join to the orders in `px`
       statements:
+        - sql:
+            postgres: delete from px_crm.order_item where id = ?
+            mariadb: delete from px_crm.order_item where id = ?
+          binds: [12]
         - sql:
             postgres: update px_crm.order_item set sku = ? where id in (select t0.id from px_crm.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not t1.id is null and t1.name = ?)
             mariadb: update px_crm.order_item set sku = ? where id in (select t0.id from px_crm.order_item t0 left join px.orders t1 on t1.id = t0.order_id where not t1.id is null and t1.name = ?)
@@ -130,17 +129,8 @@ when:
           entity: parallax.compatibility.Order
           rows:
             - { id: 8, name: Abandoned, sku: G-8, qty: 1, price: "1.00", active: true, orderedOn: "2024-10-01" }
-      databaseCalls: 2
+      databaseCalls: 0
       note: buffered, then delivered by the predicate write's flush, the insert's mutation phase in `px` before the update's in `px_crm`
-      statements:
-        - sql:
-            postgres: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-            mariadb: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [8, Abandoned, G-8, 1, "1.00", true, 2024-10-01]
-        - sql:
-            postgres: update px_crm.order_item set sku = ? where id = ?
-            mariadb: update px_crm.order_item set sku = ? where id = ?
-          binds: [X-11, 11]
     - uow: abandoned
       write:
         mutation: amend
@@ -152,10 +142,18 @@ when:
               value: 4
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: "Y" }
-      databaseCalls: 1
+      databaseCalls: 3
       expectAffectedRows: 1
       note: the group's last step; its callback then abandons the unit of work
       statements:
+        - sql:
+            postgres: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+            mariadb: insert into px.orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [8, Abandoned, G-8, 1, "1.00", true, 2024-10-01]
+        - sql:
+            postgres: update px_crm.order_item set sku = ? where id = ?
+            mariadb: update px_crm.order_item set sku = ? where id = ?
+          binds: [X-11, 11]
         - sql:
             postgres: update px_crm.order_item set sku = ? where quantity > ?
             mariadb: update px_crm.order_item set sku = ? where quantity > ?

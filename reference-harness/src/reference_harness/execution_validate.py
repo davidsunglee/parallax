@@ -1154,7 +1154,9 @@ def _authored_golden_kinds(case: dict[str, Any]) -> tuple[str | None, ...]:
         group = when.get(key)
         if isinstance(group, list):
             for entry in group:
-                kinds += _entry_kinds(entry, "statements")
+                # A scenario find's `flush` precedes its own read (`m-case-format`
+                # *Which step a statement belongs to*).
+                kinds += _entry_kinds(entry, "flush") + _entry_kinds(entry, "statements")
     concurrency = when.get("concurrency")
     rounds = concurrency.get("rounds") if isinstance(concurrency, dict) else None
     if isinstance(rounds, list):

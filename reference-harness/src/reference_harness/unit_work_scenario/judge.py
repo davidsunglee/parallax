@@ -48,9 +48,7 @@ from .compile import (
     CompiledScenario,
     FlushFailure,
     Submission,
-    _BoundaryAction,
     _GroupedWrite,
-    _RowPublishingStep,
     _SettledOn,
     _UngroupedWrite,
 )
@@ -76,11 +74,11 @@ def judge_document(scenario: CompiledScenario, dialect: str) -> None:
 def _assert_normalization(scenario: CompiledScenario, dialect: str) -> None:
     case = scenario.case
     for step in scenario.steps:
-        for sql in step.statements.sql(dialect):
+        for sql in step.presented(dialect):
             canonical = normalize(sql, dialect)
             if canonical != sql:
                 raise CaseFailure(
-                    f"{case.path.name}: when.scenario[{step.index}].statements ({dialect}) is "
+                    f"{case.path.name}: when.scenario[{step.index}] golden SQL ({dialect}) is "
                     f"not canonical.\n"
                     f"  stored:     {sql!r}\n"
                     f"  normalized: {canonical!r}"
@@ -88,8 +86,8 @@ def _assert_normalization(scenario: CompiledScenario, dialect: str) -> None:
 
 
 def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
-    """Each step's declared databaseCalls MUST equal its golden SQL statement count
-    plus the resolving reads it owes.
+    """Each step's declared databaseCalls MUST equal the golden SQL statements it
+    lists — a find's ``flush`` and its ``statements`` — plus the reads it owes.
 
     An action over loaded data issues no SQL. An ungrouped write
     step declares its DML beside the read its keyed verbs' sources require, which
@@ -101,11 +99,12 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     case = scenario.case
     through_flushed = _writes_through_flushed_inserts(scenario)
     _assert_one_step_owns_each_shared_read(scenario, through_flushed)
+    coverage = _coverage_by_site(scenario, through_flushed)
     total = 0
     for step in scenario.steps:
         declared = step.database_calls
-        statements = step.statements.sql(dialect)
-        reads = _resolving_reads(case, step, through_flushed)
+        statements = step.presented(dialect)
+        reads = _resolving_reads(case, step) + coverage.get(step.index, 0)
         if len(statements) + reads != declared:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step.index}] declares databaseCalls "
@@ -122,19 +121,19 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
         )
 
 
-def _resolving_reads(case: Case, step: Any, through_flushed: frozenset[str]) -> int:
-    """The resolving, acquisition, and coverage reads ONE scenario step owes
+def _resolving_reads(case: Case, step: Any) -> int:
+    """The resolving and acquisition reads ONE scenario step's own call makes
     beside the SQL it lists.
 
     An UNGROUPED write step is its own choreography unit, so it owes what any unit
     owes (:func:`write_plan.unit_resolving_reads`). A GROUPED one owes no
     resolving read of its own: its group's find steps are what publish the values
     it settles against, and those finds already declare their own Database Calls
-    (`m-case-format` *Resolving reads a write owes*). What it can owe is one
-    acquisition of each object a Locking target submission writes, made at its
-    call, and the coverage reads its flush makes (:func:`_coverage_reads`). An
-    empty amendment is dropped with no database work, acquisition included. A
-    find step owes none either — a read IS the SQL it lists.
+    (`m-case-format` *Resolving reads a write owes*). What its call can make is
+    one acquisition of each object a Locking target submission writes. An empty
+    amendment is dropped with no database work, acquisition included. A find
+    step's call makes none — a read IS the SQL it lists. The coverage reads a
+    Flush makes are the presenting step's (:func:`_coverage_by_site`).
     """
     if isinstance(step, _GroupedWrite):
         acquired = (
@@ -148,10 +147,41 @@ def _resolving_reads(case: Case, step: Any, through_flushed: frozenset[str]) -> 
             if case.concurrency_mode == "locking"
             else set()
         )
-        return len(acquired) + _coverage_reads(case, step, through_flushed)
+        return len(acquired)
     if not isinstance(step, _UngroupedWrite):
         return 0
     return unit_resolving_reads(case, list(step.entries))
+
+
+def _coverage_by_site(
+    scenario: CompiledScenario, through_flushed: frozenset[str]
+) -> dict[int, int]:
+    """The coverage reads each step presents, keyed by its index.
+
+    Coverage reads are statements of the Flush that makes them, so they belong
+    to the step whose call presented that Flush (`m-case-format` *Which step a
+    statement belongs to*): a find, a predicate write, or the group's last step
+    for its commit. Each write step's reads are counted over its own buffer
+    (:func:`_coverage_reads`), which is exact because no two write steps of one
+    Flush may share them (:func:`_assert_one_step_owns_each_shared_read`).
+    """
+    by_pointer = {submission.pointer: submission for submission in scenario.submissions()}
+    charged: dict[int, int] = {}
+    for unit in scenario.units.values():
+        for flush in unit.flushes:
+            writers = {by_pointer[pointer].step for pointer in flush.flushed}
+            reads = sum(
+                _coverage_reads(scenario.case, _grouped_write(scenario, index), through_flushed)
+                for index in writers
+            )
+            charged[flush.site] = charged.get(flush.site, 0) + reads
+    return charged
+
+
+def _grouped_write(scenario: CompiledScenario, index: int) -> _GroupedWrite:
+    step = scenario.steps[index]
+    assert isinstance(step, _GroupedWrite)  # a submission is an entry of a grouped write step
+    return step
 
 
 def _coverage_reads(case: Case, step: _GroupedWrite, through_flushed: frozenset[str]) -> int:
@@ -241,25 +271,24 @@ def _step_coverage(
 
 def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str]:
     """The pointers of the submissions writing through the value of an insert a
-    flush of their group executed before them, a find's or a flushing predicate
-    submission's; one written through while that insert is still pending
-    composes with it instead (`m-unit-work` *Insertion authority*). A keyed
-    write naming no ``on`` writes through its group's latest insert of its
-    object, where one precedes it (`m-case-format` *Settling against a grouped
-    find*)."""
+    flush of their group executed before them, a find's or a predicate write's;
+    one written through while that insert is still pending composes with it
+    instead (`m-unit-work` *Insertion authority*). A keyed write naming no
+    ``on`` writes through its group's latest insert of its object, where one
+    precedes it (`m-case-format` *Settling against a grouped find*)."""
     through: set[str] = set()
     for unit in scenario.units.values():
-        flushed: set[str] = set()
-        pending: list[str] = []
         inserted: dict[tuple[str, tuple[Any, ...]] | None, str] = {}
         for index in unit.steps:
             step = scenario.steps[index]
-            if isinstance(step, (_RowPublishingStep, _BoundaryAction)):
-                flushed.update(pending)
-                pending = []
-                continue
             if not isinstance(step, _GroupedWrite):
                 continue
+            flushed = {
+                pointer
+                for flush in unit.flushes
+                if flush.at != "commit" and flush.at < index
+                for pointer in flush.flushed
+            }
             for submission in step.submissions:
                 source = submission.entry.get("on")
                 if source is None and submission.kind == "keyed" and not submission.inserts:
@@ -267,11 +296,7 @@ def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str
                 if source in flushed:
                     through.add(submission.pointer)
                 if submission.inserts and submission.refusal is None:
-                    pending.append(submission.pointer)
                     inserted[_object_key(submission)] = submission.pointer
-                if submission.flushes:
-                    flushed.update(pending)
-                    pending = []
     return frozenset(through)
 
 
@@ -300,42 +325,31 @@ def _assert_one_step_owns_each_shared_read(
     """Refuse deferred writes of one Entity that one flush settles but several
     write steps author.
 
-    Those writes may share coverage reads, which are statements of the flush
-    rather than of any step (`m-case-format` *Resolving reads a write owes*), so
-    no step's own Database Calls can hold a read another step's write shares.
-    A find, an action, or a predicate submission that writes something
-    ends the flush its group has pending.
+    Those writes may share coverage reads, and the reads a Flush makes are
+    counted over each write step's own buffer (:func:`_coverage_by_site`), so a
+    read two steps' writes share would be counted once for each of them.
     """
     case = scenario.case
+    by_pointer = {submission.pointer: submission for submission in scenario.submissions()}
     for unit in scenario.units.values():
-        authors: dict[str, set[int]] = {}
-        for index in unit.steps:
-            step = scenario.steps[index]
-            if isinstance(step, (_RowPublishingStep, _BoundaryAction)):
-                _refuse_shared_across_steps(case, authors)
-                authors = {}
-                continue
-            if not isinstance(step, _GroupedWrite):
-                continue
-            _, deferred = _step_coverage(case, step, through_flushed)
-            for submission in step.submissions:
+        for flush in unit.flushes:
+            authors: dict[str, set[int]] = {}
+            for pointer in flush.flushed:
+                submission = by_pointer[pointer]
+                _, deferred = _step_coverage(
+                    case, _grouped_write(scenario, submission.step), through_flushed
+                )
                 key = _object_key(submission)
-                if submission.flushes:
-                    _refuse_shared_across_steps(case, authors)
-                    authors = {}
-                elif key is not None and key in deferred:
-                    authors.setdefault(key[0], set()).add(index)
-        _refuse_shared_across_steps(case, authors)
-
-
-def _refuse_shared_across_steps(case: Case, authors: dict[str, set[int]]) -> None:
-    for entity, steps in authors.items():
-        if len(steps) > 1:
-            raise CaseFailure(
-                f"{case.path.name}: scenario steps {sorted(steps)} buffer deferred writes of "
-                f"{entity} into one flush, whose coverage reads they may share; author them "
-                f"in one write step, whose Database Calls count the reads its flush makes."
-            )
+                if key is not None and key in deferred:
+                    authors.setdefault(key[0], set()).add(submission.step)
+            for entity, steps in authors.items():
+                if len(steps) > 1:
+                    raise CaseFailure(
+                        f"{case.path.name}: scenario steps {sorted(steps)} buffer deferred "
+                        f"writes of {entity} into one flush, whose coverage reads they may "
+                        f"share; author them in one write step, whose buffer counts the reads "
+                        f"its flush makes once."
+                    )
 
 
 def _enclosing(
@@ -406,25 +420,28 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
     one is asked.
     """
     case = scenario.case
-    for step in scenario.steps:
-        if not isinstance(step, _GroupedWrite) or not any(
-            _aligns(submission) for submission in step.submissions
-        ):
-            continue
-        fate = scenario.units.get(step.group) if step.group is not None else None
-        failure = fate.flush_failure if fate is not None else None
-        refused = (
-            failure
-            if failure is not None
-            and failure.error == "temporalConflict"
-            and step.index in failure.flushed_steps
-            else None
-        )
-        # The write-grading operations this delegates to speak of the statement
-        # they were handed rather than of the Scenario position that handed it
-        # over, so the position is added here, at the boundary that knows it.
-        with reported_against(case, step.index):
-            _assert_settled_step(case, step, refused, dialect)
+    by_pointer = {submission.pointer: submission for submission in scenario.submissions()}
+    for unit in scenario.units.values():
+        failure = unit.flush_failure
+        for flush in unit.flushes:
+            submissions = tuple(by_pointer[pointer] for pointer in flush.flushed)
+            if not any(_aligns(submission) for submission in submissions):
+                continue
+            refused = (
+                failure
+                if failure is not None
+                and failure.error == "temporalConflict"
+                and failure.site == flush.site
+                else None
+            )
+            golden = scenario.steps[flush.site].flush_golden
+            # The write-grading operations this delegates to speak of the statement
+            # they were handed rather than of the Scenario position that handed it
+            # over, so the position is added here, at the boundary that knows it.
+            with reported_against(case, flush.site):
+                _assert_settled_flush(
+                    case, flush.site, golden.pairs(dialect), submissions, refused, dialect
+                )
 
 
 def _aligns(submission: Submission) -> bool:
@@ -434,28 +451,33 @@ def _aligns(submission: Submission) -> bool:
     return submission.settles_on is not None or submission.kind == "target"
 
 
-def _assert_settled_step(
-    case: Case, step: _GroupedWrite, refused: FlushFailure | None, dialect: str
+def _assert_settled_flush(
+    case: Case,
+    index: int,
+    pairs: list[tuple[str, list[Any]]],
+    submissions: tuple[Submission, ...],
+    refused: FlushFailure | None,
+    dialect: str,
 ) -> None:
-    """Grade one settled write step's golden against each entry's named find or
-    stated revision.
+    """Grade the golden of one Flush delivering settled writes against each
+    entry's named find or stated revision.
 
-    Every existing-row statement belongs to an entry of the step once every entry
-    aligns; a step whose other entries name no find leaves their statements to the
-    table state. A grouped effect is graded as the lone statement each of its
-    source rows stands for (:func:`ungrouped_effect`). An entry that emits no
-    statement aligns with none: an empty target amendment, dropped with no
-    database work, and a write a Temporal Conflict of its flush (*refused*)
-    stops (:func:`_stopped_by`)."""
-    index = step.index
+    *index* is the step whose call presented the Flush, which lists its golden
+    *pairs*, and *submissions* are the entries it delivered. Every existing-row
+    statement belongs to an entry once every entry aligns; a Flush whose other
+    entries name no find leaves their statements to the table state. A grouped
+    effect is graded as the lone statement each of its source rows stands for
+    (:func:`ungrouped_effect`). An entry that emits no statement aligns with
+    none: an empty target amendment, dropped with no database work, and a write
+    a Temporal Conflict of its flush (*refused*) stops (:func:`_stopped_by`)."""
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
-        for statement, binds in _ungrouped_pairs(case, index, step.statements.pairs(dialect))
+        for statement, binds in _ungrouped_pairs(case, index, pairs)
         if is_existing_row_statement(statement)
     ]
     aligned: set[int] = set()
-    every_entry_settles = all(_aligns(submission) for submission in step.submissions)
-    for submission in step.submissions:
+    every_entry_settles = all(_aligns(submission) for submission in submissions)
+    for submission in submissions:
         if _is_empty_target(submission) or (
             refused is not None and _stopped_by(case, submission, refused, settling, dialect)
         ):
@@ -500,9 +522,9 @@ def _assert_settled_step(
     if every_entry_settles and len(aligned) != len(settling):
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] carries {len(settling) - len(aligned)} "
-            f"existing-row statement(s) for {dialect} addressing an object no entry of its "
-            f"buffer writes — every statement a settled flush emits belongs to one of the "
-            f"objects written, and entries settling against one state coalesce into one."
+            f"existing-row statement(s) for {dialect} addressing an object no entry its "
+            f"flush delivers writes — every statement a settled flush emits belongs to one of "
+            f"the objects written, and entries settling against one state coalesce into one."
         )
 
 

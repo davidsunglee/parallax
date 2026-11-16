@@ -432,7 +432,8 @@ assert len(_STORIES_BY_RUN) == len(graph_stories.GRAPH_STORIES), "one story per 
 
 
 def _golden_write_binds(case_id: str) -> list[list[object]]:
-    """The DML binds the case's own write step declares, statement for statement.
+    """The DML binds the case's own writes declare, statement for statement:
+    each write step's own statements and each find's ``flush``.
 
     The corpus owns the SQL text and both wire executors grade it, so what a
     story owes here is that the PUBLIC surface reached the wire with the same
@@ -442,12 +443,14 @@ def _golden_write_binds(case_id: str) -> list[list[object]]:
     out of scope").
     """
     steps = cast("list[dict[str, Any]]", case_document(corpus_case(case_id))["when"]["scenario"])
-    writes = [step for step in steps if "write" in step]
-    assert writes, case_id
+    assert any("write" in step for step in steps), case_id
     return [
         cast("list[object]", statement.get("binds", []))
-        for step in writes
-        for statement in cast("list[dict[str, Any]]", step["statements"])
+        for step in steps
+        for statement in cast(
+            "list[dict[str, Any]]",
+            step.get("flush", []) + (step.get("statements", []) if "write" in step else []),
+        )
     ]
 
 

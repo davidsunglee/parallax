@@ -41,13 +41,8 @@ when:
           entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: "125.00" }
-      databaseCalls: 1
-      note: settle against the FIRST delivery — the gate binds the version it published for a root it delivered on a page since released
-      statements:
-        - sql:
-            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
-            mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
-          binds: ["125.00", 2, 1, 1]
+      databaseCalls: 0
+      note: settle against the FIRST delivery — the gate binds the version it published for a root it delivered on a page since released, in the update the second delivery flushes
     - uow: two-deliveries
       objectQuery:
         target: parallax.compatibility.Account
@@ -55,8 +50,13 @@ when:
           "true": {}
       stream:
         batchSize: 2
-      databaseCalls: 2
+      databaseCalls: 3
       note: the second delivery — its first page force-flushes the pending intent and then observes account 1 at generation two
+      flush:
+        - sql:
+            postgres: update px.account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update px.account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["125.00", 2, 1, 1]
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from px.account t0 order by t0.id asc limit ?
