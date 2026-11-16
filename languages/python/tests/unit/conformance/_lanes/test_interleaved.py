@@ -2,7 +2,8 @@
 sessions it releases, and what the interleaved run sweep leaves ungraded — each
 step's exact pointer, an interleaved group's `stepAffectedRows`, a fate taken
 from the database rather than the case, the tables read once both groups have
-joined, and a forced flush's coverage read kept off the find that forced it.
+joined, and a forced flush's coverage read counted at the find that forced it
+but emitted under no pointer.
 """
 
 from __future__ import annotations
@@ -650,7 +651,7 @@ def test_a_finds_force_flush_reads_coverage_it_never_reports_as_the_finds_own() 
     run, ours_port = _coverage_race([_POSITION_FIND, _UNBOUNDED_TERMINATE, _POSITION_FIND])
 
     assert len(ours_port.reads) == 3
-    assert _closed_ends(run) == [("/scenario/1/write", _JUN), ("/scenario/1/write", "infinity")]
+    assert _closed_ends(run) == [("/scenario/3/flush", _JUN), ("/scenario/3/flush", "infinity")]
     finds = [(e.case_pointer, e.sql) for e in run.emissions if e.sql.startswith("select")]
     assert [pointer for pointer, _sql in finds] == [
         "/scenario/0/objectQuery",
@@ -659,3 +660,6 @@ def test_a_finds_force_flush_reads_coverage_it_never_reports_as_the_finds_own() 
     ]
     assert len({sql for _pointer, sql in finds}) == 1
     assert run.database_calls == 6
+    # The find's Flush makes its coverage read and the two closes before the
+    # find reads, all four presented by the find's own call.
+    assert [entry["databaseCalls"] for entry in run.step_database_calls] == [1, 0, 1, 4]

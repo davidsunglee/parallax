@@ -1828,17 +1828,16 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
 # work open at once and grade what the reading one observes across the writing
 # one's commit. There is no single-callback developer expression of two concurrent
 # units of work, exactly as `_OPT_LOCK_INTERLEAVED_RACE_REASON` records for the
-# optimistic-lock race. What differs between them is which OTHER lane grades them:
-# the run sweep's interleaved-group runner drives `-032` and `-034`, and names why
-# it does not drive `-031` (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
+# optimistic-lock race. The run sweep's interleaved-group runner drives all three
+# (`test_run_sweep._INTERLEAVED_UOW_GROUP_CASES`).
 _ISOLATION_SCENARIO_REASON: Final[str] = (
     "the guarantee a portable Isolation Level makes to a READING unit of work while a "
     "concurrent one writes: two units of work held open at once, which has no "
     "single-callback developer expression and therefore no idiomatic example. The "
     "reference harness grades it on both engines, which is also the only place the "
-    "MariaDB half of the promise is observable at all; `m-unit-work-032` and `-034` "
-    "are the arms the run sweep's interleaved-group runner drives against real "
-    "Postgres through the shipped `db.transact`"
+    "MariaDB half of the promise is observable at all; the run sweep's "
+    "interleaved-group runner drives each against real Postgres through the shipped "
+    "`db.transact`"
 )
 _ISOLATION_WITNESS_REASON: Final[str] = (
     "a two-session isolation witness: two transactions held open at once over the "

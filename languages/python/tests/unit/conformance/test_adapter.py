@@ -570,6 +570,10 @@ def test_run_case_scenario_reports_database_calls_and_the_rows_its_read_step_pub
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "databaseCalls": 2,
+        "stepDatabaseCalls": [
+            {"at": "/scenario/0", "databaseCalls": 1},
+            {"at": "/scenario/1", "databaseCalls": 1},
+        ],
         "stepRows": [
             {
                 "at": "/scenario/1",

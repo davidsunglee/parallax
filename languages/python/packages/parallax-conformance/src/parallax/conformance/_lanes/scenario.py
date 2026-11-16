@@ -15,6 +15,7 @@ from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
+    ObservedCall,
     lifecycle_run,
 )
 from parallax.conformance._mechanism import case_document, envelope
@@ -148,6 +149,8 @@ __all__ = [
     "is_flush_failure",
     "is_predicate_write_step",
     "lower_writes",
+    "presented",
+    "presented_steps",
     "read_step_graph",
     "read_table_state",
     "run_conflict_case",
@@ -157,6 +160,8 @@ __all__ = [
     "run_write_sequence_case",
     "scenario_group_step_indices",
     "step_affected_rows",
+    "step_database_calls",
+    "step_emissions",
     "step_query",
     "step_rows",
     "write_entries",
@@ -234,12 +239,87 @@ def _pinned_clock(tx_instant: str) -> FixedClock:
 
 @dataclass(frozen=True, slots=True)
 class LoweredStep:
-    """One lowered scenario step: its emission pointer and DML, and how to run it."""
+    """One scenario step's statements, under the members its goldens are
+    authored at (`m-case-format` *Which step a statement belongs to*): a find
+    lists the Flush its call ran apart from its own read, and a write step
+    lists everything its call presented."""
 
-    pointer: str
-    statements: tuple[envelope.UnitStatement, ...]
-    is_write: bool
-    rollback: bool
+    index: int
+    member: Literal["objectQuery", "write"]
+    statements: tuple[envelope.UnitStatement, ...] = ()
+    flush: tuple[LoweredStatement, ...] = ()
+
+    def pointed(self) -> tuple[tuple[str, tuple[envelope.UnitStatement, ...]], ...]:
+        """The step's statements by `casePointer`, in the order its call
+        presented them."""
+        return (
+            (f"/scenario/{self.index}/flush", self.flush),
+            (f"/scenario/{self.index}/{self.member}", self.statements),
+        )
+
+
+def step_emissions(steps: Iterable[LoweredStep]) -> list[Emission]:
+    """Every statement ``steps`` presented, in step order, under the pointer its
+    golden is authored at."""
+    return envelope.emissions([pair for step in steps for pair in step.pointed()])
+
+
+def presented[T](
+    starts: Sequence[tuple[int, int]], delivered: Sequence[T], where: str
+) -> dict[int, tuple[T, ...]]:
+    """What each step of one `uow` group presented, keyed by step index.
+
+    ``starts`` holds each step's index and how much had been delivered when its
+    call began, in the order the steps ran. A step presents everything delivered
+    from its own start to the next step's — the Flush a find or a predicate write
+    ran and what its own call issued — and the group's last step everything
+    after, its commit's Flush included (`m-case-format` *Which step a statement
+    belongs to*). Nothing is delivered before the first step starts. A replayed
+    attempt starts its steps again, so a step's share across attempts
+    concatenates in delivery order.
+    """
+    first = starts[0][1] if starts else len(delivered)
+    if first:
+        raise UnclassifiedEngineError(
+            f"{where}: the lifecycle delivered {first} statement(s) before any step started"
+        )
+    shares: dict[int, tuple[T, ...]] = {}
+    for position, (index, begin) in enumerate(starts):
+        stop = starts[position + 1][1] if position + 1 < len(starts) else len(delivered)
+        shares[index] = (*shares.get(index, ()), *delivered[begin:stop])
+    return shares
+
+
+def presented_steps(
+    steps: Sequence[Mapping[str, object]],
+    indices: Iterable[int],
+    starts: Sequence[tuple[int, int]],
+    calls: Sequence[ObservedCall],
+    where: str,
+) -> tuple[list[LoweredStep], dict[int, int]]:
+    """Each of one held group's steps ``indices``, as its call presented it, and
+    the Database Calls each presented.
+
+    A find's writes are the Flush its call ran, and its reads outside that Flush
+    its own read; a Flush's coverage reads are counted and never emitted. A write
+    step emits every write its call presented, and counts its acquisitions and
+    coverage reads beside them. A step the group never reached presents nothing.
+    """
+    shares = presented(starts, calls, where)
+    lowered: list[LoweredStep] = []
+    counts: dict[int, int] = {}
+    for index in indices:
+        share = shares.get(index, ())
+        writes = tuple(call.statement for call in share if call.kind == "write")
+        if "write" in steps[index]:
+            lowered.append(LoweredStep(index, "write", writes))
+        else:
+            reads = tuple(
+                call.statement for call in share if call.kind == "read" and not call.flushed
+            )
+            lowered.append(LoweredStep(index, "objectQuery", reads, flush=writes))
+        counts[index] = len(share)
+    return lowered, counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -781,8 +861,7 @@ def _lower_scenario_step(
     step as its own simulated transaction. A `uow` group's steps share one
     transaction instead (:func:`_lower_group`)."""
     if "write" not in step:
-        statements = _compile_find(step, context, dialect)
-        return LoweredStep(f"/scenario/{index}/objectQuery", statements, False, False)
+        return LoweredStep(index, "objectQuery", _compile_find(step, context, dialect))
     raw_write = step["write"]
     rollback = step.get("rollback") is True
     if is_predicate_write_step(raw_write):
@@ -795,7 +874,7 @@ def _lower_scenario_step(
             context.concurrency,
             rollback=rollback,
         )
-        return LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
+        return LoweredStep(index, "write", statements)
     entries = write_entries(raw_write)
     statements = lower_writes(
         entries,
@@ -806,7 +885,7 @@ def _lower_scenario_step(
         entry_instant(entries[0]),
         rollback=rollback,
     )
-    return LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
+    return LoweredStep(index, "write", statements)
 
 
 def _lower_group(
@@ -825,14 +904,14 @@ def _lower_group(
     Every write step buffers into the group's one unit of work, at the group's
     one Transaction Instant (:func:`group_tx_instant`); a find step's read
     flushes what is buffered before it is compiled, and the group's end runs
-    the pre-commit flush. A DOOMED group still flushes. What a flush emitted is
-    attributed as the run lane attributes a held group's delivered writes
-    (:func:`group_writes`): a read's flush to the last write step buffered
-    before it, and a predicate write's flush to the predicate's own step.
+    the pre-commit flush. A DOOMED group still flushes. Each flush belongs to
+    the step whose call ran it, as the run lane attributes a held group's
+    (:func:`presented`): a find's to its `flush`, a predicate write's to its own
+    statements, and the pre-commit flush to the group's last step.
     """
     model = context.model
-    state = GroupReport()
-    lowered: list[LoweredStep] = []
+    starts: list[tuple[int, int]] = []
+    reads: dict[int, tuple[LoweredStatement, ...]] = {}
     with _simulated_unit(
         model,
         context.binding,
@@ -841,34 +920,29 @@ def _lower_group(
         rollback=doomed,
     ) as unit:
         for index in range(start, end + 1):
+            starts.append((index, len(unit.statements)))
             step = steps[index]
             if "write" not in step:
-                statements = unit.read(functools.partial(_compile_find, step, context, dialect))
-                lowered.append(
-                    LoweredStep(f"/scenario/{index}/objectQuery", statements, False, False)
-                )
+                reads[index] = unit.read(functools.partial(_compile_find, step, context, dialect))
                 continue
             raw_write = step["write"]
             if is_predicate_write_step(raw_write):
-                state.buffered.append((index, len(unit.statements)))
                 unit.execute_predicate(
                     _prepared_case_predicate_write(
                         cast("Mapping[str, object]", raw_write), model, context.prepare
                     )
                 )
-            else:
-                entries = write_entries(raw_write)
-                submissions = read_submissions(model, entries)
-                for write in _resolve_entries(entries, model, context.prepare, submissions):
-                    unit.buffer(write)
-                state.buffered.append((index, len(unit.statements)))
-            lowered.append(
-                LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True)
-            )
-    shares = group_writes(state, unit.statements, "a simulated `uow` group")
+                continue
+            entries = write_entries(raw_write)
+            submissions = read_submissions(model, entries)
+            for write in _resolve_entries(entries, model, context.prepare, submissions):
+                unit.buffer(write)
+    shares = presented(starts, unit.statements, "a simulated `uow` group")
     return [
-        replace(step, statements=shares[index]) if step.is_write else step
-        for index, step in zip(range(start, end + 1), lowered, strict=True)
+        LoweredStep(index, "objectQuery", reads[index], flush=shares[index])
+        if index in reads
+        else LoweredStep(index, "write", shares[index])
+        for index in range(start, end + 1)
     ]
 
 
@@ -1019,9 +1093,7 @@ def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[li
     emissions and Database Call count; a scenario carrying an action step is the
     snapshot lane's (:func:`~parallax.conformance._lanes.snapshot.compile_scenario`),
     which the façade dispatches to."""
-    emissions = envelope.emissions(
-        [(step.pointer, step.statements) for step in _scenario_lowered(case, dialect_name)]
-    )
+    emissions = step_emissions(_scenario_lowered(case, dialect_name))
     return emissions, len(emissions)
 
 
@@ -1242,7 +1314,7 @@ class CaseContext:
         object.__setattr__(self, "resolved", ResolvedBinding(self.model, self.binding))
 
 
-def _empty_buffered() -> list[tuple[int, int]]:
+def _empty_starts() -> list[tuple[int, int]]:
     return []
 
 
@@ -1252,40 +1324,13 @@ def _empty_affected() -> dict[int, int]:
 
 @dataclass(frozen=True, slots=True)
 class GroupReport:
-    buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
+    """What one attempt of a held group's steps reported: where each step's
+    call began, in Database Calls (:func:`presented`), the count each
+    predicate-write step's verb returned, and each refused submission."""
+
+    starts: list[tuple[int, int]] = field(default_factory=_empty_starts)
     affected: dict[int, int] = field(default_factory=_empty_affected)
     refusals: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
-
-
-def group_writes(
-    state: GroupReport, delivered: Sequence[LoweredStatement], where: str
-) -> dict[int, tuple[LoweredStatement, ...]]:
-    """Each write step's share of the writes one held group's flushes delivered,
-    keyed by step index.
-
-    A held group's buffered writes reach the wire when a later read or
-    predicate write forces a flush, or at its boundary, so the step a delivered
-    write belongs to is read off when it was delivered: each write step owns
-    what was delivered after its mark and before the next write step's, and the
-    last owns everything after. A keyed write step's mark is where it finished
-    buffering, so write steps buffered before a read's flush report that
-    flush's statements under the last of them, because what one flush delivers
-    carries no trace of the step that buffered each write. A predicate write's
-    mark is where it was called, so it reports the whole flush it executed in:
-    everything buffered before it, then its own statement.
-    """
-    shares: dict[int, tuple[LoweredStatement, ...]] = {}
-    buffered = state.buffered
-    first = buffered[0][1] if buffered else len(delivered)
-    if first:
-        raise UnclassifiedEngineError(
-            f"{where}: the lifecycle delivered {first} write(s) before any write step had "
-            "buffered one"
-        )
-    for position, (index, start) in enumerate(buffered):
-        stop = buffered[position + 1][1] if position + 1 < len(buffered) else len(delivered)
-        shares[index] = (*shares.get(index, ()), *delivered[start:stop])
-    return shares
 
 
 @dataclass(frozen=True, slots=True)
@@ -1307,12 +1352,13 @@ class _StepRead:
 @dataclass(frozen=True, slots=True)
 class _GroupRun:
     """One `uow` group's own report: its steps' lowered emissions in step order,
-    the Database Calls its single transaction made, the per-step observations
-    its read steps filled, each in step order, the count each of its
-    predicate-write steps returned, by step index, and its fate."""
+    the Database Calls its single transaction made and each step presented, the
+    per-step observations its read steps filled, each in step order, the count
+    each of its predicate-write steps returned, by step index, and its fate."""
 
     lowered: list[LoweredStep]
     database_calls: int
+    step_database_calls: dict[int, int]
     step_rows: list[dict[str, object]]
     step_graphs: list[dict[str, object]]
     affected: dict[int, int]
@@ -1371,25 +1417,19 @@ def run_group_step(
     step: Mapping[str, object],
     index: int,
     observation: LifecycleObservation,
-) -> tuple[LoweredStep, _StepRead | None]:
-    """Execute a group step and record its lifecycle attribution and returned counts."""
+) -> _StepRead | None:
+    """Execute a group step, recording where its call began and the counts its
+    verbs returned; a find answers what it handed over."""
+    report.starts.append((index, observation.database_calls))
     if "write" not in step:
-        return _group_read(tx, context, submitter, step, index, observation)
-    submissions = read_submissions(context.model, step["write"], step=index)
-    predicate = is_predicate_write_step(step["write"])
-    if predicate:
-        report.buffered.append((index, len(observation.writes)))
-    for submission in submissions:
+        return _group_read(tx, context, submitter, step, index)
+    for submission in read_submissions(context.model, step["write"], step=index):
         outcome = submitter.submit(submission)
         if isinstance(outcome, Refused):
             report.refusals.append({"at": outcome.at, "errorClass": outcome.code})
         elif isinstance(outcome, Executed):
             report.affected[index] = outcome.affected
-    if not predicate:
-        report.buffered.append((index, len(observation.writes)))
-    return LoweredStep(
-        f"/scenario/{index}/write", (), True, step.get("rollback") is True if predicate else False
-    ), None
+    return None
 
 
 def _group_read(
@@ -1398,13 +1438,11 @@ def _group_read(
     submitter: WireSubmitter,
     step: Mapping[str, object],
     index: int,
-    observation: LifecycleObservation,
-) -> tuple[LoweredStep, _StepRead]:
+) -> _StepRead:
     """One `uow` group's find step, through ``tx.wire.find`` or, for a step
     carrying `stream`, ``tx.wire.stream`` at its page size — recording into
     the submitter the checked values a later write may use."""
     model = context.model
-    mark = observation.database_calls
     batch_size = case_document.batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
         snapshot = tx.wire.find(step_query(step, model))
@@ -1413,9 +1451,7 @@ def _group_read(
         with tx.wire.stream(step_query(step, model), batch_size=batch_size) as delivery:
             read = _StepRead(tuple(delivery.checked()), None)
     submitter.record_find(index, read.graph if read.graph is not None else read.roots)
-    return LoweredStep(
-        f"/scenario/{index}/objectQuery", observation.own_reads_since(mark), False, False
-    ), read
+    return read
 
 
 def _run_uow_group(
@@ -1442,26 +1478,24 @@ def _run_uow_group(
     observation = lifecycle.observation()
     session = GroupSession(write_adapter(port, rollback=abandoned), context, instant, observation)
     try:
-        lowered: list[LoweredStep] = []
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
         state = GroupReport()
-        prior_buffered: list[tuple[int, int]] = []
+        prior_starts: list[tuple[int, int]] = []
         running: list[int] = []
 
         def body(tx: TxnContext) -> None:
-            nonlocal state, lowered, rows_observed, step_graphs
-            prior_buffered.extend(state.buffered)
+            nonlocal state, rows_observed, step_graphs
+            prior_starts.extend(state.starts)
             state = GroupReport()
-            lowered, rows_observed, step_graphs = [], [], []
+            rows_observed, step_graphs = [], []
             running.clear()
             submitter = WireSubmitter(tx, context.model)
             for index in range(start, end + 1):
                 running.append(index)
-                step, read = run_group_step(
+                read = run_group_step(
                     tx, context, submitter, state, steps[index], index, observation
                 )
-                lowered.append(step)
                 if read is None:
                     continue
                 query = step_query(steps[index], context.model)
@@ -1487,17 +1521,24 @@ def _run_uow_group(
                 "outcome": "rolledBack",
                 "flushFailure": flush_failure(context.model, failure, at),
             }
-        state.buffered[:0] = prior_buffered
-        shares = group_writes(state, observation.writes, "a held `uow` group")
-        reported = [
-            replace(step, statements=shares[index]) if step.is_write else step
-            for index, step in zip(range(start, end + 1), lowered, strict=True)
-        ]
+        reported, step_calls = presented_steps(
+            steps,
+            range(start, end + 1),
+            [*prior_starts, *state.starts],
+            observation.calls,
+            "a held `uow` group",
+        )
         # Every statement this ONE transaction put on the wire, which is where the
         # group's Database Calls come from rather than from a second count this lane
         # keeps.
         return _GroupRun(
-            reported, observation.database_calls, rows_observed, step_graphs, state.affected, fate
+            reported,
+            observation.database_calls,
+            step_calls,
+            rows_observed,
+            step_graphs,
+            state.affected,
+            fate,
         )
     finally:
         session.close()
@@ -1590,9 +1631,7 @@ def _run_state_graded_group(
         for index in range(start, end + 1):
             running.append(index)
             step = steps[index]
-            _lowered, read = run_group_step(
-                tx, context, submitter, report, step, index, observation
-            )
+            read = run_group_step(tx, context, submitter, report, step, index, observation)
             if read is not None:
                 query = step_query(step, context.model)
                 rows_observed.append(step_rows(context.model, index, query, read.roots))
@@ -1704,7 +1743,10 @@ def run_scenario_case(
     `stepRows` is filled on both lanes too, by every read step this run drives —
     ungrouped, grouped, and streamed alike — and by every accepted `mutate`
     declaring `expectRows`. `stepAffectedRows` holds the count each direct
-    predicate-write step's verb returned, grouped or not."""
+    predicate-write step's verb returned, grouped or not, and
+    `stepDatabaseCalls` the Database Calls each step's call presented: a
+    grouped find's Flush and the commit's Flush its group's last step presents
+    included (`m-case-format` *Which step a statement belongs to*)."""
     lifecycle = lifecycle_run(lifecycle)
     if case.document.get("grading") == "state":
         return _run_state_graded_case(case, port, lifecycle)
@@ -1733,6 +1775,7 @@ def run_scenario_case(
     lowered: list[LoweredStep] = []
     units: dict[str, dict[str, object]] = {}
     affected: dict[int, int] = {}
+    step_calls: dict[int, int] = {}
     database_calls = 0
     try:
         apply_given_apply(case, port)
@@ -1747,6 +1790,7 @@ def run_scenario_case(
                 rows_observed.extend(group.step_rows)
                 step_graphs.extend(group.step_graphs)
                 affected.update(group.affected)
+                step_calls.update(group.step_database_calls)
                 database_calls += group.database_calls
                 index = end + 1
                 continue
@@ -1754,9 +1798,8 @@ def run_scenario_case(
             if "write" not in step:
                 read, read_observed = run_standalone_find(port, context, step, lifecycle)
                 database_calls += read_observed.database_calls
-                lowered.append(
-                    LoweredStep(f"/scenario/{index}/objectQuery", read_observed.reads, False, False)
-                )
+                step_calls[index] = read_observed.database_calls
+                lowered.append(LoweredStep(index, "objectQuery", read_observed.reads))
                 query = step_query(step, model)
                 rows_observed.append(step_rows(model, index, query, read.checked().results()))
                 observed = read_step_graph(case, model, index, step, query, read)
@@ -1778,17 +1821,19 @@ def run_scenario_case(
                     rollback=rollback,
                 )
                 database_calls += predicate_calls
-                lowered.append(LoweredStep(f"/scenario/{index}/write", ran, True, rollback))
+                step_calls[index] = predicate_calls
+                lowered.append(LoweredStep(index, "write", ran))
             else:
                 statements, unit_calls = execute_keyed_unit(
                     port, context, write_entries(raw_write), lifecycle, rollback=rollback
                 )
                 database_calls += unit_calls
-                lowered.append(LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
+                step_calls[index] = unit_calls
+                lowered.append(LoweredStep(index, "write", statements))
             index += 1
     except LOWERING_ERRORS as exc:
         raise UnclassifiedEngineError(f"{case.path.name}: {exc}") from exc
-    emissions = envelope.emissions([(step.pointer, step.statements) for step in lowered])
+    emissions = step_emissions(lowered)
     then = case.document.get("then")
     table_state = (
         read_table_state(port, context.resolved)
@@ -1804,7 +1849,17 @@ def run_scenario_case(
         units,
         table_state,
         step_affected_rows(affected),
+        step_database_calls(step_calls),
     )
+
+
+def step_database_calls(counts: Mapping[int, int]) -> list[dict[str, object]]:
+    """The `stepDatabaseCalls` observation (`m-conformance-adapter`): each
+    step's pointer and the Database Calls its call presented, in step order."""
+    return [
+        {"at": f"/scenario/{index}", "databaseCalls": count}
+        for index, count in sorted(counts.items())
+    ]
 
 
 def step_affected_rows(affected: Mapping[int, int]) -> list[dict[str, object]]:

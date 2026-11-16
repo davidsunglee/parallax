@@ -99,7 +99,8 @@ class ScenarioRun:
     both. All three are in step order. ``units`` holds each `uow` group's fate by
     label, and ``table_state`` the tables read back once every step ran, where
     the case states them. ``step_affected_rows`` holds, in step order, the count
-    each direct predicate-write step's verb returned.
+    each direct predicate-write step's verb returned, and ``step_database_calls``
+    the Database Calls each step of a golden-graded scenario presented.
     """
 
     emissions: list[Emission]
@@ -110,6 +111,7 @@ class ScenarioRun:
     units: dict[str, dict[str, object]] | None = None
     table_state: dict[str, dict[str, list[MappingRow]]] | None = None
     step_affected_rows: list[dict[str, object]] = field(default_factory=_no_counts)
+    step_database_calls: list[dict[str, object]] = field(default_factory=_no_counts)
 
 
 def driver_binds(binds: Sequence[object]) -> list[object]:

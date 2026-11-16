@@ -278,6 +278,8 @@ def _scenario_observations(run: engine.ScenarioRun) -> dict[str, Any]:
         observations["stepRows"] = run.step_rows
     if run.step_affected_rows:
         observations["stepAffectedRows"] = run.step_affected_rows
+    if run.step_database_calls:
+        observations["stepDatabaseCalls"] = run.step_database_calls
     if run.step_graphs:
         observations["stepGraphs"] = run.step_graphs
     if run.units:
@@ -334,7 +336,9 @@ def _run(
     row-observing `mutate`, carrying the values that step published, which is what
     the run sweep grades against each step's ``expectRows``, and one
     ``stepAffectedRows`` entry per direct predicate-write step, carrying the
-    count its verb returned). A rejected run
+    count its verb returned, and, for a golden-graded scenario, one
+    ``stepDatabaseCalls`` entry per step, carrying the Database Calls its call
+    presented). A rejected run
     touches no database and no port: it reports
     the classified ``rejectedRule`` with ``databaseCalls: 0`` (m-conformance-
     adapter), and an evolution run reports the complete described ``evolution``

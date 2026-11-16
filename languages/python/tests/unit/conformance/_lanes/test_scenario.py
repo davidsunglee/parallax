@@ -226,46 +226,6 @@ def test_an_unaddressed_write_neither_reads_nor_submits_dml(row: dict[str, objec
 # against a real database by the run sweep.
 
 
-def test_run_scenario_case_runs_a_grouped_predicate_write_after_what_its_group_buffered() -> None:
-    # m-batch-write-011: the predicate write runs at its own step, inside the
-    # group's transaction rather than as a unit of its own, in the flush that
-    # first delivers the delete its group buffered before it. The run reports
-    # that flush under the predicate's step, the inserts buffered after it
-    # under the step that buffered them, and the count the verb returned.
-    port = FakeWritePort(
-        find_rows=[
-            {
-                "id": 12,
-                "order_id": 1,
-                "sku": "B-200",
-                "quantity": 1,
-                "shipped_on": dt.date(2024, 2, 15),
-            }
-        ]
-    )
-    run = scenario.run_scenario_case(_case("m-batch-write-011"), port)
-    assert run.database_calls == 5
-    assert [e.case_pointer for e in run.emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/2/write",
-        "/scenario/2/write",
-        "/scenario/3/write",
-        "/scenario/3/write",
-    ]
-    assert run.step_affected_rows == [{"at": "/scenario/2", "affectedRows": 1}]
-    # What is reported is what the port executed, in the order it executed it.
-    assert [e.sql for e in run.emissions[1:]] == [sql for sql, _ in port.writes]
-    assert [sql.split("(")[0] for sql, _ in port.writes] == [
-        "delete from px.order_item where id = ?",
-        "update px.order_item set sku = ? where quantity < ?",
-        "insert into px.orders",
-        "insert into px.order_item",
-    ]
-    # One participating read, then the case's own tables read back once it ran.
-    assert len(port.reads) == 1 + len((run.table_state or {}).get("px", {}))
-    assert port.commits == 1 and port.rollbacks == 0
-
-
 def test_a_group_opening_with_a_predicate_write_runs_at_that_writes_own_instant() -> None:
     steps: list[Mapping[str, object]] = [
         {"uow": "g", "write": {"mutation": "delete", "at": "2024-05-01T00:00:00+00:00"}},
@@ -523,34 +483,6 @@ def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_l
     }
 
 
-def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_it() -> None:
-    # The group buffers every write before one pre-commit flush, so everything
-    # that flush emits belongs to the group's last write step — the rule the run
-    # lane reports a held group's delivered writes by.
-    compiled, database_calls = scenario.compile_scenario_case(
-        _load_case("m-execution-lifecycle-002"), "postgres"
-    )
-    assert [emission.case_pointer for emission in compiled] == ["/scenario/1/write"] * 2
-    assert database_calls == 2
-
-
-def test_a_predicate_writes_flush_is_reported_under_the_predicates_own_step() -> None:
-    # The predicate's flush delivers the delete its group buffered before it,
-    # then its own statement; the inserts buffered after it reach the
-    # pre-commit flush under the step that buffered them.
-    compiled, database_calls = scenario.compile_scenario_case(
-        _load_case("m-batch-write-011"), "postgres"
-    )
-    assert [emission.case_pointer for emission in compiled] == [
-        "/scenario/0/objectQuery",
-        "/scenario/2/write",
-        "/scenario/2/write",
-        "/scenario/3/write",
-        "/scenario/3/write",
-    ]
-    assert database_calls == 5
-
-
 def _account_insert(account_id: int) -> dict[str, object]:
     return {
         "mutation": "insert",
@@ -576,8 +508,8 @@ def _account_find_step(account_id: int, *, uow: str = "g") -> dict[str, object]:
 def test_a_committing_groups_read_flushes_what_its_earlier_steps_buffered() -> None:
     # One transaction for the whole committing group: a find step's read
     # flushes the insert buffered before it, and the group's end flushes the
-    # one after it; each flush's statements belong to the last write step
-    # buffered before it.
+    # one after it; each flush belongs to the step whose call ran it, the
+    # find's under its `flush` and the commit's under the group's last step.
     case = _synthetic_write(
         "scenario",
         {
@@ -592,7 +524,7 @@ def test_a_committing_groups_read_flushes_what_its_earlier_steps_buffered() -> N
     )
     compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     assert [(emission.case_pointer, emission.sql.split(" ", 1)[0]) for emission in compiled] == [
-        ("/scenario/0/write", "insert"),
+        ("/scenario/1/flush", "insert"),
         ("/scenario/1/objectQuery", "select"),
         ("/scenario/2/write", "insert"),
     ]
@@ -617,7 +549,8 @@ def test_a_groups_writes_buffered_before_one_flush_compose_in_its_one_buffer() -
         ),
         "postgres",
     )
-    # Two steps of one group compose exactly as two entries of one step do.
+    # Two steps of one group compose exactly as two entries of one step do, in
+    # the commit's Flush its last step presents.
     assert [(emission.sql, emission.binds) for emission in compiled] == [
         (emission.sql, emission.binds) for emission in ungrouped
     ]
@@ -2187,10 +2120,10 @@ def test_a_compiled_group_writes_through_its_latest_insertion_across_flushes() -
         for emission in compiled
         if not emission.sql.startswith("select")
     ] == [
-        ("/scenario/0/write", "insert", (decimal.Decimal("5.00"), 1)),
-        ("/scenario/2/write", "update", (9, 1)),
-        ("/scenario/5/write", "delete", (9, 2)),
-        ("/scenario/5/write", "insert", (decimal.Decimal("1.00"), 1)),
+        ("/scenario/1/flush", "insert", (decimal.Decimal("5.00"), 1)),
+        ("/scenario/3/flush", "update", (9, 1)),
+        ("/scenario/6/flush", "delete", (9, 2)),
+        ("/scenario/6/flush", "insert", (decimal.Decimal("1.00"), 1)),
         ("/scenario/7/write", "update", (9, 1)),
     ]
 
@@ -2236,7 +2169,7 @@ def test_each_write_of_a_compiled_group_is_admitted_on_its_own_evidence() -> Non
     )
     compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
     assert [(emission.case_pointer, emission.sql, emission.binds) for emission in compiled] == [
-        ("/scenario/0/write", "update px.order_item set quantity = ? where id = ?", (9, 21)),
+        ("/scenario/1/flush", "update px.order_item set quantity = ? where id = ?", (9, 21)),
         (
             "/scenario/1/objectQuery",
             "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from px.order_item t0 "
