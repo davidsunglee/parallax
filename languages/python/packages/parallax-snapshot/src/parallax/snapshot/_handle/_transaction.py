@@ -113,10 +113,12 @@ class TxnContext:
         Strategy and the version is derived, so the Entity constructor refuses a
         caller-authored one and the row carries none.
 
-        The answer is ``instance`` itself, unchanged: a flush never writes a
-        version or an interval bound back into it, so an ordinary participating
-        read is what observes those once stored. It carries the insertion's
-        authority from then on, and
+        With a supplied key the answer is ``instance`` itself, unchanged; with an
+        omitted ``KeySequence`` key it is a new value carrying the allocated key,
+        and ``instance`` stays keyless and carries no authority. A flush never
+        writes a version or interval bound back into the answer, so an
+        ordinary participating read is what observes those once stored. The
+        answer carries the insertion's authority from then on, and
         so does every value derived from it afterwards by ``edit``: through them
         the amend, replace, and terminate verbs revise what the insert opened for the rest
         of the attempt, starting at ``valid_from``, before and after a flush. A
