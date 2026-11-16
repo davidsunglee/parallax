@@ -1,0 +1,12 @@
+# A native key sequence handing out blocks of three keys from 100, ten apart.
+entity:
+  name: Pass
+  namespace: parallax.compatibility
+  table: pass
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+      pkGeneration:
+        { strategy: key-sequence, name: pass_ids, batchSize: 3, initialValue: 100, incrementSize: 10 }
+    - { name: holder, type: string, maxLength: 64 }

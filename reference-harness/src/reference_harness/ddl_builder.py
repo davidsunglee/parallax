@@ -29,6 +29,7 @@ from ._declared_contributor import DeclaredContributor
 from .case import Model
 from .database_binding import PhysicalTable, Placement
 from .paths import schemas_dir
+from .pk_gen import NativeSequence, native_sequences
 from .storage_layout import (
     AttributeContributor,
     ColumnContributor,
@@ -519,8 +520,25 @@ def _create_indices(layout: TableLayout, physical: PhysicalTable, dialect: str) 
     return statements
 
 
+def _create_sequence(sequence: NativeSequence, physical: PhysicalTable, dialect: str) -> str:
+    """The native sequence a ``key-sequence`` allocator draws from: one step per
+    reserved block, bounded by the key range, starting at the initial value, and
+    never cycling or caching beyond the value a reservation takes."""
+    low, high = sequence.key_range(dialect)
+    data_type = (_POSTGRES_BASE_TYPES if dialect == "postgres" else _MARIADB_BASE_TYPES)[
+        sequence.data_type
+    ]
+    no_cycle = "no cycle" if dialect == "postgres" else "nocache nocycle"
+    return (
+        f"create sequence {qualified_table(physical, dialect)} as {data_type} "
+        f"increment by {sequence.step} minvalue {low} maxvalue {high} "
+        f"start with {sequence.initial_value} {no_cycle}"
+    )
+
+
 def ddl_for(model: Model, placement: Placement) -> list[str]:
-    """Return the ordered DDL statements that create every physical table.
+    """Return the ordered DDL statements that create every physical table and
+    native sequence.
 
     One ``CREATE TABLE`` per compiled Table Layout, so a `table-per-hierarchy`
     family's shared table is created once with the whole family's slots and each
@@ -528,7 +546,8 @@ def ddl_for(model: Model, placement: Placement) -> list[str]:
     On PostgreSQL the exclusion prerequisite precedes the tables whenever one is
     temporal. Every authored Index follows as its own named statement, after every table,
     which is the form a generated Schema Delta uses too — the catalogs the two
-    leave behind are what a delta cell is graded by. Foreign keys are
+    leave behind are what a delta cell is graded by. Each ``key-sequence``
+    allocator's sequence follows, where the binding places it. Foreign keys are
     intentionally omitted: relationships are a query concern (navigation/join
     derivation), and leaving FK constraints out keeps fixture-load order
     unconstrained. *placement* resolves each table's physical location and
@@ -553,5 +572,9 @@ def ddl_for(model: Model, placement: Placement) -> list[str]:
             statement
             for layout in tables
             for statement in _create_indices(layout, placement.table(layout.mapping_owner), dialect)
+        ]
+        + [
+            _create_sequence(sequence, placement.sequences[allocator], dialect)
+            for allocator, sequence in native_sequences(model.entity_defs).items()
         ]
     )

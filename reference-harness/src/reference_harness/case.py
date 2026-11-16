@@ -1390,6 +1390,16 @@ class Case:
         """
         return [entry["sql"][dialect] for entry in self.golden_entries()]
 
+    @property
+    def reservations(self) -> frozenset[int]:
+        """The indices of the golden statements tagged ``purpose: reservation``:
+        native key sequence reservations, which no step's statement count covers."""
+        return frozenset(
+            index
+            for index, entry in enumerate(self.golden_entries())
+            if entry.get("purpose") == "reservation"
+        )
+
     def statement_binds(self, index: int, dialect: str | None = None) -> list[Any]:
         """The authored binds for golden statement *index* (default ``[]``).
 

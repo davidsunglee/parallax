@@ -149,6 +149,7 @@ class ObservedCall:
 
     statement: LoweredStatement
     kind: Literal["read", "write"]
+    purpose: Literal["reservation"] | None = None
 
 
 # The eight tables below are the projection from Python's runtime vocabularies to
@@ -307,12 +308,16 @@ class LifecycleObservation:
         call the database never answered is still the Database Call it was charged
         for.
         """
-        return tuple(
-            ObservedCall(event.statement, _CALL_KIND[event.kind])
-            for root in self.roots
-            for event in root.events
-            if isinstance(event, DatabaseCallStarted)
-        )
+        calls: list[ObservedCall] = []
+        reservations: set[int] = set()
+        for root in self.roots:
+            for event in root.events:
+                if isinstance(event, ReadStarted) and event.purpose == "reservation":
+                    reservations.add(event.activity_id)
+                elif isinstance(event, DatabaseCallStarted):
+                    purpose = "reservation" if event.parent_activity_id in reservations else None
+                    calls.append(ObservedCall(event.statement, _CALL_KIND[event.kind], purpose))
+        return tuple(calls)
 
     @property
     def statements(self) -> tuple[LoweredStatement, ...]:
@@ -325,6 +330,14 @@ class LifecycleObservation:
     @property
     def writes(self) -> tuple[LoweredStatement, ...]:
         return tuple(call.statement for call in self.calls if call.kind == "write")
+
+    @property
+    def write_unit_calls(self) -> tuple[ObservedCall, ...]:
+        """Every write and every key reservation, in delivery order: what a write
+        unit's emissions report (`m-case-format` *Reservation statements*)."""
+        return tuple(
+            call for call in self.calls if call.kind == "write" or call.purpose == "reservation"
+        )
 
     def since(
         self, mark: int, kind: Literal["read", "write"] | None = None

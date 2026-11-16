@@ -4327,6 +4327,16 @@
       "valueObject": {}
     }
   },
+  "models/pk-key-sequence.yaml": {
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/pk-max.yaml": {
     "parallax.compatibility.Attendee": {
       "attribute": {

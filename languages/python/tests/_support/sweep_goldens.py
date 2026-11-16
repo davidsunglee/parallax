@@ -350,9 +350,14 @@ def assert_write_emissions_equal_goldens(
     golden_statements: list[tuple[str, list[object]]],
     emissions: list[dict[str, Any]],
 ) -> None:
-    """Each reported write emission states its golden's SQL and canonical binds, at
-    a ``casePointer`` well-formed for the case's shape."""
+    """Each reported write emission states its golden's SQL, canonical binds, and
+    purpose, at a ``casePointer`` well-formed for the case's shape."""
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
+    purposes = [entry.get("purpose") for entry in _write_golden_entries(case)]
+    assert [emission.get("purpose") for emission in emissions] == purposes, (
+        case.case_id,
+        emissions,
+    )
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
@@ -383,19 +388,24 @@ def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[obje
     all when it emits no SQL (a snapshot-read `mutate`'s in-memory-only change);
     it contributes an empty group rather than a missing-key error.
     """
+    out: list[tuple[str, list[object]]] = []
+    for entry in _write_golden_entries(case):
+        sql: Any = entry["sql"]
+        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        out.append((cast("str", text), _entry_binds(entry)))
+    return out
+
+
+def _write_golden_entries(case: case_format.Case) -> list[dict[str, Any]]:
     doc = case_document(case)
     if case.shape == "writeSequence":
-        groups = [cast("list[dict[str, Any]]", doc["then"]["statements"])]
-    else:
-        steps = cast("list[dict[str, Any]]", doc["when"]["scenario"])
-        groups = [cast("list[dict[str, Any]]", step.get("statements", [])) for step in steps]
-    out: list[tuple[str, list[object]]] = []
-    for group in groups:
-        for entry in group:
-            sql: Any = entry["sql"]
-            text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
-            out.append((cast("str", text), _entry_binds(entry)))
-    return out
+        return cast("list[dict[str, Any]]", doc["then"]["statements"])
+    steps = cast("list[dict[str, Any]]", doc["when"]["scenario"])
+    return [
+        entry
+        for step in steps
+        for entry in cast("list[dict[str, Any]]", step.get("statements", []))
+    ]
 
 
 def _entry_binds(entry: dict[str, Any]) -> list[object]:

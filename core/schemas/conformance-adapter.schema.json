@@ -199,6 +199,10 @@
         },
         "binds": {
           "$ref": "#/$defs/binds"
+        },
+        "purpose": {
+          "description": "Present only on a native key sequence's reservation, which the case's golden statement tags with the same `purpose` (m-conformance-adapter).",
+          "enum": ["reservation"]
         }
       }
     },

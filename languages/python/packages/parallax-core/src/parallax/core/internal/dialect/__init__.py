@@ -765,10 +765,10 @@ class Dialect:
         if self.sequence_bounds is None:
             return Unsupported(f"{self.name} has no native sequence")
         return (
-            "select pg_catalog.nextval(s.seqrelid) as first_key, s.seqincrement as increment, "
-            "s.seqmin as minimum, s.seqmax as maximum, s.seqcycle as cycles, "
-            "pg_catalog.format_type(s.seqtypid, null) as data_type "
-            "from pg_catalog.pg_sequence s where s.seqrelid = pg_catalog.to_regclass(?)"
+            "select pg_catalog.nextval(t0.seqrelid) first_key, t0.seqincrement increment, "
+            "t0.seqmin minimum, t0.seqmax maximum, t0.seqcycle cycles, "
+            "pg_catalog.format_type(t0.seqtypid, null) data_type "
+            "from pg_catalog.pg_sequence t0 where t0.seqrelid = pg_catalog.to_regclass(?)"
         )
 
     def reports_sequence_exhaustion(self, code: str | None) -> bool:
