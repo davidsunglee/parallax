@@ -6032,6 +6032,122 @@
       "table": "evolution_ledger"
     }
   },
+  "models/evolution-key-sequence-settings-v1.yaml": {
+    "parallax.compatibility.Badge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Badge.id",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Badge.holder",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "badge"
+    },
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
+  "models/evolution-key-sequence-settings-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Badge.id",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Badge.holder",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "badge"
+    },
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
   "models/evolution-long-names-v1.yaml": {
     "parallax.compatibility.LongIdentifierTruncationWitness": {
       "columns": [

@@ -1008,7 +1008,6 @@ def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> N
 
 def test_an_acquisition_must_name_its_policy_and_a_granted_one_its_route() -> None:
     for transition, payload in (
-        ("acquisitionStarted", {}),
         ("acquisitionFinished", {"outcome": "acquired"}),
         (
             "acquisitionFinished",
@@ -1651,3 +1650,13 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-unit-work-040-a-join-is-held-to-the-outer-bound-not-the-roots.yaml",
         "m-unit-work-041-a-join-is-held-to-the-outer-level-not-the-roots.yaml",
     ]
+
+
+def test_only_a_key_reservation_s_acquisition_omits_its_policy() -> None:
+    root = _write_root()
+    root["events"][2] = _event(3, 3, 2, acquisitionStarted={})
+    assert _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
+    assert any(
+        "names no Read Policy" in problem
+        for problem in validate_execution(_case(_lifecycle(root)))
+    )

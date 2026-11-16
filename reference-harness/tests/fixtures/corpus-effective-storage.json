@@ -2146,6 +2146,42 @@
       "valueObject": {}
     }
   },
+  "models/evolution-key-sequence-settings-v1.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-settings-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-long-names-v1.yaml": {
     "parallax.compatibility.LongIdentifierTruncationWitness": {
       "attribute": {

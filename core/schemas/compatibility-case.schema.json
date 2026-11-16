@@ -1719,6 +1719,8 @@
             "metamodel-index-temporal-attribute",
             "metamodel-temporal-member-reserved",
             "pk-gen-sequence-conflict",
+            "pk-gen-key-sequence-conflict",
+            "pk-gen-key-sequence-subtype-override",
             "inheritance-unknown-parent",
             "inheritance-cycle",
             "inheritance-missing-root",
