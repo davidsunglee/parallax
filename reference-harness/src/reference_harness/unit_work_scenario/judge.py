@@ -97,9 +97,9 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     declared counts — the harness never compiles a query to SQL.
     """
     case = scenario.case
-    through_flushed = _writes_through_flushed_inserts(scenario)
-    _assert_one_step_owns_each_shared_read(scenario, through_flushed)
-    coverage = _coverage_by_site(scenario, through_flushed)
+    by_step = _flushed_step_coverage(scenario, _writes_through_flushed_inserts(scenario))
+    _assert_one_step_owns_each_shared_read(scenario, by_step)
+    coverage = _coverage_by_site(scenario, by_step)
     total = 0
     for step in scenario.steps:
         declared = step.database_calls
@@ -153,56 +153,59 @@ def _resolving_reads(case: Case, step: Any) -> int:
     return unit_resolving_reads(case, list(step.entries))
 
 
-def _coverage_by_site(
+_StepCoverage = tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]
+
+
+def _flushed_step_coverage(
     scenario: CompiledScenario, through_flushed: frozenset[str]
+) -> dict[int, _StepCoverage]:
+    """The coverage of each write step authoring a flushed submission, keyed by
+    its index (:func:`_step_coverage`)."""
+    by_pointer = {submission.pointer: submission for submission in scenario.submissions()}
+    by_step: dict[int, _StepCoverage] = {}
+    for unit in scenario.units.values():
+        for flush in unit.flushes:
+            for pointer in flush.flushed:
+                index = by_pointer[pointer].step
+                if index not in by_step:
+                    step = scenario.steps[index]
+                    assert isinstance(step, _GroupedWrite)  # a submission is a grouped entry
+                    by_step[index] = _step_coverage(scenario.case, step, through_flushed)
+    return by_step
+
+
+def _coverage_by_site(
+    scenario: CompiledScenario, by_step: Mapping[int, _StepCoverage]
 ) -> dict[int, int]:
     """The coverage reads each step presents, keyed by its index.
 
     Coverage reads are statements of the Flush that makes them, so they belong
     to the step whose call presented that Flush (`m-case-format` *Which step a
     statement belongs to*): a find, a predicate write, or the group's last step
-    for its commit. Each write step's reads are counted over its own buffer
-    (:func:`_coverage_reads`), which is exact because no two write steps of one
-    Flush may share them (:func:`_assert_one_step_owns_each_shared_read`).
+    for its commit. Each write step's reads are counted over its own buffer,
+    which is exact because no two write steps of one Flush may share them
+    (:func:`_assert_one_step_owns_each_shared_read`). Within a buffer,
+    consecutive deferred writes share reads whatever their temporal shape
+    (:func:`write_plan.flush_coverage_reads`; `m-temporal-write` *Observed
+    writes span their requested extent*; `m-sql` *Requested ranges*).
     """
     by_pointer = {submission.pointer: submission for submission in scenario.submissions()}
     charged: dict[int, int] = {}
     for unit in scenario.units.values():
         for flush in unit.flushes:
             writers = {by_pointer[pointer].step for pointer in flush.flushed}
-            reads = sum(
-                _coverage_reads(scenario.case, _grouped_write(scenario, index), through_flushed)
-                for index in writers
-            )
+            reads = sum(flush_coverage_reads(scenario.case, *by_step[index]) for index in writers)
             charged[flush.site] = charged.get(flush.site, 0) + reads
     return charged
 
 
-def _grouped_write(scenario: CompiledScenario, index: int) -> _GroupedWrite:
-    step = scenario.steps[index]
-    assert isinstance(step, _GroupedWrite)  # a submission is an entry of a grouped write step
-    return step
-
-
-def _coverage_reads(case: Case, step: _GroupedWrite, through_flushed: frozenset[str]) -> int:
-    """The coverage reads a settled step's flush makes for the objects whose
-    writes defer (`m-temporal-write` *Observed writes span their requested
-    extent*; `m-sql` *Requested ranges*).
-
-    Consecutive such writes share reads whatever their temporal shape
-    (:func:`write_plan.flush_coverage_reads`); an object whose coverage is known
-    at planning settles there and ends a run, and an amendment assigning
-    nothing is dropped before it settles.
-    """
-    settled, deferred = _step_coverage(case, step, through_flushed)
-    return flush_coverage_reads(case, settled, deferred)
-
-
 def _step_coverage(
     case: Case, step: _GroupedWrite, through_flushed: frozenset[str]
-) -> tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]:
+) -> _StepCoverage:
     """The objects a settled step's writes settle, in authored order, beside the
-    uncovered parts of each one whose write defers.
+    uncovered parts of each one whose write defers; an object whose coverage is
+    known at planning settles there, ending any run of shared reads, and an
+    amendment assigning nothing is dropped before it settles.
 
     A Bitemporal write settling against a find reads the part of its requested
     extent — the enclosing window of its entries' ``[validFrom, until)``,
@@ -320,7 +323,7 @@ def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
 
 
 def _assert_one_step_owns_each_shared_read(
-    scenario: CompiledScenario, through_flushed: frozenset[str]
+    scenario: CompiledScenario, by_step: Mapping[int, _StepCoverage]
 ) -> None:
     """Refuse deferred writes of one Entity that one flush settles but several
     write steps author.
@@ -336,9 +339,7 @@ def _assert_one_step_owns_each_shared_read(
             authors: dict[str, set[int]] = {}
             for pointer in flush.flushed:
                 submission = by_pointer[pointer]
-                _, deferred = _step_coverage(
-                    case, _grouped_write(scenario, submission.step), through_flushed
-                )
+                _, deferred = by_step[submission.step]
                 key = _object_key(submission)
                 if key is not None and key in deferred:
                     authors.setdefault(key[0], set()).add(submission.step)
