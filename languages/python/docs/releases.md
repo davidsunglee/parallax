@@ -51,9 +51,10 @@ only counted keys can then be dropped. A Wire value spelling `{"increment": n}` 
 `{"computed": "maxPlusOne"}` at a scalar member is no longer read as a database-computed
 marker: it is refused like any other value of the wrong type, with `InvalidValueError`
 code `neutral-literal-type-mismatch`. Leave a key that sent `{"computed": "maxPlusOne"}`
-unset under a `KeySequence` declaration instead, and replace an `{"increment": n}` advance
-of any other member with a read of the row inside the transaction and an amend stating
-the advanced value.
+unset under a `KeySequence` declaration instead; any other member that sent it
+now needs a value your code computes and sends as an ordinary value. Replace an
+`{"increment": n}` advance of any member with a read of the row inside the transaction
+and an amend stating the advanced value.
 
 `ServingModel.publish` now refuses a candidate that changes a surviving allocator's batch
 size, increment size, or key range, as it refuses a relocation, and both refusals use the
