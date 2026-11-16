@@ -8,9 +8,13 @@ around each transaction and around each insert call, so a call's own cost stays
 apart from the flush and commit it shares with the rest of its transaction.
 
 A case names one flow, one representation, and one Storage Layout, and the
-mode says how its keys are stated. ``assigned`` supplies every key. Each case
-inserts the same rows under the same windows in every mode, so a later mode's
-reading compares with this one cell by cell.
+mode says how its keys are stated. ``assigned`` supplies every key;
+``generated`` omits it, so each insert takes its key from a KeySequence of
+batch size 100 whose blocks the case's own root reserves. Each case inserts the
+same rows under the same windows in every mode, so a generated reading compares
+with the assigned one cell by cell, and a generated insert call is read apart
+by whether it took its root's first reservation, a key the root already held,
+or a refill.
 
 The readings are diagnostics, not retained evidence: nothing here is a gate,
 and nothing here is fed to the cost portfolio.
@@ -35,6 +39,7 @@ from parallax.core import (
     Entity,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
+    KeySequence,
     RootExecution,
     TablePerHierarchy,
     TxTemporal,
@@ -50,6 +55,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
     ExecutionEvent,
+    ReadStarted,
 )
 from parallax.snapshot import TxnContext
 from tests._support.pooled_key_diagnostic import DiagnosticRefused, Mode
@@ -57,7 +63,7 @@ from tests._support.pooled_key_diagnostic import DiagnosticRefused, Mode
 __all__ = [
     "CASES",
     "CHECK",
-    "MODEL",
+    "MODELS",
     "NAMESPACE",
     "SCHEMA",
     "CallCounter",
@@ -138,18 +144,123 @@ class DiscSheet(FigureSheet, namespace=NAMESPACE, inheritance=ConcreteSubtype(ta
     size: Attr[float]
 
 
-MODEL: Final = DomainModel(
-    Plain,
-    PlainSheet,
-    Versioned,
-    VersionedSheet,
-    Log,
-    LogSheet,
-    Figure,
-    Disc,
-    FigureSheet,
-    DiscSheet,
-)
+_BATCH_SIZE: Final = 100
+
+
+def _generated(allocator: str) -> Any:
+    return attr(primary_key=KeySequence(allocator, batch_size=_BATCH_SIZE))
+
+
+class GeneratedPlain(Entity, table="pkd_g_plain", namespace=NAMESPACE):
+    id: Attr[int] = _generated("pkd_g_plain_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedPlainSheet(
+    Entity, table="pkd_g_plain_sheet", namespace=NAMESPACE, layout=Document()
+):
+    id: Attr[int] = _generated("pkd_g_plain_sheet_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedVersioned(Entity, table="pkd_g_versioned", namespace=NAMESPACE):
+    id: Attr[int] = _generated("pkd_g_versioned_ids")
+    label: Attr[str] = attr(max_length=16)
+    version: Attr[int] = attr(optimistic_locking=True)
+
+
+class GeneratedVersionedSheet(
+    Entity, table="pkd_g_versioned_sheet", namespace=NAMESPACE, layout=Document()
+):
+    id: Attr[int] = _generated("pkd_g_versioned_sheet_ids")
+    label: Attr[str] = attr(max_length=16)
+    version: Attr[int] = attr(optimistic_locking=True)
+
+
+class GeneratedLog(TxTemporal, table="pkd_g_log", namespace=NAMESPACE):
+    id: Attr[int] = _generated("pkd_g_log_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedLogSheet(
+    TxTemporal, table="pkd_g_log_sheet", namespace=NAMESPACE, layout=Document()
+):
+    id: Attr[int] = _generated("pkd_g_log_sheet_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedFigure(
+    Entity,
+    table="pkd_g_figure",
+    namespace=NAMESPACE,
+    inheritance=AbstractRoot(TablePerHierarchy("kind")),
+):
+    id: Attr[int] = _generated("pkd_g_figure_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedDisc(
+    GeneratedFigure, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="disc")
+):
+    size: Attr[float]
+
+
+class GeneratedFigureSheet(
+    Entity,
+    table="pkd_g_figure_sheet",
+    namespace=NAMESPACE,
+    inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    layout=Document(),
+):
+    id: Attr[int] = _generated("pkd_g_figure_sheet_ids")
+    label: Attr[str] = attr(max_length=16)
+
+
+class GeneratedDiscSheet(
+    GeneratedFigureSheet, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="disc")
+):
+    size: Attr[float]
+
+
+MODELS: Final[Mapping[Mode, DomainModel]] = {
+    "assigned": DomainModel(
+        Plain,
+        PlainSheet,
+        Versioned,
+        VersionedSheet,
+        Log,
+        LogSheet,
+        Figure,
+        Disc,
+        FigureSheet,
+        DiscSheet,
+    ),
+    "generated": DomainModel(
+        GeneratedPlain,
+        GeneratedPlainSheet,
+        GeneratedVersioned,
+        GeneratedVersionedSheet,
+        GeneratedLog,
+        GeneratedLogSheet,
+        GeneratedFigure,
+        GeneratedDisc,
+        GeneratedFigureSheet,
+        GeneratedDiscSheet,
+    ),
+}
+"""Each mode's model: the same tables' shapes, one supplying keys and one
+generating them."""
+
+_GENERATED: Final[Mapping[type[Entity], type[Entity]]] = {
+    Plain: GeneratedPlain,
+    PlainSheet: GeneratedPlainSheet,
+    Versioned: GeneratedVersioned,
+    VersionedSheet: GeneratedVersionedSheet,
+    Log: GeneratedLog,
+    LogSheet: GeneratedLogSheet,
+    Disc: GeneratedDisc,
+    DiscSheet: GeneratedDiscSheet,
+}
 
 type Flow = Literal[
     "plain", "versioned", "temporal", "inheritance", "amend-pending", "amend-flushed", "batch"
@@ -164,11 +275,23 @@ _SIZE: Final = 2.5
 
 @dataclass(frozen=True, slots=True)
 class Tally:
-    """What one transaction did: acquisitions it made, and its Database Calls by kind."""
+    """What one transaction did: acquisitions it made, its Database Calls by
+    kind, and how many of its Reads were key reservations, each of which made
+    one of those acquisitions and one of those reads."""
 
     acquisitions: int = 0
     reads: int = 0
     writes: int = 0
+    reservations: int = 0
+
+    def reserving(self, reservations: int) -> Tally:
+        """This tally with ``reservations`` key reservations beside it."""
+        return Tally(
+            self.acquisitions + reservations,
+            self.reads + reservations,
+            self.writes,
+            self.reservations + reservations,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,9 +327,11 @@ class Case:
         scope = f"batch.{self.rows}" if self.flow == "batch" else self.flow
         return f"{scope}.{self.layout}.{self.representation}"
 
-    @property
-    def table(self) -> str:
-        return _TABLES[self.entity]
+    def table(self, mode: Mode) -> str:
+        return _TABLES[self.entity] if mode == "assigned" else _TABLES[_GENERATED[self.entity]]
+
+    def inserted(self, mode: Mode) -> type[Entity]:
+        return self.entity if mode == "assigned" else _GENERATED[self.entity]
 
     @property
     def amended(self) -> bool:
@@ -222,6 +347,14 @@ _TABLES: Final[Mapping[type[Entity], str]] = {
     LogSheet: "pkd_log_sheet",
     Disc: "pkd_figure",
     DiscSheet: "pkd_figure_sheet",
+    GeneratedPlain: "pkd_g_plain",
+    GeneratedPlainSheet: "pkd_g_plain_sheet",
+    GeneratedVersioned: "pkd_g_versioned",
+    GeneratedVersionedSheet: "pkd_g_versioned_sheet",
+    GeneratedLog: "pkd_g_log",
+    GeneratedLogSheet: "pkd_g_log_sheet",
+    GeneratedDisc: "pkd_g_figure",
+    GeneratedDiscSheet: "pkd_g_figure_sheet",
 }
 
 _ONE_WRITE: Final = Tally(acquisitions=1, writes=1)
@@ -294,6 +427,7 @@ class CallCounter:
             acquisitions=sum(handler.acquisitions for handler in handlers),
             reads=sum(handler.reads for handler in handlers),
             writes=sum(handler.writes for handler in handlers),
+            reservations=sum(handler.reservations for handler in handlers),
         )
 
 
@@ -301,7 +435,15 @@ _COMPLETED: Final = (DatabaseReadCompleted, DatabaseWriteCompleted, DatabaseWrit
 
 
 class _Counting:
-    __slots__ = ("_acquiring", "_calling", "_counter", "acquisitions", "reads", "writes")
+    __slots__ = (
+        "_acquiring",
+        "_calling",
+        "_counter",
+        "acquisitions",
+        "reads",
+        "reservations",
+        "writes",
+    )
 
     def __init__(self, counter: CallCounter) -> None:
         self._counter = counter
@@ -310,17 +452,16 @@ class _Counting:
         self.acquisitions = 0
         self.reads = 0
         self.writes = 0
+        self.reservations = 0
 
     def handle(self, event: ExecutionEvent, /) -> None:
-        if isinstance(event, AcquisitionStarted):
+        if isinstance(event, ReadStarted):
+            self.reservations += event.purpose == "reservation"
+        elif isinstance(event, AcquisitionStarted):
             self._acquiring.add(event.activity_id)
             self.acquisitions += 1
         elif isinstance(event, AcquisitionFinished):
-            if event.activity_id not in self._acquiring:
-                self._counter.refuse(f"acquisition {event.activity_id} finished unstarted")
-            self._acquiring.discard(event.activity_id)
-            if not isinstance(event.outcome, ConnectionAcquired):
-                self._counter.refuse(f"acquisition {event.activity_id} failed: {event.outcome!r}")
+            self._acquisition_finished(event)
         elif isinstance(event, DatabaseCallStarted):
             self._calling.add(event.activity_id)
             if event.kind == "read":
@@ -328,13 +469,23 @@ class _Counting:
             else:
                 self.writes += 1
         elif isinstance(event, DatabaseCallFinished):
-            if event.activity_id not in self._calling:
-                self._counter.refuse(f"database call {event.activity_id} finished unstarted")
-            self._calling.discard(event.activity_id)
-            if not isinstance(event.outcome, _COMPLETED):
-                self._counter.refuse(
-                    f"database call {event.activity_id} did not complete: {event.outcome!r}"
-                )
+            self._call_finished(event)
+
+    def _acquisition_finished(self, event: AcquisitionFinished) -> None:
+        if event.activity_id not in self._acquiring:
+            self._counter.refuse(f"acquisition {event.activity_id} finished unstarted")
+        self._acquiring.discard(event.activity_id)
+        if not isinstance(event.outcome, ConnectionAcquired):
+            self._counter.refuse(f"acquisition {event.activity_id} failed: {event.outcome!r}")
+
+    def _call_finished(self, event: DatabaseCallFinished) -> None:
+        if event.activity_id not in self._calling:
+            self._counter.refuse(f"database call {event.activity_id} finished unstarted")
+        self._calling.discard(event.activity_id)
+        if not isinstance(event.outcome, _COMPLETED):
+            self._counter.refuse(
+                f"database call {event.activity_id} did not complete: {event.outcome!r}"
+            )
 
     def unfinished(self) -> list[str]:
         return [
@@ -343,21 +494,39 @@ class _Counting:
         ]
 
 
+type _Handout = Literal["first", "local", "refill"]
+
+
+def _handout(key: int) -> _Handout:
+    """Which of its root's handouts the generated insert of ``key`` is: keys
+    are handed out in order from blocks of ``_BATCH_SIZE``, so the first key
+    of every block but the first refills."""
+    if key == 1:
+        return "first"
+    return "refill" if (key - 1) % _BATCH_SIZE == 0 else "local"
+
+
 @dataclass(slots=True)
 class CaseReading:
     """One case's readings: nanoseconds per transaction and per insert call,
-    and the tally every transaction it measured agreed on."""
+    and the tally every transaction it measured agreed on beside its key
+    reservations. A generated reading also keeps each measured insert call's
+    nanoseconds by whether it handed out a held key or refilled."""
 
     case: Case
+    mode: Mode
     protocol: Protocol
     first_transaction_ns: int
     first_insert_ns: int
     transaction_ns: list[int] = field(default_factory=list[int])
     insert_ns: list[int] = field(default_factory=list[int])
+    local_insert_ns: list[int] = field(default_factory=list[int])
+    refill_insert_ns: list[int] = field(default_factory=list[int])
+    reservations: int = 0
     tally: Tally = field(default_factory=Tally)
 
     def document(self) -> dict[str, object]:
-        return {
+        document: dict[str, object] = {
             "id": self.case.id,
             "flow": self.case.flow,
             "representation": self.case.representation,
@@ -374,9 +543,19 @@ class CaseReading:
                 "writes": self.tally.writes,
             },
         }
+        if self.mode == "generated":
+            document["handouts"] = {
+                "firstReservationInsertNs": self.first_insert_ns,
+                "localInsertNs": _summary(self.local_insert_ns),
+                "refillInsertNs": _summary(self.refill_insert_ns),
+                "measuredReservations": self.reservations,
+            }
+        return document
 
 
 def _summary(samples: Sequence[int]) -> dict[str, object]:
+    if not samples:
+        return {"count": 0, "samples": []}
     ordered = sorted(samples)
     return {
         "count": len(ordered),
@@ -388,7 +567,8 @@ def _summary(samples: Sequence[int]) -> dict[str, object]:
 
 
 class _Keys:
-    """The next key each transaction of one case supplies."""
+    """The keys each transaction of one case inserts, supplied in assigned
+    mode and handed out in the same order in generated mode."""
 
     __slots__ = ("next",)
 
@@ -405,39 +585,46 @@ def _name(entity: type[Entity]) -> str:
     return f"{NAMESPACE}.{entity.__name__}"
 
 
-def _typed_draft(case: Case, key: int) -> Entity:
+def _typed_draft(case: Case, mode: Mode, key: int) -> Entity:
+    entity: Any = case.inserted(mode)
+    stated: dict[str, object] = {"label": _INSERTED}
+    if mode == "assigned":
+        stated["id"] = key
     if case.flow == "inheritance":
-        return case.entity(id=key, label=_INSERTED, size=_SIZE)
-    return case.entity(id=key, label=_INSERTED)
+        stated["size"] = _SIZE
+    return entity(**stated)
 
 
-def _wire_payload(case: Case, key: int) -> dict[str, object]:
-    payload: dict[str, object] = {"id": key, "label": _INSERTED}
+def _wire_payload(case: Case, mode: Mode, key: int) -> dict[str, object]:
+    payload: dict[str, object] = {"label": _INSERTED}
+    if mode == "assigned":
+        payload["id"] = key
     if case.flow == "inheritance":
         payload["size"] = _SIZE
     return payload
 
 
-def _insert(tx: TxnContext, case: Case, key: int) -> tuple[object, int]:
-    """Insert ``key`` the way ``case`` states it, answering the value that now
-    carries the insertion and the call's own elapsed nanoseconds."""
+def _insert(tx: TxnContext, case: Case, mode: Mode, key: int) -> tuple[object, int]:
+    """Insert ``key`` the way ``case`` and ``mode`` state it, answering the
+    value that now carries the insertion and the call's own elapsed
+    nanoseconds."""
     if case.representation == "typed":
-        draft = _typed_draft(case, key)
+        draft = _typed_draft(case, mode, key)
         started = time.perf_counter_ns()
-        tx.insert(draft)
-        return draft, time.perf_counter_ns() - started
-    payload = _wire_payload(case, key)
+        inserted = tx.insert(draft)
+        return inserted, time.perf_counter_ns() - started
+    payload = _wire_payload(case, mode, key)
     started = time.perf_counter_ns()
-    node = tx.wire.insert(_name(case.entity), payload)
+    node = tx.wire.insert(_name(case.inserted(mode)), payload)
     return node, time.perf_counter_ns() - started
 
 
-def _read(tx: TxnContext, case: Case, key: int) -> None:
-    entity: Any = case.entity
+def _read(tx: TxnContext, case: Case, mode: Mode, key: int) -> None:
+    entity: Any = case.inserted(mode)
     if case.representation == "typed":
         tx.find(entity.where(entity.id == key)).result()
         return
-    name = _name(case.entity)
+    name = _name(entity)
     tx.wire.find(
         {"target": name, "predicate": {"eq": {"path": f"{name}.id", "value": key}}}
     ).result()
@@ -450,72 +637,89 @@ def _amend(tx: TxnContext, case: Case, inserted: Any) -> None:
         tx.wire.amend(inserted, {"label": _AMENDED})
 
 
-def _transaction(case: Case, keys: range, calls: list[int]) -> Callable[[TxnContext], None]:
+def _transaction(
+    case: Case, mode: Mode, keys: range, calls: list[tuple[int, int]]
+) -> Callable[[TxnContext], None]:
     def body(tx: TxnContext) -> None:
         for key in keys:
-            inserted, elapsed = _insert(tx, case, key)
-            calls.append(elapsed)
+            inserted, elapsed = _insert(tx, case, mode, key)
+            calls.append((key, elapsed))
             if case.flow == "amend-flushed":
-                _read(tx, case, key)
+                _read(tx, case, mode, key)
             if case.amended:
                 _amend(tx, case, inserted)
 
     return body
 
 
-def run_case(db: Any, counter: CallCounter, case: Case, protocol: Protocol) -> CaseReading:
-    """Run ``case`` on ``db``, a fresh root counted by ``counter``: one first
-    transaction, ``protocol``'s warm-up, then its measured transactions, each of
-    which must tally exactly what the case expects."""
+def run_case(
+    db: Any, counter: CallCounter, case: Case, mode: Mode, protocol: Protocol
+) -> CaseReading:
+    """Run ``case`` in ``mode`` on ``db``, a fresh root counted by ``counter``:
+    one first transaction, ``protocol``'s warm-up, then its measured
+    transactions, each of which must tally exactly what the case expects beside
+    the reservations its keys' positions in their blocks call for."""
     keys = _Keys()
     counter.take()
 
-    def measured(calls: list[int]) -> int:
-        body = _transaction(case, keys.take(case.rows), calls)
+    def measured(calls: list[tuple[int, int]]) -> tuple[int, int]:
+        taken = keys.take(case.rows)
+        reserving = 0 if mode == "assigned" else sum(_handout(key) != "local" for key in taken)
+        expected = case.expected.reserving(reserving)
+        body = _transaction(case, mode, taken, calls)
         started = time.perf_counter_ns()
         db.transact(body)
         elapsed = time.perf_counter_ns() - started
         tally = counter.take()
-        if tally != case.expected:
-            raise DiagnosticRefused(f"{case.id} made {tally}, not {case.expected}")
-        return elapsed
+        if tally != expected:
+            raise DiagnosticRefused(f"{case.id} made {tally}, not {expected}")
+        return elapsed, reserving
 
-    first_calls: list[int] = []
-    first = measured(first_calls)
-    reading = CaseReading(case, protocol, first, first_calls[0], tally=case.expected)
+    first_calls: list[tuple[int, int]] = []
+    first, _ = measured(first_calls)
+    reading = CaseReading(case, mode, protocol, first, first_calls[0][1], tally=case.expected)
     for _ in range(protocol.warmup):
         measured([])
     gc.collect()
     for _ in range(protocol.repeats):
-        calls: list[int] = []
-        reading.transaction_ns.append(measured(calls))
-        reading.insert_ns.extend(calls)
+        calls: list[tuple[int, int]] = []
+        elapsed, reserving = measured(calls)
+        reading.transaction_ns.append(elapsed)
+        reading.reservations += reserving
+        reading.insert_ns.extend(call for _, call in calls)
+        if mode == "generated":
+            for key, call in calls:
+                handouts = (
+                    reading.refill_insert_ns
+                    if _handout(key) == "refill"
+                    else (reading.local_insert_ns)
+                )
+                handouts.append(call)
     return reading
 
 
-def stored_state(profile_run: Any, case: Case) -> tuple[int, int, int, set[str]]:
-    """How many current rows ``case``'s table holds, its least and greatest
-    key, and every label it stores."""
+def stored_state(profile_run: Any, case: Case, mode: Mode) -> tuple[int, int, int, set[str]]:
+    """How many current rows ``case``'s table holds in ``mode``, its least and
+    greatest key, and every label it stores."""
     label = "payload->>'label'" if case.layout == "document" else "label"
     current = " where out_z = 'infinity'" if case.flow == "temporal" else ""
+    table = case.table(mode)
     ((count, least, greatest),) = profile_run.port.execute(
-        f"select count(*), min(id), max(id) from px.{case.table}{current}", []
+        f"select count(*), min(id), max(id) from px.{table}{current}", []
     )
     labels = {
         str(row[0])
-        for row in profile_run.port.execute(
-            f"select distinct {label} from px.{case.table}{current}", []
-        )
+        for row in profile_run.port.execute(f"select distinct {label} from px.{table}{current}", [])
     }
     return int(count), int(least), int(greatest), labels
 
 
-def check_stored(profile_run: Any, case: Case, transactions: int) -> None:
+def check_stored(profile_run: Any, case: Case, mode: Mode, transactions: int) -> None:
     """Refuse a case whose table holds anything but its own inserts, each
-    labelled as its flow leaves it."""
+    labelled as its flow leaves it, keyed one through the number inserted."""
     expected_rows = transactions * case.rows
     expected_label = _AMENDED if case.amended else _INSERTED
-    observed = stored_state(profile_run, case)
+    observed = stored_state(profile_run, case, mode)
     if observed != (expected_rows, 1, expected_rows, {expected_label}):
         raise DiagnosticRefused(
             f"{case.id} stored {observed}, not "

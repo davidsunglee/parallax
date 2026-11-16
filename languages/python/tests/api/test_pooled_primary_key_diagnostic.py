@@ -1,9 +1,10 @@
 """The pooled primary-key live diagnostic, and the refusals that keep its readings honest.
 
 The database-backed test runs every frozen case. Without an output file it runs
-each case once and grades it; ``tools/pooled_primary_key_diagnostic.py`` names
-an output file, which makes the same test take the capture protocol and write
-its readings there. Either way a case that tallies other calls or acquisitions
+each case once in every mode and grades it; the launcher,
+``tools/pooled_primary_key_diagnostic.py``, names an output file and a mode,
+which makes the same test take the capture protocol in that mode and write its
+readings there. Either way a case that tallies other calls or acquisitions
 than it expects, or stores anything but its own inserts, fails.
 """
 
@@ -23,7 +24,9 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallNotExecuted,
     DatabaseCallStarted,
     DatabaseReadCompleted,
+    DatabaseWriteCompleted,
     ExecutionEvent,
+    ReadStarted,
 )
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.sql_gen import LoweredStatement
@@ -31,8 +34,10 @@ from parallax.snapshot import connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.pooled_key_diagnostic import (
     MODE_VARIABLE,
+    MODES,
     OUT_VARIABLE,
     DiagnosticRefused,
+    Mode,
     requested,
     write_readings,
 )
@@ -40,7 +45,7 @@ from tests._support.root_ownership import own_root
 from tests.api._pooled_primary_key_diagnostic_support import (
     CASES,
     CHECK,
-    MODEL,
+    MODELS,
     CallCounter,
     Case,
     CaseReading,
@@ -62,33 +67,35 @@ def _server_version(profile_run: Any) -> str:
     return str(version)
 
 
-def _graded(profile_run: Any, case: Case, protocol: Protocol) -> CaseReading:
-    """``case`` run on a fresh root over freshly provisioned tables, then
-    graded by what it stored."""
-    profile_run.reset(model_of(MODEL), {}, TEST_BINDING)
+def _graded(profile_run: Any, case: Case, mode: Mode, protocol: Protocol) -> CaseReading:
+    """``case`` run in ``mode`` on a fresh root over freshly provisioned tables,
+    then graded by what it stored."""
+    model = MODELS[mode]
+    profile_run.reset(model_of(model), {}, TEST_BINDING)
     counter = CallCounter()
     root = own_root(
-        connect(profile_run.port, MODEL, binding=TEST_BINDING, lifecycle_provider=counter)
+        connect(profile_run.port, model, binding=TEST_BINDING, lifecycle_provider=counter)
     )
-    reading = run_case(root.using_database_login(), counter, case, protocol)
+    reading = run_case(root.using_database_login(), counter, case, mode, protocol)
     root.close()
-    check_stored(profile_run, case, 1 + protocol.warmup + protocol.repeats)
+    check_stored(profile_run, case, mode, 1 + protocol.warmup + protocol.repeats)
     return reading
 
 
 def test_every_frozen_case_tallies_and_stores_only_its_inserts(profile_run: Any) -> None:
     # A capture first runs every case once unrecorded, so no case's first
     # reading pays for warming the process rather than for its own root.
-    mode, out = requested()
-    if out is None:
-        readings = [_graded(profile_run, case, CHECK) for case in CASES]
-    else:
-        for case in CASES:
-            _graded(profile_run, case, CHECK)
-        readings = [_graded(profile_run, case, capture_protocol(case)) for case in CASES]
-    document = readings_document(mode, readings, _server_version(profile_run))
-    if out is not None:
-        write_readings(out, "live", document)
+    requested_mode, out = requested()
+    for mode in MODES if out is None else (requested_mode,):
+        if out is None:
+            readings = [_graded(profile_run, case, mode, CHECK) for case in CASES]
+        else:
+            for case in CASES:
+                _graded(profile_run, case, mode, CHECK)
+            readings = [_graded(profile_run, case, mode, capture_protocol(case)) for case in CASES]
+        document = readings_document(mode, readings, _server_version(profile_run))
+        if out is not None:
+            write_readings(out, "live", document)
 
 
 # --------------------------------------------------------------------------- #
@@ -133,6 +140,36 @@ def test_the_counter_tallies_completed_calls_and_acquisitions() -> None:
     assert counter.take() == Tally(acquisitions=1, reads=1)
 
 
+def test_the_counter_tallies_a_reservation_read_beside_its_call_and_acquisition() -> None:
+    counter = _counted(
+        ReadStarted(_EXECUTION, 1, 1, 0, "t", "reservation", None),
+        *_acquisition(2),
+        _call_started(4),
+        _call_finished(4, DatabaseReadCompleted(1)),
+    )
+    assert counter.take() == Tally().reserving(1)
+
+
+def test_a_generated_case_missing_a_reservation_its_keys_call_for_is_refused() -> None:
+    (case, *_rest) = CASES
+
+    class _Unreserved:
+        def __init__(self, counter: CallCounter) -> None:
+            self._counter = counter
+
+        def transact(self, body: object) -> None:
+            del body
+            handler = self._counter.open(None)  # pyright: ignore[reportArgumentType] - the counter reads no descriptor
+            assert handler is not None
+            for event in (*_acquisition(2), _call_started(4)):
+                handler.handle(event)
+            handler.handle(_call_finished(4, DatabaseWriteCompleted(1)))
+
+    counter = CallCounter()
+    with pytest.raises(DiagnosticRefused, match=r"reservations=0\), not Tally\(.*reservations=1"):
+        run_case(_Unreserved(counter), counter, case, "generated", CHECK)
+
+
 @pytest.mark.parametrize(
     ("events", "reason"),
     [
@@ -170,7 +207,7 @@ class _Idle:
 def test_a_case_tallying_other_work_than_it_expects_is_refused() -> None:
     (case, *_rest) = CASES
     with pytest.raises(DiagnosticRefused, match=f"{case.id} made Tally"):
-        run_case(_Idle(), CallCounter(), case, CHECK)
+        run_case(_Idle(), CallCounter(), case, "assigned", CHECK)
 
 
 class _Stored:
@@ -200,14 +237,14 @@ class _Run:
 )
 def test_a_case_storing_anything_but_its_inserts_is_refused(stored: _Stored) -> None:
     (case, *_rest) = CASES
-    check_stored(_Run(_Stored(3, 1, 3, ["inserted"])), case, 3)
+    check_stored(_Run(_Stored(3, 1, 3, ["inserted"])), case, "assigned", 3)
     with pytest.raises(DiagnosticRefused, match=f"{case.id} stored"):
-        check_stored(_Run(stored), case, 3)
+        check_stored(_Run(stored), case, "assigned", 3)
 
 
 def test_readings_missing_a_frozen_case_are_refused() -> None:
     (case, *_rest) = CASES
-    reading = CaseReading(case, CHECK, 0, 0, [0], [0])
+    reading = CaseReading(case, "assigned", CHECK, 0, 0, [0], [0])
     with pytest.raises(DiagnosticRefused, match="not every frozen case"):
         readings_document("assigned", [reading], "18")
 

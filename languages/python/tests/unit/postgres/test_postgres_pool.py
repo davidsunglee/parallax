@@ -3929,3 +3929,66 @@ def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_deferrable_
     assert isinstance(cause, ConnectionAcquisitionError)
     assert cause.reason == "authentication_refused"
     assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+
+
+# --------------------------------------------------------------------------- #
+# A key reservation's lease: the writer's reservation pool, bounded by one     #
+# deadline its setup carries into the session.                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reservation_lease_installs_what_remains_of_its_deadline_as_its_statement_timeout() -> (
+    None
+):
+    connection = _FakeConnection()
+    runtime = _runtime(_pool(), reservation=_pool(connection))
+    source = runtime.reservation_source()
+    assert source.reservation_timeout == 15.0
+
+    with source.new_context(monotonic() + 5.0) as leased:
+        assert leased is not None
+
+    (installed,) = connection.statements
+    assert "statement_timeout" in installed
+    milliseconds = int(installed.rsplit("(", 1)[-1].split(")", 1)[0])
+    assert 0 < milliseconds <= 5000
+
+
+def test_a_reservation_whose_deadline_passed_takes_no_connection() -> None:
+    connection = _FakeConnection()
+    pool = _pool(connection)
+    runtime = _runtime(_pool(), reservation=pool)
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        runtime.reservation_source().new_context(monotonic() - 1.0).__enter__()
+
+    assert refused.value.reason == "timeout"
+    assert connection.statements == []
+    assert pool.returned == []
+
+
+def test_a_statement_timeout_the_session_refuses_fails_preparation_and_disposes_it() -> None:
+    refusal = psycopg.errors.InsufficientPrivilege("cannot set statement_timeout")
+    refusing = _FakeConnection(execute_error=refusal)
+    runtime = _runtime(_pool(), reservation=_pool(refusing))
+    resource = runtime.reservation_source().new_context(monotonic() + 5.0)
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "preparation_failed"
+    assert refused.value.__cause__ is refusal
+    assert _issues(resource.cleanup_result) == [("inspect", "suspect")]
+
+
+def test_an_interrupt_installing_the_statement_timeout_propagates_once_disposed() -> None:
+    interrupted = _FakeConnection(execute_error=KeyboardInterrupt())
+    pool = _pool(interrupted)
+    runtime = _runtime(_pool(), reservation=pool)
+    resource = runtime.reservation_source().new_context(monotonic() + 5.0)
+
+    with pytest.raises(KeyboardInterrupt):
+        resource.__enter__()
+
+    assert pool.returned == [interrupted]
+    assert _issues(resource.cleanup_result) == [("inspect", "suspect")]

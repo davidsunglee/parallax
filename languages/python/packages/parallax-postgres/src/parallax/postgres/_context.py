@@ -518,24 +518,19 @@ class PostgresConnectionContext:
         lock included — fails within it.
 
         Setup rather than a modeled statement, like the role installation. Only
-        the reservation pool's leases carry a statement deadline, and every one
-        of them installs its own, so the setting never outlives its purpose on
-        a session another lease reuses.
+        the reservation pool's single-route leases carry a statement deadline,
+        so a lost session is replaced on that route rather than another, and
+        every one of them installs its own, so the setting never outlives its
+        purpose on a session another lease reuses.
         """
         deadline = self._statement_deadline
         if deadline is None:
             return
+        milliseconds = max(1, math.ceil((deadline - monotonic()) * 1000))
         try:
-            self._admit(deadline)
-            milliseconds = max(1, math.ceil((deadline - monotonic()) * 1000))
             self._run_native(
                 _install_setup, statement_timeout(milliseconds), replay_safe=True, setup=True
             )
-        except _FellBack:
-            raise
-        except ConnectionAcquisitionError:
-            self._cleanup_result = self._settled(suspect=False, restore_role=self._authorized)
-            raise
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
