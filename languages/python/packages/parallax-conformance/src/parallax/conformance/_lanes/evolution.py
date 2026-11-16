@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from parallax.conformance import case_format, models
@@ -10,16 +10,23 @@ from parallax.conformance._mechanism.model_facts import model_path
 from parallax.conformance.bindings import binding_document
 from parallax.conformance.evolution_wire import (
     evolution_observation,
+    migration_cell,
     schema_cell,
     unsupported_cell,
 )
 from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.evolution.internal.model_evolution import (
     ABSENT,
+    CoordinatedEvolution,
+    Evolution,
     UnilateralEvolution,
     evolve_resolved,
 )
-from parallax.evolution.internal.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
+from parallax.evolution.internal.schema_delta import (
+    UnsupportedSchemaEvolutionError,
+    coordinated_migration,
+    schema_delta,
+)
 from parallax.postgres import PostgresBinding
 
 __all__ = ["run_evolution_case"]
@@ -36,10 +43,11 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
     every other corpus model does, so a case cannot describe an evolution between
     models this implementation would not otherwise accept.
 
-    A unilateral description additionally carries its Schema Delta for every
-    Dialect the specification names, reported as one whole matrix rather than one
-    cell per run: a Dialect this implementation ships no strategy for is an
-    explicit exclusion naming its reason, never a silently absent key.
+    A unilateral description additionally carries its Schema Delta, and a
+    coordinated one its Coordinated Migration, for every Dialect the
+    specification names, reported as one whole matrix rather than one cell per
+    run: a Dialect this implementation ships no strategy for is an explicit
+    exclusion naming its reason, never a silently absent key.
 
     The run touches no database and no port: describing the difference between
     two accepted models and lowering it to statements are both pure, which is
@@ -79,7 +87,9 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
     )
     observations: dict[str, Any] = {"evolution": evolution_observation(evolution)}
     if isinstance(evolution, UnilateralEvolution):
-        observations["schema"] = _schema_matrix(evolution)
+        observations["schema"] = _matrix(evolution, _schema_matrix_cell)
+    else:
+        observations["migration"] = _matrix(evolution, _migration_matrix_cell)
     return observations
 
 
@@ -89,12 +99,14 @@ def _endpoint_binding(endpoint: object, case_binding: object) -> PostgresBinding
     )
 
 
-def _schema_matrix(evolution: UnilateralEvolution) -> dict[str, Any]:
+def _matrix[E: Evolution](evolution: E, cell: Callable[[E], dict[str, Any]]) -> dict[str, Any]:
     """One cell per Dialect the specification supports, in catalog order."""
-    return {name: _schema_matrix_cell(evolution, name) for name in DIALECT_CATALOG}
+    return {name: _matrix_cell(evolution, name, cell) for name in DIALECT_CATALOG}
 
 
-def _schema_matrix_cell(evolution: UnilateralEvolution, name: str) -> dict[str, Any]:
+def _matrix_cell[E: Evolution](
+    evolution: E, name: str, cell: Callable[[E], dict[str, Any]]
+) -> dict[str, Any]:
     try:
         dialect = dialect_for(name)
     except ValueError:
@@ -102,6 +114,14 @@ def _schema_matrix_cell(evolution: UnilateralEvolution, name: str) -> dict[str, 
     if dialect.name != evolution.later.dialect.name:  # pragma: no cover - one shipped dialect
         return {"excluded": {"reason": "no-dialect"}}
     try:
-        return schema_cell(schema_delta(evolution))
+        return cell(evolution)
     except UnsupportedSchemaEvolutionError as refusal:
         return unsupported_cell(refusal)
+
+
+def _schema_matrix_cell(evolution: UnilateralEvolution) -> dict[str, Any]:
+    return schema_cell(schema_delta(evolution))
+
+
+def _migration_matrix_cell(evolution: CoordinatedEvolution) -> dict[str, Any]:
+    return migration_cell(coordinated_migration(evolution))

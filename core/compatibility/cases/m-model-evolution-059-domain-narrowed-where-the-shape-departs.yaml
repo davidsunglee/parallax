@@ -67,3 +67,36 @@ then:
                 parent: parallax.compatibility.Registry
                 tag: { value: record }
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Record
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Filed
+                    tag: { value: record }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Registry
+                    tag: { value: record }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Record
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Filed
+                    tag: { value: record }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Registry
+                    tag: { value: record }

@@ -158,6 +158,7 @@ def test_evolution_wheel_ships_each_of_its_scopes(wheelhouse: Wheelhouse) -> Non
         wheelhouse, "parallax-evolution", "parallax/evolution/internal/schema_delta/"
     ) == {
         "parallax/evolution/internal/schema_delta/__init__.py",
+        "parallax/evolution/internal/schema_delta/_coordinated.py",
         "parallax/evolution/internal/schema_delta/_naming.py",
         "parallax/evolution/internal/schema_delta/_order.py",
         "parallax/evolution/internal/schema_delta/_physical.py",

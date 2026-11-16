@@ -18,3 +18,20 @@ then:
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
       - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }

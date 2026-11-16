@@ -29,7 +29,13 @@ which replaces `PUBLICATION_RELOCATION_REFUSED`. Code matching the old constant 
 needs the new one. `evolve` reports such a change as the new `AllocatorSettingsChanged`
 operation, so code matching every evolution operation needs a case for it, and
 `schema_delta` now raises `TypeError` when handed a `CoordinatedEvolution` rather than
-rendering an incomplete delta. A pool metrics source now names its `purpose`,
+rendering an incomplete delta, naming the new `coordinated_migration`, which turns every
+`CoordinatedEvolution` into a `CoordinatedMigration`: ordered `MigrationStatement`s and
+`ManualStep`s (`ManualAction` `DRAIN_EARLIER_ROOTS`, `TRANSFORM_STORED_DATA`, `RELOCATE`,
+or `UPDATE_AUTHORING_SURFACE`), each naming the operations that asked for it. It creates,
+alters, positions, and drops native sequences — moving an existing entity onto generated
+keys positions its sequence past every stored key — and leaves draining, relocating, and
+transforming stored data to you. A pool metrics source now names its `purpose`,
 `"application"` or `"reservation"`; an observer watching only application pools can
 decline the reservation pool's source.
 

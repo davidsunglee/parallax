@@ -27,7 +27,14 @@ from ..database_binding import PhysicalTable
 from ..ddl_builder import qualified_table, quote_identifier
 from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
-from . import Catalog, build_catalog, register
+from . import (
+    Catalog,
+    SequenceDefinition,
+    build_catalog,
+    register,
+    sequence_definitions,
+    with_sequences,
+)
 
 # The provisioning seam pins a stable Postgres major (m-case-format/DQ15).
 POSTGRES_IMAGE = "postgres:18"
@@ -57,6 +64,20 @@ join pg_catalog.pg_namespace n on n.oid = c.relnamespace
 join pg_catalog.pg_attribute a on a.attrelid = c.oid
 where n.nspname = any(%s) and a.attnum > 0 and not a.attisdropped
   and c.relname = any(%s)
+"""
+
+_CATALOG_SEQUENCES = """
+select n.nspname as sequence_schema,
+       c.relname as sequence_name,
+       format_type(s.seqtypid, null) as data_type,
+       s.seqincrement as increment,
+       s.seqmin as minimum,
+       s.seqmax as maximum,
+       s.seqcycle as cycles
+from pg_catalog.pg_sequence s
+join pg_catalog.pg_class c on c.oid = s.seqrelid
+join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+where n.nspname = any(%s) and c.relname = any(%s)
 """
 
 # `indkey` is the ordered component vector, so `with ordinality` recovers the
@@ -293,8 +314,27 @@ class PostgresProvider:
             for statement in statements:
                 cur.execute(_trusted_query(statement))
 
-    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
-        """The physical shape Postgres itself reports for the physical *tables*."""
+    def catalog(
+        self, tables: Sequence[PhysicalTable], sequences: Sequence[PhysicalTable] = ()
+    ) -> Catalog:
+        """The physical shape Postgres itself reports for the physical *tables*
+        and *sequences*."""
+        return with_sequences(self._tables(tables), sequences, self._sequences(sequences))
+
+    def _sequences(self, sequences: Sequence[PhysicalTable]) -> list[SequenceDefinition]:
+        if not sequences:
+            return []
+        with self._conn.cursor() as cur:
+            cur.execute(
+                _trusted_query(_CATALOG_SEQUENCES),
+                (
+                    sorted({_schema(sequence.qualifier) for sequence in sequences}),
+                    sorted({sequence.name for sequence in sequences}),
+                ),
+            )
+            return sequence_definitions(cur.fetchall())
+
+    def _tables(self, tables: Sequence[PhysicalTable]) -> Catalog:
         if not tables:
             return Catalog(tables=())
         binds = (

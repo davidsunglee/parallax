@@ -21,3 +21,20 @@ then:
           attribute: parallax.compatibility.Placard.caption
           deltas: [{ kind: StorageChanged, earlier: caption, later: headline }]
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Placard.caption
+              deltas:
+                - { kind: StorageChanged, earlier: caption, later: headline }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Placard.caption
+              deltas:
+                - { kind: StorageChanged, earlier: caption, later: headline }

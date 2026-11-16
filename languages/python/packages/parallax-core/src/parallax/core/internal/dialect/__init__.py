@@ -269,6 +269,11 @@ def _check_condition(check: IntervalCheckDdl | DocumentRootCheckDdl) -> str:
             return f"jsonb_typeof({column}) = 'object'"
 
 
+def _text_literal(value: str) -> str:
+    """``value`` as a standard SQL string literal, its own quotes doubled."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _column_clause(column: ColumnDdl) -> str:
     """One Column's name, type, and nullability, as every DDL statement spells it."""
     return f"{column.column} {column.type_sql}" + ("" if column.nullable else " not null")
@@ -750,6 +755,73 @@ class Dialect:
         return (
             f"create sequence {sequence} as {ddl.data_type} increment by {ddl.increment} "
             f"minvalue {ddl.minimum} maxvalue {ddl.maximum} start with {ddl.start} no cycle"
+        )
+
+    def alter_sequence(
+        self, sequence: str, earlier: SequenceDdl, later: SequenceDdl
+    ) -> str | Unsupported:
+        """``alter sequence`` restating each of ``earlier``'s settings ``later``
+        changes, or why this dialect cannot.
+
+        The start is a creation setting and is never restated, and nothing here
+        restarts the sequence: its position is :meth:`position_sequence`'s.
+        """
+        if self.sequence_bounds is None:
+            return Unsupported(f"{self.name} has no native sequence")
+        clauses = [
+            clause
+            for changed, clause in (
+                (earlier.data_type != later.data_type, f"as {later.data_type}"),
+                (earlier.increment != later.increment, f"increment by {later.increment}"),
+                (earlier.minimum != later.minimum, f"minvalue {later.minimum}"),
+                (earlier.maximum != later.maximum, f"maxvalue {later.maximum}"),
+            )
+            if changed
+        ]
+        return f"alter sequence {sequence} {' '.join(clauses)}"
+
+    def drop_sequence(self, sequence: str) -> str | Unsupported:
+        """``drop sequence`` for one native sequence no model references any more."""
+        if self.sequence_bounds is None:
+            return Unsupported(f"{self.name} has no native sequence")
+        return f"drop sequence {sequence}"
+
+    def position_sequence(
+        self,
+        sequence: str,
+        ddl: SequenceDdl,
+        key_columns: Sequence[tuple[str, str]],
+        *,
+        reserved_increment: int,
+    ) -> str | Unsupported:
+        """One statement moving ``sequence`` forward past every stored key and
+        every block already reserved from it, or why this dialect cannot.
+
+        ``key_columns`` holds each consuming Table's rendered name and quoted key
+        Column. The next reservation answers the greatest of one past each
+        Table's largest key and the sequence's own next value, which a sequence
+        that has answered a reservation computes under ``reserved_increment``,
+        the physical step that reservation was taken under. A position past
+        ``ddl``'s maximum leaves the sequence exhausted rather than wrapping, and
+        no position ever moves it backward. The arithmetic is exact, so neither a
+        key at its type's bound nor a step past it overflows.
+        """
+        if self.sequence_bounds is None:
+            return Unsupported(f"{self.name} has no native sequence")
+        floors = [
+            "(select case when t1.is_called then cast(t1.last_value as numeric) + "
+            f"{reserved_increment} else t1.last_value end from {sequence} t1)",
+            *(
+                f"(select cast(max(t{index}.{column}) as numeric) + 1 from {table} t{index})"
+                for index, (table, column) in enumerate(key_columns, start=2)
+            ),
+        ]
+        name = _text_literal(sequence)
+        return (
+            f"select case when t0.next_key > {ddl.maximum} "
+            f"then pg_catalog.setval({name}, {ddl.maximum}, true) "
+            f"else pg_catalog.setval({name}, cast(t0.next_key as {ddl.data_type}), false) end "
+            f"from (select greatest({', '.join(floors)}) next_key) t0"
         )
 
     def reserve_sequence(self) -> str | Unsupported:

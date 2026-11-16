@@ -1,0 +1,95 @@
+# A populated Entity moves from application-assigned keys onto an allocator
+# another Entity already draws from (m-model-evolution, m-schema-delta,
+# m-pk-gen). The surviving sequence is never created or reset again: the
+# migration drains the earlier roots and moves the sequence forward past every
+# key both consumers store, keeping any later position it already holds.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-members-v1.yaml
+    later: models/evolution-key-sequence-settings-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Pass.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: { generation: application-assigned }
+            later:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Pass.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: { generation: application-assigned }
+              later:
+                generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+        reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1
+        - statement: "select case when t0.next_key > 9223372036854775807 then pg_catalog.setval('px.\"credentialIds\"', 9223372036854775807, true) else pg_catalog.setval('px.\"credentialIds\"', cast(t0.next_key as bigint), false) end from (select greatest((select case when t1.is_called then cast(t1.last_value as numeric) + 50 else t1.last_value end from px.\"credentialIds\" t1), (select cast(max(t2.id) as numeric) + 1 from px.badge t2), (select cast(max(t3.id) as numeric) + 1 from px.pass t3)) next_key) t0"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1
+        - statement: "begin not atomic declare next_key decimal(65) default (select greatest(-9223372036854775807, coalesce((select cast(max(t1.id) as decimal(65)) + 1 from px.badge t1), -9223372036854775807), coalesce((select cast(max(t2.id) as decimal(65)) + 1 from px.pass t2), -9223372036854775807))); execute immediate concat('select setval(px.`credentialIds`, ', next_key, ', 0)'); end"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1

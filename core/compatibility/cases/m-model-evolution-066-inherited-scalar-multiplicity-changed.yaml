@@ -61,3 +61,68 @@ then:
           deltas:
             - {kind: MultiplicityChanged, earlier: one, later: many}
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Drill.sizes
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Gear.labels
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Saw.teeth
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Tool.tags
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Prototype.marks
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Drill.sizes
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Gear.labels
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Saw.teeth
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Tool.tags
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Prototype.marks
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }

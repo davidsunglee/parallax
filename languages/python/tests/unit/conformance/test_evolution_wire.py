@@ -17,10 +17,12 @@ import pytest
 from parallax.conformance.evolution_wire import (
     EvolutionSpellingError,
     evolution_observation,
+    migration_cell,
     schema_cell,
     unsupported_cell,
 )
 from parallax.core.internal.base import STRING, Numeric
+from parallax.core.internal.database_binding import PhysicalSequence
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
@@ -116,7 +118,11 @@ from parallax.evolution.internal.model_evolution import (
     WritesEnabled,
 )
 from parallax.evolution.internal.schema_delta import (
+    CoordinatedMigration,
     CreatedIndex,
+    ManualAction,
+    ManualStep,
+    MigrationStatement,
     SchemaDelta,
     SchemaTarget,
     UnsupportedSchemaEvolutionError,
@@ -779,4 +785,38 @@ def test_an_unsupported_cell_names_each_operation_its_place_and_its_causes() -> 
                 },
             ]
         }
+    }
+
+
+def test_a_migration_cell_spells_each_step_as_its_statement_or_its_manual_action() -> None:
+    cause = EntityAdded(entity=_ORDER)
+    migration = CoordinatedMigration(
+        steps=(
+            ManualStep(ManualAction.DRAIN_EARLIER_ROOTS, (cause,)),
+            MigrationStatement(sql="drop sequence px.ids", caused_by=(cause,)),
+        )
+    )
+    spelled_cause = [{"kind": "EntityAdded", "entity": _ORDER_SPELLING}]
+    assert migration_cell(migration) == {
+        "steps": [
+            {"manual": "DrainEarlierRoots", "causedBy": spelled_cause},
+            {"statement": "drop sequence px.ids", "causedBy": spelled_cause},
+        ]
+    }
+
+
+def test_an_unsupported_sequence_operation_is_placed_by_its_sequence_alone() -> None:
+    refusal = UnsupportedSchemaEvolutionError(
+        "mariadb",
+        (
+            UnsupportedSchemaOperation(
+                kind="PositionSequence",
+                location=SchemaTarget(sequence=PhysicalSequence(("px",), "ids")),
+                reason="ignored by the corpus",
+                caused_by=(EntityAdded(entity=_ORDER),),
+            ),
+        ),
+    )
+    assert unsupported_cell(refusal)["unsupported"]["operations"][0]["physicalLocation"] == {
+        "sequence": {"qualifier": ["px"], "name": "ids"}
     }

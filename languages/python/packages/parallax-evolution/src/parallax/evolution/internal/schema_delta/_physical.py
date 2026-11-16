@@ -17,20 +17,25 @@ from parallax.evolution.internal.schema_delta._values import SchemaTarget
 
 __all__ = [
     "AddColumn",
+    "AlterSequence",
     "CreateExtension",
     "CreateIndex",
     "CreateSequence",
     "CreateTable",
     "DocumentRootCheck",
     "DropIndex",
+    "DropSequence",
     "Exclusion",
     "IndexDefinition",
     "IntervalCheck",
     "PhysicalColumn",
     "PhysicalOperation",
+    "PositionSequence",
     "RestateColumnDomain",
+    "SequenceOperation",
     "TableOperation",
     "TemporalBackingIndex",
+    "key_columns",
     "location_of",
     "member_key",
     "table_of",
@@ -150,6 +155,43 @@ class CreateSequence:
 
 
 @dataclass(frozen=True, slots=True)
+class AlterSequence:
+    """Restate a surviving allocator's sequence under its later allocation settings.
+
+    ``earlier`` and ``later`` are the allocator under each endpoint's binding;
+    the sequence is altered where the later one places it.
+    """
+
+    earlier: ResolvedSequence
+    later: ResolvedSequence
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSequence:
+    """Move a sequence forward past every key its consuming Tables store and
+    every block already reserved from it.
+
+    ``reserved_increment`` is the physical step the sequence's latest
+    reservation was taken under: the earlier settings' step for a sequence whose
+    step this evolution alters, and its own otherwise.
+    """
+
+    sequence: ResolvedSequence
+    reserved_increment: int
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DropSequence:
+    """Drop the sequence of an allocator the later model no longer references,
+    where the earlier binding placed it."""
+
+    sequence: ResolvedSequence
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CreateTable:
     """Create one whole Table: every target Column, the derived primary key,
     its checks, and a temporal Table's exclusion.
@@ -219,8 +261,14 @@ class DropIndex:
 type TableOperation = CreateTable | AddColumn | RestateColumnDomain | CreateIndex | DropIndex
 """An operation local to a single Table."""
 
-type PhysicalOperation = CreateExtension | CreateSequence | TableOperation
-"""Everything a Unilateral Evolution can ask a relational schema to do."""
+type SequenceOperation = CreateSequence | AlterSequence | PositionSequence | DropSequence
+"""An operation on one native sequence."""
+
+type PhysicalOperation = CreateExtension | SequenceOperation | TableOperation
+"""Everything an evolution can ask a relational schema to do.
+
+A Unilateral Evolution asks for no sequence operation but a creation; altering,
+positioning, and dropping a sequence arise only in a coordinated migration."""
 
 
 def table_of(operation: TableOperation) -> ResolvedTable:
@@ -258,8 +306,10 @@ def location_of(operation: PhysicalOperation) -> SchemaTarget:
     match operation:
         case CreateExtension():
             return SchemaTarget(extension=operation.name)
-        case CreateSequence():
+        case CreateSequence() | PositionSequence() | DropSequence():
             return SchemaTarget(sequence=operation.sequence.physical)
+        case AlterSequence():
+            return SchemaTarget(sequence=operation.later.physical)
         case CreateTable():
             return SchemaTarget(table=operation.table.physical)
         case AddColumn():
@@ -268,3 +318,29 @@ def location_of(operation: PhysicalOperation) -> SchemaTarget:
             return SchemaTarget(table=operation.table.physical, column=operation.later.column)
         case CreateIndex() | DropIndex():
             return SchemaTarget(table=operation.definition.table.physical, index=operation.name)
+
+
+def key_columns(sequence: ResolvedSequence) -> tuple[tuple[ResolvedTable, Column], ...]:
+    """Each Table drawing keys from ``sequence`` beside the Column storing them.
+
+    A temporal Table's physical key closes with axis Columns and a
+    table-per-hierarchy Table's may carry its tag, so the key Column is read off
+    the family root's declared key: a temporal Table's logical key, and the
+    authored Attribute of any other Table's physical key. Every stored row a
+    Table holds, history included, sits in that one Column.
+    """
+    held: list[tuple[ResolvedTable, Column]] = []
+    for table in sequence.consuming_tables:
+        layout = table.layout
+        constraints = layout.temporal_constraints
+        slots = (
+            constraints.logical_key
+            if constraints is not None
+            else tuple(
+                slot
+                for slot in layout.physical_primary_key
+                if isinstance(slot.contributor, AttributeIdentity)
+            )
+        )
+        held.extend((table, slot.column) for slot in slots)
+    return tuple(held)

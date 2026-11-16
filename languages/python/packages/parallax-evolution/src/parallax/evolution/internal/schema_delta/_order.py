@@ -17,7 +17,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     table_of,
 )
 
-__all__ = ["order", "order_key"]
+__all__ = ["order", "order_key", "table_operations"]
 
 KIND_RANK: Final[Mapping[type, int]] = {
     CreateTable: 0,
@@ -60,12 +60,21 @@ def order(plan: Sequence[PhysicalOperation]) -> tuple[PhysicalOperation, ...]:
             operation.sequence.physical.qualifier,
         ),
     )
-    local = sorted(
-        (
-            operation
-            for operation in plan
-            if not isinstance(operation, CreateExtension | CreateSequence)
-        ),
-        key=order_key,
+    return (*prerequisites, *sequences, *table_operations(plan))
+
+
+def table_operations(plan: Sequence[PhysicalOperation]) -> tuple[TableOperation, ...]:
+    """``plan``'s Table operations alone, in executable order among themselves."""
+    return tuple(
+        sorted(
+            (
+                operation
+                for operation in plan
+                if isinstance(
+                    operation,
+                    CreateTable | AddColumn | RestateColumnDomain | CreateIndex | DropIndex,
+                )
+            ),
+            key=order_key,
+        )
     )
-    return (*prerequisites, *sequences, *local)

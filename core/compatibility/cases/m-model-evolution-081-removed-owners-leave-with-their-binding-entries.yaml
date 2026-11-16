@@ -49,3 +49,20 @@ then:
         reasons: [AuthoringSurfaceChangeRequired]
       - operation: { kind: EntityRemoved, entity: parallax.compatibility.Refund }
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: archive.Statement }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Refund }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: archive.Statement }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Refund }

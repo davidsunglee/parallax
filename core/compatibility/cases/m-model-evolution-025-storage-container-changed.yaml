@@ -31,3 +31,32 @@ then:
           earlier: { qualifier: [px], name: evolution_vault }
           later: { qualifier: [px], name: evolution_vault_archive }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Vault
+              earlier: { qualifier: [px], name: evolution_vault }
+              later: { qualifier: [px], name: evolution_vault_archive }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Vault
+              earlier: { qualifier: [px], name: evolution_vault }
+              later: { qualifier: [px], name: evolution_vault_archive }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Vault
+              earlier: { qualifier: [px], name: evolution_vault }
+              later: { qualifier: [px], name: evolution_vault_archive }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Vault
+              earlier: { qualifier: [px], name: evolution_vault }
+              later: { qualifier: [px], name: evolution_vault_archive }

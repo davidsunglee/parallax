@@ -13,11 +13,16 @@ from parallax.evolution.internal.model_evolution import (
     UnilateralEvolution,
 )
 from parallax.evolution.internal.schema_delta import (
+    CoordinatedMigration,
     CreatedIndex,
+    ManualAction,
+    ManualStep,
+    MigrationStatement,
     SchemaDelta,
     SchemaTarget,
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
+    coordinated_migration,
     schema_delta,
 )
 
@@ -25,15 +30,20 @@ __all__ = [
     "ABSENT",
     "Absent",
     "CoordinatedEvolution",
+    "CoordinatedMigration",
     "CoordinationReason",
     "CoordinationRequirement",
     "CreatedIndex",
     "Evolution",
+    "ManualAction",
+    "ManualStep",
+    "MigrationStatement",
     "SchemaDelta",
     "SchemaTarget",
     "UnilateralEvolution",
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",
+    "coordinated_migration",
     "evolve",
     "schema_delta",
 ]

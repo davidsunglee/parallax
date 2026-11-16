@@ -40,3 +40,20 @@ then:
           attribute: parallax.compatibility.Notice.headline
           deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Notice.headline
+              deltas:
+                - { kind: ReadOnlyChanged, earlier: false, later: true }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Notice.headline
+              deltas:
+                - { kind: ReadOnlyChanged, earlier: false, later: true }

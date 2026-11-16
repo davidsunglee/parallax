@@ -1238,22 +1238,38 @@
       "additionalProperties": false,
       "required": ["kind", "physicalLocation", "causedBy"],
       "properties": {
-        "kind": {"enum": ["CreateExtension", "CreateTable", "AddColumn", "RestateColumnDomain", "CreateIndex", "DropIndex"]},
+        "kind": {
+          "enum": [
+            "CreateExtension",
+            "CreateSequence",
+            "AlterSequence",
+            "PositionSequence",
+            "DropSequence",
+            "CreateTable",
+            "AddColumn",
+            "RestateColumnDomain",
+            "CreateIndex",
+            "DropIndex"
+          ]
+        },
         "physicalLocation": {
-          "description": "Where the operation acts: a Table and the member within it, or the database-wide extension a prerequisite installs.",
+          "description": "Where the operation acts: a Table and the member within it, a native sequence, or the database-wide extension a prerequisite installs.",
           "type": "object",
           "additionalProperties": false,
           "oneOf": [
-            {"required": ["table"], "not": {"required": ["extension"]}},
+            {"required": ["table"], "not": {"anyOf": [{"required": ["extension"]}, {"required": ["sequence"]}]}},
+            {"required": ["sequence"], "maxProperties": 1},
             {"required": ["extension"], "maxProperties": 1}
           ],
           "properties": {
             "table": {"$ref": "#/$defs/physicalTable"},
             "column": {"type": "string", "minLength": 1},
             "index": {"type": "string", "minLength": 1},
+            "sequence": {"$ref": "#/$defs/physicalTable"},
             "extension": {"type": "string", "minLength": 1}
           }
         },
+
         "causedBy": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evolutionOperation"}}
       }
     },
@@ -1304,6 +1320,54 @@
       "minProperties": 1,
       "propertyNames": {"enum": ["postgres", "mariadb"]},
       "additionalProperties": {"$ref": "#/$defs/schemaObservationCell"}
+    },
+    "migrationStep": {
+      "description": "One step of a Coordinated Migration, naming the Evolution Operations that asked for it in canonical order: EITHER one generated `statement` for the cell's Dialect, OR a `manual` action the deployment performs itself.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["causedBy"],
+      "oneOf": [{"required": ["statement"]}, {"required": ["manual"]}],
+      "properties": {
+        "statement": {"type": "string", "minLength": 1},
+        "manual": {"enum": ["DrainEarlierRoots", "TransformStoredData", "Relocate", "UpdateAuthoringSurface"]},
+        "causedBy": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evolutionOperation"}}
+      }
+    },
+    "migrationObservationCell": {
+      "description": "One Dialect's answer for a Coordinated Evolution: EITHER the ordered steps of the Coordinated Migration the run generated, OR the complete ordered set of physical operations that Dialect cannot render, OR an explicit exclusion naming why this adapter reported no answer at all. Exactly one of the three.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/migrationStep"}},
+        "unsupported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operations"],
+          "properties": {
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"$ref": "#/$defs/unsupportedSchemaOperation"}
+            }
+          }
+        },
+        "excluded": {
+          "description": "The adapter reported no answer for this Dialect, and why. `no-dialect` means it ships no dialect strategy for that Dialect Identity at all.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {"reason": {"enum": ["no-dialect"]}}
+        }
+      }
+    },
+    "migrationObservation": {
+      "description": "The Coordinated Migration an evolution-case run generated for every supported Dialect, keyed by Dialect Identity, compared against the case's `then.migration`. Reported only for a coordinated description, because a Unilateral Evolution is not an input to coordinated migration.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"enum": ["postgres", "mariadb"]},
+      "additionalProperties": {"$ref": "#/$defs/migrationObservationCell"}
     },
     "observations": {
       "type": "object",
@@ -1392,6 +1456,10 @@
         "schema": {
           "description": "The Schema Delta an evolution-case run lowered its unilateral description to, one cell per supported Dialect, compared against the case's `then.schema`. Optional and additive at the schema layer — only a unilateral evolution-shape run reports it, and existing run outputs stay valid.",
           "$ref": "#/$defs/schemaObservation"
+        },
+        "migration": {
+          "description": "The Coordinated Migration an evolution-case run generated for its coordinated description, one cell per supported Dialect, compared against the case's `then.migration`. Optional and additive at the schema layer — only a coordinated evolution-shape run reports it, and existing run outputs stay valid.",
+          "$ref": "#/$defs/migrationObservation"
         },
         "rejectedRule": {
           "description": "The classified normative rule identifier a rejected-case run refused the input with (m-predicate / m-navigate / m-value-object / m-inheritance / m-storage-layout / m-relationship), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `databaseCalls: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",

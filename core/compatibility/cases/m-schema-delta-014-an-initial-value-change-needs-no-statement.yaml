@@ -1,0 +1,37 @@
+# A surviving allocator's initial value changes (m-schema-delta, m-pk-gen,
+# m-model-evolution): the initial value places only a sequence not yet created,
+# so the evolution is unilateral and its delta is empty on every dialect.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-settings-v1.yaml
+    later: models/evolution-key-sequence-initial-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Badge.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+            later:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 900, incrementSize: 1 }
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Pass.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+            later:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 900, incrementSize: 1 }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta: { statements: [], createdIndices: [] }
+    mariadb:
+      delta: { statements: [], createdIndices: [] }

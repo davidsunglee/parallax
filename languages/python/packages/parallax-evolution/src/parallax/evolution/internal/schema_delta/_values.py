@@ -15,8 +15,12 @@ __all__ = [
     "CollidingRelation",
     "CollidingTemporalConstraint",
     "CollisionGroup",
+    "CoordinatedMigration",
     "CreatedIndex",
     "IndexPresence",
+    "ManualAction",
+    "ManualStep",
+    "MigrationStatement",
     "SchemaDelta",
     "SchemaTarget",
     "UnsupportedSchemaEvolutionError",
@@ -47,6 +51,55 @@ class SchemaDelta:
 
     statements: tuple[str, ...]
     created_indices: tuple[CreatedIndex, ...]
+
+
+class ManualAction(enum.Enum):
+    """What a coordinated migration step asks of the deployment rather than of SQL."""
+
+    DRAIN_EARLIER_ROOTS = "DrainEarlierRoots"
+    """Close every Database Root serving the earlier edition, abandoning the keys
+    it holds reserved and retiring its provider sessions, before any later step."""
+    TRANSFORM_STORED_DATA = "TransformStoredData"
+    """Carry the stored data and schema across a change no generated statement
+    expresses."""
+    RELOCATE = "Relocate"
+    """Move or rename a physical table or sequence, with what it holds, to the
+    later binding's placement."""
+    UPDATE_AUTHORING_SURFACE = "UpdateAuthoringSurface"
+    """Change the application's queries and writes for an operation that needs
+    no database change of its own."""
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationStatement:
+    """One generated statement of a coordinated migration.
+
+    ``caused_by`` names the operations that asked for it."""
+
+    sql: str
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ManualStep:
+    """One step of a coordinated migration that the deployment performs itself.
+
+    ``caused_by`` names the operations that asked for it."""
+
+    action: ManualAction
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CoordinatedMigration:
+    """The ordered steps carrying a database and its roots from one edition to the next.
+
+    The editions are a Coordinated Evolution's earlier and later ones. Every
+    step is applied in order, each only after the one before it completes, and
+    the later edition is published after the last.
+    """
+
+    steps: tuple[MigrationStatement | ManualStep, ...]
 
 
 @dataclass(frozen=True, slots=True)

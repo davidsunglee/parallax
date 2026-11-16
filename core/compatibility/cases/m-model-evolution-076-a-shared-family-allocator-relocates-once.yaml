@@ -40,3 +40,32 @@ then:
           earlier: { qualifier: [px], name: fleetIds }
           later: { qualifier: [px_keys], name: fleet_ids }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: fleetIds
+              earlier: { qualifier: [px], name: fleetIds }
+              later: { qualifier: [px_keys], name: fleet_ids }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: fleetIds
+              earlier: { qualifier: [px], name: fleetIds }
+              later: { qualifier: [px_keys], name: fleet_ids }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: fleetIds
+              earlier: { qualifier: [px], name: fleetIds }
+              later: { qualifier: [px_keys], name: fleet_ids }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: fleetIds
+              earlier: { qualifier: [px], name: fleetIds }
+              later: { qualifier: [px_keys], name: fleet_ids }

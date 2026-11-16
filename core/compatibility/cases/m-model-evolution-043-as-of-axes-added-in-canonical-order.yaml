@@ -113,3 +113,44 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.validEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.validStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Gauge, dimension: valid-time }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Gauge, dimension: transaction-time }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.validEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Gauge.validStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Gauge, dimension: valid-time }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Gauge, dimension: transaction-time }

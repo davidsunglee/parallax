@@ -81,3 +81,26 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Permit.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Permit.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Permit, dimension: transaction-time }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Permit.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Permit.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Permit, dimension: transaction-time }

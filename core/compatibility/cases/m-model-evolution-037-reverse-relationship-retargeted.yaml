@@ -48,3 +48,24 @@ then:
               later: parallax.compatibility.Bin.items
         reasons:
           - AuthoringSurfaceChangeRequired
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Item.holder
+              deltas:
+                - kind: ReverseOfChanged
+                  earlier: parallax.compatibility.Folder.items
+                  later: parallax.compatibility.Bin.items
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Item.holder
+              deltas:
+                - kind: ReverseOfChanged
+                  earlier: parallax.compatibility.Folder.items
+                  later: parallax.compatibility.Bin.items

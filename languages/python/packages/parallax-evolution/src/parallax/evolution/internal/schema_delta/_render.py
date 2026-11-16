@@ -12,18 +12,23 @@ from parallax.core.internal.dialect import (
 )
 from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
+    AlterSequence,
     CreateExtension,
     CreateIndex,
     CreateSequence,
     CreateTable,
     DocumentRootCheck,
     DropIndex,
+    DropSequence,
     Exclusion,
     IndexDefinition,
     IntervalCheck,
     PhysicalColumn,
     PhysicalOperation,
+    PositionSequence,
     RestateColumnDomain,
+    SequenceOperation,
+    key_columns,
 )
 
 __all__ = ["render"]
@@ -34,8 +39,8 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
     match operation:
         case CreateExtension():
             return dialect.create_extension(dialect.quote(operation.name))
-        case CreateSequence():
-            return dialect.create_sequence(operation.sequence.sql, sequence_ddl(operation.sequence))
+        case CreateSequence() | AlterSequence() | PositionSequence() | DropSequence():
+            return _sequence_statement(operation, dialect)
         case CreateTable():
             return dialect.create_table(
                 operation.table.sql,
@@ -70,6 +75,28 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
             )
         case DropIndex():
             return dialect.drop_index(operation.definition.table.physical, operation.name)
+
+
+def _sequence_statement(operation: SequenceOperation, dialect: Dialect) -> str | Unsupported:
+    match operation:
+        case CreateSequence():
+            return dialect.create_sequence(operation.sequence.sql, sequence_ddl(operation.sequence))
+        case AlterSequence():
+            return dialect.alter_sequence(
+                operation.later.sql, sequence_ddl(operation.earlier), sequence_ddl(operation.later)
+            )
+        case PositionSequence():
+            return dialect.position_sequence(
+                operation.sequence.sql,
+                sequence_ddl(operation.sequence),
+                [
+                    (table.sql, dialect.quote(column.name))
+                    for table, column in key_columns(operation.sequence)
+                ],
+                reserved_increment=operation.reserved_increment,
+            )
+        case DropSequence():
+            return dialect.drop_sequence(operation.sequence.sql)
 
 
 def _column(column: PhysicalColumn, dialect: Dialect) -> ColumnDdl:

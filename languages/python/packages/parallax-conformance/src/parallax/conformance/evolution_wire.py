@@ -114,12 +114,14 @@ from parallax.evolution.internal.model_evolution import (
     WritesEnabled,
 )
 from parallax.evolution.internal.schema_delta import (
+    CoordinatedMigration,
+    ManualStep,
     SchemaDelta,
     SchemaTarget,
     UnsupportedSchemaEvolutionError,
 )
 
-__all__ = ["evolution_observation", "schema_cell", "unsupported_cell"]
+__all__ = ["evolution_observation", "migration_cell", "schema_cell", "unsupported_cell"]
 
 _DIMENSIONS: Final[dict[TemporalDimension, str]] = {
     TemporalDimension.VALID_TIME: "valid-time",
@@ -239,8 +241,26 @@ def schema_cell(delta: SchemaDelta) -> dict[str, Any]:
     }
 
 
+def migration_cell(migration: CoordinatedMigration) -> dict[str, Any]:
+    """``migration`` as the ``then.migration`` cell for the dialect that produced it."""
+    return {
+        "steps": [
+            {
+                **(
+                    {"manual": step.action.value}
+                    if isinstance(step, ManualStep)
+                    else {"statement": step.sql}
+                ),
+                "causedBy": [_operation(cause) for cause in step.caused_by],
+            }
+            for step in migration.steps
+        ]
+    }
+
+
 def unsupported_cell(error: UnsupportedSchemaEvolutionError) -> dict[str, Any]:
-    """A refusing Dialect's ``then.schema`` cell: every operation it cannot render.
+    """A refusing Dialect's ``then.schema`` or ``then.migration`` cell: every
+    operation it cannot render.
 
     The dialect-neutral reason each refusal carries is deliberately not spelled:
     a cell asserts WHICH operations a dialect cannot render, and pinning a
@@ -268,8 +288,10 @@ def physical_table(table: PhysicalTable | PhysicalSequence) -> dict[str, Any]:
 def _physical_location(location: SchemaTarget) -> dict[str, Any]:
     if location.extension is not None:
         return {"extension": location.extension}
-    if location.table is None:  # pragma: no cover - every location names one of the two
-        raise ValueError("a physical location names a Table or an extension")
+    if location.sequence is not None:
+        return {"sequence": physical_table(location.sequence)}
+    if location.table is None:  # pragma: no cover - every location names one of the three
+        raise ValueError("a physical location names a Table, a sequence, or an extension")
     spelled: dict[str, Any] = {"table": physical_table(location.table)}
     if location.column is not None:
         spelled["column"] = location.column.name

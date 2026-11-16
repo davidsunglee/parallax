@@ -69,3 +69,52 @@ then:
           earlier: { qualifier: [px], name: invoiceNumbers }
           later: { qualifier: [px_next], name: invoiceNumbers }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Invoice
+              earlier: { qualifier: [px], name: invoice }
+              later: { qualifier: [px_next], name: invoice }
+            - kind: SequenceRelocated
+              sequence: invoiceNumbers
+              earlier: { qualifier: [px], name: invoiceNumbers }
+              later: { qualifier: [px_next], name: invoiceNumbers }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Invoice
+              earlier: { qualifier: [px], name: invoice }
+              later: { qualifier: [px_next], name: invoice }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: invoiceNumbers
+              earlier: { qualifier: [px], name: invoiceNumbers }
+              later: { qualifier: [px_next], name: invoiceNumbers }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Invoice
+              earlier: { qualifier: [px], name: invoice }
+              later: { qualifier: [px_next], name: invoice }
+            - kind: SequenceRelocated
+              sequence: invoiceNumbers
+              earlier: { qualifier: [px], name: invoiceNumbers }
+              later: { qualifier: [px_next], name: invoiceNumbers }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Invoice
+              earlier: { qualifier: [px], name: invoice }
+              later: { qualifier: [px_next], name: invoice }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: invoiceNumbers
+              earlier: { qualifier: [px], name: invoiceNumbers }
+              later: { qualifier: [px_next], name: invoiceNumbers }

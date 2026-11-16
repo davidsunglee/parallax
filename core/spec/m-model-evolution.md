@@ -68,7 +68,8 @@ earlier scope survives for one to hold on.
 
 A Coordinated Evolution is a **complete, valid description**, not a refusal. Each
 requirement associates one exact operation with the structured reasons unilateral
-application is unavailable; it prescribes no migration procedure.
+application is unavailable; the description prescribes no migration procedure of
+its own, and `m-schema-delta`'s coordinated migration derives one from it.
 
 ## Evolution Operations
 
@@ -520,15 +521,17 @@ its requirements.
 
 ## Consumer contract
 
-**`m-schema-delta`.** Consumes a `UnilateralEvolution` and nothing else: it
-reads the operations, both retained endpoints, and — through `m-storage-layout` —
-their physical shapes. It never re-derives the MODEL difference, never
-re-classifies an operation, and never asks whether an evolution "should" be
-applied; all three questions are already answered by the value it is handed. What
-the two physical shapes differ by is a different question and the generator's
-own. A Coordinated Evolution is not one of its inputs, so a coordination reason
-is never a schema-generation concern, and a Behavioral Impact is never one
-either: an impact reports what changes behind the surface, which no statement
+**`m-schema-delta`.** Its Schema Delta generator consumes a
+`UnilateralEvolution` and nothing else, and its coordinated migration generator a
+`CoordinatedEvolution` and nothing else: each reads the operations, both retained
+endpoints, and — through `m-storage-layout` — their physical shapes. Neither
+re-derives the MODEL difference, re-classifies an operation, or asks whether an
+evolution "should" be applied; all three questions are already answered by the
+value it is handed. What the two physical shapes differ by is a different
+question and the generators' own. A coordination reason never reaches the Schema
+Delta generator; the coordinated generator reads the requirements to decide which
+changes are the deployment's manual steps. A Behavioral Impact is neither one's
+concern: an impact reports what changes behind the surface, which no statement
 expresses.
 
 The generator refusing a Dialect does not travel back here. Renderer support is a

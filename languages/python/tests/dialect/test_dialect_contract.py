@@ -53,6 +53,7 @@ from parallax.core.internal.dialect import (
     PhysicalIndexName,
     RenderedScalarCell,
     ScalarResult,
+    SequenceDdl,
     Unsupported,
     decode_bytes_cell,
     scalar_result,
@@ -561,3 +562,43 @@ def test_a_physical_index_name_is_a_nonempty_identifier() -> None:
     assert PhysicalIndexName("widget_pkey").value == "widget_pkey"
     with pytest.raises(ValueError, match="nonempty identifier"):
         PhysicalIndexName("")
+
+
+_SEQUENCE = SequenceDdl(data_type="bigint", increment=20, minimum=1, maximum=1000, start=1)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_alter_sequence_restates_only_the_settings_that_moved(dialect: Dialect) -> None:
+    assert dialect.alter_sequence(
+        "px.ids", _SEQUENCE, replace(_SEQUENCE, increment=10, start=900)
+    ) == ("alter sequence px.ids increment by 10")
+    assert dialect.alter_sequence("px.ids", _SEQUENCE, SequenceDdl("integer", 20, -5, 99, 1)) == (
+        "alter sequence px.ids as integer minvalue -5 maxvalue 99"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_position_sequence_moves_forward_past_every_table_and_the_reserved_block(
+    dialect: Dialect,
+) -> None:
+    assert dialect.position_sequence(
+        'px."it\'s"', _SEQUENCE, [("px.a", "id"), ("px_eu.b", '"key"')], reserved_increment=50
+    ) == (
+        "select case when t0.next_key > 1000 then pg_catalog.setval('px.\"it''s\"', 1000, true) "
+        "else pg_catalog.setval('px.\"it''s\"', cast(t0.next_key as bigint), false) end "
+        "from (select greatest((select case when t1.is_called then "
+        'cast(t1.last_value as numeric) + 50 else t1.last_value end from px."it\'s" t1), '
+        "(select cast(max(t2.id) as numeric) + 1 from px.a t2), "
+        '(select cast(max(t3."key") as numeric) + 1 from px_eu.b t3)) next_key) t0'
+    )
+
+
+def test_a_dialect_without_native_sequences_refuses_every_sequence_statement() -> None:
+    sequenceless = replace(POSTGRES, name="sequenceless", sequence_bounds=None)
+    assert isinstance(sequenceless.alter_sequence("px.ids", _SEQUENCE, _SEQUENCE), Unsupported)
+    assert isinstance(sequenceless.drop_sequence("px.ids"), Unsupported)
+    assert isinstance(
+        sequenceless.position_sequence("px.ids", _SEQUENCE, [], reserved_increment=1),
+        Unsupported,
+    )
+    assert POSTGRES.drop_sequence("px.ids") == "drop sequence px.ids"

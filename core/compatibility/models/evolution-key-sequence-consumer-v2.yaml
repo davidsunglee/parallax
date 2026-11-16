@@ -1,0 +1,30 @@
+# models/evolution-key-sequence-settings-v1.yaml with a new Entity drawing from
+# the allocator its two Entities already share.
+entities:
+  - name: Badge
+    namespace: parallax.compatibility
+    table: badge
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: key-sequence, name: credentialIds, batchSize: 50 }
+      - { name: holder, type: string, maxLength: 32 }
+  - name: Pass
+    namespace: parallax.compatibility
+    table: pass
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: key-sequence, name: credentialIds, batchSize: 50 }
+      - { name: holder, type: string, maxLength: 32 }
+  - name: Ticket
+    namespace: parallax.compatibility
+    table: ticket
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: key-sequence, name: credentialIds, batchSize: 50 }
+      - { name: holder, type: string, maxLength: 32 }

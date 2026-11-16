@@ -3550,6 +3550,9 @@ def _assert_evolution_schema(case: Case, db: DatabaseProvider) -> None:
     derived from the descriptor by a second implementation. What is compared is
     the catalog each left behind rather than the statements either authored, so
     two ways of spelling one schema agree and one schema short of it does not.
+    The catalog holds every native sequence either endpoint places as well as
+    every later table, so a sequence created twice, never, or with other
+    settings is a difference too.
 
     The earlier database is provisioned from the earlier endpoint, or is empty
     when the case names the fresh-provisioning sentinel.
@@ -3558,6 +3561,67 @@ def _assert_evolution_schema(case: Case, db: DatabaseProvider) -> None:
     delta = cell.get("delta")
     if not isinstance(delta, dict):
         return
+    applied, provisioned = _applied_and_provisioned(
+        case, db, [str(statement) for statement in delta.get("statements") or []]
+    )
+    if applied != provisioned:
+        raise CaseFailure(
+            f"{case.path.name}: the {db.dialect} delta leaves a schema the later model's own "
+            f"DDL does not.\n  after the delta:    {applied}"
+            f"\n  after provisioning: {provisioned}"
+        )
+    _assert_created_indices(case, delta, applied)
+
+
+_UNEXECUTABLE_STEPS: Final = frozenset({"TransformStoredData", "Relocate"})
+"""Manual migration steps a provisioned database cannot stand in for: a
+statement after one may depend on the data or placement it leaves."""
+
+
+def _assert_evolution_migration(case: Case, db: DatabaseProvider) -> None:
+    """The authored ``migration`` cell's statements really carry the earlier
+    database's sequences, and where nothing else is manual its tables too, to
+    the later model's own provisioning.
+
+    A cell whose steps transform stored data or relocate an object is graded
+    structurally alone: no provisioned database stands in for what the
+    deployment does there. Otherwise every statement runs, in order, on a
+    database provisioned at the earlier endpoint. A drain and an authoring
+    update change nothing a catalog holds, but an authoring update can leave
+    rows — and the wider domain they need — in place, so the tables are
+    compared only where every manual step is a drain; the sequences, which no
+    authoring step touches, are compared always.
+    """
+    cell = case.migration_cell(db.dialect) or {}
+    steps = [step for step in cell.get("steps") or [] if isinstance(step, dict)]
+    manual = {str(step["manual"]) for step in steps if "manual" in step}
+    if not steps or manual & _UNEXECUTABLE_STEPS:
+        return
+    applied, provisioned = _applied_and_provisioned(
+        case, db, [str(step["statement"]) for step in steps if "statement" in step]
+    )
+    if manual <= {"DrainEarlierRoots"}:
+        compared = (applied, provisioned)
+    else:
+        compared = (applied.sequences, provisioned.sequences)
+    if compared[0] != compared[1]:
+        raise CaseFailure(
+            f"{case.path.name}: the {db.dialect} migration leaves a schema the later model's "
+            f"own DDL does not.\n  after the migration: {compared[0]}"
+            f"\n  after provisioning:  {compared[1]}"
+        )
+
+
+def _applied_and_provisioned(
+    case: Case, db: DatabaseProvider, statements: Sequence[str]
+) -> tuple[Catalog, Catalog]:
+    """The catalog *statements* leave on a database at the earlier endpoint,
+    beside the one the later model's own provisioning DDL leaves.
+
+    Both read every later table and every native sequence either endpoint
+    places, so a sequence one side creates, keeps, or drops and the other does
+    not is a difference.
+    """
     later = case.placement(db.dialect, case.model, "laterBinding")
     earlier = (
         None
@@ -3566,24 +3630,24 @@ def _assert_evolution_schema(case: Case, db: DatabaseProvider) -> None:
     )
     qualifiers = later.qualifiers | (frozenset() if earlier is None else earlier.qualifiers)
     tables = list(later.tables.values())
+    sequences = [
+        later.sequences[allocator] for allocator in native_sequences(case.model.entity_defs)
+    ]
+    if case.earlier_model is not None and earlier is not None:
+        sequences += [
+            earlier.sequences[allocator]
+            for allocator in native_sequences(case.earlier_model.entity_defs)
+        ]
 
     db.reset(qualifiers)
     if case.earlier_model is not None and earlier is not None:
         db.apply_ddl(ddl_for(case.earlier_model, earlier))
-    db.apply_ddl([str(statement) for statement in delta.get("statements") or []])
-    applied = db.catalog(tables)
+    db.apply_ddl(statements)
+    applied = db.catalog(tables, sequences)
 
     db.reset(qualifiers)
     db.apply_ddl(ddl_for(case.model, later))
-    provisioned = db.catalog(tables)
-
-    if applied != provisioned:
-        raise CaseFailure(
-            f"{case.path.name}: the {db.dialect} delta leaves a schema the later model's own "
-            f"DDL does not.\n  after the delta:    {applied}"
-            f"\n  after provisioning: {provisioned}"
-        )
-    _assert_created_indices(case, delta, applied)
+    return applied, db.catalog(tables, sequences)
 
 
 def _assert_created_indices(case: Case, delta: dict[str, Any], applied: Catalog) -> None:
@@ -3703,13 +3767,14 @@ def _run_evolution(case: Case, db: DatabaseProvider | None) -> None:
     # adapter, exactly as it grades golden SQL against a run.
     _assert_schema(case)
     _assert_evolution(case)
-    # The Schema Delta beside it is not pure: an authored `delta` cell claims
-    # statements that carry a real database from one endpoint to the other,
-    # so it is executed and its result compared against the later model's own
-    # provisioning. A cell naming an unsupported operation has nothing to
-    # execute, and a Coordinated Evolution carries no cell at all.
+    # The Schema Delta or Coordinated Migration beside it is not pure: an
+    # authored cell claims statements that carry a real database from one
+    # endpoint to the other, so it is executed and its result compared against
+    # the later model's own provisioning. A cell naming an unsupported operation
+    # has nothing to execute.
     if db is not None:
         _assert_evolution_schema(case, db)
+        _assert_evolution_migration(case, db)
 
 
 def _run_rejected(case: Case) -> None:

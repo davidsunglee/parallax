@@ -52,3 +52,52 @@ then:
           earlier: { qualifier: [px], name: truck }
           later: { qualifier: [px_us], name: truck }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Car
+              earlier: { qualifier: [px], name: car }
+              later: { qualifier: [px_eu], name: car }
+            - kind: TableRelocated
+              entity: parallax.compatibility.Truck
+              earlier: { qualifier: [px], name: truck }
+              later: { qualifier: [px_us], name: truck }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Car
+              earlier: { qualifier: [px], name: car }
+              later: { qualifier: [px_eu], name: car }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Truck
+              earlier: { qualifier: [px], name: truck }
+              later: { qualifier: [px_us], name: truck }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Car
+              earlier: { qualifier: [px], name: car }
+              later: { qualifier: [px_eu], name: car }
+            - kind: TableRelocated
+              entity: parallax.compatibility.Truck
+              earlier: { qualifier: [px], name: truck }
+              later: { qualifier: [px_us], name: truck }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Car
+              earlier: { qualifier: [px], name: car }
+              later: { qualifier: [px_eu], name: car }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Truck
+              earlier: { qualifier: [px], name: truck }
+              later: { qualifier: [px_us], name: truck }

@@ -60,3 +60,24 @@ then:
                 target: parallax.compatibility.Archive.folderId
         reasons:
           - AuthoringSurfaceChangeRequired
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Folder.holder
+              deltas:
+                - kind: JoinChanged
+                  earlier: { source: parallax.compatibility.Folder.id, target: parallax.compatibility.Item.folderId }
+                  later: { source: parallax.compatibility.Folder.id, target: parallax.compatibility.Archive.folderId }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Folder.holder
+              deltas:
+                - kind: JoinChanged
+                  earlier: { source: parallax.compatibility.Folder.id, target: parallax.compatibility.Item.folderId }
+                  later: { source: parallax.compatibility.Folder.id, target: parallax.compatibility.Archive.folderId }

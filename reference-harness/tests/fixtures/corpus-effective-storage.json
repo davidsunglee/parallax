@@ -2146,6 +2146,146 @@
       "valueObject": {}
     }
   },
+  "models/evolution-key-sequence-consumer-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Ticket": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-initial-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-join-v1.yaml": {
+    "parallax.compatibility.Car": {
+      "attribute": {
+        "doors": "doors"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Garage": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Truck": {
+      "attribute": {
+        "axles": "axles"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vehicle": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-join-v2.yaml": {
+    "parallax.compatibility.Car": {
+      "attribute": {
+        "doors": "doors"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Garage": {
+      "attribute": {
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Truck": {
+      "attribute": {
+        "axles": "axles"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Vehicle": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-members-v1.yaml": {
+    "parallax.compatibility.Badge": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-key-sequence-retired-v2.yaml": {
+    "parallax.compatibility.Pass": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-key-sequence-settings-v1.yaml": {
     "parallax.compatibility.Badge": {
       "attribute": {

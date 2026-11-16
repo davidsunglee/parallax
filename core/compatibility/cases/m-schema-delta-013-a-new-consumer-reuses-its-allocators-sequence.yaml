@@ -1,0 +1,29 @@
+# A new Entity drawing from an allocator two Entities already share
+# (m-schema-delta, m-pk-gen): an empty table joining an allocator is unilateral,
+# and the delta creates the table alone, neither recreating nor resetting the
+# surviving sequence.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-settings-v1.yaml
+    later: models/evolution-key-sequence-consumer-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Ticket }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table px.ticket (id bigint not null, holder varchar(32) not null, primary key (id))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create table px.ticket (id bigint not null, holder varchar(32) not null, primary key (id))
+        createdIndices: []

@@ -88,3 +88,56 @@ then:
               earlier: { generation: application-assigned }
               later: false
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Voucher.code
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: false
+                  later: { generation: application-assigned }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Voucher.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later: false
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Coupon.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later: { generation: max }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Voucher.code
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: false
+                  later: { generation: application-assigned }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Voucher.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later: false
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Coupon.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later: { generation: max }

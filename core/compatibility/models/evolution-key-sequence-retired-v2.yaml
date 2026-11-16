@@ -1,0 +1,9 @@
+# models/evolution-key-sequence-members-v1.yaml without the badge, the
+# allocator's one consumer: nothing references `credentialIds` any more.
+entity:
+  name: Pass
+  namespace: parallax.compatibility
+  table: pass
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: holder, type: string, maxLength: 32 }

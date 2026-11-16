@@ -88,3 +88,30 @@ then:
                 role: abstract-subtype
                 parent: parallax.compatibility.Instrument
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Note
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Instrument
+                    tag: { value: note }
+                  later: { role: abstract-subtype, parent: parallax.compatibility.Instrument }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Note
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Instrument
+                    tag: { value: note }
+                  later: { role: abstract-subtype, parent: parallax.compatibility.Instrument }

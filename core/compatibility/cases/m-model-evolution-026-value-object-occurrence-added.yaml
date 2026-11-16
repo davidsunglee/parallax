@@ -23,3 +23,20 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectOccurrenceAdded, valueObject: parallax.compatibility.Shipment.warranty }
+        - statement: alter table px.evolution_shipment add column audit jsonb
+          causedBy:
+            - { kind: ValueObjectOccurrenceAdded, valueObject: parallax.compatibility.Shipment.audit }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectOccurrenceAdded, valueObject: parallax.compatibility.Shipment.warranty }
+        - statement: alter table px.evolution_shipment add column audit json
+          causedBy:
+            - { kind: ValueObjectOccurrenceAdded, valueObject: parallax.compatibility.Shipment.audit }
