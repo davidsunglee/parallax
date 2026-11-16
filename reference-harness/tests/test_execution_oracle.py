@@ -1657,6 +1657,5 @@ def test_only_a_key_reservation_s_acquisition_omits_its_policy() -> None:
     root["events"][2] = _event(3, 3, 2, acquisitionStarted={})
     assert _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert any(
-        "names no Read Policy" in problem
-        for problem in validate_execution(_case(_lifecycle(root)))
+        "names no Read Policy" in problem for problem in validate_execution(_case(_lifecycle(root)))
     )
