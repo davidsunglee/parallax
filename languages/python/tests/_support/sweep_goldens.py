@@ -395,6 +395,12 @@ def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[obje
     return out
 
 
+def write_golden_pointers(case: case_format.Case) -> list[str | None]:
+    """The ``casePointer`` each of :func:`write_golden_statements` is emitted at,
+    in the same order; a writeSequence's flat goldens name none."""
+    return [pointer for pointer, _entry in _write_golden_entries(case)]
+
+
 def _write_golden_entries(case: case_format.Case) -> list[tuple[str | None, dict[str, Any]]]:
     """Each golden statement entry in flattened order, beside the ``casePointer``
     of the step member it is authored at; a writeSequence's flat goldens name
