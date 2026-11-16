@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 
 from parallax.core.internal.database_binding import (
@@ -13,13 +13,11 @@ from parallax.core.internal.database_binding import (
     sequence_ddl,
 )
 from parallax.core.internal.dialect import Dialect, Unsupported
-from parallax.core.internal.metamodel import KeySequence, PrimaryKey
+from parallax.core.internal.metamodel import PrimaryKey
 from parallax.evolution.internal.model_evolution import (
     AttributeAltered,
-    ConcreteSubtypeRemoved,
     CoordinatedEvolution,
     CoordinationReason,
-    EntityRemoved,
     EvolutionOperation,
     PrimaryKeyChanged,
 )
@@ -36,8 +34,7 @@ from parallax.evolution.internal.schema_delta._physical import (
 )
 from parallax.evolution.internal.schema_delta._plan import (
     Plan,
-    drawing_entities,
-    joined_allocator,
+    abandoned_by,
     joined_allocators,
     plan,
 )
@@ -83,7 +80,8 @@ def migration_plan(evolution: CoordinatedEvolution) -> tuple[Plan, tuple[_Step, 
         for operation in evolution.operations
         if isinstance(operation, AllocatorSettingsChanged)
     )
-    joins = tuple(operation for operation in evolution.operations if joined_allocators(operation))
+    joins = joined_allocators(evolution)
+    joining = {operation for causes in joins.values() for operation in causes}
     sequences: list[PhysicalOperation] = [
         operation for operation in built.operations if isinstance(operation, CreateSequence)
     ]
@@ -98,12 +96,12 @@ def migration_plan(evolution: CoordinatedEvolution) -> tuple[Plan, tuple[_Step, 
     covered = {
         *relocations,
         *settings,
-        *(operation for operation in joins if _only_joins(operation)),
+        *(operation for operation in joining if _only_moves_generation(operation)),
     }
     drained = {
         *relocations,
         *settings,
-        *joins,
+        *joining,
         *(cause for drop in drops for cause in drop.caused_by),
     }
     steps: list[_Step] = []
@@ -162,10 +160,10 @@ def migration_steps(
 def _positions(
     later: ResolvedBinding,
     operations: Sequence[EvolutionOperation],
-    joins: Sequence[EvolutionOperation],
+    joins: Mapping[str, Sequence[EvolutionOperation]],
     settings: Sequence[AllocatorSettingsChanged],
 ) -> Iterable[PositionSequence]:
-    """One positioning per sequence a surviving key joins or whose physical step
+    """One positioning per sequence a surviving Entity joins or whose physical step
     shrinks, caused by every operation asking for it.
 
     A sequence whose step shrinks is positioned past the block its latest
@@ -180,9 +178,8 @@ def _positions(
         if before > after:
             causes.setdefault(change.allocator, set()).add(change)
             reserved[change.allocator] = before
-    for operation in joins:
-        for allocator in joined_allocators(operation):
-            causes.setdefault(allocator, set()).add(operation)
+    for allocator, joining in joins.items():
+        causes.setdefault(allocator, set()).update(joining)
     for allocator in sorted(causes, key=lambda key: _physical_order(later.sequences[key])):
         sequence = later.sequences[allocator]
         assert isinstance(sequence, ResolvedSequence)  # a joined or altered allocator is native
@@ -204,50 +201,20 @@ def _drops(evolution: CoordinatedEvolution) -> tuple[DropSequence, ...]:
         ),
         key=_physical_order,
     )
-    if not gone:
-        return ()
-    drawing = drawing_entities(evolution.earlier)
     return tuple(
-        DropSequence(
-            sequence=sequence,
-            caused_by=tuple(
-                operation
-                for operation in evolution.operations
-                if (
-                    isinstance(operation, EntityRemoved | ConcreteSubtypeRemoved)
-                    and operation.entity in drawing.get(sequence.allocator, ())
-                )
-                or (
-                    isinstance(operation, AttributeAltered)
-                    and sequence.allocator in _left_allocators(operation)
-                )
-            ),
-        )
+        DropSequence(sequence=sequence, caused_by=abandoned_by(evolution, sequence.allocator))
         for sequence in gone
     )
 
 
-def _left_allocators(operation: AttributeAltered) -> frozenset[str]:
-    """The native allocators a surviving key stops drawing from at ``operation``."""
-    return frozenset(
-        earlier.generation.name
-        for delta in operation.deltas
-        if isinstance(delta, PrimaryKeyChanged)
-        and isinstance(earlier := delta.earlier, PrimaryKey)
-        and isinstance(earlier.generation, KeySequence)
-        and not (
-            isinstance(later := delta.later, PrimaryKey)
-            and isinstance(later.generation, KeySequence)
-            and later.generation.name == earlier.generation.name
-        )
-    )
-
-
-def _only_joins(operation: EvolutionOperation) -> bool:
-    """Whether every field ``operation`` changes is a key joining an allocator, so
-    the sequence statements carry the whole of its database change."""
+def _only_moves_generation(operation: EvolutionOperation) -> bool:
+    """Whether every field ``operation`` changes is a key's generation, so the
+    sequence statements carry the whole of its database change."""
     return isinstance(operation, AttributeAltered) and all(
-        joined_allocator(delta) is not None for delta in operation.deltas
+        isinstance(delta, PrimaryKeyChanged)
+        and isinstance(delta.earlier, PrimaryKey)
+        and isinstance(delta.later, PrimaryKey)
+        for delta in operation.deltas
     )
 
 
