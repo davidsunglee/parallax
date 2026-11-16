@@ -334,12 +334,6 @@ def assert_wire_binds(
     assert_zero_signs(observed, expected, statement_bind_positions(model, golden_sql, golden_binds))
 
 
-def _write_pointer_well_formed(shape: str, pointer: str) -> bool:
-    if shape == "writeSequence":
-        return re.fullmatch(r"/writeSequence/\d+", pointer) is not None
-    return re.fullmatch(r"/scenario/\d+/(write|objectQuery)", pointer) is not None
-
-
 def assert_write_emissions_equal_goldens(
     case: case_format.Case,
     model: Metamodel,
@@ -347,20 +341,27 @@ def assert_write_emissions_equal_goldens(
     emissions: list[dict[str, Any]],
 ) -> None:
     """Each reported write emission states its golden's SQL, canonical binds, and
-    purpose, at a ``casePointer`` well-formed for the case's shape."""
+    purpose, at the ``casePointer`` of the step whose golden it is — a find's
+    `flush`, its `objectQuery`, or a write step's `write` (m-conformance-adapter)
+    — or, for a writeSequence, whose flat goldens name no entry, at a
+    well-formed entry pointer."""
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
-    purposes = [entry.get("purpose") for entry in _write_golden_entries(case)]
-    assert [emission.get("purpose") for emission in emissions] == purposes, (
-        case.case_id,
-        emissions,
-    )
-    for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
+    goldens = _write_golden_entries(case)
+    assert [emission.get("purpose") for emission in emissions] == [
+        entry.get("purpose") for _pointer, entry in goldens
+    ], (case.case_id, emissions)
+    for emission, (golden_sql, golden_binds), (pointer, _entry) in zip(
+        emissions, golden_statements, goldens, strict=True
+    ):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
         assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
-        assert _write_pointer_well_formed(case.shape, emission["casePointer"]), (
-            case.case_id,
-            emission,
-        )
+        if pointer is None:
+            assert re.fullmatch(r"/writeSequence/\d+", emission["casePointer"]), (
+                case.case_id,
+                emission,
+            )
+        else:
+            assert emission["casePointer"] == pointer, (case.case_id, pointer, emission)
 
 
 def read_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
@@ -387,24 +388,35 @@ def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[obje
     it contributes an empty group rather than a missing-key error.
     """
     out: list[tuple[str, list[object]]] = []
-    for entry in _write_golden_entries(case):
+    for _pointer, entry in _write_golden_entries(case):
         sql: Any = entry["sql"]
         text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
         out.append((cast("str", text), _entry_binds(entry)))
     return out
 
 
-def _write_golden_entries(case: case_format.Case) -> list[dict[str, Any]]:
+def _write_golden_entries(case: case_format.Case) -> list[tuple[str | None, dict[str, Any]]]:
+    """Each golden statement entry in flattened order, beside the ``casePointer``
+    of the step member it is authored at; a writeSequence's flat goldens name
+    none."""
     doc = case_document(case)
     if case.shape == "writeSequence":
-        return cast("list[dict[str, Any]]", doc["then"]["statements"])
+        return [(None, entry) for entry in cast("list[dict[str, Any]]", doc["then"]["statements"])]
     steps = cast("list[dict[str, Any]]", doc["when"]["scenario"])
     return [
-        entry
-        for step in steps
+        (_golden_pointer(index, step, member), entry)
+        for index, step in enumerate(steps)
         for member in ("flush", "statements")
         for entry in cast("list[dict[str, Any]]", step.get(member, []))
     ]
+
+
+def _golden_pointer(index: int, step: dict[str, Any], member: str) -> str:
+    """The pointer a statement a scenario step authors under ``member`` is
+    emitted at (m-conformance-adapter)."""
+    if member == "flush":
+        return f"/scenario/{index}/flush"
+    return f"/scenario/{index}/{'objectQuery' if 'objectQuery' in step else 'write'}"
 
 
 def _entry_binds(entry: dict[str, Any]) -> list[object]:

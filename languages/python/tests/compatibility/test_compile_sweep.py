@@ -148,8 +148,9 @@ def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
 
 def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
     """Grade a keyed unit-of-work write case: per-step emissions == the golden DML,
-    Database Calls == the DML statement count, and every casePointer well-formed for
-    the shape.
+    each at the casePointer of the step whose golden it is, and Database Calls ==
+    the DML statement count. Each step's own count follows from those pointers:
+    the compile lane executes none of the reads a step owes.
 
     The compile lane lowers a write buffer and issues nothing, so what it can
     report is the DML it emitted. `then.databaseCalls` counts the RESOLVING READS a

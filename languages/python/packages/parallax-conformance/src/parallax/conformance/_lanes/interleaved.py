@@ -4,7 +4,7 @@ import contextlib
 import datetime as dt
 import threading
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.conformance import case_format, models
@@ -20,18 +20,20 @@ from parallax.conformance._lanes.scenario import (
     LoweredStep,
     flush_failure,
     group_tx_instant,
-    group_writes,
+    presented_steps,
     read_table_state,
     run_group_step,
     run_standalone_find,
     scenario_group_step_indices,
     step_affected_rows,
+    step_database_calls,
+    step_emissions,
     step_query,
     step_rows,
 )
 from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._lifecycle_observation import LifecycleObservation, LifecycleRun
-from parallax.conformance._mechanism import case_document, envelope
+from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.envelope import ScenarioRun, UnclassifiedEngineError
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import case_binding, case_serving_model
@@ -55,8 +57,7 @@ def _committed() -> dict[str, object]:
 
 @dataclass(slots=True)
 class _InterleavedGroupResult:
-    """One interleaved group's own report: its lowered steps (keyed by
-    scenario step index), its fate — committed, or rolled back by the
+    """One interleaved group's own report: its fate — committed, or rolled back by the
     optimistic-lock conflict its flush reported (`m-case-format` *Unit fates*) —
     any OTHER exception the worker thread raised (re-raised on the main
     thread once both join — never silently swallowed), and every OWN find
@@ -65,7 +66,6 @@ class _InterleavedGroupResult:
     step; without this the caller has no way to grade a grouped find at all,
     only its DML shape."""
 
-    lowered: dict[int, LoweredStep]
     fate: dict[str, object] = field(default_factory=_committed)
     failure: BaseException | None = None
     rows: dict[int, dict[str, object]] = field(default_factory=_empty_group_rows)
@@ -89,9 +89,9 @@ def _run_interleaved_group(
     :func:`~parallax.conformance._lanes.scenario._run_uow_group` drives over a
     contiguous span,
     generalized to an explicit index list and gated by ``turnstile`` at every
-    step. A write step reports the DML its group's own flush delivered for it,
-    so a step whose flush CONFLICTS still reports the well-formed statement that
-    reached the database (`m-unit-work` "Affected-row enforcement" — the SQL is
+    step. A step reports the DML of the flush its own call ran, so a step whose
+    flush CONFLICTS still reports the well-formed statement that reached the
+    database (`m-unit-work` "Affected-row enforcement" — the SQL is
     correct, the row count is not).
 
     The group's own boundary flushes what its last step buffered, and that
@@ -130,7 +130,6 @@ def _run_interleaved_group(
     writes durable, or a group opened at the wrong Isolation Level, would report
     well-formed SQL and still pass.
     """
-    lowered: dict[int, LoweredStep] = {}
     state = result.state
     running: list[int] = []
     entered = False
@@ -149,15 +148,7 @@ def _run_interleaved_group(
             turnstile.wait_for(index)
             running.append(index)
             is_last = position == len(indices) - 1
-            lowered[index], read = run_group_step(
-                tx,
-                context,
-                submitter,
-                state,
-                steps[index],
-                index,
-                observation,
-            )
+            read = run_group_step(tx, context, submitter, state, steps[index], index, observation)
             if read is not None:
                 result.rows[index] = step_rows(
                     context.model, index, step_query(steps[index], context.model), read.roots
@@ -179,7 +170,6 @@ def _run_interleaved_group(
             result.failure = exc
             # Never leave a partner thread hanging on this thread's own defect.
             turnstile.release_all()
-    result.lowered = lowered
     result.database_calls = observation.database_calls
     if committed:
         turnstile.advance()
@@ -313,7 +303,8 @@ def run_interleaved_scenario_case(
     Reports a :class:`~parallax.conformance._mechanism.envelope.ScenarioRun`:
     the ordered emissions, total Database Calls, EVERY find step's `stepRows`
     observation (grouped or ungrouped, in scenario step order), the count each
-    predicate-write step's verb returned, each group's fate by label —
+    predicate-write step's verb returned, the Database Calls each step
+    presented, each group's fate by label —
     committed, or rolled back by the conflict its flush reported — and, where
     the case states `then.tableState`, the tables read back once both groups
     have joined. Routed to explicitly by the
@@ -368,8 +359,8 @@ def run_interleaved_scenario_case(
         case_format.database_options(case),
     )
     turnstile = Turnstile()
-    result_a = _InterleavedGroupResult(lowered={})
-    result_b = _InterleavedGroupResult(lowered={})
+    result_a = _InterleavedGroupResult()
+    result_b = _InterleavedGroupResult()
     # Incremental protection: each execution is registered for release the
     # moment it opens, so a second-session failure — or the trust refusal below
     # — releases the first rather than leaking it, and the ordinary exit
@@ -417,16 +408,20 @@ def run_interleaved_scenario_case(
             raise result.failure
     # Each group's writes reach the wire in its own flushes — a conflicting
     # flush included, whose gated statement reached the database and reported
-    # zero rows — so a group's own write steps report its own connection's
-    # delivery. Attributed on this thread rather than inside the worker, so a
-    # disagreement surfaces where every other failure of this lane does.
+    # zero rows — so a group's own steps report its own connection's delivery.
+    # Attributed on this thread rather than inside the worker, so a disagreement
+    # surfaces where every other failure of this lane does.
     lowered: dict[int, LoweredStep] = {}
-    for result, observed in ((result_a, observed_a), (result_b, observed_b)):
-        shares = group_writes(result.state, observed.writes, "an interleaved `uow` group")
-        lowered.update(
-            (index, replace(step, statements=shares[index]) if step.is_write else step)
-            for index, step in result.lowered.items()
+    step_calls: dict[int, int] = {}
+    for result, observed, indices in (
+        (result_a, observed_a, indices_a),
+        (result_b, observed_b, indices_b),
+    ):
+        group_steps, group_calls = presented_steps(
+            steps, indices, result.state.starts, observed.calls, "an interleaved `uow` group"
         )
+        lowered.update((step.index, step) for step in group_steps)
+        step_calls.update(group_calls)
 
     rows_by_index: dict[int, dict[str, object]] = {**result_a.rows, **result_b.rows}
     # Each group's own transaction counted its own calls; the trailing ungrouped
@@ -445,12 +440,10 @@ def run_interleaved_scenario_case(
             model, index, step_query(step, model), read.checked().results()
         )
         database_calls += read_observed.database_calls
-        lowered[index] = LoweredStep(
-            f"/scenario/{index}/objectQuery", read_observed.reads, False, False
-        )
+        step_calls[index] = read_observed.database_calls
+        lowered[index] = LoweredStep(index, "objectQuery", read_observed.reads)
 
-    ordered = [lowered[index] for index in sorted(lowered)]
-    emissions = envelope.emissions([(step.pointer, step.statements) for step in ordered])
+    emissions = step_emissions(lowered[index] for index in sorted(lowered))
     units = {label_a: result_a.fate, label_b: result_b.fate}
     observed_rows = [rows_by_index[index] for index in sorted(rows_by_index)]
     then = case.document.get("then")
@@ -469,4 +462,5 @@ def run_interleaved_scenario_case(
         units,
         table_state,
         step_affected_rows(affected),
+        step_database_calls(step_calls),
     )

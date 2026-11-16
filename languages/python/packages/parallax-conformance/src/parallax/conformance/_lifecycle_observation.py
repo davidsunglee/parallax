@@ -144,12 +144,15 @@ class ObservedCall:
 
     ``kind`` is the Database Call's own, which is the same read/write split the
     corpus charges a materializing pair's resolve and its per-row writes to
-    separate pointers by.
+    separate pointers by. ``flushed`` is whether a Flush made the call, which
+    is what tells a find's own read from a coverage read of the Flush its call
+    ran before it: both are reads, and a case authors only the first.
     """
 
     statement: LoweredStatement
     kind: Literal["read", "write"]
     purpose: Literal["reservation"] | None = None
+    flushed: bool = False
 
 
 # The eight tables below are the projection from Python's runtime vocabularies to
@@ -312,12 +315,22 @@ class LifecycleObservation:
         for root in self.roots:
             # Activity IDs are scoped to their root.
             reservations: set[int] = set()
+            flushes: set[int] = set()
             for event in root.events:
                 if isinstance(event, ReadStarted) and event.purpose == "reservation":
                     reservations.add(event.activity_id)
+                elif isinstance(event, FlushStarted):
+                    flushes.add(event.activity_id)
                 elif isinstance(event, DatabaseCallStarted):
-                    purpose = "reservation" if event.parent_activity_id in reservations else None
-                    calls.append(ObservedCall(event.statement, _CALL_KIND[event.kind], purpose))
+                    parent = event.parent_activity_id
+                    calls.append(
+                        ObservedCall(
+                            event.statement,
+                            _CALL_KIND[event.kind],
+                            "reservation" if parent in reservations else None,
+                            flushed=parent in flushes,
+                        )
+                    )
         return tuple(calls)
 
     @property
@@ -345,43 +358,14 @@ class LifecycleObservation:
     ) -> tuple[LoweredStatement, ...]:
         """Every statement of ``kind`` issued after ``mark`` Database Calls.
 
-        A run driving many steps through one handle reads each step's own
+        A run driving many reads through one handle reads each one's own
         emissions by taking :attr:`database_calls` before it and asking for the
-        difference after, so one observation serves a whole scenario without a
-        second observation per step.
-
-        ``kind`` matters because a participating read force-flushes: the DML a
-        read triggers belongs to the write step that buffered it, which reports
-        it, so asking a find step for its reads is what keeps one statement from
-        being emitted under two pointers.
+        difference after, so one observation serves them all without a second
+        observation per read.
         """
         return tuple(
             call.statement for call in self.calls[mark:] if kind is None or call.kind == kind
         )
-
-    def own_reads_since(self, mark: int) -> tuple[LoweredStatement, ...]:
-        """Every read issued after ``mark`` Database Calls outside a flush.
-
-        A participating read's force-flush can itself read: the coverage a
-        deferred settled write binds is acquired inside the flush. That read is a
-        Database Call of the flush, which no step's emissions name (`m-case-format`
-        "Resolving reads a write owes"), so the read that triggered the flush
-        reports only the statements it issued itself.
-        """
-        reads: list[LoweredStatement] = []
-        position = 0
-        for root in self.roots:
-            flushing = False
-            for event in root.events:
-                if isinstance(event, FlushStarted):
-                    flushing = True
-                elif isinstance(event, FlushFinished):
-                    flushing = False
-                elif isinstance(event, DatabaseCallStarted):
-                    if position >= mark and event.kind == "read" and not flushing:
-                        reads.append(event.statement)
-                    position += 1
-        return tuple(reads)
 
     @property
     def database_calls(self) -> int:
@@ -493,10 +477,10 @@ class _StatementIndexer:
 
     The correspondence is positional — the k-th call ran the k-th emission — but
     it is not assumed. A run reports its emissions per step rather than per
-    call: a held group's flushed writes are reported under the write steps that
-    buffered them, and its reads under the steps that issued them, so a lane
-    that placed a statement under the wrong step would leave position *k*
-    naming a different statement while the case still graded green. Comparing
+    call: a held group's statements are reported under the step whose call
+    presented them, so a lane that placed a statement under the wrong step would
+    leave position *k* naming a different statement while the case still graded
+    green. Comparing
     the SQL text closes every mechanism that changes it.
 
     Binds need no comparison here: a run's emission of a delivered call is the

@@ -381,30 +381,15 @@ def test_a_streamed_case_declaring_a_scope_reads_at_that_scope(profile_run: Any)
 # `uow` groups (`scenario._scenario_uow_spans`; a genuinely interleaved group needs a
 # SECOND, independent connection this test's ordinary single-`DatabaseConnection` seam does not
 # hold open), so every one of them stays OUT of `_WRITE_CASES`/
-# `test_write_run_sweep`. Membership here is a routing exclusion alone;
-# `_INTERLEAVED_RUNNER_CASES` below is the SUBSET this test drives through the
-# interleaved runner, and names per case why it leaves the rest to the reference
-# harness.
-_INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
-    {
-        "m-temporal-write-021",
-        "m-inheritance-105",
-        "m-concurrency-012",
-        "m-temporal-read-010",
-        "m-unit-work-031",
-        "m-unit-work-032",
-        "m-unit-work-034",
-    }
-)
-
-
-# The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
-# `engine.run_interleaved_scenario_case` over its own dedicated executions:
+# `test_write_run_sweep`, and `test_interleaved_uow_group_run_sweep` drives each
+# through `engine.run_interleaved_scenario_case` over its own dedicated executions:
 # `m-concurrency-012`'s optimistic-lock race; the races of two temporal closes, each
 # group at its own instant — `m-temporal-read-010` over a Transaction-Time-Only
 # milestone, `m-temporal-write-021` over a Valid-Time-pinned bitemporal rectangle, and
 # `m-inheritance-105` over a table-per-hierarchy subtype's tag-guarded milestone;
-# and the two Repeatable Read proofs
+# the Read Committed proof `m-unit-work-031`, whose writer's find flushes its update
+# before the reader reads and keeps it uncommitted across that read; and the two
+# Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
 # delivery) — two units of work reading and writing one row, whose second read is
 # graded against the first. The isolation cases are what make the level reach a HELD
@@ -413,19 +398,13 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # here because the turnstile hands off per authored STEP and a step's delivery is
 # drained WHOLE before it does: the peer's commit lands between the two deliveries,
 # exactly where the case authors it.
-#
-# `m-unit-work-031` is graded by the reference harness alone on both engines:
-# its reader must face state its peer wrote and has not committed,
-# and a unit of work BUFFERS its writes until its own flush edge, so the peer's DML
-# is not on the wire when the reader's step runs — the window the case authors is
-# one the harness's verbatim per-step execution has and a real unit of work does
-# not, so running it here would assert nothing about any level.
-_INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
+_INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-temporal-write-021",
         "m-inheritance-105",
         "m-concurrency-012",
         "m-temporal-read-010",
+        "m-unit-work-031",
         "m-unit-work-032",
         "m-unit-work-034",
     }
@@ -556,9 +535,11 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     possibly uncommitted mid-transaction state), committing or rolling back only at
     the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
-    golden DML, each at a `casePointer` well-formed for the case's shape, and its total
-    Database Calls the case's `then.databaseCalls`; every scenario
-    row-observing step's `stepRows` observation equals its `expectRows`
+    golden DML, each at the `casePointer` of the step its golden is authored at, and
+    its total Database Calls the case's `then.databaseCalls`; every scenario step's
+    `stepDatabaseCalls` observation its declared `databaseCalls`
+    (:func:`_grade_step_database_calls`); every scenario row-observing step's
+    `stepRows` observation equals its `expectRows`
     (:func:`_grade_step_rows`), every direct predicate-write step's
     `stepAffectedRows` observation its `expectAffectedRows`
     (:func:`_grade_step_affected_rows`), each group's fate the one `then.units` states, and
@@ -610,6 +591,7 @@ def _grade_write_run(
 
     if case.shape == "scenario":
         steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+        _grade_step_database_calls(case, steps, envelope["observations"])
         _grade_step_rows(case, model, steps, envelope)
         _grade_step_affected_rows(case, steps, envelope)
         # `expectError` steps grade through the adapter's `errors` observation
@@ -699,10 +681,12 @@ def _grade_state_run(case: case_format.Case, model: Metamodel, envelope: dict[st
     """Grade a state-graded scenario on what it states: each find's published
     rows, each submission its verb refused, each group's fate, and the final
     tables. It authors no golden, so neither the statements a flush chose nor
-    the Database Calls they cost are graded."""
+    the Database Calls they cost are graded, and its run reports no per-step
+    count."""
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
     observations = envelope["observations"]
     assert envelope["emissions"] == [], (case.case_id, envelope["emissions"])
+    assert "stepDatabaseCalls" not in observations, (case.case_id, observations)
     _grade_step_rows(case, model, steps, envelope)
     expected_errors = [
         {"at": f"/scenario/{index}/write/{position}", "errorClass": entry["expectError"]}
@@ -844,6 +828,22 @@ def _grade_step_rows(
             continue
         compare = compare_rows_in_order if streamed else compare_rows
         compare(entry["rows"], expected_rows)
+
+
+def _grade_step_database_calls(
+    case: case_format.Case, steps: list[dict[str, Any]], observations: dict[str, Any]
+) -> None:
+    """Grade every step's declared `databaseCalls` against the run's own
+    `stepDatabaseCalls` observation: the Database Calls that step's call
+    presented, at its own pointer, in step order. The whole ordered list is
+    asserted, so a run that charged a Flush to another step, or left a step
+    unanswered, fails on it although its total still agrees."""
+    expected = [
+        {"at": f"/scenario/{index}", "databaseCalls": step["databaseCalls"]}
+        for index, step in enumerate(steps)
+    ]
+    observed = observations.get("stepDatabaseCalls", [])
+    assert observed == expected, (case.case_id, observed)
 
 
 def _grade_step_affected_rows(
@@ -1018,7 +1018,7 @@ def _assert_layout_shaped_table_state(
 
 def _reachable_interleaved_uow_group_cases() -> list[case_format.Case]:
 
-    return [c for c in reachable_cases() if c.case_id in _INTERLEAVED_RUNNER_CASES]
+    return [c for c in reachable_cases() if c.case_id in _INTERLEAVED_UOW_GROUP_CASES]
 
 
 _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
@@ -1033,8 +1033,9 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
 
     Grades the layers `test_write_run_sweep` grades for an ordinary scenario —
     the ordered per-step golden DML (flattened across both interleaved groups
-    plus the trailing ungrouped verify find, in AUTHORED step order),
-    `then.databaseCalls`, every find step's `stepRows` against its authored
+    plus the trailing ungrouped verify find, in AUTHORED step order, each at its
+    step's pointer), `then.databaseCalls` and each step's own count, every find
+    step's `stepRows` against its authored
     `expectRows` (the grouped observing finds AND the trailing ungrouped verify,
     through the same :func:`_grade_step_rows` every scenario lane's rows go
     through), each group's fate (`then.units`): the conflict a group's flush
@@ -1077,11 +1078,13 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     then = case_document(case)["then"]
     assert run.database_calls == then["databaseCalls"], case.case_id
     observations: dict[str, Any] = {
+        "stepDatabaseCalls": run.step_database_calls,
         "stepRows": run.step_rows,
         "units": run.units,
         "tableState": run.table_state,
     }
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    _grade_step_database_calls(case, steps, observations)
     _grade_step_rows(case, model, steps, {"observations": observations})
     _grade_units(case, observations)
     if "tableState" in then:
@@ -1502,6 +1505,93 @@ def test_grade_step_affected_rows_refuses_any_other_report(counts: list[tuple[in
 # a conforming observation, then the damage a grader must refuse.
 type _Damage = Callable[[dict[str, Any]], object]
 
+
+# `m-unit-work-005`: a buffered update (step 1, presenting nothing), then a find
+# whose call presents the Flush of that update and its own read (step 2).
+_FLUSHING_FIND_CASE: Final[str] = "m-unit-work-005"
+
+
+def _flushing_find_case() -> tuple[case_format.Case, list[dict[str, Any]]]:
+    case = _write_case(_FLUSHING_FIND_CASE)
+    return case, cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+
+
+def _counts_stated(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"at": f"/scenario/{index}", "databaseCalls": step["databaseCalls"]}
+        for index, step in enumerate(steps)
+    ]
+
+
+def test_grade_step_database_calls_accepts_the_count_each_step_states() -> None:
+    case, steps = _flushing_find_case()
+    _grade_step_database_calls(case, steps, {"stepDatabaseCalls": _counts_stated(steps)})
+
+
+type _CountsDamage = Callable[[list[dict[str, Any]]], object]
+
+
+def _flush_charged_to_the_queuing_step(counts: list[dict[str, Any]]) -> object:
+    counts[1]["databaseCalls"] += 1
+    counts[2]["databaseCalls"] -= 1
+    return counts
+
+
+def _a_step_unanswered(counts: list[dict[str, Any]]) -> object:
+    return counts.pop()
+
+
+def _nothing_counted(counts: list[dict[str, Any]]) -> object:
+    counts.clear()
+    return counts
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [_flush_charged_to_the_queuing_step, _a_step_unanswered, _nothing_counted],
+    ids=["a-flush-at-the-queuing-step", "a-missing-step", "no-counts"],
+)
+def test_grade_step_database_calls_refuses_any_other_report(damage: _CountsDamage) -> None:
+    case, steps = _flushing_find_case()
+    counts = _counts_stated(steps)
+    damage(counts)
+    with pytest.raises(AssertionError):
+        _grade_step_database_calls(case, steps, {"stepDatabaseCalls": counts})
+
+
+def _flushing_find_emissions(case: case_format.Case) -> list[dict[str, Any]]:
+    """The emissions of a run answering every golden at the pointer its step
+    authors it under."""
+    pointers = ["/scenario/0/objectQuery", "/scenario/2/flush", "/scenario/2/objectQuery"]
+    return [
+        {"casePointer": pointer, "sql": sql, "binds": binds}
+        for pointer, (sql, binds) in zip(pointers, write_golden_statements(case), strict=True)
+    ]
+
+
+def test_write_emission_grading_accepts_each_statement_at_its_presenting_step() -> None:
+    case = _write_case(_FLUSHING_FIND_CASE)
+    assert_write_emissions_equal_goldens(
+        case,
+        engine.load_case_metamodel(case),
+        write_golden_statements(case),
+        _flushing_find_emissions(case),
+    )
+
+
+@pytest.mark.parametrize(
+    "pointer", ["/scenario/1/write", "/scenario/2/objectQuery"], ids=["queuing-step", "the-read"]
+)
+def test_write_emission_grading_refuses_a_flush_at_any_other_pointer(pointer: str) -> None:
+    case = _write_case(_FLUSHING_FIND_CASE)
+    emissions = _flushing_find_emissions(case)
+    emissions[1]["casePointer"] = pointer
+    with pytest.raises(AssertionError, match=pointer):
+        assert_write_emissions_equal_goldens(
+            case, engine.load_case_metamodel(case), write_golden_statements(case), emissions
+        )
+
+
 _LIFECYCLE_STREAM: Final[list[dict[str, str]]] = [{"kind": "first"}, {"kind": "second"}]
 
 
@@ -1701,6 +1791,9 @@ def test_grade_state_run_accepts_what_the_case_states() -> None:
 
 _STATE_RUN_DAMAGE: Final[dict[str, _Damage]] = {
     "an-invented-emission": lambda run: run["emissions"].append({"sql": "update"}),
+    "an-invented-step-count": lambda run: run["observations"].update(
+        stepDatabaseCalls=[{"at": "/scenario/0", "databaseCalls": 0}]
+    ),
     "a-lost-step-row": lambda run: run["observations"]["stepRows"][0]["rows"].pop(),
     "a-lost-refusal": lambda run: run["observations"]["errors"].pop(),
     "an-invented-refusal": lambda run: run["observations"]["errors"].append(

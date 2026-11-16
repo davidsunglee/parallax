@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 
-from parallax.conformance._lanes.scenario import GroupReport, group_writes
+from parallax.conformance._lanes.scenario import presented
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -699,8 +699,8 @@ def test_the_statements_a_run_reports_are_the_ones_its_calls_borrowed() -> None:
         "insert 1",
         "select 2",
     ]
-    # The read/write split is the call's own kind, which is what keeps a
-    # force-flush's DML off the find step that triggered it.
+    # The read/write split is the call's own kind, which is what tells the DML
+    # of a find's Flush from the find's own read.
     assert [statement.sql for statement in observation.reads] == ["select 1", "select 2"]
     assert [statement.sql for statement in observation.writes] == ["insert 1"]
     assert observation.database_calls == 3
@@ -840,7 +840,8 @@ def test_a_flushs_coverage_reads_are_counted_like_any_database_call() -> None:
         "select coverage 1",
         "select coverage 2",
     ]
-    assert [statement.sql for statement in observation.own_reads_since(0)] == ["select source"]
+    # Only the source read ran outside the Flush, so only it is a find's own read.
+    assert [call.flushed for call in observation.calls] == [False, True, True, True, True]
 
 
 def test_an_emission_naming_a_coverage_read_is_left_unnamed() -> None:
@@ -850,49 +851,14 @@ def test_an_emission_naming_a_coverage_read_is_left_unnamed() -> None:
         execution_lifecycle_observation([root], emitted)
 
 
-def test_a_held_groups_delivered_writes_are_reported_under_the_steps_that_buffered_them() -> None:
-    """A held group's writes reach the wire when a later read forces a flush, or
-    at its boundary. Each write step reports what was delivered after it
-    finished buffering, so the steps' reports, read in step order, are the
-    delivery order itself, and every call's index names its own statement."""
-    observation = LifecycleObservation()
-    handler = _Handler(observation)
-    state = GroupReport()
-    handler.deliver(_call("read", "select 1"))
-    state.buffered.append((1, len(observation.writes)))
-    handler.deliver(_call("write", "insert 1"), _call("read", "select 2"))
-    state.buffered.append((3, len(observation.writes)))
-    state.buffered.append((4, len(observation.writes)))
-    handler.deliver(_call("write", "insert 2"), _call("write", "update 3"))
-
-    shares = group_writes(state, observation.writes, "a group")
-    assert {index: [statement.sql for statement in share] for index, share in shares.items()} == {
-        1: ["insert 1"],
-        3: [],
-        4: ["insert 2", "update 3"],
-    }
-    emitted = [
-        "select 1",
-        *(statement.sql for statement in shares[1]),
-        "select 2",
-        *(statement.sql for statement in (*shares[3], *shares[4])),
-    ]
-    events = cast(
-        "list[dict[str, Any]]",
-        _roots(execution_lifecycle_observation(observation.roots, emitted))[0]["events"],
-    )
-    assert [event["databaseCallStarted"]["statement"] for event in events] == [0, 1, 2, 3, 4]
-
-
-def test_a_write_delivered_before_any_step_buffered_one_is_an_adapter_defect() -> None:
+def test_a_statement_delivered_before_any_step_started_is_an_adapter_defect() -> None:
     observation = LifecycleObservation()
     _Handler(observation).deliver(_call("write", "insert 1"))
-    state = GroupReport()
-    state.buffered.append((0, len(observation.writes)))
-    with pytest.raises(UnclassifiedEngineError, match="before any write step had buffered one"):
-        group_writes(state, observation.writes, "a group")
-    with pytest.raises(UnclassifiedEngineError, match="delivered 1 write"):
-        group_writes(GroupReport(), observation.writes, "a group")
+    refusal = r"delivered 1 statement\(s\) before any step started"
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
+        presented([(0, len(observation.calls))], observation.calls, "a group")
+    with pytest.raises(UnclassifiedEngineError, match=refusal):
+        presented([], observation.calls, "a group")
 
 
 # --- the run collects what its several handles each observed -------------------

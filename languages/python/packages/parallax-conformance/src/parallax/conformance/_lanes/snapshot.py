@@ -21,6 +21,7 @@ from parallax.conformance._lanes.scenario import (
     is_predicate_write_step,
     lower_writes,
     read_step_graph,
+    step_database_calls,
     step_query,
     step_rows,
     write_entries,
@@ -236,8 +237,8 @@ def run_scenario(
     fetched, whatever the write did to the rows behind it. Its step slot is
     parked empty so a later step's `on` index still names the step it means.
 
-    Reports its observations as a :class:`ScenarioRun`; this lane opens no `uow`
-    group."""
+    Reports its observations as a :class:`ScenarioRun`, the Database Calls of
+    each step among them; this lane opens no `uow` group."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     context = CaseContext(
@@ -258,6 +259,7 @@ def run_scenario(
         errors: list[dict[str, object]] = []
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
+        step_calls = dict.fromkeys(range(len(steps)), 0)
         for index, step in enumerate(steps):
             observed: dict[str, object] | None = None
             match _snapshot_step_kind(step):
@@ -284,6 +286,7 @@ def run_scenario(
                     )
                     emissions.extend(envelope.emissions([(f"/scenario/{index}/write", statements)]))
                     database_calls += unit_calls
+                    step_calls[index] = unit_calls
                     results.append(_NO_SCENARIO_RESULT)
                 case "find":
                     query = step_query(step, model)
@@ -300,7 +303,8 @@ def run_scenario(
                         Emission(f"/scenario/{index}/objectQuery", statement)
                         for statement in observation.since(mark, "read")
                     )
-                    database_calls += observation.database_calls - mark
+                    step_calls[index] = observation.database_calls - mark
+                    database_calls += step_calls[index]
                     rows_observed.append(
                         step_rows(model, index, query, snapshot.checked().results())
                     )
@@ -312,7 +316,14 @@ def run_scenario(
                     )
             if observed is not None:
                 step_graphs.append(observed)
-        return ScenarioRun(emissions, database_calls, errors, rows_observed, step_graphs)
+        return ScenarioRun(
+            emissions,
+            database_calls,
+            errors,
+            rows_observed,
+            step_graphs,
+            step_database_calls=step_database_calls(step_calls),
+        )
 
 
 def _root_members(
