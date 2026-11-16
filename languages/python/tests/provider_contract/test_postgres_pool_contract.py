@@ -13,15 +13,18 @@ it opens is closed by the scope that opened it.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any, cast
 
 import psycopg_pool
 import pytest
 
+from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
@@ -35,13 +38,17 @@ from parallax.core.internal.db_port import (
     PipelineStatement,
     PoolAvailable,
     PoolDetached,
+    PoolMetricsSource,
     PoolUnavailable,
     Returned,
 )
+from parallax.core.internal.entity._model import model_of
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.postgres._connection import IncompatibleSessionError
+from parallax.snapshot import TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend, named_backend
+from tests._support.pooled_key_diagnostic import requested, write_readings
 
 _BACKEND = "select pg_backend_pid() as pid"
 _SESSION_USER = "select session_user as login_identity"
@@ -1218,3 +1225,165 @@ def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answ
         assert isinstance(source.sample(), PoolAvailable)
     finally:
         runtime.close()
+
+
+# --------------------------------------------------------------------------- #
+# What a Database Root holds of the provider, checkpoint by checkpoint.        #
+# --------------------------------------------------------------------------- #
+
+
+class FootprintRow(Entity, table="pool_footprint_row", namespace="pool.footprint"):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+
+_FOOTPRINT_MODEL = DomainModel(FootprintRow)
+_FOOTPRINT_POOL = PoolOptions(min_size=1, max_size=2)
+_FOOTPRINT_SCHEMA = "parallax.diagnostic.pooled-primary-keys.provider/1"
+
+
+class _PoolSources:
+    """A lifecycle Provider that keeps every pool source a root publishes and
+    observes no execution."""
+
+    def __init__(self) -> None:
+        self.sources: list[PoolMetricsSource] = []
+
+    def open(self, execution: object, /) -> None:
+        return None
+
+    def report_handler_error(self, error: object, /) -> None:
+        raise AssertionError(f"lifecycle handler failed: {error!r}")
+
+    def observe_pool(self, source: PoolMetricsSource, /) -> _Unobserved:
+        self.sources.append(source)
+        return _Unobserved()
+
+
+class _Unobserved:
+    def close(self) -> None:
+        return None
+
+
+def _sessions(profile_run: Any, application_name: str) -> int:
+    control = profile_run.control()
+    try:
+        ((count,),) = control.execute(
+            "select count(*) from pg_stat_activity "
+            "where application_name = ? and datname = current_database()",
+            [application_name],
+        )
+    finally:
+        control.close()
+    return int(count)
+
+
+def _pool_readings(sources: list[PoolMetricsSource]) -> list[dict[str, object]]:
+    readings: list[dict[str, object]] = []
+    for source in sources:
+        sample = source.sample()
+        reading: dict[str, object] = {"route": source.route, "state": type(sample).__name__}
+        if isinstance(sample, PoolAvailable):
+            reading |= dataclasses.asdict(sample.measurements)
+        readings.append(reading)
+    return readings
+
+
+def _quiescent(
+    profile_run: Any, application_name: str, sources: list[PoolMetricsSource], threads: int | None
+) -> dict[str, object]:
+    """One checkpoint, taken once the server lists exactly the sessions the
+    pools say they manage and, where ``threads`` is given, once the process
+    runs exactly that many threads."""
+    deadline = time.monotonic() + 10.0
+    while True:
+        pools = _pool_readings(sources)
+        managed = sum(cast("int", pool.get("pool_size", 0)) for pool in pools)
+        sessions = _sessions(profile_run, application_name)
+        running = threading.active_count()
+        if sessions == managed and threads in {None, running}:
+            return {"threads": running, "serverSessions": sessions, "pools": pools}
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"never quiescent: {sessions} sessions for {managed} managed, "
+                f"{running} threads for {threads}"
+            )
+        time.sleep(0.01)
+
+
+def _insert_one(key: int) -> Callable[[TxnContext], None]:
+    def insert(tx: TxnContext) -> None:
+        tx.insert(FootprintRow(id=key, label="inserted"))
+
+    return insert
+
+
+def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
+    profile_run: Any,
+) -> None:
+    # The frozen footprint protocol: quiescent checkpoints before the root,
+    # after its startup, after its first insert, after a second one, and after
+    # it closed. The pool's connection-attempt counter is not a count of the
+    # connections it retains; the server's own session list is.
+    mode, out = requested()
+    profile_run.reset(model_of(_FOOTPRINT_MODEL), {}, TEST_BINDING)
+    application_name = f"parallax_footprint_{uuid.uuid4().hex[:12]}"
+    pools = _PoolSources()
+    checkpoints: dict[str, dict[str, object]] = {}
+    baseline = threading.active_count()
+    checkpoints["before-root"] = _quiescent(profile_run, application_name, [], baseline)
+    root = connect(
+        profile_run.configured(
+            pool=_FOOTPRINT_POOL, settings={"application_name": application_name}
+        ),
+        _FOOTPRINT_MODEL,
+        binding=TEST_BINDING,
+        lifecycle_provider=pools,
+    )
+    try:
+        db = root.using_database_login()
+        checkpoints["after-startup"] = _quiescent(
+            profile_run, application_name, pools.sources, None
+        )
+        db.transact(_insert_one(1))
+        checkpoints["after-first-insert"] = _quiescent(
+            profile_run, application_name, pools.sources, None
+        )
+        db.transact(_insert_one(2))
+        checkpoints["after-second-insert"] = _quiescent(
+            profile_run, application_name, pools.sources, None
+        )
+    finally:
+        root.close()
+    checkpoints["after-closure"] = _quiescent(
+        profile_run, application_name, pools.sources, baseline
+    )
+
+    started, first, second = (
+        checkpoints[name] for name in ("after-startup", "after-first-insert", "after-second-insert")
+    )
+    assert [pool["route"] for pool in cast("list[dict[str, object]]", started["pools"])] == [
+        "writer"
+    ]
+    assert started["serverSessions"] == first["serverSessions"] == second["serverSessions"] == 1
+    assert started["threads"] == first["threads"] == second["threads"]
+    (started_pool,) = cast("list[dict[str, object]]", started["pools"])
+    (second_pool,) = cast("list[dict[str, object]]", second["pools"])
+    assert second_pool["connections_num"] == started_pool["connections_num"]
+    assert second_pool["requests_num"] == cast("int", started_pool["requests_num"]) + 2
+    closed = checkpoints["after-closure"]
+    assert closed["serverSessions"] == 0
+    assert [pool["state"] for pool in cast("list[dict[str, object]]", closed["pools"])] == [
+        "PoolDetached"
+    ]
+    if out is not None:
+        write_readings(
+            out,
+            "provider",
+            {
+                "schema": _FOOTPRINT_SCHEMA,
+                "mode": mode,
+                "pool": dataclasses.asdict(_FOOTPRINT_POOL),
+                "checkpoints": checkpoints,
+            },
+        )
