@@ -1930,20 +1930,14 @@
       ]
     },
     "allocationSettings": {
-      "description": "A native allocator's allocation settings: what a reservation a root holds depends on. The initial value only places a newly created sequence, so it is no part of them.",
+      "description": "A native allocator's allocation settings (m-database-binding), spelled by what determines them on every backend: the batch size, the increment size, and the key's declared neutral type. The key range is that type's values within one backend's sequence bounds, so the type stands for it; the initial value only places a newly created sequence and is no part of them.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["batchSize", "incrementSize", "keyRange"],
+      "required": ["batchSize", "incrementSize", "dataType"],
       "properties": {
         "batchSize": {"type": "integer", "minimum": 1},
         "incrementSize": {"type": "integer", "minimum": 1},
-        "keyRange": {
-          "description": "The inclusive lowest and highest key the sequence may hand out.",
-          "type": "array",
-          "prefixItems": [{"type": "integer"}, {"type": "integer"}],
-          "items": false,
-          "minItems": 2
-        }
+        "dataType": {"enum": ["int32", "int64"]}
       }
     },
     "evolutionFieldDeltaKind": {
@@ -2125,7 +2119,7 @@
           "propertyNames": {"enum": ["kind", "sequence", "earlier", "later"]}
         },
         {
-          "description": "A surviving native allocator whose batch size, increment size, or key range the two endpoints resolve differently (m-database-binding).",
+          "description": "A surviving native allocator whose allocation settings the two endpoints resolve differently (m-database-binding).",
           "properties": {
             "kind": {"enum": ["AllocatorSettingsChanged"]},
             "earlier": {"$ref": "#/$defs/allocationSettings"},

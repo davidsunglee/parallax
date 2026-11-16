@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from parallax.core.internal.base import Int32, Int64
 from parallax.core.internal.dialect import SequenceDdl
 from parallax.core.internal.metamodel import EntityIdentity, KeySequence
 from parallax.core.internal.storage_layout import (
@@ -95,20 +96,22 @@ class ResolvedSequence:
     :class:`ResolvedTable`, and the one view allocation, DDL, and publication
     comparison read.
 
-    ``sql`` is the dialect's rendering of ``physical`` and ``data_type`` its
-    rendering of the key type, both made once at resolution. ``key_sequence``
-    is the model's declaration, which every consumer of the allocator states
-    identically. ``key_range`` is the key type's value space intersected with
-    the sequences the dialect represents. ``consuming_tables`` are the
-    binding's resolved tables whose rows take keys from it, in canonical owner
-    order; they are a function of the model and binding, so they stay out of
-    comparison.
+    ``key_type`` is the key's declared neutral type; ``sql`` is the dialect's
+    rendering of ``physical`` and ``data_type`` its rendering of ``key_type``,
+    both made once at resolution. ``key_sequence`` is the model's declaration,
+    which every consumer of the allocator states identically. ``key_range`` is
+    ``key_type``'s value space intersected with the sequences the dialect
+    represents, so within one dialect ``key_type`` determines it.
+    ``consuming_tables`` are the binding's resolved tables whose rows take keys
+    from it, in canonical owner order; they are a function of the model and
+    binding, so they stay out of comparison.
     """
 
     allocator: str
     physical: PhysicalSequence
     sql: str
     key_sequence: KeySequence
+    key_type: Int32 | Int64
     data_type: str
     key_range: tuple[int, int]
     consuming_tables: tuple[ResolvedTable, ...] = field(compare=False, repr=False)

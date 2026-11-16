@@ -22,6 +22,7 @@ from parallax.core.internal.database_binding import (
     AllocatorSettingsChanged,
     PhysicalSequence,
     PhysicalTable,
+    ResolvedSequence,
     SequenceRelocated,
     TableRelocated,
 )
@@ -390,9 +391,16 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
             }
 
 
-def _allocation_settings(settings: tuple[int, int, tuple[int, int]]) -> dict[str, Any]:
-    batch_size, increment_size, (low, high) = settings
-    return {"batchSize": batch_size, "incrementSize": increment_size, "keyRange": [low, high]}
+def _allocation_settings(sequence: ResolvedSequence) -> dict[str, Any]:
+    """``sequence``'s allocation settings by what determines them on every
+    backend: the key range is the declared key type's value space under one
+    backend's sequence bounds, so the key type stands for it."""
+    key_sequence = sequence.key_sequence
+    return {
+        "batchSize": key_sequence.batch_size,
+        "incrementSize": key_sequence.increment_size,
+        "dataType": format_type_spelling(sequence.key_type),
+    }
 
 
 def _breaking_change(
@@ -402,8 +410,8 @@ def _breaking_change(
         return {
             "kind": type(operation).__name__,
             "sequence": operation.allocator,
-            "earlier": _allocation_settings(operation.earlier.allocation_settings),
-            "later": _allocation_settings(operation.later.allocation_settings),
+            "earlier": _allocation_settings(operation.earlier),
+            "later": _allocation_settings(operation.later),
         }
     subject = (
         {"entity": _entity(operation.mapping_owner)}

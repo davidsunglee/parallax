@@ -68,15 +68,6 @@ _IDENTITY_MEMBER: Mapping[str, str] = {
 }
 
 _RELOCATIONS = frozenset({"TableRelocated", "SequenceRelocated", "AllocatorSettingsChanged"})
-_SEQUENCE_BOUNDS: Mapping[str, tuple[int, int]] = {
-    "postgres": (-(2**63), 2**63 - 1),
-    "mariadb": (-(2**63) + 1, 2**63 - 2),
-}
-"""The values each dialect's native sequences hold (m-dialect *Native sequences*)."""
-_KEY_BOUNDS: Mapping[str, tuple[int, int]] = {
-    "int32": (-(2**31), 2**31 - 1),
-    "int64": (-(2**63), 2**63 - 1),
-}
 _RELOCATION_DIALECTS = ("postgres", "mariadb")
 
 EVOLUTION_OPERATION_KINDS: frozenset[str] = frozenset(_IDENTITY_MEMBER)
@@ -384,33 +375,31 @@ def _physical(table: PhysicalTable) -> dict[str, Any]:
     return {"qualifier": list(table.qualifier), "name": table.name}
 
 
-def _allocation_settings(model: Model, dialect: str) -> dict[str, dict[str, Any]]:
-    """Each native allocator *model* declares, by key, to its allocation
-    settings under *dialect*: batch size, increment size, and the key type's
-    values intersected with the dialect's sequence bounds."""
-    low, high = _SEQUENCE_BOUNDS[dialect]
+def _allocation_settings(model: Model) -> dict[str, dict[str, Any]]:
+    """Each native allocator *model* declares, by key, to the allocation
+    settings it declares on every backend: batch size, increment size, and the
+    key's neutral type, which fixes the key range under any one backend."""
     settings: dict[str, dict[str, Any]] = {}
     for entity in model.entities:
         for attribute in entity.attributes:
             generation = attribute.get("pkGeneration")
             if not isinstance(generation, Mapping) or generation.get("strategy") != "key-sequence":
                 continue
-            key_low, key_high = _KEY_BOUNDS[str(attribute.get("type"))]
             settings.setdefault(
                 str(generation["name"]),
                 {
                     "batchSize": generation.get("batchSize", 100),
                     "incrementSize": generation.get("incrementSize", 1),
-                    "keyRange": [max(key_low, low), min(key_high, high)],
+                    "dataType": attribute.get("type"),
                 },
             )
     return settings
 
 
-def _settings_changes(earlier: Model, later: Model, dialect: str) -> list[dict[str, Any]]:
+def _settings_changes(earlier: Model, later: Model) -> list[dict[str, Any]]:
     """Every native allocator both endpoints declare whose allocation settings
-    differ under *dialect*, spelled as an authored operation."""
-    before = _allocation_settings(earlier, dialect)
+    differ, spelled as an authored operation."""
+    before = _allocation_settings(earlier)
     return [
         {
             "kind": "AllocatorSettingsChanged",
@@ -418,7 +407,7 @@ def _settings_changes(earlier: Model, later: Model, dialect: str) -> list[dict[s
             "earlier": before[allocator],
             "later": settings,
         }
-        for allocator, settings in _allocation_settings(later, dialect).items()
+        for allocator, settings in _allocation_settings(later).items()
         if allocator in before and before[allocator] != settings
     ]
 
@@ -467,7 +456,7 @@ def _relocation_findings(
                     case.placement(dialect, case.earlier_model, "earlierBinding"),
                     case.placement(dialect, case.model, "laterBinding"),
                 )
-                + _settings_changes(case.earlier_model, case.model, dialect),
+                + _settings_changes(case.earlier_model, case.model),
                 key=canonical_operation_key,
             )
             if authored != expected:

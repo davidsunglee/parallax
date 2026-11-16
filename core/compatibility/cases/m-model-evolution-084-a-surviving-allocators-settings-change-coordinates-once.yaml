@@ -3,7 +3,8 @@
 # PrimaryKeyChanged, but the allocation-settings change is classified once, by
 # the one AllocatorSettingsChanged the binding comparison yields, so the
 # evolution has one coordination requirement however many Entities share the
-# allocator. An int32 key bounds the key range the same way on every backend.
+# allocator. The settings name the key's int64 type rather than the key range it
+# resolves to, which PostgreSQL's and MariaDB's sequence bounds make differ.
 tags: [m-model-evolution, m-database-binding, m-pk-gen, evolution, slice-snapshot-1]
 shape: evolution
 when:
@@ -32,14 +33,14 @@ then:
               generation: { strategy: key-sequence, name: credentialIds, batchSize: 20, initialValue: 1, incrementSize: 1 }
       - kind: AllocatorSettingsChanged
         sequence: credentialIds
-        earlier: { batchSize: 50, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
-        later: { batchSize: 20, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+        earlier: { batchSize: 50, incrementSize: 1, dataType: int64 }
+        later: { batchSize: 20, incrementSize: 1, dataType: int64 }
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements:
       - operation:
           kind: AllocatorSettingsChanged
           sequence: credentialIds
-          earlier: { batchSize: 50, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
-          later: { batchSize: 20, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+          earlier: { batchSize: 50, incrementSize: 1, dataType: int64 }
+          later: { batchSize: 20, incrementSize: 1, dataType: int64 }
         reasons: [DatabaseMigrationRequired]
