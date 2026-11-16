@@ -39,6 +39,7 @@ def _sequence(
     physical: PhysicalSequence | None = None,
 ) -> ResolvedSequence:
     place = physical if physical is not None else PhysicalSequence(("px",), allocator)
+    key_type = INT32 if key_range == _INT32_RANGE else INT64
     return ResolvedSequence(
         allocator=allocator,
         physical=place,
@@ -49,7 +50,8 @@ def _sequence(
             increment_size=increment_size,
             initial_value=initial_value,
         ),
-        data_type=POSTGRES.column_type(INT32 if key_range == _INT32_RANGE else INT64, None),
+        key_type=key_type,
+        data_type=POSTGRES.column_type(key_type, None),
         key_range=key_range,
         consuming_tables=(),
     )

@@ -114,7 +114,11 @@ AllocatorSettingsChanged
 tables; `SequenceRelocated` carries the logical allocator key and its earlier
 and later physical sequences, each a qualifier and a local name;
 `AllocatorSettingsChanged` carries the logical allocator key and its earlier and
-later allocation settings — batch size, increment size, and key range.
+later allocation settings, each spelled by what determines it on every backend:
+batch size, increment size, and the key's declared neutral type. Both endpoints
+resolve under one backend, where that type fixes the key range
+(`m-database-binding` *Resolved sequences*), so the spelling describes every
+change the comparison finds without stating one backend's sequence bounds.
 
 The generic Entity add and remove variants **exclude** concrete-subtype add and
 remove; a surviving concrete subtype uses `EntityAltered`. Value Object

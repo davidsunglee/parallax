@@ -280,6 +280,7 @@ class _Resolver:
             physical=physical,
             sql=self.dialect.render_table(physical),
             key_sequence=declaration,
+            key_type=key_type,
             data_type=self.dialect.column_type(key_type, None),
             key_range=(low, high),
             consuming_tables=consumers,
