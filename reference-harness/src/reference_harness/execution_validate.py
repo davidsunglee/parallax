@@ -360,7 +360,7 @@ def _check_started(
         label=where,
         started_payload=payload,
         started_at=position,
-        owns_connection=_is_connection_owner(kind, parent, holder),
+        owns_connection=_is_connection_owner(kind, parent, holder, payload),
     )
     return True
 
@@ -414,12 +414,17 @@ def _owns_connection(activity: _Activity) -> bool:
     return activity.owns_connection
 
 
-def _is_connection_owner(kind: str, parent: int | None, holder: _Activity | None) -> bool:
-    """Resolve ownership while the activity's parent is directly available."""
+def _is_connection_owner(
+    kind: str, parent: int | None, holder: _Activity | None, payload: dict[str, Any]
+) -> bool:
+    """Resolve ownership while the activity's parent is directly available.
+
+    A key reservation's Read acquires its own connection beside its attempt's.
+    """
     if kind == "transactionAttemptStarted":
         return True
     if kind == "readStarted":
-        return parent is None
+        return parent is None or payload.get("purpose") == "reservation"
     return (
         kind == "streamBatchStarted"
         and holder is not None
@@ -653,6 +658,7 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
                 f"operation holds one for its OWN lifetime, so a hold this record shows "
                 f"beginning is one it shows ending"
             )
+        _check_policy(owner, acquisitions, problems)
         _check_acquired(owner, acquisitions, problems)
         _check_work_acquired(owner, children, acquisitions, problems)
         _check_refusal(owner, acquisitions, problems)
@@ -830,6 +836,23 @@ def _check_begin_attribution(
             f"{payload.get('cause')}; a begin failure is caused only by an Acquisition of its "
             f"own that failed, because a boundary that never opened is that Acquisition's failure"
         )
+
+
+def _check_policy(owner: _Activity, acquisitions: list[_Activity], problems: list[str]) -> None:
+    """An acquisition names the Read Policy it requested, except a key
+    reservation's, which no Read Policy selects."""
+    reserving = owner.started_payload.get("purpose") == "reservation"
+    for acquisition in acquisitions:
+        named = "policy" in acquisition.started_payload
+        if named == reserving:
+            problems.append(
+                f"{acquisition.label} "
+                + (
+                    "names a Read Policy for a key reservation, which none selects"
+                    if reserving
+                    else "names no Read Policy; only a key reservation's acquisition omits one"
+                )
+            )
 
 
 def _check_resource_count(

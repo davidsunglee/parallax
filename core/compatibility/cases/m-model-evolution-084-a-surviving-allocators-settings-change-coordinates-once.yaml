@@ -1,0 +1,45 @@
+# A surviving native allocator's batch size changes (m-model-evolution,
+# m-database-binding, m-pk-gen). Each consuming key reports its own
+# PrimaryKeyChanged, but the allocation-settings change is classified once, by
+# the one AllocatorSettingsChanged the binding comparison yields, so the
+# evolution has one coordination requirement however many Entities share the
+# allocator. An int32 key bounds the key range the same way on every backend.
+tags: [m-model-evolution, m-database-binding, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-settings-v1.yaml
+    later: models/evolution-key-sequence-settings-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Badge.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+            later:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 20, initialValue: 1, incrementSize: 1 }
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Pass.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+            later:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 20, initialValue: 1, incrementSize: 1 }
+      - kind: AllocatorSettingsChanged
+        sequence: credentialIds
+        earlier: { batchSize: 50, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+        later: { batchSize: 20, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AllocatorSettingsChanged
+          sequence: credentialIds
+          earlier: { batchSize: 50, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+          later: { batchSize: 20, incrementSize: 1, keyRange: [-2147483648, 2147483647] }
+        reasons: [DatabaseMigrationRequired]

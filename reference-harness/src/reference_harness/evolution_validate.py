@@ -64,9 +64,19 @@ _IDENTITY_MEMBER: Mapping[str, str] = {
     "DeclarationOrderChanged": "owner",
     "TableRelocated": "entity",
     "SequenceRelocated": "sequence",
+    "AllocatorSettingsChanged": "sequence",
 }
 
-_RELOCATIONS = frozenset({"TableRelocated", "SequenceRelocated"})
+_RELOCATIONS = frozenset({"TableRelocated", "SequenceRelocated", "AllocatorSettingsChanged"})
+_SEQUENCE_BOUNDS: Mapping[str, tuple[int, int]] = {
+    "postgres": (-(2**63), 2**63 - 1),
+    "mariadb": (-(2**63) + 1, 2**63 - 2),
+}
+"""The values each dialect's native sequences hold (m-dialect *Native sequences*)."""
+_KEY_BOUNDS: Mapping[str, tuple[int, int]] = {
+    "int32": (-(2**31), 2**31 - 1),
+    "int64": (-(2**63), 2**63 - 1),
+}
 _RELOCATION_DIALECTS = ("postgres", "mariadb")
 
 EVOLUTION_OPERATION_KINDS: frozenset[str] = frozenset(_IDENTITY_MEMBER)
@@ -225,7 +235,10 @@ def _index_attributes(index: _Index, owner: str, attributes: Iterable[Any]) -> N
             continue
         index.attributes.add(f"{owner}.{attribute.get('name')}")
         generation = attribute.get("pkGeneration")
-        if isinstance(generation, Mapping) and generation.get("strategy") == "sequence":
+        if isinstance(generation, Mapping) and generation.get("strategy") in {
+            "sequence",
+            "key-sequence",
+        }:
             index.allocators.add(str(generation.get("name")))
 
 
@@ -284,13 +297,16 @@ def canonical_operation_key(operation: Mapping[str, Any]) -> tuple[Any, ...]:
     so the key carries no operation-kind rank and a rename's removal and addition
     stay in identity order rather than being forced removal-first. Every
     relocation follows every logical operation: table relocations in owner
-    order, then sequence relocations in allocator-key codepoint order.
+    order, then, in allocator-key codepoint order, each allocator's relocation
+    before its allocation-settings change.
     """
     kind = str(operation.get("kind"))
     member = _IDENTITY_MEMBER.get(kind, "entity")
     spelling = str(operation.get(member, ""))
     if kind == "SequenceRelocated":
         return (3, "", spelling, 0, (), "", 0, 0)
+    if kind == "AllocatorSettingsChanged":
+        return (3, "", spelling, 1, (), "", 0, 0)
     entity, path = split_reference(spelling)
     namespace, _, name = (entity or "").rpartition(".")
     if kind == "TableRelocated":
@@ -368,6 +384,45 @@ def _physical(table: PhysicalTable) -> dict[str, Any]:
     return {"qualifier": list(table.qualifier), "name": table.name}
 
 
+def _allocation_settings(model: Model, dialect: str) -> dict[str, dict[str, Any]]:
+    """Each native allocator *model* declares, by key, to its allocation
+    settings under *dialect*: batch size, increment size, and the key type's
+    values intersected with the dialect's sequence bounds."""
+    low, high = _SEQUENCE_BOUNDS[dialect]
+    settings: dict[str, dict[str, Any]] = {}
+    for entity in model.entities:
+        for attribute in entity.attributes:
+            generation = attribute.get("pkGeneration")
+            if not isinstance(generation, Mapping) or generation.get("strategy") != "key-sequence":
+                continue
+            key_low, key_high = _KEY_BOUNDS[str(attribute.get("type"))]
+            settings.setdefault(
+                str(generation["name"]),
+                {
+                    "batchSize": generation.get("batchSize", 100),
+                    "incrementSize": generation.get("incrementSize", 1),
+                    "keyRange": [max(key_low, low), min(key_high, high)],
+                },
+            )
+    return settings
+
+
+def _settings_changes(earlier: Model, later: Model, dialect: str) -> list[dict[str, Any]]:
+    """Every native allocator both endpoints declare whose allocation settings
+    differ under *dialect*, spelled as an authored operation."""
+    before = _allocation_settings(earlier, dialect)
+    return [
+        {
+            "kind": "AllocatorSettingsChanged",
+            "sequence": allocator,
+            "earlier": before[allocator],
+            "later": settings,
+        }
+        for allocator, settings in _allocation_settings(later, dialect).items()
+        if allocator in before and before[allocator] != settings
+    ]
+
+
 def _relocations(earlier: Placement, later: Placement) -> list[dict[str, Any]]:
     """Every surviving owner's, then allocator's, relocation from *earlier* to
     *later*, in relocation order, spelled as an authored operation."""
@@ -407,9 +462,13 @@ def _relocation_findings(
     findings: list[str] = []
     if case.earlier_model is not None:
         for dialect in _RELOCATION_DIALECTS:
-            expected = _relocations(
-                case.placement(dialect, case.earlier_model, "earlierBinding"),
-                case.placement(dialect, case.model, "laterBinding"),
+            expected = sorted(
+                _relocations(
+                    case.placement(dialect, case.earlier_model, "earlierBinding"),
+                    case.placement(dialect, case.model, "laterBinding"),
+                )
+                + _settings_changes(case.earlier_model, case.model, dialect),
+                key=canonical_operation_key,
             )
             if authored != expected:
                 findings.append(
@@ -432,7 +491,8 @@ def _relocation_findings(
             )
     if authored and evolution.get("kind") != "coordinated":
         findings.append(
-            f"{case.path.name}: an evolution relocating a table or sequence is coordinated"
+            f"{case.path.name}: an evolution relocating a table or sequence, or changing an "
+            "allocator's settings, is coordinated"
         )
     return findings
 

@@ -286,12 +286,16 @@ class Placement:
         )
 
 
+_ALLOCATING = frozenset({"sequence", "key-sequence"})
+"""The pkGeneration strategies whose ``name`` is a logical allocator key."""
+
+
 def _allocators(entity_defs: Iterable[Mapping[str, Any]]) -> list[str]:
     keys = set()
     for definition in entity_defs:
         for attribute in definition.get("attributes", []) or []:
             generation = attribute.get("pkGeneration") if isinstance(attribute, dict) else None
-            if isinstance(generation, dict) and generation.get("strategy") == "sequence":
+            if isinstance(generation, dict) and generation.get("strategy") in _ALLOCATING:
                 keys.add(generation["name"])
     return sorted(keys)
 
