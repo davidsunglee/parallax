@@ -7,6 +7,7 @@ import decimal
 import sys
 import uuid
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -100,6 +101,13 @@ def test_an_ill_formed_entity_name_stays_constructible_so_it_can_locate_its_issu
         pytest.param(lambda: Sequence(""), id="sequence-name"),
         pytest.param(lambda: Sequence("s", batch_size=0), id="sequence-batch-size"),
         pytest.param(lambda: Sequence("s", increment_size=0), id="sequence-increment-size"),
+        pytest.param(lambda: KeySequence(""), id="key-sequence-name"),
+        pytest.param(lambda: KeySequence("s", batch_size=0), id="key-sequence-batch-size"),
+        pytest.param(lambda: KeySequence("s", increment_size=-1), id="key-sequence-increment-size"),
+        pytest.param(
+            lambda: KeySequence("s", initial_value=cast("int", 1.0)),
+            id="key-sequence-initial-value",
+        ),
         pytest.param(lambda: TablePerHierarchy(""), id="tag-column"),
         pytest.param(lambda: ConcreteSubtype(_ORDERS, ""), id="tag-value"),
         pytest.param(
