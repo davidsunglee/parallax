@@ -258,6 +258,19 @@
   ],
   "allOf": [
     {
+      "description": "Only a writeSequence's `then.statements` tags a golden statement with its `purpose` (m-case-format *Reservation statements*); every per-step location refuses one through `goldenStatements`.",
+      "if": { "not": { "properties": { "shape": { "const": "writeSequence" } } } },
+      "then": {
+        "properties": {
+          "then": {
+            "properties": {
+              "statements": { "items": { "not": { "required": ["purpose"] } } }
+            }
+          }
+        }
+      }
+    },
+    {
       "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row. A step carries only the members such a step is run by or graded on, beside an ungraded `databaseCalls` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
       "if": { "required": ["grading"] },
       "then": {
@@ -3097,7 +3110,7 @@
           ]
         },
         "purpose": {
-          "description": "What a golden statement serves when it is not the write or read its step authors (m-case-format *Reservation statements*): `reservation` is a native key sequence's reservation, executed on its own acquisition and committed on its own. It counts as a Database Call and never toward a step's declared statement count. Only a golden statement carries one.",
+          "description": "What a golden statement serves when it is not the write or read its step authors (m-case-format *Reservation statements*): `reservation` is a native key sequence's reservation, executed on its own acquisition and committed on its own. It counts as a Database Call and never toward a step's declared statement count. Only an entry of a writeSequence's `then.statements` carries one.",
           "enum": ["reservation"]
         },
         "binds": {
@@ -3119,9 +3132,10 @@
       }
     },
     "goldenStatements": {
-      "description": "An ordered, non-empty list of golden statement entries — the shared `statementEntry`, with `sql` narrowed to the dialect-keyed map form (dialect texts side by side).",
+      "description": "An ordered, non-empty list of golden statement entries — the shared `statementEntry`, with `sql` narrowed to the dialect-keyed map form (dialect texts side by side). These are the per-step locations, none of which carries a `purpose`: only a writeSequence's `then.statements` does (m-case-format *Reservation statements*).",
       "$ref": "#/$defs/goldenStatementSequence",
-      "minItems": 1
+      "minItems": 1,
+      "items": { "not": { "required": ["purpose"] } }
     },
     "goldenStatementSequence": {
       "description": "An ordered list of golden statement entries, possibly empty — `then.statements`' own form, where only an ordinary `read` of a position with no concrete subtype may state that it issues none (m-case-format *Structurally empty reads*); every other location requires at least one entry through `goldenStatements`.",
