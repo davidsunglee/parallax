@@ -14,7 +14,15 @@ from parallax.core import (
     prepare_model,
 )
 from parallax.descriptor import domain_model_from_yaml, export_yaml
-from parallax.evolution import CoordinatedEvolution, Evolution, evolve, schema_delta
+from parallax.evolution import (
+    CoordinatedEvolution,
+    Evolution,
+    MigrationStatement,
+    UnilateralEvolution,
+    coordinated_migration,
+    evolve,
+    schema_delta,
+)
 from parallax.evolution.operations import SequenceRelocated, TableRelocated
 from parallax.postgres import PostgresAdapter, PostgresBinding, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, connect
@@ -29,6 +37,7 @@ __all__ = [
     "edition_of_a_transaction",
     "migrate",
     "migration_for",
+    "migration_steps",
     "moves_in",
     "payments_this_edition_can_read",
 ]
@@ -84,6 +93,21 @@ def migration_for(
     if isinstance(evolution, CoordinatedEvolution):
         raise CoordinationRequiredError(evolution.coordination_requirements)
     return schema_delta(evolution).statements
+
+
+def migration_steps(
+    deployed: Deployed, release: DomainModel, binding: PostgresBinding
+) -> list[str]:
+    """Every step that brings the database from the deployed model to ``release``,
+    in order: each statement to run, and each manual step, by its action, to
+    perform where it falls."""
+    evolution = changes_since(deployed, release, binding)
+    if isinstance(evolution, UnilateralEvolution):
+        return list(schema_delta(evolution).statements)
+    return [
+        step.sql if isinstance(step, MigrationStatement) else f"-- {step.action.name}"
+        for step in coordinated_migration(evolution).steps
+    ]
 
 
 def migrate(

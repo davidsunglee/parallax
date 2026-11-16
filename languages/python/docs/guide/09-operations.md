@@ -75,6 +75,13 @@ process and close at the end. Each setting here has a section of its own:
   [what you build](../postgresql-lifecycle.md#what-you-build-and-what-owns-it),
   [retention](../postgresql-lifecycle.md#retention) and
   [what each operation holds](../postgresql-lifecycle.md#what-each-operation-holds).
+- **Key reservations.** A model with
+  [generated keys](02-modeling.md#keys-the-database-generates) reserves them in blocks on
+  one more writer connection per root, opened at the first reservation and kept as the
+  writer keeps its own, so a root whose routes hold up to N connections holds up to N + 1.
+  The reservation runs as the adapter's login whatever scope the insert runs under, and
+  one reservation spends at most `acquire_timeout`. See the lifecycle guide on
+  [key reservations](../postgresql-lifecycle.md#key-reservations).
 - **Credentials.** The `credentials` the adapter takes are resolved each time a
   connection is made, so a rotated secret or a short-lived token reaches every new
   connection. See [Execution authority](06-execution-authority.md#credentials) and the
@@ -110,6 +117,13 @@ The lifecycle guide also covers the decisions a deployment makes once:
   neither. Moving a table or sequence the database already holds needs a coordinated
   migration behind a replacement root
   ([Changing a binding](07-model-evolution.md#changing-a-binding)).
+- Generated keys: grant the adapter's login `USAGE` on every sequence your model's keys
+  come from, and budget one more server connection per process that inserts with them.
+  Choose a `batch_size` that makes reservations rare at your insert rate: a root reserves
+  again each time it hands out that many keys. A release that changes an allocator's
+  settings, or moves its sequence, closes every root serving the earlier model before
+  its migration runs, abandoning the keys they reserved
+  ([Which key changes publish](07-model-evolution.md#which-key-changes-publish)).
 - Clocks: every server writing one database stamps Transaction Time from its own clock,
   so keep their clocks synchronized. A clock behind stored history makes writes retry
   until it catches up ([Writing](04-writing.md#transaction-time-only-entities)).

@@ -45,6 +45,7 @@ from parallax.core import (
     Attr,
     Bitemporal,
     Edge,
+    KeySequence,
     NoResultFound,
     TemporalBound,
     TxTemporal,
@@ -61,7 +62,8 @@ from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 
 ### Insert, then read your own write
 
-`tx.insert` takes a new instance and returns that same instance:
+`tx.insert` takes a new instance and returns it. When the instance states its key, as
+here, it returns that same instance:
 
 <!-- example: insert-and-read-your-own-write -->
 ```python
@@ -92,6 +94,96 @@ rest of the attempt. You can amend or delete it, or an edited copy of it, withou
 it back. The flush never writes into it: a version or a Transaction-Time start the
 database stores reads as absent on that instance, and a `find` like the one above
 returns the stored values.
+
+### Let the database choose the key
+
+An entity whose key is declared `KeySequence(...)`, such as the shop's `Ticket` from
+[Modeling](02-modeling.md#keys-the-database-generates), takes its key from a database
+sequence when you leave the key unset. The insert takes the key at the call, and
+returns a new instance holding it:
+
+<!-- example: insert-without-a-key -->
+```python
+def open_a_ticket(db: ScopedDatabase, customer_id: int, subject: str) -> Ticket:
+    """Insert a ticket without a key; the insert answers it holding the key it took."""
+    return db.transact(lambda tx: tx.insert(Ticket(customer_id=customer_id, subject=subject)))
+```
+<!-- /example -->
+
+`open_a_ticket` returns a `Ticket` whose `id` is the key the insert took. The row waits
+in the buffer like any insert; only its key is settled at the call. The draft you passed
+is left as it was: its `id` still reads `None`, and it carries no licence.
+
+What an insert returns records what you inserted. A member Parallax sets when the row is
+sent, such as `version` or a temporal entity's `tx_start`, reads `None` on it and stays
+out of its `model_fields_set`, whether the insert took the key or you supplied it, and a
+flush never writes into it. To see what was stored, read the object:
+
+<!-- example: insert-a-parent-and-its-child -->
+```python
+def open_a_ticket_with_a_note(
+    db: ScopedDatabase, customer_id: int, subject: str, note: str
+) -> tuple[Ticket, Ticket]:
+    """Key a note by the key its ticket's insert answered, retitle the ticket
+    through that answer, and read back the ticket as stored."""
+
+    def open_ticket(tx: TxnContext) -> tuple[Ticket, Ticket]:
+        ticket = tx.insert(Ticket(customer_id=customer_id, subject=subject))
+        tx.insert(TicketNote(ticket_id=ticket.id, body=note))
+        tx.amend(ticket.edit(subject=f"{subject} (noted)"))
+        stored = tx.find(Ticket.where(Ticket.id == ticket.id)).result()
+        return ticket, stored
+
+    return db.transact(open_ticket)
+```
+<!-- /example -->
+
+Three values take part here. The draft, `Ticket(customer_id=..., subject=...)`, has no
+key and licenses nothing. `ticket`, what the insert returned, has the key and the
+insertion's licence, but only the members you stated. `stored`, what the `find` returned,
+holds what the database stored. The note is built from `ticket.id` before anything has
+been sent, so a parent's key can key its children in the same transaction; Parallax
+inserts no child for you and changes no draft. The `amend` writes through `ticket`
+without reading it first, and folds into the pending insert, so one ticket row is sent,
+with the edited subject. The `find` sends both inserts, and returns the ticket with its
+edited subject and `version` 1. `ticket` keeps the subject it was inserted with and no
+version: nothing changes a returned value, and no read is made up for it.
+
+Leaving the key out asks for a new object every time. Each insert of a keyless draft
+takes a fresh key, even when you insert the same draft again:
+
+<!-- example: insert-one-draft-twice -->
+```python
+def file_one_draft_twice(db: ScopedDatabase, draft: Ticket) -> tuple[int, int]:
+    """Two inserts of one keyless draft open two tickets, each with a key of its own."""
+
+    def file_twice(tx: TxnContext) -> tuple[int, int]:
+        return tx.insert(draft).id, tx.insert(draft).id
+
+    return db.transact(file_twice)
+```
+<!-- /example -->
+
+`file_one_draft_twice` opens two tickets with two keys. Code that means to write the same
+object again, such as an insert you repeat after a rollback, has to use the key the first
+insert returned, not the draft. A keyless draft is for `insert` alone: `amend`,
+`replace`, `delete`, `terminate` and the target writes refuse one with a `UsageError`
+whose `code` is `"write-key-absent"`, before anything is buffered.
+
+You can still state the key of a generated-key entity, and Parallax uses it as given,
+`0` included; only a key you leave unset is generated, and `id=None` is refused when you
+construct the instance. Parallax doesn't check a stated key against the sequence. A key
+the sequence hasn't reached yet can later be handed to another insert: a Non-Temporal
+entity's table refuses the second row as a duplicate key, but a temporal entity stores
+two rows whose windows don't overlap, and two unrelated objects then share one key.
+State a generated-key entity's key only when it is one the sequence already handed out,
+as a value an earlier insert returned does.
+
+Keys are never handed out twice, and a rollback doesn't give its keys back. Each root
+reserves keys in blocks and abandons what a block has left when it closes, so keys have
+gaps and say nothing about which transaction committed first. A retried attempt takes
+new keys: what the failed attempt returned keeps its own, and inserting that value again,
+after a rollback or in a later transaction, inserts under the key it holds.
 
 ### Amend or replace an edited value
 
@@ -510,6 +602,41 @@ earlier in Valid Time. An insert reads none of the key's stored coverage, so it 
 to place where the key has none: an insert over current coverage is refused by the
 table, not merged into it.
 
+An entity whose key is generated covers a gap the same way, stating the key it already
+has:
+
+<!-- example: insert-into-a-gap-under-a-generated-key -->
+```python
+class Subscription(Bitemporal, table="subscription"):
+    id: Attr[int] = attr(primary_key=KeySequence("subscription_ids", batch_size=20))
+    customer_id: Attr[int]
+    plan: Attr[str] = attr(max_length=20)
+
+
+def subscribe(
+    db: ScopedDatabase, customer_id: int, plan: str, start: dt.datetime, end: dt.datetime
+) -> int:
+    """Open a subscription from ``start`` up to ``end``; answer the key its insert took."""
+    subscription = Subscription(customer_id=customer_id, plan=plan)
+    return db.transact(lambda tx: tx.insert(subscription, valid_from=start, until=end).id)
+
+
+def resubscribe(
+    db: ScopedDatabase, subscription_id: int, customer_id: int, plan: str, start: dt.datetime
+) -> None:
+    """Cover the same subscription again from ``start``, after a gap: supply its
+    key, so the insert takes no new one."""
+    subscription = Subscription(id=subscription_id, customer_id=customer_id, plan=plan)
+    db.transact(lambda tx: tx.insert(subscription, valid_from=start))
+```
+<!-- /example -->
+
+`subscribe` leaves the key to the insert, which returns the subscription holding it.
+`resubscribe` covers the same subscription again after a gap by stating that key, so the
+insert takes none and both windows belong to one object. Leaving the key out there would
+open a second subscription instead. Like any insert, it reads no coverage and closes
+nothing: coverage the subscription already has is the table's to refuse.
+
 ### Terminate
 
 `terminate` ends a price from the Valid Time its source was read at:
@@ -775,7 +902,9 @@ def rename_a_customer_through_wire(db: ScopedDatabase, customer_id: int, name: s
 
 A node is one of the `WireEntity` mappings Wire publishes. `tx.wire.insert` names the
 entity and returns the node it opened, which carries the insertion's licence just as an
-inserted instance does. `tx.wire.amend` takes a node a Wire read of this transaction
+inserted instance does. A document that leaves out a generated key is a keyless
+draft: the insert takes the key, the node it returns holds it, and the document you
+passed is left as it was. `tx.wire.amend` takes a node a Wire read of this transaction
 returned and a document naming the members to change; `tx.wire.replace` takes a node and
 the whole new state. The target verbs take an entity name and a document holding the
 key, and state the revision with the same keywords as the Typed ones: `version=` for a
@@ -818,6 +947,10 @@ Otherwise it fails with `WritePreconditionError`, like any target write.
   time axes and how a Bitemporal write reshapes coverage. The
   [Python write-flow architecture](../architecture/write-flow.md) maps the write path
   onto the implementation.
+- [Primary-key generation](../../../../core/spec/m-pk-gen.md#native-key-sequences)
+  defines when an insert takes a key and what a stated key does, and
+  [ADR 0097](../../../../docs/adr/0097-an-insert-answers-an-immutable-keyed-value.md)
+  records why an insert returns an immutable keyed value.
 - The [unit of work](../../../../core/spec/m-unit-work.md) defines buffering, flushing
   and [abort](../../../../core/spec/m-unit-work.md#abort), which reads
   [license a write](../../../../core/spec/m-unit-work.md#current-attempt-source-admission),

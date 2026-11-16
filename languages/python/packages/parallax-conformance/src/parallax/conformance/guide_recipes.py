@@ -14,7 +14,10 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Subscription,
     Supplier,
+    Ticket,
+    TicketNote,
 )
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
@@ -108,14 +111,18 @@ __all__ = [
     "delete_the_shipments_of",
     "deliveries_for",
     "discontinue_a_tea",
+    "draft_a_ticket",
     "every_stored_price",
     "export_customers",
+    "file_one_draft_twice",
     "forget_an_email_address",
     "grant_a_credit_limit",
     "largest_orders_since",
     "list_a_seasonal_tea",
     "list_a_tea",
     "look_up_a_customer",
+    "open_a_ticket",
+    "open_a_ticket_with_a_note",
     "open_an_account",
     "open_an_account_even_if_the_order_fails",
     "orders_of",
@@ -141,8 +148,10 @@ __all__ = [
     "replace_contact_details",
     "reprice_a_tea_for",
     "reprice_from_a_review",
+    "resubscribe",
     "run_a_summer_sale",
     "shipments_to",
+    "subscribe",
     "table_statements",
     "the_shops_binding",
     "the_shops_binding_as_configured",
@@ -155,7 +164,8 @@ __all__ = [
 
 
 def table_statements(model: DomainModel, binding: PostgresBinding) -> tuple[str, ...]:
-    """The SQL that creates the model's tables where ``binding`` places them.
+    """The SQL that creates the model's tables, and the sequences its generated
+    keys come from, where ``binding`` places them.
 
     Parallax never changes a schema itself, and never creates one: create the
     binding's schemas and run these with your migration tool.
@@ -466,6 +476,42 @@ def register_a_customer(db: ScopedDatabase, customer_id: int, name: str) -> Cust
     return db.transact(register)
 
 
+def draft_a_ticket(customer_id: int, subject: str) -> Ticket:
+    """A draft leaves its generated key unset: ``id`` reads ``None`` and stays out
+    of ``model_fields_set``, and an insert of it returns a separate keyed value."""
+    return Ticket(customer_id=customer_id, subject=subject)
+
+
+def open_a_ticket(db: ScopedDatabase, customer_id: int, subject: str) -> Ticket:
+    """Insert a ticket without a key; the insert answers it holding the key it took."""
+    return db.transact(lambda tx: tx.insert(Ticket(customer_id=customer_id, subject=subject)))
+
+
+def open_a_ticket_with_a_note(
+    db: ScopedDatabase, customer_id: int, subject: str, note: str
+) -> tuple[Ticket, Ticket]:
+    """Key a note by the key its ticket's insert answered, retitle the ticket
+    through that answer, and read back the ticket as stored."""
+
+    def open_ticket(tx: TxnContext) -> tuple[Ticket, Ticket]:
+        ticket = tx.insert(Ticket(customer_id=customer_id, subject=subject))
+        tx.insert(TicketNote(ticket_id=ticket.id, body=note))
+        tx.amend(ticket.edit(subject=f"{subject} (noted)"))
+        stored = tx.find(Ticket.where(Ticket.id == ticket.id)).result()
+        return ticket, stored
+
+    return db.transact(open_ticket)
+
+
+def file_one_draft_twice(db: ScopedDatabase, draft: Ticket) -> tuple[int, int]:
+    """Two inserts of one keyless draft open two tickets, each with a key of its own."""
+
+    def file_twice(tx: TxnContext) -> tuple[int, int]:
+        return tx.insert(draft).id, tx.insert(draft).id
+
+    return db.transact(file_twice)
+
+
 def change_an_email(db: ScopedDatabase, customer_id: int, email: str) -> None:
     """Write the members ``edit`` changed; every other member keeps its stored value."""
 
@@ -546,6 +592,23 @@ def list_a_seasonal_tea(
 ) -> None:
     """Open a price from ``start`` up to, but not including, ``end``."""
     db.transact(lambda tx: tx.insert(Price(sku=sku, amount=amount), valid_from=start, until=end))
+
+
+def subscribe(
+    db: ScopedDatabase, customer_id: int, plan: str, start: dt.datetime, end: dt.datetime
+) -> int:
+    """Open a subscription from ``start`` up to ``end``; answer the key its insert took."""
+    subscription = Subscription(customer_id=customer_id, plan=plan)
+    return db.transact(lambda tx: tx.insert(subscription, valid_from=start, until=end).id)
+
+
+def resubscribe(
+    db: ScopedDatabase, subscription_id: int, customer_id: int, plan: str, start: dt.datetime
+) -> None:
+    """Cover the same subscription again from ``start``, after a gap: supply its
+    key, so the insert takes no new one."""
+    subscription = Subscription(id=subscription_id, customer_id=customer_id, plan=plan)
+    db.transact(lambda tx: tx.insert(subscription, valid_from=start))
 
 
 def change_a_price_from(db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime) -> None:

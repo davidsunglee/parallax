@@ -14,42 +14,62 @@ A key can now come from a native PostgreSQL sequence: declare
 `attr(primary_key=KeySequence("order_ids"))` (descriptor
 `pkGeneration: {strategy: key-sequence, name: order_ids}`), and an insert of an instance or
 Wire payload that leaves the key unset takes the next key at the call. The insert answers
-a new value holding that key; the draft you passed is left unset and can be inserted again
-for another key. A key you set, `0` included, is used as given. Each `Database` reserves
-`batch_size` keys (100 by default) at a time on one extra writer connection, opened at the
-first reservation and logged in as the database login, so the login needs `USAGE` on the
-sequence and your application roles don't; plan for one more connection per process.
-`schema_delta` creates each new allocator's sequence where the binding places it. Every
-verb but `insert` refuses an unset key with `UsageError` code `write-key-absent`.
+a new value holding that key; the draft you passed is left unset, carries no licence, and
+takes another key if you insert it again. A key you set, `0` included, is used as given.
+Each `Database` reserves `batch_size` keys (100 by default) at a time on one extra writer
+connection, opened at the first reservation and logged in as the database login, so the
+login needs `USAGE` on the sequence and your application roles don't; plan for one more
+connection per process. Every root now opens that reservation pool, and its two
+maintenance threads, at `connect`, even when its model generates no key. `schema_delta`
+creates each new allocator's sequence where the binding places it. Every verb but
+`insert` refuses an unset key with `UsageError` code `write-key-absent`; a reservation
+that finds no sequence, a sequence whose definition differs, or no keys left fails the
+insert with `key-sequence-missing`, `key-sequence-mismatch` or `key-sequence-exhausted`,
+and a binding that can't hold a declaration's settings is refused with
+`binding-sequence-unrepresentable`. [Keys the database
+generates](guide/02-modeling.md#keys-the-database-generates) and [Let the database choose
+the key](guide/04-writing.md#let-the-database-choose-the-key) teach it.
 
 `KeySequence` is now the only generated key: `MAX` and `Sequence(...)` are gone from
 `parallax.core`, and so are the descriptor's `pkGeneration: max` and
 `{strategy: sequence, ...}`, which the schema now refuses. `parallax.core` exports the
-two-member `PkGeneration` union, `ApplicationAssigned | KeySequence`. Replace a `MAX` or
-registry `Sequence` key with `KeySequence(name, ...)` — its `batch_size` defaults to 100
-where `Sequence`'s was 1 — or with an application-assigned key, and provision the native
-sequence: `coordinated_migration` creates and positions it past the stored keys when you
-move an existing entity, as above. A Wire value spelling `{"increment": n}` or
+two-member `PkGeneration` union, `ApplicationAssigned | KeySequence`. Two declarations of
+one allocator that disagree are reported as `pk-gen-key-sequence-conflict`, which replaces
+`pk-gen-sequence-conflict`, and a subtype declaring a generator of its own as
+`pk-gen-key-sequence-subtype-override`. To migrate, replace a `MAX` or registry `Sequence`
+key with `KeySequence(name, ...)` — its `batch_size` defaults to 100 where `Sequence`'s was
+1 — or with an application-assigned key. Nothing created a native sequence for either old
+strategy, so treat the entity as moving to generated keys: `coordinated_migration`, below,
+creates the sequence and positions it past every stored key, and a registry table that
+only counted keys can then be dropped. A Wire value spelling `{"increment": n}` or
 `{"computed": "maxPlusOne"}` at a scalar member is no longer read as a database-computed
-marker: it is refused like any other value of the wrong type, with
-`InvalidValueError` code `neutral-literal-type-mismatch`.
+marker: it is refused like any other value of the wrong type, with `InvalidValueError`
+code `neutral-literal-type-mismatch`.
 
 `ServingModel.publish` now refuses a candidate that changes a surviving allocator's batch
 size, increment size, or key range, as it refuses a relocation, and both refusals use the
 renamed code `PUBLICATION_BREAKING_CHANGE_REFUSED` (`publication-breaking-change-refused`),
 which replaces `PUBLICATION_RELOCATION_REFUSED`. Code matching the old constant or string
-needs the new one. `evolve` reports such a change as the new `AllocatorSettingsChanged`
-operation, so code matching every evolution operation needs a case for it, and
+needs the new one. Such a release is served from replacement roots once its migration has
+drained the old ones. `evolve` reports the change as the new `AllocatorSettingsChanged`
+operation, so code matching every evolution operation needs a case for it. A key moving
+from application-assigned to generated is now coordinated with `DatabaseMigrationRequired`
+alone, since callers lose nothing, and one moving back with
+`AuthoringSurfaceChangeRequired` alone; a generated key is no longer framework-owned, so
+neither move reports a `WriteCapabilityChanged` impact.
+
 `schema_delta` now raises `TypeError` when handed a `CoordinatedEvolution` rather than
 rendering an incomplete delta, naming the new `coordinated_migration`, which turns every
 `CoordinatedEvolution` into a `CoordinatedMigration`: ordered `MigrationStatement`s and
 `ManualStep`s (`ManualAction` `DRAIN_EARLIER_ROOTS`, `TRANSFORM_STORED_DATA`, `RELOCATE`,
 or `UPDATE_AUTHORING_SURFACE`), each naming the operations that asked for it. It creates,
 alters, positions, and drops native sequences — moving an existing entity onto generated
-keys positions its sequence past every stored key — and leaves draining, relocating, and
-transforming stored data to you. A pool metrics source now names its `purpose`,
-`"application"` or `"reservation"`; an observer watching only application pools can
-decline the reservation pool's source.
+keys positions its sequence past every stored key — and leaves draining, relocating,
+transforming stored data, and updating code to you. A release check that refused every
+coordinated change can now list its steps instead, as [Coordinated
+migrations](guide/07-model-evolution.md#coordinated-migrations) shows. A pool metrics
+source now names its `purpose`, `"application"` or `"reservation"`; an observer watching
+only application pools can decline the reservation pool's source.
 
 A Bitemporal table's primary key now ends with `out_z` before `thru_z`, and so does every
 index you declare on a Bitemporal entity: `price` is keyed `(sku, out_z, thru_z)` rather

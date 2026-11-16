@@ -7,7 +7,8 @@ but it never changes your database itself. This chapter starts with editions, th
 successive models a process serves, and how a transaction uses them. It then describes
 a change between two models, generates the migration for it, and rolls the new model out
 to running processes, including the window when two editions run against one database.
-It ends with changing a [Database Binding](02-modeling.md#database-bindings), which rolls
+It then turns a change that a live database can't take into ordered migration steps, and
+ends with changing a [Database Binding](02-modeling.md#database-bindings), which rolls
 out the same way unless it moves something the database already holds.
 
 The examples use the shop model from [Modeling](02-modeling.md) and these imports:
@@ -34,7 +35,9 @@ from parallax.evolution import (
     ABSENT,
     CoordinatedEvolution,
     Evolution,
+    MigrationStatement,
     UnilateralEvolution,
+    coordinated_migration,
     evolve,
     schema_delta,
 )
@@ -165,8 +168,9 @@ operation that needs coordination with its reasons, each a `CoordinationReason`:
 `AUTHORING_SURFACE_CHANGE_REQUIRED` when code written against the earlier model has to
 change, and `DATABASE_MIGRATION_REQUIRED` when no schema change can carry the database
 across without transforming stored data or staging the change. A Coordinated Evolution
-is a complete description, not an error, but Parallax generates no migration for it and
-prescribes no procedure: how you stage that change is your decision.
+is a complete description, not an error. `schema_delta` can't carry it, but
+`coordinated_migration` turns it into ordered steps, statements and the manual work only
+you can do, as [Coordinated migrations](#coordinated-migrations) shows.
 
 **What behaves differently?** `behavioral_impacts` lists what changes behind a surface
 that stays valid. Gift cards cause one `QueryResultMembershipChanged`, on `Payment`: a
@@ -190,8 +194,9 @@ It accepts only a `UnilateralEvolution`, so your type checker refuses a call tha
 hand it a Coordinated one. `evolve(ABSENT, ...)` is always unilateral and typed that
 way, which is why [Getting started](01-getting-started.md#create-the-tables) passes it
 straight in.
-Between two models the type is only known at run time, so a release check refuses a
-coordinated change first:
+Handed a `CoordinatedEvolution` at run time all the same, it raises `TypeError` naming
+`coordinated_migration`. Between two models the type is only known at run time, so a
+release check refuses a coordinated change first:
 
 <!-- example: generate-the-migration -->
 ```python
@@ -330,6 +335,108 @@ A read of `CardPayment` alone never reaches a gift-card row, because it selects 
 tagged `card`. Once the process adopts release 2, the same read through `Payment` returns
 the gift card as a `GiftCardPayment`.
 
+## Coordinated migrations
+
+`coordinated_migration(evolution)` turns a `CoordinatedEvolution` into a
+`CoordinatedMigration`, whose `steps` carry the database across in order. Each step is a
+`MigrationStatement`, whose `sql` you run, or a `ManualStep`, whose `action` you
+perform, and each names in `caused_by` the operations that asked for it. A release check
+can list them in one order, writing each manual step as a comment naming its action:
+
+<!-- example: list-a-releases-migration-steps -->
+```python
+def migration_steps(
+    deployed: Deployed, release: DomainModel, binding: PostgresBinding
+) -> list[str]:
+    """Every step that brings the database from the deployed model to ``release``,
+    in order: each statement to run, and each manual step, by its action, to
+    perform where it falls."""
+    evolution = changes_since(deployed, release, binding)
+    if isinstance(evolution, UnilateralEvolution):
+        return list(schema_delta(evolution).statements)
+    return [
+        step.sql if isinstance(step, MigrationStatement) else f"-- {step.action.name}"
+        for step in coordinated_migration(evolution).steps
+    ]
+```
+<!-- /example -->
+
+A `ManualAction` is work Parallax can't do for you:
+
+- `DRAIN_EARLIER_ROOTS`: close every root serving the earlier model, in every process,
+  before any later step runs. Closing a root abandons the keys it has reserved and ends
+  its database sessions, so nothing the earlier model serves writes while the migration
+  runs.
+- `RELOCATE`: move or rename a table or sequence, with what it holds, to where the new
+  binding places it.
+- `TRANSFORM_STORED_DATA`: carry stored rows and schema across a change no generated
+  statement expresses, such as giving every stored row a value for a new required
+  attribute.
+- `UPDATE_AUTHORING_SURFACE`: change the code that reads or writes what the release
+  removes or restricts; the database needs nothing for it.
+
+Generated statements cover the ordinary schema changes the release's other operations
+need, and the sequences [generated keys](02-modeling.md#keys-the-database-generates) come
+from: creating one, altering one whose settings change, moving one forward past the keys
+already stored, and dropping one once no entity uses it. Run the steps in the order given,
+stopping at the first failure, and run each statement as given, as you would a schema
+delta's. A drain comes first whenever there is one. Once every step has run, serve the
+release, from new roots where the drain closed the old ones, and keep its descriptor and
+binding as deployed. Parallax still runs nothing itself.
+
+### Moving an entity to generated keys
+
+Suppose the shop's next release generates customers' keys: `Customer.id` becomes
+`attr(primary_key=KeySequence("customer_ids"))`. Code that supplies an id keeps working,
+so no code has to change, but the keys already stored must never be handed out again.
+Under a binding whose default schema is `shop`, `migration_steps` lists three steps:
+
+```text
+-- DRAIN_EARLIER_ROOTS
+create sequence shop.customer_ids as bigint increment by 100 minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle
+select case when t0.next_key > 9223372036854775807 then pg_catalog.setval('shop.customer_ids', 9223372036854775807, true) else pg_catalog.setval('shop.customer_ids', cast(t0.next_key as bigint), false) end from (select greatest((select case when t1.is_called then cast(t1.last_value as numeric) + 100 else t1.last_value end from shop.customer_ids t1), (select cast(max(t2.id) as numeric) + 1 from shop.customer t2)) next_key) t0
+```
+
+The last statement moves the sequence forward past the largest key stored in every table
+that draws from it: each table of a family stored per concrete subtype, every other
+entity sharing the allocator, and every history row. It never moves a sequence back, and
+it runs after the drain, because a root still serving the earlier model could otherwise
+store a larger key behind it. Grant the login `USAGE` on the new sequence before the
+release serves. Moving back to application-assigned keys takes away keyless inserts, so
+its migration asks you to update the code that relies on them, and drops the sequence,
+after a drain, once no entity draws from it.
+
+### Adopting a sequence that already exists
+
+A database may already hold a sequence for an allocator, from an earlier system, say. To
+adopt it rather than create it, place it with the binding, leave out the generated
+`create sequence`, and make its definition the one that statement spells: an increment of
+`batch_size` × `increment_size`, no cycle, and bounds within the key's type. Then move it
+past every stored key before any root takes a key from it. Each reservation checks the
+sequence's definition and refuses a mismatch, but nothing checks its position against
+the rows already stored: that is your deployment's to get right.
+
+### Which key changes publish
+
+A root holds a block of keys reserved under one sequence and one set of settings, so
+what a release changes about an allocator decides how it rolls out:
+
+- Adding an allocator or removing one, changing only an `initial_value`, and moving an
+  entity between application-assigned and generated keys leave every block a root holds
+  valid, and `publish` accepts them. A new allocator's sequence has to exist first, which
+  `schema_delta` or the coordinated migration creates. An `initial_value` only says where
+  a sequence Parallax creates starts, so changing it changes nothing in the database.
+  Moving an existing entity onto an allocator still carries the migration above, whose
+  drain comes first.
+- Changing a surviving allocator's `batch_size`, `increment_size` or key type, or
+  moving its sequence, would leave a root handing out keys from a block reserved under
+  the old settings or the old sequence. `publish` refuses it, and its migration starts
+  with a drain: serve the release from replacement roots, as
+  [Changing a binding](#changing-a-binding) describes for a move. When the release
+  shrinks the step a sequence advances by, the migration also moves the sequence past the
+  last block the drained roots reserved, since keys from that block may already be
+  stored.
+
 ## Changing a binding
 
 A selection is prepared from a model and its binding together, so a binding change is
@@ -389,14 +496,17 @@ def moves_in(evolution: Evolution) -> list[str]:
 
 `publish` refuses a candidate that relocates anything the selection it replaces holds, or
 changes a surviving allocator's batch size, increment size, or key range, with a
-`UsageError` whose `code` is `PUBLICATION_BREAKING_CHANGE_REFUSED` and whose message names
-each change, and the held selection keeps serving. It refuses one prepared for another
+`UsageError` whose `code` is `"publication-breaking-change-refused"` and whose message
+names each change, and the held selection keeps serving. `evolve` reports such a
+settings change as an `AllocatorSettingsChanged` operation. It refuses one prepared for another
 backend in the same way. Changing an entity's `table=` relocates its table too, unless its
 binding entry gives the old physical name: then the change is the model's alone, publishes
 like any other, and needs no statement.
 
 Parallax generates nothing that moves or renames a table or copies data. Relocating is a
-coordinated migration that you run behind a replacement root:
+coordinated migration that you run behind a replacement root, whose
+`coordinated_migration` lists a `DRAIN_EARLIER_ROOTS` step and a `RELOCATE` step for each
+move:
 
 1. Stop everything serving the old placement, because no process can publish the move.
 2. Move the objects, for example with `alter table px.orders set schema sales`, and grant
@@ -429,6 +539,10 @@ Until a process publishes, its executions keep the placement its selection carri
   Operations, classification, Behavioral Impacts and Overlap-Visible Operations, and
   [schema delta](../../../../core/spec/m-schema-delta.md) defines the generated
   statements and what an application applying them must do.
+- [Schema delta](../../../../core/spec/m-schema-delta.md#coordinated-migration) defines
+  the coordinated migration and its manual actions, and
+  [ADR 0098](../../../../docs/adr/0098-native-key-generation-rolls-out-through-publication-and-evolution.md)
+  records which key changes publish and why every coordinated change now has one.
 - [Database binding](../../../../core/spec/m-database-binding.md#relocation-between-two-resolved-bindings)
   defines relocation, which publication refuses and evolution coordinates, and
   [ADR 0093](../../../../docs/adr/0093-a-database-binding-places-each-prepared-selection-and-publication-never-relocates.md)

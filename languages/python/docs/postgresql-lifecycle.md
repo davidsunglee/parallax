@@ -322,6 +322,7 @@ Each operation acquires a connection and gives it back:
 | Eager read (`db.find`, `db.wire.find`) | For the whole read, materialization included |
 | Standalone delivery (`db.stream`, `db.wire.stream`) | For one page at a time, through that page's materialization |
 | Transaction attempt (`db.transact`) | For the attempt, every participating read, write and delivery inside it included |
+| A keyless insert whose root has handed out its block of keys | The root's reservation connection, for one statement, beside the attempt's own ([Key reservations](#key-reservations)) |
 
 Work that INHERITS a connection takes none of its own: a read inside a
 transaction and every page of a participating delivery run on the attempt's
@@ -359,6 +360,74 @@ If a writer endpoint's connection string points at a replica, that is where its
 connections go: nothing is inferred from the string, startup adds no
 physical-writer check, and writes through it fail natively. Every operation of
 such a root requests the writer route, which is the only one it declares.
+
+## Key reservations
+
+A model whose keys come from `KeySequence` declarations
+([Modeling](guide/02-modeling.md#keys-the-database-generates)) has each root reserve
+blocks of keys from their sequences, on writer capacity of its own beside its routes.
+
+**One more pool on the writer.** The runtime opens it with the writer's endpoint,
+credentials, `max_idle` and `max_lifetime`, but at a capacity of one connection with no
+minimum and one maintenance worker; an on-demand writer gets an on-demand reservation
+pool of one instead. The pool, with its scheduler and worker threads, opens with the
+root, whether or not the model generates a key, so the root's pool observations keep one
+identity for its whole life. Its connection opens at the root's first reservation, and
+is kept and retired as the writer's are. Every sequence the root uses, and every scope
+derived from it, shares that one connection, so a root whose routes hold up to N
+connections holds up to N + 1, and a fleet needs one more server connection per process
+that inserts with generated keys ([Sizing two routes](#sizing-two-routes)).
+
+**When it runs.** Only when the root has handed out the block it holds: a key still in
+the block costs no statement and no acquisition. A reservation is one statement that
+takes the next block and reads back the sequence's definition, autocommitted on its own,
+outside your transaction, so a rollback doesn't return its keys, and an attempt holding
+its route's only connection can still reserve. Its acquisition, statement and release
+belong to the attempt whose insert asked for them, as a Read whose `purpose` is
+`reservation`.
+
+**Who it runs as.** Always the adapter's login, whatever scope the insert runs under:
+no role is installed on the reservation connection, and a `using_principal` scope's
+privileges and row-level security still govern every statement of its own transaction.
+Grant the login `USAGE` on every sequence; your application roles need no privilege on
+them. Parallax grants nothing.
+
+**What it checks.** Every reservation compares the definition it reads back with the
+model's declaration: an increment of `batch_size` × `increment_size`, bounds within the
+key's type, and no cycle. A sequence that is missing, differs, or has run out of keys
+is refused, and no key from that reservation is handed out
+([Errors](guide/08-errors.md#failures-the-database-reports)). A sequence altered under a
+running root is therefore caught at that root's next reservation.
+
+**One budget.** A reservation spends one budget, the adapter's `acquire_timeout`, from
+the moment it starts: waiting for another thread's reservation of the same sequence,
+acquiring the connection, setting it up and running the statement. Before the statement,
+Parallax installs what remains of the budget as the session's `statement_timeout`, a
+setup step rather than a Database Call, so a statement stalled on a live server,
+including one waiting on the sequence's lock behind an uncommitted `ALTER SEQUENCE`,
+fails with a `DatabaseError` whose `native_code` is `57014` and whose `category` is
+`None`. Running out of budget before the statement is a `ConnectionAcquisitionError`
+with `reason="timeout"`. Neither is retried, and a reservation whose outcome is
+uncertain hands out none of its keys.
+
+A server that disappears in the middle of a reservation is bounded only roughly. The
+reservation connection asks for TCP keepalives every second and for unanswered sends to
+be abandoned after about `acquire_timeout` seconds (libpq's `keepalives_*` and
+`tcp_user_timeout`, the latter only where the platform supports it), so the operating
+system ends the connection, and the waiting insert fails, roughly that long after the
+server went away. Nothing closes the connection on a timer, so treat this as an
+approximate bound, not a deadline.
+
+**Observation.** The reservation pool is published as one more pool metrics source, on
+route `writer` with `purpose` `reservation`; [Observing the pool](#observing-the-pool)
+shows a Provider declining it.
+
+**Shutdown and draining.** Closing the root closes the reservation pool with the
+others, ends its session, and abandons the keys its blocks still hold, so keys have
+gaps. A release that changes an allocator's settings or moves its sequence needs every
+root serving the earlier model closed before its migration runs: that drain is what
+retires the blocks they reserved under the old settings and the sessions they reserved
+on ([Which key changes publish](guide/07-model-evolution.md#which-key-changes-publish)).
 
 ## Writer and reader routes
 
