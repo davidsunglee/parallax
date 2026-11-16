@@ -77,3 +77,36 @@ then:
                 parent: parallax.compatibility.Docket
                 tag: { value: motion }
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Motion
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Filing
+                    tag: { value: motion }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Docket
+                    tag: { value: motion }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Motion
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Filing
+                    tag: { value: motion }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Docket
+                    tag: { value: motion }

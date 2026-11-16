@@ -23,3 +23,14 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectOccurrenceRemoved, valueObject: parallax.compatibility.Contact.profile.home }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectOccurrenceRemoved, valueObject: parallax.compatibility.Contact.profile.home }

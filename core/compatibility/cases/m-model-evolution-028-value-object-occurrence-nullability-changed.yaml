@@ -62,3 +62,32 @@ then:
               later: false
         reasons:
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Parcel.courier
+              deltas:
+                - { kind: NullabilityChanged, earlier: true, later: false }
+        - statement: alter table px.evolution_parcel alter column origin drop not null
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Parcel.origin
+              deltas:
+                - { kind: NullabilityChanged, earlier: false, later: true }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Parcel.courier
+              deltas:
+                - { kind: NullabilityChanged, earlier: true, later: false }
+        - statement: alter table px.evolution_parcel modify origin json
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Parcel.origin
+              deltas:
+                - { kind: NullabilityChanged, earlier: false, later: true }

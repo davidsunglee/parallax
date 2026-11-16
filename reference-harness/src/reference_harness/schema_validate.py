@@ -18,10 +18,11 @@ It performs m-case-format layer 1 statically (no database needed):
   case-authoring rules JSON Schema cannot express are asked here too, where the
   model is in hand and no executor has run yet: a buffered write's member honesty
   and a scenario `mutate`'s own assignments (:func:`_validate_scenario_edit`),
-  both model-aware; the Schema Delta matrix rule, which reaches across
-  ``then.evolution.kind`` into ``then.schema`` and so cannot be a schema
-  constraint — a unilateral Evolution MUST carry one cell per supported Dialect
-  and a coordinated one carries none (:func:`_schema_matrix_problems`); a Retry
+  both model-aware; the evolution matrix rule, which reaches across
+  ``then.evolution.kind`` into ``then.schema`` or ``then.migration`` and the
+  Dialect catalog — a unilateral Evolution's Schema Delta and a coordinated
+  one's Coordinated Migration each carry one cell per supported Dialect
+  (:func:`_schema_matrix_problems`); a Retry
   Policy's finiteness and field order once its built-in values are filled
   (:func:`~reference_harness.retry_policy_validate.retry_policy_problems`); and the
   cross-references a scenario step makes — which find a
@@ -1020,33 +1021,39 @@ def _case_models(case: dict[str, Any]) -> list[str]:
 
 def _schema_matrix_problems(case: dict[str, Any]) -> list[str]:
     """``then.schema`` states one cell per supported Dialect for every unilateral
-    Evolution, and nothing for a coordinated one.
+    Evolution, and ``then.migration`` one for every coordinated Evolution.
 
-    The matrix is mandatory rather than optional (m-case-format): a unilateral
-    Evolution is exactly what schema generation accepts, so a case describing one
-    and authoring no Schema Delta leaves the generator ungraded. An omitted
-    dialect is never an implicit skip either — adding a Dialect makes every
-    unilateral evolution case incomplete until its cell is authored. Both are
-    static failures here rather than quieter runs later.
+    Each matrix is mandatory rather than optional (m-case-format): a unilateral
+    Evolution is exactly what schema generation accepts and a coordinated one
+    exactly what coordinated migration accepts, so a case describing one and
+    authoring no expectation leaves its generator ungraded. An omitted dialect
+    is never an implicit skip either — adding a Dialect makes every evolution
+    case incomplete until its cell is authored. Both are static failures here
+    rather than quieter runs later. Which matrix a kind may carry at all is the
+    case schema's.
     """
     then = case.get("then")
     if not isinstance(then, dict):
         return []
-    matrix = then.get("schema")
     evolution = then.get("evolution")
     kind = evolution.get("kind") if isinstance(evolution, dict) else None
-    if matrix is None:
-        if kind == "unilateral":
-            return [
-                "then.evolution is unilateral and carries no then.schema; the Schema Delta "
-                f"for {sorted(DIALECT_CATALOG)} is what schema generation accepts"
-            ]
+    member, generator = {
+        "unilateral": ("schema", "the Schema Delta schema generation"),
+        "coordinated": ("migration", "the Coordinated Migration coordinated migration"),
+    }.get(str(kind), (None, None))
+    if member is None:
         return []
+    matrix = then.get(member)
+    if matrix is None:
+        return [
+            f"then.evolution is {kind} and carries no then.{member}; {generator} produces "
+            f"for {sorted(DIALECT_CATALOG)} is what it is graded by"
+        ]
     if not isinstance(matrix, dict):
         return []
     if set(matrix) != set(DIALECT_CATALOG):
         return [
-            f"then.schema names {sorted(matrix)}, and the supported Dialect catalog is "
+            f"then.{member} names {sorted(matrix)}, and the supported Dialect catalog is "
             f"{sorted(DIALECT_CATALOG)}"
         ]
     return []

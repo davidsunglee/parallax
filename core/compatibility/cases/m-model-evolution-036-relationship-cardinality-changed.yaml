@@ -34,3 +34,20 @@ then:
               later: one-to-many
         reasons:
           - AuthoringSurfaceChangeRequired
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Folder.items
+              deltas:
+                - { kind: CardinalityChanged, earlier: many-to-one, later: one-to-many }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: RelationshipAltered
+              relationship: parallax.compatibility.Folder.items
+              deltas:
+                - { kind: CardinalityChanged, earlier: many-to-one, later: one-to-many }

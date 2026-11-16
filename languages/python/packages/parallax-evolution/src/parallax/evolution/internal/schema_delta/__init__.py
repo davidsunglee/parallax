@@ -5,7 +5,8 @@ from typing import Final
 from parallax.core.internal.base import InternalError
 from parallax.core.internal.database_binding import PhysicalSequence, PhysicalTable
 from parallax.core.internal.dialect import Dialect, Unsupported
-from parallax.evolution.internal.model_evolution import UnilateralEvolution
+from parallax.evolution.internal.model_evolution import CoordinatedEvolution, UnilateralEvolution
+from parallax.evolution.internal.schema_delta._coordinated import migration_plan, migration_steps
 from parallax.evolution.internal.schema_delta._order import order
 from parallax.evolution.internal.schema_delta._physical import (
     CreateIndex,
@@ -19,7 +20,11 @@ from parallax.evolution.internal.schema_delta._values import (
     CollidingRelation,
     CollidingTemporalConstraint,
     CollisionGroup,
+    CoordinatedMigration,
     CreatedIndex,
+    ManualAction,
+    ManualStep,
+    MigrationStatement,
     SchemaDelta,
     SchemaTarget,
     UnsupportedSchemaEvolutionError,
@@ -27,11 +32,16 @@ from parallax.evolution.internal.schema_delta._values import (
 )
 
 __all__ = [
+    "CoordinatedMigration",
     "CreatedIndex",
+    "ManualAction",
+    "ManualStep",
+    "MigrationStatement",
     "SchemaDelta",
     "SchemaTarget",
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",
+    "coordinated_migration",
     "schema_delta",
 ]
 
@@ -59,14 +69,13 @@ def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
     the later binding resolves and the earlier one does not.
 
     A :class:`~parallax.evolution.internal.model_evolution.CoordinatedEvolution`
-    raises :class:`TypeError` before anything is planned: its database
-    requirements need a coordinated migration, which a delta cannot express.
+    raises :class:`TypeError` before anything is planned:
+    :func:`coordinated_migration` generates its steps.
     """
     if not isinstance(evolution, UnilateralEvolution):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so a coordinated evolution is refused rather than rendered
         raise TypeError(
-            f"schema_delta takes a UnilateralEvolution, not a {type(evolution).__name__}: a "
-            "coordinated evolution's database requirements need a coordinated migration, "
-            "which a schema delta cannot express"
+            f"schema_delta takes a UnilateralEvolution, not a {type(evolution).__name__}; "
+            "use coordinated_migration for a coordinated evolution"
         )
     dialect = evolution.later.dialect
     built = plan(evolution)
@@ -93,6 +102,38 @@ def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
             if isinstance(operation, CreateIndex)
         ),
     )
+
+
+def coordinated_migration(evolution: CoordinatedEvolution) -> CoordinatedMigration:
+    """The ordered steps carrying a `CoordinatedEvolution`'s database and roots onward.
+
+    Each step is a generated :class:`MigrationStatement` for the later binding's
+    backend or a :class:`ManualStep` the deployment performs, and each names
+    the operations that asked for it: every operation a coordination
+    requirement names appears in some step. Every drain the migration needs
+    precedes every relocation, transformation, and statement. Nothing here moves
+    a table or sequence or transforms stored data; those are manual steps.
+
+    Statements are generated for the ordinary physical changes the evolution's
+    other operations ask for, exactly as :func:`schema_delta` generates them,
+    and for native sequences: creating one, altering a surviving one's
+    settings, moving one forward past every key its consumers store and every
+    block already reserved from it, and dropping one no model references.
+    Refusals and Physical Index Name collisions are raised exactly as
+    :func:`schema_delta` raises them, before any step escapes.
+
+    A :class:`~parallax.evolution.internal.model_evolution.UnilateralEvolution`
+    raises :class:`TypeError`: :func:`schema_delta` generates its statements.
+    """
+    if not isinstance(evolution, CoordinatedEvolution):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so a unilateral evolution is refused rather than migrated
+        raise TypeError(
+            f"coordinated_migration takes a CoordinatedEvolution, not a "
+            f"{type(evolution).__name__}; use schema_delta for a unilateral evolution"
+        )
+    dialect = evolution.later.dialect
+    built, steps = migration_plan(evolution)
+    _reject_collisions(built, dialect)
+    return CoordinatedMigration(steps=migration_steps(steps, dialect))
 
 
 def _refusal(operation: PhysicalOperation, result: Unsupported) -> UnsupportedSchemaOperation:

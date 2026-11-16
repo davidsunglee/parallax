@@ -80,3 +80,26 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Meter.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Meter.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Meter, dimension: transaction-time }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Meter.txEnd }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Meter.txStart }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AsOfAxisAdded, entity: parallax.compatibility.Meter, dimension: transaction-time }

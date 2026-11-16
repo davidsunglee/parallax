@@ -1351,6 +1351,10 @@ class Case:
         """This case's ``then.schema`` expectation for *dialect*, if it carries one."""
         return (self.then.get("schema") or {}).get(dialect)
 
+    def migration_cell(self, dialect: str) -> dict[str, Any] | None:
+        """This case's ``then.migration`` expectation for *dialect*, if it carries one."""
+        return (self.then.get("migration") or {}).get(dialect)
+
     @property
     def rejected_rule(self) -> str | None:
         """The normative rule a ``rejected`` case expects the input to violate.

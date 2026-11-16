@@ -103,3 +103,106 @@ then:
           deltas:
             - {kind: MultiplicityChanged, earlier: one, later: many}
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Register.marks
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Register.title
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.codes
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.note
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+                - { kind: NullabilityChanged, earlier: true, later: false }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.tag
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.detail.label
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.detail.scores
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.lines.flags
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Register.marks
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Register.title
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.codes
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.note
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+                - { kind: NullabilityChanged, earlier: true, later: false }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Roster.tag
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.detail.label
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.detail.scores
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectAttributeAltered
+              valueObjectAttribute: parallax.compatibility.Roster.lines.flags
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }

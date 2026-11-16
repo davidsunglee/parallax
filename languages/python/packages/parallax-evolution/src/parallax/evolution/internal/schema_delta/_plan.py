@@ -41,6 +41,8 @@ from parallax.evolution.internal.model_evolution import (
     AttributeAltered,
     AttributeDelta,
     ConcreteSubtypeAdded,
+    CoordinatedEvolution,
+    CoordinationReason,
     EntityAdded,
     EntityAltered,
     EvolutionOperation,
@@ -50,6 +52,8 @@ from parallax.evolution.internal.model_evolution import (
     InheritanceChanged,
     MaximumLengthChanged,
     NullabilityChanged,
+    PrimaryKeyChanged,
+    TypeChanged,
     UnilateralEvolution,
     ValueObjectOccurrenceAdded,
     ValueObjectOccurrenceAltered,
@@ -79,7 +83,14 @@ from parallax.evolution.internal.schema_delta._physical import (
 )
 from parallax.evolution.internal.schema_delta._values import CollisionGroup
 
-__all__ = ["Plan", "plan", "temporal_backing_indices"]
+__all__ = [
+    "Plan",
+    "drawing_entities",
+    "joined_allocator",
+    "joined_allocators",
+    "plan",
+    "temporal_backing_indices",
+]
 
 # The framework-owned table-per-hierarchy tag is not a declared Attribute
 # (m-inheritance), so it has no declared type to resolve: the generator fixes one
@@ -110,20 +121,25 @@ class Plan:
     collisions: tuple[CollisionGroup, ...]
 
 
-def plan(evolution: UnilateralEvolution) -> Plan:
+def plan(evolution: UnilateralEvolution | CoordinatedEvolution) -> Plan:
     """Every physical operation ``evolution`` asks the database to perform.
 
     The later binding's dialect fixes the identifier limit every physical index
     name is derived against and the scope index names are unique within.
+
+    A Coordinated Evolution plans only the Table operations its manual steps do
+    not carry (:class:`_Withholding`); sequence creations are always planned.
     """
     dialect = evolution.later.dialect
     later = _Endpoint.of(evolution.later)
     earlier = None if evolution.earlier is None else _Endpoint.of(evolution.earlier)
     causes = _Causes.over(evolution.operations, later, earlier)
+    withholding = _Withholding.of(evolution, causes)
     operations = tuple(
         operation
         for layout in later.facet.tables
-        for operation in _lower(layout, later, earlier, causes, dialect)
+        for operation in _lower(layout, later, earlier, causes, dialect, withholding)
+        if not withholding.withholds(layout.mapping_owner, operation.caused_by, column=False)
     )
     return Plan(
         operations=(
@@ -171,10 +187,12 @@ def _prerequisites(
     return (CreateExtension(name=_EXCLUSION_PREREQUISITE, caused_by=caused_by),)
 
 
-def _created_sequences(evolution: UnilateralEvolution) -> tuple[CreateSequence, ...]:
+def _created_sequences(
+    evolution: UnilateralEvolution | CoordinatedEvolution,
+) -> tuple[CreateSequence, ...]:
     """One creation for each native allocator the later binding resolves and
     the earlier one does not, caused by the operations that added an Entity
-    drawing from it.
+    drawing from it or moved a surviving key onto it.
 
     An allocator surviving both endpoints already has its sequence, however its
     consumers changed, so none is created, reset, or repositioned for it.
@@ -187,25 +205,61 @@ def _created_sequences(evolution: UnilateralEvolution) -> tuple[CreateSequence, 
     )
     if not created:
         return ()
-    families = inheritance_facet_of(evolution.later.meta)
-    drawing: dict[str, set[EntityIdentity]] = {}
-    for entity in evolution.later.meta.entities:
-        view = families.entity(entity.identity)
-        key = None if view is None else view.primary_key.primary_key
-        if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
-            drawing.setdefault(key.generation.name, set()).add(entity.identity)
+    drawing = drawing_entities(evolution.later)
     return tuple(
         CreateSequence(
             sequence=sequence,
             caused_by=tuple(
                 operation
                 for operation in evolution.operations
-                if isinstance(operation, EntityAdded | ConcreteSubtypeAdded)
-                and operation.entity in drawing.get(sequence.allocator, ())
+                if (
+                    isinstance(operation, EntityAdded | ConcreteSubtypeAdded)
+                    and operation.entity in drawing.get(sequence.allocator, ())
+                )
+                or sequence.allocator in joined_allocators(operation)
             ),
         )
         for sequence in created
     )
+
+
+def drawing_entities(resolved: ResolvedBinding) -> Mapping[str, frozenset[EntityIdentity]]:
+    """Each native allocator ``resolved`` declares beside every Entity whose
+    family key draws from it."""
+    families = inheritance_facet_of(resolved.meta)
+    drawing: dict[str, set[EntityIdentity]] = {}
+    for entity in resolved.meta.entities:
+        view = families.entity(entity.identity)
+        key = None if view is None else view.primary_key.primary_key
+        if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
+            drawing.setdefault(key.generation.name, set()).add(entity.identity)
+    return {allocator: frozenset(held) for allocator, held in drawing.items()}
+
+
+def joined_allocators(operation: EvolutionOperation) -> frozenset[str]:
+    """The native allocators a surviving key starts drawing from at ``operation``."""
+    if not isinstance(operation, AttributeAltered):
+        return frozenset()
+    return frozenset(
+        allocator for delta in operation.deltas if (allocator := joined_allocator(delta))
+    )
+
+
+def joined_allocator(delta: AttributeDelta) -> str | None:
+    """The native allocator a key starts drawing from at ``delta``: one its
+    generation moves onto from application-assigned keys or another allocator."""
+    if not (
+        isinstance(delta, PrimaryKeyChanged)
+        and isinstance(earlier := delta.earlier, PrimaryKey)
+        and isinstance(later := delta.later, PrimaryKey)
+        and isinstance(later.generation, KeySequence)
+    ):
+        return None
+    stays = (
+        isinstance(earlier.generation, KeySequence)
+        and earlier.generation.name == later.generation.name
+    )
+    return None if stays else later.generation.name
 
 
 def temporal_backing_indices(resolved: ResolvedBinding) -> tuple[TemporalBackingIndex, ...]:
@@ -255,6 +309,7 @@ def _lower(
     earlier: _Endpoint | None,
     causes: _Causes,
     dialect: Dialect,
+    withholding: _Withholding,
 ) -> Iterator[PhysicalOperation]:
     """Everything one target Table needs, given what the earlier edition held.
 
@@ -268,7 +323,7 @@ def _lower(
     if before is None or earlier is None:
         yield from _create(layout, later, defined, causes.table(layout.mapping_owner), dialect)
         return
-    yield from _columns(layout, before, later, earlier, causes)
+    yield from _columns(layout, before, later, earlier, causes, withholding)
     yield from _indices(tuple(_index_definitions(earlier, before)), defined, causes, dialect)
 
 
@@ -451,6 +506,7 @@ def _columns(
     later: _Endpoint,
     earlier: _Endpoint,
     causes: _Causes,
+    withholding: _Withholding,
 ) -> Iterator[PhysicalOperation]:
     """Each Column this Table gains, and each whose value domain moved.
 
@@ -466,27 +522,25 @@ def _columns(
         held = before.column(slot.column)
         target = _physical_column(later.model, slot)
         if held is None:
-            yield AddColumn(
-                table=table,
-                column=target,
-                caused_by=causes.column(layout.mapping_owner, slot),
-            )
+            added = causes.column(layout.mapping_owner, slot)
+            if not withholding.withholds(layout.mapping_owner, added, column=True):
+                yield AddColumn(table=table, column=target, caused_by=added)
             continue
         source = _physical_column(earlier.model, held)
         if source == target:
             continue
+        caused_by = causes.domain(
+            layout.mapping_owner, slot, moved_nullability=source.nullable != target.nullable
+        )
+        if withholding.withholds(layout.mapping_owner, caused_by, column=True):
+            continue
         if not _expands(source, target) and not _stores_nothing(held, slot):
+            if withholding.coordinated:
+                continue
             raise ValueError(  # pragma: no cover - classification refuses this pair
                 f"{layout.table.name}.{slot.column.name}: a stored domain narrowed"
             )
-        yield RestateColumnDomain(
-            table=table,
-            earlier=source,
-            later=target,
-            caused_by=causes.domain(
-                layout.mapping_owner, slot, moved_nullability=source.nullable != target.nullable
-            ),
-        )
+        yield RestateColumnDomain(table=table, earlier=source, later=target, caused_by=caused_by)
 
 
 def _expands(earlier: PhysicalColumn, later: PhysicalColumn) -> bool:
@@ -548,6 +602,56 @@ def _named(
     definitions: Sequence[IndexDefinition], dialect: Dialect
 ) -> Mapping[PhysicalIndexName, IndexDefinition]:
     return {physical_index_name(definition, dialect): definition for definition in definitions}
+
+
+@dataclass(frozen=True, slots=True)
+class _Withholding:
+    """Which Table operations a coordinated migration leaves to its manual steps.
+
+    A database-coordinated operation's change is the deployment's to make, so
+    no statement is generated for a Table operation it is a cause of, nor for a
+    Column of a Table where such an operation alters an Entity whose rows it
+    stores at either endpoint: which declarations those rows answer to, and so
+    whether the Column is required of them, is what moved. A physical difference no operation
+    is a cause of is one such an operation made through a fact this lowering
+    does not attribute — a storage location or layout moved — and is withheld
+    too. A domain narrowed by an authoring-only change keeps its earlier, wider
+    form: such a change leaves the rows it no longer describes in place.
+
+    A Unilateral Evolution withholds nothing.
+    """
+
+    coordinated: bool
+    database: frozenset[EvolutionOperation]
+    causes: _Causes
+
+    @staticmethod
+    def of(evolution: UnilateralEvolution | CoordinatedEvolution, causes: _Causes) -> _Withholding:
+        if isinstance(evolution, UnilateralEvolution):
+            return _Withholding(coordinated=False, database=frozenset(), causes=causes)
+        return _Withholding(
+            coordinated=True,
+            database=frozenset(
+                requirement.operation
+                for requirement in evolution.coordination_requirements
+                if CoordinationReason.DATABASE_MIGRATION_REQUIRED in requirement.reasons
+            ),
+            causes=causes,
+        )
+
+    def withholds(
+        self, table: EntityIdentity, caused_by: Sequence[EvolutionOperation], *, column: bool
+    ) -> bool:
+        """Whether a Table operation on ``table`` caused by ``caused_by`` is
+        left to a manual step; ``column`` marks a Column's addition or
+        restatement."""
+        if not self.coordinated:
+            return False
+        if not caused_by or self.database.intersection(caused_by):
+            return True
+        return column and any(
+            self.causes.alters_rows_in(operation, table) for operation in self.database
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,6 +851,13 @@ class _Causes:
             and owner not in self.earlier_held.get(table, frozenset())
         )
 
+    def alters_rows_in(self, operation: EvolutionOperation, table: EntityIdentity) -> bool:
+        """Whether ``operation`` alters an Entity owning rows in ``table`` at either endpoint."""
+        return isinstance(operation, EntityAltered) and table in (
+            self.later_rows.get(operation.entity),
+            self.earlier_rows.get(operation.entity),
+        )
+
     def _changes_stored_shapes(self, operation: EvolutionOperation, table: EntityIdentity) -> bool:
         """Whether ``operation`` moves a row-owning shape into or out of ``table``."""
         return isinstance(operation, (EntityAdded, ConcreteSubtypeAdded, EntityAltered)) and (
@@ -788,13 +899,18 @@ def _moves_declared_domain(operation: EvolutionOperation, slot: ColumnSlot) -> b
 
 
 def _moves_domain(deltas: Sequence[AttributeDelta | ValueObjectOccurrenceDelta]) -> bool:
-    """Whether any delta moved a fact a stored domain is made of.
+    """Whether any delta moved a fact a stored domain is made of: its Neutral
+    Type, its String bound, or its nullability.
 
-    A Neutral Type change is never unilateral, so the two facts left are the
-    String bound and nullability — the same pair `m-model-evolution`'s value-domain
-    boundary is phrased over, in either direction.
+    A Neutral Type change is never unilateral, so in a Unilateral Evolution the
+    two facts left are the String bound and nullability — the same pair
+    `m-model-evolution`'s value-domain boundary is phrased over, in either
+    direction.
     """
-    return any(isinstance(delta, (NullabilityChanged, MaximumLengthChanged)) for delta in deltas)
+    return any(
+        isinstance(delta, (TypeChanged, NullabilityChanged, MaximumLengthChanged))
+        for delta in deltas
+    )
 
 
 def _reparents(operation: EntityAltered) -> bool:

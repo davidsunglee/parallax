@@ -66,14 +66,19 @@ def _physical_operation_kinds() -> frozenset[str]:
     return frozenset(definitions["unsupportedSchemaOperation"]["properties"]["kind"]["enum"])
 
 
-# What each physical operation looks like once it is a statement. A `delta` cell
-# carries plain SQL and no operation kind — the algebra never crosses the
-# generator's boundary — so a kind is witnessed either by a statement of its own
-# shape or by an `unsupported` cell naming it. The shapes are the ones both
-# dialects share; a domain restatement is the one that diverges, and the
-# alternation is that divergence rather than a second grammar.
+# What each physical operation looks like once it is a statement. A `delta` or
+# `migration` cell carries plain SQL and no operation kind — the algebra never
+# crosses the generator's boundary — so a kind is witnessed either by a
+# statement of its own shape or by an `unsupported` cell naming it. The shapes
+# are the ones both dialects share; a domain restatement and a positioning are
+# the ones that diverge, and each alternation is that divergence rather than a
+# second grammar.
 _PHYSICAL_OPERATION_STATEMENTS: Final[Mapping[str, str]] = {
     "CreateExtension": r"^create extension\b",
+    "CreateSequence": r"^create sequence\b",
+    "AlterSequence": r"^alter sequence\b",
+    "PositionSequence": r"^(select case when t0\.next_key\b|begin not atomic\b)",
+    "DropSequence": r"^drop sequence\b",
     "CreateTable": r"^create table\b",
     "AddColumn": r"^alter table \S+ add column\b",
     "RestateColumnDomain": r"^alter table \S+ (alter column|modify)\b",
@@ -82,17 +87,34 @@ _PHYSICAL_OPERATION_STATEMENTS: Final[Mapping[str, str]] = {
 }
 
 
+def _cells(case: Case) -> Iterator[Any]:
+    yield from (case.then.get("schema") or {}).values()
+    yield from (case.then.get("migration") or {}).values()
+
+
 def _authored_statements() -> Iterator[str]:
     for case in _CASES:
-        for cell in (case.then.get("schema") or {}).values():
+        for cell in _cells(case):
             delta = cell.get("delta") if isinstance(cell, Mapping) else None
             if isinstance(delta, Mapping):
                 yield from (str(statement) for statement in delta.get("statements") or [])
+            steps = cell.get("steps") if isinstance(cell, Mapping) else None
+            for step in steps or []:
+                if isinstance(step, Mapping) and "statement" in step:
+                    yield str(step["statement"])
+
+
+def _manual_actions() -> Iterator[str]:
+    for case in _CASES:
+        for cell in (case.then.get("migration") or {}).values():
+            for step in cell.get("steps") or [] if isinstance(cell, Mapping) else []:
+                if isinstance(step, Mapping) and "manual" in step:
+                    yield str(step["manual"])
 
 
 def _refused_kinds() -> Iterator[str]:
     for case in _CASES:
-        for cell in (case.then.get("schema") or {}).values():
+        for cell in _cells(case):
             unsupported = cell.get("unsupported") if isinstance(cell, Mapping) else None
             if isinstance(unsupported, Mapping):
                 yield from (
@@ -181,6 +203,12 @@ def test_every_physical_operation_kind_has_a_witness() -> None:
         if any(re.match(shape, statement) for statement in statements)
     } | set(_refused_kinds())
     assert _physical_operation_kinds() - witnessed == set()
+
+
+def test_every_manual_action_has_a_witness() -> None:
+    definitions = json.loads(_CASE_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    actions = set(definitions["migrationStep"]["properties"]["manual"]["enum"])
+    assert actions - set(_manual_actions()) == set()
 
 
 def test_every_behavioral_impact_kind_has_a_witness() -> None:

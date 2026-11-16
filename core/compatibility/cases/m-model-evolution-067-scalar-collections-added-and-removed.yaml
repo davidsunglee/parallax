@@ -29,3 +29,32 @@ then:
           kind: ValueObjectAttributeRemoved
           valueObjectAttribute: parallax.compatibility.Parcel.origin.zones
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Parcel.legacy }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Parcel.tags }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectAttributeAdded, valueObjectAttribute: parallax.compatibility.Parcel.origin.codes }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectAttributeRemoved, valueObjectAttribute: parallax.compatibility.Parcel.origin.zones }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Parcel.legacy }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: AttributeAdded, attribute: parallax.compatibility.Parcel.tags }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectAttributeAdded, valueObjectAttribute: parallax.compatibility.Parcel.origin.codes }
+        - manual: TransformStoredData
+          causedBy:
+            - { kind: ValueObjectAttributeRemoved, valueObjectAttribute: parallax.compatibility.Parcel.origin.zones }

@@ -45,3 +45,32 @@ then:
         reasons:
           - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Ledger.entry
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Ledger.line
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Ledger.entry
+              deltas:
+                - { kind: MultiplicityChanged, earlier: one, later: many }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Ledger.line
+              deltas:
+                - { kind: MultiplicityChanged, earlier: many, later: one }

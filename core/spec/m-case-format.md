@@ -149,7 +149,8 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
   `databaseCalls`), the classified `storedDataIssues`, the portable boundary
   `outcome`, the edit `result` / `carry` / preserved `source`, the described
-  `evolution` and its per-dialect `schema`, and the numeric-comparison `tolerance`.
+  `evolution` and its per-dialect `schema` or `migration`, and the numeric-comparison
+  `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
@@ -200,7 +201,8 @@ A case is one of **ten shapes**, named by the required top-level `shape`:
   see *Rejected cases*, below).
 - **`evolution`** — the complete difference between the two accepted models
   `when.evolve` names, asserted in `then.evolution` and — for a unilateral
-  expectation — in `then.schema` keyed by Dialect Identity (`m-model-evolution`,
+  expectation — in `then.schema`, or — for a coordinated one — in
+  `then.migration`, each keyed by Dialect Identity (`m-model-evolution`,
   carrying no top-level `model` and no golden SQL — see *Evolution cases*,
   below).
 
@@ -432,7 +434,8 @@ in decimal space under any authored `tolerance`.
 | `then.source` | `then` | edit | source preservation after derivation; `unchanged: true` requires all declared source members and warmed native witness state to remain unchanged |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
-| `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
+| `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one, which is not an accepted input |
+| `then.migration` | `then` | coordinated evolution | the Coordinated Migration expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `steps` (that dialect's ordered steps, each a generated `statement` or a `manual` action, with its `causedBy` operations) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a COORDINATED `evolution` expectation, which is exactly what coordinated migration accepts, and FORBIDDEN on a unilateral one (see *Evolution cases*, below) |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
 | `then.databaseCalls` | `then` | no | the DATABASE CALLS the case costs — every statement presented to the port, a FAILED, not-executed, or unconfirmed one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level, at a level whose target position has no concrete subtype, and at a back-reference level); for a write sequence it MUST equal the ordered DML statement count PLUS its reservation statements PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step Database Calls — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes, one outcome, and one read are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about; and a read whose result position has no concrete subtype declares `0` beside its empty `then.statements` (see *Structurally empty reads*, below) — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare only where an inexact numeric representation requires it |
@@ -3008,6 +3011,17 @@ dialect is never an implicit skip, so adding a Dialect makes every unilateral
 evolution case incomplete until its cell is authored. A **coordinated**
 expectation MUST omit `then.schema` entirely.
 
+A **coordinated** expectation MUST carry `then.migration` instead, keyed the same
+way and complete over the same catalog, because a Coordinated Evolution is
+exactly what coordinated migration accepts (`m-schema-delta` *Coordinated
+migration*). Each cell is the closed choice of `steps` — the dialect's complete
+ordered Coordinated Migration, each step either one generated `statement` or one
+`manual` action (`DrainEarlierRoots`, `TransformStoredData`, `Relocate`,
+`UpdateAuthoringSurface`), each naming its `causedBy` operations as an impact
+does — or `unsupported`, the complete ordered operations that dialect cannot
+render. Manual steps are dialect-independent and repeat in every cell; a cell
+differs only in its statements.
+
 An evolution whose Schema Delta is empty authors that: both cells carry a `delta`
 with no statement and no created Index. Equal endpoints, and every unilateral
 change the physical schema is indifferent to, say so explicitly rather than by an
@@ -3025,7 +3039,15 @@ once rather than once per dialect. The harness checks the authored Evolution
 structurally — closed vocabularies, every identity resolving in the endpoint that
 must hold it, and every ordered sequence actually ordered — and a language
 implementation grades the value itself through the conformance adapter's
-`evolution` observation.
+`evolution` observation. The harness checks each migration cell structurally
+too — every step naming only reported operations, the steps in their
+prerequisite-first order, and every requirement and relocation named by a step of
+its kind — and EXECUTES the cell's statements on a database provisioned at the
+earlier endpoint wherever no step transforms stored data or relocates: the
+native sequences either endpoint places, and where every manual step is a drain
+the later tables too, must then match the later model's own provisioning. A
+language implementation grades the cell itself through the adapter's `migration`
+observation, reporting a dialect it ships no strategy for as an exclusion.
 
 ## Case comments
 

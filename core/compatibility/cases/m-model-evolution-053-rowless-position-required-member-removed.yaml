@@ -19,3 +19,14 @@ then:
           kind: AttributeRemoved
           attribute: parallax.compatibility.Draft.reviewer
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Draft.reviewer }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Draft.reviewer }

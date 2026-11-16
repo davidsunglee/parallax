@@ -2,7 +2,9 @@
 
 *Superseded in part (2026-11, [ADR 0098](0098-native-key-generation-rolls-out-through-publication-and-evolution.md)):*
 a KeySequence key is caller-omittable rather than framework-owned, and a
-generation change's classification reads its direction.
+generation change's classification reads its direction. Every Coordinated
+Evolution also generates an ordered Coordinated Migration, and a coordinated
+corpus case carries its per-dialect migration cells.
 
 Carrying a live tenant from one accepted Metamodel to the next is two deep
 modules with a real seam between them. `m-model-evolution` exposes

@@ -22,10 +22,28 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import adapter, case_format
+from parallax.conformance import adapter, case_format, models
+from parallax.conformance._mechanism.model_facts import model_path
+from parallax.conformance.bindings import binding_document
 from parallax.conformance.profile import profile_for
+from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
+    ResolvedBinding,
+    SequenceRelocated,
+    TableRelocated,
+)
 from parallax.core.internal.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.internal.dialect import POSTGRES, Dialect
+from parallax.evolution import (
+    CoordinatedEvolution,
+    CoordinationReason,
+    ManualAction,
+    ManualStep,
+    coordinated_migration,
+    schema_delta,
+)
+from parallax.evolution.internal.model_evolution import evolve_resolved
+from parallax.postgres import PostgresBinding
 from tests._support.case_corpus import reachable_cases
 from tests._support.corpus import case_document
 from tests._support.db_port import ConnectsAsItself
@@ -71,10 +89,18 @@ def _expected(case: case_format.Case) -> dict[str, Any]:
     return cast("dict[str, Any]", case_document(case)["then"]["evolution"])
 
 
-def _expected_schema(case: case_format.Case) -> dict[str, Any] | None:
+def _expected_matrix(case: case_format.Case, member: str) -> dict[str, Any] | None:
     then = cast("dict[str, Any]", case_document(case)["then"])
-    matrix = then.get("schema")
+    matrix = then.get(member)
     return cast("dict[str, Any]", matrix) if matrix is not None else None
+
+
+def _graded(observed: dict[str, Any], expected: dict[str, Any]) -> None:
+    # A cell this implementation has no Dialect for is authored as the answer
+    # some implementation must produce; the run reports it as an explicit
+    # exclusion instead, which is a counted gap rather than a match.
+    graded = {name: cell for name, cell in observed.items() if "excluded" not in cell}
+    assert graded == {name: cell for name, cell in expected.items() if name in graded}
 
 
 @pytest.mark.parametrize(
@@ -89,15 +115,10 @@ def test_evolution_sweep(case: case_format.Case) -> None:
     observations = envelope["observations"]
     assert observations["databaseCalls"] == 0
     assert observations["evolution"] == _expected(case)
-    expected_schema = _expected_schema(case)
-    if expected_schema is not None:
-        # A cell this implementation has no Dialect for is authored as the delta
-        # some implementation must produce; the run reports it as an explicit
-        # exclusion instead, which is a counted gap rather than a match.
-        graded = {
-            name: cell for name, cell in observations["schema"].items() if "excluded" not in cell
-        }
-        assert graded == {name: cell for name, cell in expected_schema.items() if name in graded}
+    for member in ("schema", "migration"):
+        expected = _expected_matrix(case, member)
+        if expected is not None:
+            _graded(observations[member], expected)
 
 
 def test_reachable_evolution_population_is_non_empty() -> None:
@@ -130,17 +151,108 @@ def test_the_matrix_reports_every_catalog_dialect_and_excludes_the_missing_one()
         assert "delta" in matrix["postgres"], case.path.name
 
 
-def test_a_coordinated_description_reports_no_schema_matrix() -> None:
-    # A Coordinated Evolution is not an input to schema generation at all, so
-    # there is no cell to report — not an empty one, and not an excluded one.
-    coordinated = [
-        case
-        for case in _REACHABLE_EVOLUTION
-        if case_document(case)["then"]["evolution"]["kind"] == "coordinated"
+def test_each_description_reports_the_one_matrix_its_kind_generates() -> None:
+    # A Coordinated Evolution is not an input to schema generation at all, nor a
+    # Unilateral one to coordinated migration, so each reports the other's
+    # matrix not as an empty or excluded cell but not at all.
+    by_kind = {
+        kind: [
+            case
+            for case in _REACHABLE_EVOLUTION
+            if case_document(case)["then"]["evolution"]["kind"] == kind
+        ]
+        for kind in ("unilateral", "coordinated")
+    }
+    for kind, reported, absent in (
+        ("unilateral", "schema", "migration"),
+        ("coordinated", "migration", "schema"),
+    ):
+        assert by_kind[kind], f"the reachable population lost its {kind} cases"
+        envelope = adapter.run_case(by_kind[kind][0].path, _PROFILE.on_stand_in(_RefusingPort()))
+        assert reported in envelope["observations"]
+        assert absent not in envelope["observations"]
+
+
+_COORDINATED_EVOLUTION = [
+    case
+    for case in _REACHABLE_EVOLUTION
+    if case_document(case)["then"]["evolution"]["kind"] == "coordinated"
+]
+
+
+def _evolution_of(case: case_format.Case) -> CoordinatedEvolution:
+    document = case_document(case)
+    named = document["when"]["evolve"]
+    inherited = document.get("binding")
+
+    def endpoint(model: str, binding: object) -> ResolvedBinding:
+        return ResolvedBinding(
+            models.load_model(model_path(model)),
+            PostgresBinding.from_document(
+                binding_document(binding, "postgres", inherited=inherited)
+            ),
+        )
+
+    evolution = evolve_resolved(
+        endpoint(named["earlier"], named.get("earlierBinding")),
+        endpoint(named["later"], named.get("laterBinding")),
+    )
+    assert isinstance(evolution, CoordinatedEvolution), case.case_id
+    return evolution
+
+
+@pytest.mark.parametrize(
+    "case", _COORDINATED_EVOLUTION, ids=[c.case_id for c in _COORDINATED_EVOLUTION]
+)
+def test_every_coordinated_fixture_migrates_completely(case: case_format.Case) -> None:
+    evolution = _evolution_of(case)
+    with pytest.raises(TypeError, match="use coordinated_migration"):
+        schema_delta(evolution)  # pyright: ignore[reportArgumentType] - the refused input
+    steps = coordinated_migration(evolution).steps
+
+    def actions_naming(operation: object) -> set[ManualAction | None]:
+        return {
+            step.action if isinstance(step, ManualStep) else None
+            for step in steps
+            if operation in step.caused_by
+        }
+
+    for requirement in evolution.coordination_requirements:
+        named = actions_naming(requirement.operation)
+        if CoordinationReason.DATABASE_MIGRATION_REQUIRED in requirement.reasons:
+            assert named - {ManualAction.UPDATE_AUTHORING_SURFACE}, requirement
+        else:
+            assert ManualAction.UPDATE_AUTHORING_SURFACE in named, requirement
+            assert ManualAction.TRANSFORM_STORED_DATA not in named, requirement
+    drains = [
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, ManualStep) and step.action is ManualAction.DRAIN_EARLIER_ROOTS
     ]
-    assert coordinated, "the reachable population lost its coordinated cases"
-    envelope = adapter.run_case(coordinated[0].path, _PROFILE.on_stand_in(_RefusingPort()))
-    assert "schema" not in envelope["observations"]
+    assert len(drains) <= 1
+    if drains:
+        assert drains == [0]
+    for operation in evolution.operations:
+        if isinstance(operation, TableRelocated | SequenceRelocated):
+            assert {ManualAction.DRAIN_EARLIER_ROOTS, ManualAction.RELOCATE} <= actions_naming(
+                operation
+            )
+
+
+def test_the_coordinated_population_covers_every_breaking_change_and_manual_action() -> None:
+    evolutions = [_evolution_of(case) for case in _COORDINATED_EVOLUTION]
+    assert {
+        type(operation).__name__
+        for evolution in evolutions
+        for operation in evolution.operations
+        if isinstance(operation, TableRelocated | SequenceRelocated | AllocatorSettingsChanged)
+    } == {"TableRelocated", "SequenceRelocated", "AllocatorSettingsChanged"}
+    assert {
+        step.action
+        for evolution in evolutions
+        for step in coordinated_migration(evolution).steps
+        if isinstance(step, ManualStep)
+    } == set(ManualAction)
 
 
 def test_an_evolution_case_compiles_as_run_only() -> None:

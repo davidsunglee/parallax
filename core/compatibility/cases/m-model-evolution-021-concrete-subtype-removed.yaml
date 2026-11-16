@@ -23,3 +23,14 @@ then:
     coordinationRequirements:
       - operation: { kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }

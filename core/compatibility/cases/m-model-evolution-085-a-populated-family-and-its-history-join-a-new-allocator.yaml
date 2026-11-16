@@ -1,0 +1,168 @@
+# A populated table-per-concrete-subtype family, its leaves in schemas of their
+# own, and a Transaction-Time Entity holding history all move from
+# application-assigned keys onto one new native allocator (m-model-evolution,
+# m-schema-delta, m-pk-gen). Joining an allocator withdraws no caller input, so
+# each key needs the database migrated alone. The migration drains the earlier
+# roots, creates the sequence once, and moves it past every key either leaf and
+# the garage's history store.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, m-inheritance, evolution, table-per-concrete-subtype, slice-snapshot-1]
+shape: evolution
+binding:
+  postgres:
+    format_version: 1
+    backend: postgres
+    default: { schema: px }
+    entities:
+      parallax.compatibility.Car: { schema: px_eu }
+      parallax.compatibility.Truck: { schema: px_us }
+  mariadb:
+    format_version: 1
+    backend: mariadb
+    default: { database: px }
+    entities:
+      parallax.compatibility.Car: { database: px_eu }
+      parallax.compatibility.Truck: { database: px_us }
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-join-v1.yaml
+    later: models/evolution-key-sequence-join-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Garage.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: { generation: application-assigned }
+            later:
+              generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Vehicle.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: { generation: application-assigned }
+            later:
+              generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Garage.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: { generation: application-assigned }
+              later:
+                generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        reasons: [DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Vehicle.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: { generation: application-assigned }
+              later:
+                generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        - statement: "create sequence px.\"fleetIds\" as bigint increment by 10 minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        - statement: "select case when t0.next_key > 9223372036854775807 then pg_catalog.setval('px.\"fleetIds\"', 9223372036854775807, true) else pg_catalog.setval('px.\"fleetIds\"', cast(t0.next_key as bigint), false) end from (select greatest((select case when t1.is_called then cast(t1.last_value as numeric) + 10 else t1.last_value end from px.\"fleetIds\" t1), (select cast(max(t2.id) as numeric) + 1 from px_eu.car t2), (select cast(max(t3.id) as numeric) + 1 from px.garage t3), (select cast(max(t4.id) as numeric) + 1 from px_us.truck t4)) next_key) t0"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        - statement: "create sequence px.`fleetIds` as bigint increment by 10 minvalue -9223372036854775807 maxvalue 9223372036854775806 start with 1 nocache nocycle"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+        - statement: "begin not atomic declare next_key decimal(65) default (select greatest(-9223372036854775807, coalesce((select cast(max(t1.id) as decimal(65)) + 1 from px_eu.car t1), -9223372036854775807), coalesce((select cast(max(t2.id) as decimal(65)) + 1 from px.garage t2), -9223372036854775807), coalesce((select cast(max(t3.id) as decimal(65)) + 1 from px_us.truck t3), -9223372036854775807))); execute immediate concat('select setval(px.`fleetIds`, ', next_key, ', 0)'); end"
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Garage.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Vehicle.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier: { generation: application-assigned }
+                  later:
+                    generation: { strategy: key-sequence, name: fleetIds, batchSize: 10, initialValue: 1, incrementSize: 1 }

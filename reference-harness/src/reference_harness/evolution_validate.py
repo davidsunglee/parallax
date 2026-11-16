@@ -368,6 +368,98 @@ def validate_evolution(case: Case) -> list[str]:
         case, _sequence(evolution.get("coordinationRequirements")), operations
     )
     findings += _relocation_findings(case, evolution, operations)
+    findings += _migration_findings(
+        case, _sequence(evolution.get("coordinationRequirements")), operations
+    )
+    return findings
+
+
+_STEP_ORDER = ("DrainEarlierRoots", "Relocate", "TransformStoredData", "UpdateAuthoringSurface")
+"""Manual actions in the order a Coordinated Migration takes them, every
+generated statement after the last (m-schema-delta *Coordinated migration*)."""
+
+_MOVES = frozenset({"TableRelocated", "SequenceRelocated"})
+
+
+def _migration_findings(
+    case: Case,
+    requirements: Sequence[Mapping[str, Any]],
+    operations: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Every structural finding in each authored ``then.migration`` cell.
+
+    Each step names only operations the evolution reports. The steps follow the
+    prerequisite-first order: one drain at most, first, then relocations,
+    transformations, authoring updates, and generated statements. Every
+    requirement is named by a step of its kind — a database requirement by a
+    drain, relocation, transformation, or statement, and an authoring-only one
+    by an authoring update and no transformation — and every relocation by the
+    drain and by a relocation step.
+    """
+    findings: list[str] = []
+    for dialect, cell in sorted((case.then.get("migration") or {}).items()):
+        steps = _sequence(cell.get("steps")) if isinstance(cell, Mapping) else []
+        where = f"{case.path.name}: then.migration.{dialect}"
+        naming, step_findings = _step_naming(where, steps, operations)
+        findings += step_findings
+        findings += _coverage_findings(where, requirements, operations, naming)
+    return findings
+
+
+def _step_naming(
+    where: str, steps: Sequence[Mapping[str, Any]], operations: Sequence[Mapping[str, Any]]
+) -> tuple[dict[int, set[str]], list[str]]:
+    """The actions naming each reported operation, by its index, beside every
+    step naming an unreported operation and any step out of order."""
+    findings: list[str] = []
+    ranks: list[int] = []
+    naming: dict[int, set[str]] = {}
+    for position, step in enumerate(steps):
+        action = str(step.get("manual", "statement"))
+        ranks.append(_STEP_ORDER.index(action) if action in _STEP_ORDER else len(_STEP_ORDER))
+        for cause in _sequence(step.get("causedBy")):
+            if cause in operations:
+                naming.setdefault(operations.index(cause), set()).add(action)
+            else:
+                findings.append(
+                    f"{where}.steps[{position}] names an operation the evolution does not "
+                    f"report: {dict(cause)}"
+                )
+    if ranks != sorted(ranks) or ranks.count(0) > 1:
+        findings.append(
+            f"{where} is not one drain at most, then relocations, transformations, authoring "
+            f"updates, and statements, in that order"
+        )
+    return naming, findings
+
+
+def _coverage_findings(
+    where: str,
+    requirements: Sequence[Mapping[str, Any]],
+    operations: Sequence[Mapping[str, Any]],
+    naming: Mapping[int, set[str]],
+) -> list[str]:
+    findings: list[str] = []
+    for requirement in requirements:
+        operation = requirement.get("operation")
+        if not isinstance(operation, Mapping) or operation not in operations:
+            continue
+        actions = naming.get(operations.index(operation), set())
+        if "DatabaseMigrationRequired" in (requirement.get("reasons") or []):
+            missing = not actions - {"UpdateAuthoringSurface"}
+        else:
+            missing = "UpdateAuthoringSurface" not in actions or "TransformStoredData" in actions
+        if missing:
+            findings.append(
+                f"{where} names {dict(operation)} by {sorted(actions)}, which its reasons "
+                f"{requirement.get('reasons')} do not cover"
+            )
+    findings.extend(
+        f"{where} does not drain for and relocate {dict(operation)}"
+        for index, operation in enumerate(operations)
+        if operation.get("kind") in _MOVES
+        and not {"DrainEarlierRoots", "Relocate"} <= naming.get(index, set())
+    )
     return findings
 
 

@@ -24,3 +24,26 @@ then:
               earlier: null
               later: { document: { column: doc } }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Parcel
+              deltas:
+                - kind: StorageLayoutChanged
+                  earlier: null
+                  later:
+                    document: { column: doc }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Parcel
+              deltas:
+                - kind: StorageLayoutChanged
+                  earlier: null
+                  later:
+                    document: { column: doc }

@@ -71,6 +71,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "evolution-inherited-multiplicity-v2",
     "evolution-interposed-subtype-v1",
     "evolution-interposed-subtype-v2",
+    "evolution-key-sequence-join-v1",
+    "evolution-key-sequence-join-v2",
     "evolution-position-role-v1",
     "evolution-position-role-v2",
     "evolution-rowless-branch-v1",

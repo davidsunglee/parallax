@@ -272,6 +272,7 @@ Compare two Domain Models and produce the schema change between them.
 
 ### Functions
 
+- `coordinated_migration`: The ordered steps carrying a `CoordinatedEvolution`'s database and roots onward.
 - `evolve`: Describe every difference between two Domain Models, each under its binding.
 - `schema_delta`: Render a `UnilateralEvolution` as SQL statements for its later binding's backend.
 
@@ -279,9 +280,13 @@ Compare two Domain Models and produce the schema change between them.
 
 - `Absent`: The type of `ABSENT`, the empty earlier model for fresh provisioning.
 - `CoordinatedEvolution`: A model change that needs code, data or rollout coordination before it is applied.
+- `CoordinatedMigration`: The ordered steps carrying a database and its roots from one edition to the next.
 - `CoordinationReason`: Why an operation cannot be applied without coordination.
 - `CoordinationRequirement`: An operation that needs coordination, with its reasons.
 - `CreatedIndex`: An index a schema change creates, so a later violation can be traced to it.
+- `ManualAction`: What a coordinated migration step asks of the deployment rather than of SQL.
+- `ManualStep`: One step of a coordinated migration that the deployment performs itself.
+- `MigrationStatement`: One generated statement of a coordinated migration.
 - `SchemaDelta`: The ordered dialect statements carrying a database to the later model.
 - `SchemaTarget`: The table and member, sequence, or database extension a schema operation acts on.
 - `UnilateralEvolution`: A model change a live database can apply directly with `schema_delta`.

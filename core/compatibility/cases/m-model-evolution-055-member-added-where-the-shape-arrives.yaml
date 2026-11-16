@@ -58,3 +58,36 @@ then:
                 parent: parallax.compatibility.Holding
                 tag: { value: lot }
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Lot
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Portfolio
+                    tag: { value: lot }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Holding
+                    tag: { value: lot }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: EntityAltered
+              entity: parallax.compatibility.Lot
+              deltas:
+                - kind: InheritanceChanged
+                  earlier:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Portfolio
+                    tag: { value: lot }
+                  later:
+                    role: concrete-subtype
+                    parent: parallax.compatibility.Holding
+                    tag: { value: lot }

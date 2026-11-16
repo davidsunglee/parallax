@@ -1,0 +1,21 @@
+# models/evolution-key-sequence-settings-v1.yaml with the allocator's initial
+# value moved to 900, which places only a sequence not yet created.
+entities:
+  - name: Badge
+    namespace: parallax.compatibility
+    table: badge
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 900 }
+      - { name: holder, type: string, maxLength: 32 }
+  - name: Pass
+    namespace: parallax.compatibility
+    table: pass
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 900 }
+      - { name: holder, type: string, maxLength: 32 }

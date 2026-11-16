@@ -39,3 +39,32 @@ then:
           earlier: { qualifier: [px], name: evolution_widget }
           later: { qualifier: [px_archive], name: evolution_widget }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Widget
+              earlier: { qualifier: [px], name: evolution_widget }
+              later: { qualifier: [px_archive], name: evolution_widget }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Widget
+              earlier: { qualifier: [px], name: evolution_widget }
+              later: { qualifier: [px_archive], name: evolution_widget }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Widget
+              earlier: { qualifier: [px], name: evolution_widget }
+              later: { qualifier: [px_archive], name: evolution_widget }
+        - manual: Relocate
+          causedBy:
+            - kind: TableRelocated
+              entity: parallax.compatibility.Widget
+              earlier: { qualifier: [px], name: evolution_widget }
+              later: { qualifier: [px_archive], name: evolution_widget }

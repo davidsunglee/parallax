@@ -1,0 +1,33 @@
+# Provisioning two Entities that share one native allocator (m-schema-delta,
+# m-pk-gen): the allocator's sequence is created once, before the tables that
+# draw from it, however many Entities consume it.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, provisioning, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null
+    later: models/evolution-key-sequence-settings-v1.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Badge }
+      - { kind: EntityAdded, entity: parallax.compatibility.Pass }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create sequence px."credentialIds" as bigint increment by 50 minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle
+          - create table px.badge (id bigint not null, holder varchar(32) not null, primary key (id))
+          - create table px.pass (id bigint not null, holder varchar(32) not null, primary key (id))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create sequence px.`credentialIds` as bigint increment by 50 minvalue -9223372036854775807 maxvalue 9223372036854775806 start with 1 nocache nocycle
+          - create table px.badge (id bigint not null, holder varchar(32) not null, primary key (id))
+          - create table px.pass (id bigint not null, holder varchar(32) not null, primary key (id))
+        createdIndices: []

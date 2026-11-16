@@ -35,7 +35,7 @@ from the other.
 from __future__ import annotations
 
 import os
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -81,8 +81,23 @@ class CatalogTable:
 
 
 @dataclass(frozen=True)
+class CatalogSequence:
+    """One native sequence's definition, read back from the database, or
+    ``None`` where the database holds no sequence under that name.
+
+    The definition is the data type, increment, minimum, maximum, and whether
+    it cycles. A sequence's position is not part of it: two databases holding
+    one definition at different positions hold the same schema.
+    """
+
+    qualifier: tuple[str, ...]
+    name: str
+    definition: tuple[str, int, int, int, bool] | None
+
+
+@dataclass(frozen=True)
 class Catalog:
-    """What a database really holds for a named set of tables.
+    """What a database really holds for a named set of tables and sequences.
 
     A plain value compared with ``==``. Both sides of any comparison are read
     from the same backend through the same reader, so no cross-dialect type
@@ -91,6 +106,54 @@ class Catalog:
     """
 
     tables: tuple[CatalogTable, ...]
+    sequences: tuple[CatalogSequence, ...] = ()
+
+
+type SequenceDefinition = tuple[str, str, str, int, int, int, bool]
+"""One sequence catalog row: qualifier, name, data type, increment, minimum,
+maximum, and whether it cycles."""
+
+
+def sequence_definitions(rows: Iterable[Sequence[Any]]) -> list[SequenceDefinition]:
+    """A provider's raw sequence catalog rows as :data:`SequenceDefinition`
+    values; a cycle flag reported as a number or a boolean reads the same."""
+    return [
+        (
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            int(row[3]),
+            int(row[4]),
+            int(row[5]),
+            bool(int(row[6])),
+        )
+        for row in rows
+    ]
+
+
+def with_sequences(
+    catalog: Catalog, sequences: Sequence[PhysicalTable], definitions: Sequence[SequenceDefinition]
+) -> Catalog:
+    """``catalog`` holding an entry for each requested sequence, read from a
+    provider's ``definitions`` rows, each naming a one-component qualifier.
+
+    Each requested sequence gets an entry whether or not the database holds it,
+    so a sequence one side of a comparison never created is a difference rather
+    than a silently absent key.
+    """
+    defined = {
+        PhysicalTable((qualifier,), name): (type_sql, increment, minimum, maximum, cycles)
+        for qualifier, name, type_sql, increment, minimum, maximum, cycles in definitions
+    }
+    return Catalog(
+        tables=catalog.tables,
+        sequences=tuple(
+            CatalogSequence(
+                qualifier=sequence.qualifier, name=sequence.name, definition=defined.get(sequence)
+            )
+            for sequence in sorted(set(sequences))
+        ),
+    )
 
 
 def build_catalog(
@@ -188,8 +251,11 @@ class DatabaseProvider(Protocol):
         """Execute derived DDL (``CREATE TABLE`` …)."""
         ...
 
-    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
-        """What the database itself holds for the physical *tables*, read from its own catalog.
+    def catalog(
+        self, tables: Sequence[PhysicalTable], sequences: Sequence[PhysicalTable] = ()
+    ) -> Catalog:
+        """What the database itself holds for the physical *tables* and
+        *sequences*, read from its own catalog.
 
         The one observation of physical schema the seam offers, and the only way
         an applied Schema Delta can be compared against independently derived

@@ -28,3 +28,20 @@ then:
               later: origin_json
         reasons:
           - DatabaseMigrationRequired
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Crate.origin
+              deltas:
+                - { kind: StorageChanged, earlier: origin_doc, later: origin_json }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: ValueObjectOccurrenceAltered
+              valueObject: parallax.compatibility.Crate.origin
+              deltas:
+                - { kind: StorageChanged, earlier: origin_doc, later: origin_json }

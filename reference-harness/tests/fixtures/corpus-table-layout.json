@@ -6032,6 +6032,492 @@
       "table": "evolution_ledger"
     }
   },
+  "models/evolution-key-sequence-consumer-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Badge.id",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Badge.holder",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "badge"
+    },
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    },
+    "parallax.compatibility.Ticket": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ticket"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Ticket.id",
+          "declaringOwner": "parallax.compatibility.Ticket",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ticket"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Ticket.holder",
+          "declaringOwner": "parallax.compatibility.Ticket",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "ticket"
+    }
+  },
+  "models/evolution-key-sequence-initial-v2.yaml": {
+    "parallax.compatibility.Badge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Badge.id",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Badge.holder",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "badge"
+    },
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
+  "models/evolution-key-sequence-join-v1.yaml": {
+    "parallax.compatibility.Car": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "doors",
+          "contributor": "attribute:parallax.compatibility.Car.doors",
+          "declaringOwner": "parallax.compatibility.Car",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "car"
+    },
+    "parallax.compatibility.Garage": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Garage.id",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Garage.label",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Garage.txStart",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Garage.txEnd",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3
+      ],
+      "table": "garage"
+    },
+    "parallax.compatibility.Truck": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "axles",
+          "contributor": "attribute:parallax.compatibility.Truck.axles",
+          "declaringOwner": "parallax.compatibility.Truck",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "truck"
+    }
+  },
+  "models/evolution-key-sequence-join-v2.yaml": {
+    "parallax.compatibility.Car": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Car"
+          ],
+          "column": "doors",
+          "contributor": "attribute:parallax.compatibility.Car.doors",
+          "declaringOwner": "parallax.compatibility.Car",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "car"
+    },
+    "parallax.compatibility.Garage": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Garage.id",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Garage.label",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Garage.txStart",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Garage"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Garage.txEnd",
+          "declaringOwner": "parallax.compatibility.Garage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3
+      ],
+      "table": "garage"
+    },
+    "parallax.compatibility.Truck": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Vehicle.id",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Vehicle.name",
+          "declaringOwner": "parallax.compatibility.Vehicle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Truck"
+          ],
+          "column": "axles",
+          "contributor": "attribute:parallax.compatibility.Truck.axles",
+          "declaringOwner": "parallax.compatibility.Truck",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "truck"
+    }
+  },
+  "models/evolution-key-sequence-members-v1.yaml": {
+    "parallax.compatibility.Badge": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Badge.id",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Badge"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Badge.holder",
+          "declaringOwner": "parallax.compatibility.Badge",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "badge"
+    },
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
+  "models/evolution-key-sequence-retired-v2.yaml": {
+    "parallax.compatibility.Pass": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Pass.id",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Pass"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Pass.holder",
+          "declaringOwner": "parallax.compatibility.Pass",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ],
+      "table": "pass"
+    }
+  },
   "models/evolution-key-sequence-settings-v1.yaml": {
     "parallax.compatibility.Badge": {
       "columns": [

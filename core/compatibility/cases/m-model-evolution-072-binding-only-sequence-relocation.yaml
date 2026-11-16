@@ -39,3 +39,32 @@ then:
           earlier: { qualifier: [px], name: badge_seq }
           later: { qualifier: [px_keys], name: badge_seq }
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: badge_seq
+              earlier: { qualifier: [px], name: badge_seq }
+              later: { qualifier: [px_keys], name: badge_seq }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: badge_seq
+              earlier: { qualifier: [px], name: badge_seq }
+              later: { qualifier: [px_keys], name: badge_seq }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: badge_seq
+              earlier: { qualifier: [px], name: badge_seq }
+              later: { qualifier: [px_keys], name: badge_seq }
+        - manual: Relocate
+          causedBy:
+            - kind: SequenceRelocated
+              sequence: badge_seq
+              earlier: { qualifier: [px], name: badge_seq }
+              later: { qualifier: [px_keys], name: badge_seq }

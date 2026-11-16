@@ -46,7 +46,14 @@ from .._declared_contributor import TEMPORAL_INFINITY
 from ..database_binding import PhysicalTable
 from ..ddl_builder import qualified_table, quote_identifier
 from ..document_codec import is_document
-from . import Catalog, build_catalog, register
+from . import (
+    Catalog,
+    SequenceDefinition,
+    build_catalog,
+    register,
+    sequence_definitions,
+    with_sequences,
+)
 from ._binds import adapt_document_scalar_binds
 
 # The graded MariaDB floor (m-db-port *Adapter profile*). Below it
@@ -176,6 +183,13 @@ select table_schema, table_name, index_name, non_unique, column_name
 from information_schema.statistics
 where table_schema in ({schemas}) and table_name in ({names})
 order by index_name, seq_in_index
+"""
+
+_CATALOG_SEQUENCES = """
+select sequence_schema, sequence_name, data_type, increment, minimum_value, maximum_value,
+       cycle_option
+from information_schema.sequences
+where sequence_schema in ({schemas}) and sequence_name in ({names})
 """
 
 # MariaDB has no native timestamp infinity; the open upper bound (m-core/m-dialect) is the
@@ -332,10 +346,29 @@ class MariaDbProvider:
                 cur.execute(statement)
         self._conn.commit()
 
-    def catalog(self, tables: Sequence[PhysicalTable]) -> Catalog:
-        """The physical shape MariaDB itself reports for *tables*.
+    def catalog(
+        self, tables: Sequence[PhysicalTable], sequences: Sequence[PhysicalTable] = ()
+    ) -> Catalog:
+        """The physical shape MariaDB itself reports for *tables* and *sequences*."""
+        return with_sequences(self._tables(tables), sequences, self._sequences(sequences))
 
-        ``information_schema.STATISTICS`` is the whole index catalog here — it
+    def _sequences(self, sequences: Sequence[PhysicalTable]) -> list[SequenceDefinition]:
+        if not sequences:
+            return []
+        schemas = sorted({_database(sequence.qualifier) for sequence in sequences})
+        names = sorted({sequence.name for sequence in sequences})
+        with self._conn.cursor() as cur:
+            cur.execute(
+                _CATALOG_SEQUENCES.format(
+                    schemas=", ".join(["%s"] * len(schemas)),
+                    names=", ".join(["%s"] * len(names)),
+                ),
+                (*schemas, *names),
+            )
+            return sequence_definitions(cur.fetchall())
+
+    def _tables(self, tables: Sequence[PhysicalTable]) -> Catalog:
+        """``information_schema.STATISTICS`` is the whole index catalog here — it
         reports every key including the `PRIMARY` one, non-unique keys included —
         so no second source is needed for a bare ``create index``.
         """

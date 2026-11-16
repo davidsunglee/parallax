@@ -38,15 +38,18 @@ from parallax.evolution.internal.model_evolution import (
 from parallax.evolution.internal.schema_delta._order import order, order_key
 from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
+    AlterSequence,
     CreateExtension,
     CreateIndex,
     CreateSequence,
     CreateTable,
     DropIndex,
+    DropSequence,
     Exclusion,
     IndexDefinition,
     PhysicalColumn,
     PhysicalOperation,
+    PositionSequence,
     member_key,
     table_of,
 )
@@ -56,6 +59,9 @@ from tests.unit._corpus_model_support import corpus, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _MODELS = corpus()
+
+_UNTABLED = (CreateExtension, CreateSequence, AlterSequence, PositionSequence, DropSequence)
+"""The physical operations local to no Table."""
 
 
 def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ...]:
@@ -96,7 +102,7 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
     }
     violations: list[str] = []
     for position, operation in enumerate(ordered):
-        if isinstance(operation, CreateExtension | CreateSequence):
+        if isinstance(operation, _UNTABLED):
             continue
         if (
             isinstance(operation, CreateTable)
@@ -199,9 +205,7 @@ def test_within_one_table_the_kind_decides() -> None:
 def test_two_operations_of_one_kind_sort_by_the_member_they_address() -> None:
     ordered = order([_create_index("second"), _create_index("first")])
     assert [
-        member_key(operation)
-        for operation in ordered
-        if not isinstance(operation, CreateExtension | CreateSequence)
+        member_key(operation) for operation in ordered if not isinstance(operation, _UNTABLED)
     ] == ["pxi_first", "pxi_second"]
 
 
@@ -308,7 +312,7 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule(
     assert [
         (type(operation).__name__, table_of(operation).physical.name)
         for operation in ordered
-        if not isinstance(operation, CreateExtension | CreateSequence)
+        if not isinstance(operation, _UNTABLED)
     ] == [
         ("CreateIndex", "alpha"),
         ("DropIndex", "alpha"),
@@ -366,11 +370,7 @@ def test_a_prerequisite_precedes_every_table_operation_whatever_their_names() ->
     )
     ordered = order([_create_index("alpha"), _create_table(), extension, other])
     assert ordered[0] is extension
-    local = [
-        operation
-        for operation in ordered[1:]
-        if not isinstance(operation, CreateExtension | CreateSequence)
-    ]
+    local = [operation for operation in ordered[1:] if not isinstance(operation, _UNTABLED)]
     assert ordered[1:] == tuple(sorted(local, key=order_key))
 
 

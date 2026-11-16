@@ -29,3 +29,20 @@ then:
           attribute: parallax.compatibility.Reading.note
           deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Reading.note
+              deltas:
+                - { kind: NullabilityChanged, earlier: true, later: false }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Reading.note
+              deltas:
+                - { kind: NullabilityChanged, earlier: true, later: false }

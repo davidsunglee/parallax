@@ -2,16 +2,20 @@
 
 `m-schema-delta` turns a **Unilateral Evolution** into the ordered dialect
 statements that carry a database from the earlier accepted Metamodel to the later
-one. It generates; it never applies. The application executes the statements
-against its own database and publishes the later Model Edition only after every
-one of them succeeds, so this module opens no connection, runs no preflight
-query, and prescribes no rollout procedure.
+one, and a **Coordinated Evolution** into the ordered steps of a **Coordinated
+Migration** (*Coordinated migration*, below). It generates; it never applies. The
+application executes the statements against its own database, performs the
+manual steps, and publishes the later Model Edition only after every one of them
+succeeds, so this module opens no connection, runs no preflight query, and
+schedules no rollout of its own.
 
-It consumes a Unilateral Evolution and nothing else. A Coordinated Evolution is
-an equally complete description whose application needs authoring, data, or
-rollout coordination, so it is not an input to schema generation at all: one
-handed to the generator is refused, at run time where the language's types
-cannot refuse it statically, before anything is planned.
+Each generator consumes one kind of Evolution and nothing else. A Coordinated
+Evolution is an equally complete description whose application needs authoring,
+data, or rollout coordination, so it is not an input to schema generation: one
+handed to the Schema Delta generator is refused, at run time where the
+language's types cannot refuse it statically, before anything is planned, naming
+the coordinated generator. A Unilateral Evolution handed to the coordinated
+generator is refused the same way, naming the Schema Delta generator.
 
 It depends on `m-model-evolution` for the description it lowers, on `m-metamodel`
 for the declarations an operation names, on `m-inheritance` for the position each
@@ -23,14 +27,16 @@ Dialect Identity: the later endpoint's binding names the backend, and its
 dialect determines the whole output. Every created or altered table is named as
 the later binding places it, and every dropped index where the earlier binding
 placed its table. It never emits a schema or database creation, a table move or
-rename, a data copy, or any sequence allocation. The one sequence statement it
-emits creates the native sequence of a `key-sequence` allocator the later
-binding resolves and the earlier one does not (`m-database-binding` *Resolved
-sequences*); a surviving allocator's sequence is never created, reset,
-altered, or positioned, however its consumers change.
+rename, a data copy, or any sequence allocation. The one sequence statement a
+Schema Delta emits creates the native sequence of a `key-sequence` allocator the
+later binding resolves and the earlier one does not (`m-database-binding`
+*Resolved sequences*); a surviving allocator's sequence is never created, reset,
+altered, or positioned by a Schema Delta, however its consumers change.
 
-The decision record is
-[ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md).
+The decision records are
+[ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md)
+and, for coordinated migration,
+[ADR 0098](../../docs/adr/0098-native-key-generation-rolls-out-through-publication-and-evolution.md).
 
 ## The generation algebra
 
@@ -98,11 +104,17 @@ RestateColumnDomain  the earlier and later physical Column facts, restating a
                      surviving Column's value domain as the later edition's
 CreateIndex          one target physical Index definition
 DropIndex            one earlier physical Index definition
+AlterSequence        a surviving allocator's sequence under both endpoints'
+                     resolved definitions (coordinated migration only)
+PositionSequence     one sequence beside the physical step of the block it last
+                     reserved (coordinated migration only)
+DropSequence         an allocator's sequence where the earlier binding placed
+                     it (coordinated migration only)
 ```
 
-Drop-table, drop-column, rename, primary-key-alteration, and arbitrary-SQL
-variants are deliberately absent, because no Unilateral Evolution can produce
-one. So is adding a constraint to a Table the earlier edition already held, and so are
+The last three never arise from a Unilateral Evolution. Drop-table, drop-column,
+rename, primary-key-alteration, and arbitrary-SQL variants are deliberately
+absent, because no Evolution either generator accepts produces one. So is adding a constraint to a Table the earlier edition already held, and so are
 an extension's upgrade and removal: see *Temporal constraints* and *Document root
 check* below.
 
@@ -340,8 +352,8 @@ checked against the selected Dialect. If any operation is unsupported, generatio
 raises one atomic error carrying the Dialect Identity and the complete nonempty
 sequence of unsupported operations in deterministic physical-operation order.
 Each record carries the operation kind, its schema target — a physical table and
-the member within it, or the extension a prerequisite installs — and its causal
-Evolution Operations in canonical operation order. This does **not** reclassify
+the member within it, a native sequence, or the extension a prerequisite
+installs — and its causal Evolution Operations in canonical operation order. This does **not** reclassify
 the dialect-independent Unilateral Evolution as coordinated: renderer support is a
 deployment capability, not a model-semantic fact.
 
@@ -355,13 +367,117 @@ definitions, and the relations holding it. This is a defensive backstop for an
 unexpected 128-bit fingerprint collision or a binding naming a relation like a
 derived name, not an ordinary control path and not a dialect-capability error.
 
+## Coordinated migration
+
+```text
+coordinatedMigration(evolution: CoordinatedEvolution) -> CoordinatedMigration
+
+CoordinatedMigration
+  steps                        ordered; each a MigrationStatement or a ManualStep
+
+MigrationStatement
+  sql                          one dialect statement, as a plain string
+  causedBy                     its causal Evolution Operations, canonical order
+
+ManualStep
+  action                       one ManualAction
+  causedBy                     as above
+
+ManualAction
+  DrainEarlierRoots            close every root serving the earlier edition,
+                               abandoning the keys it holds reserved and
+                               retiring its provider sessions
+  TransformStoredData          carry stored data and schema across a change no
+                               generated statement expresses
+  Relocate                     move or rename a physical table or sequence, with
+                               what it holds, to the later binding's placement
+  UpdateAuthoringSurface       change the application's queries and writes for
+                               an operation that needs no database change
+```
+
+A Coordinated Migration is an immutable value with no flat statement list, and it
+is not a Schema Delta: its manual steps are part of its order. Generation is
+total over its accepted input and deterministic, and the dialect is the later
+binding's, as for a Schema Delta. Every step names its causes, and every
+operation a Coordination Requirement names appears in some step's causes: a
+requirement carrying `DatabaseMigrationRequired` in a drain, a relocation, a
+transformation, or a statement, and one carrying `AuthoringSurfaceChangeRequired`
+alone in an `UpdateAuthoringSurface` step and in no transformation.
+
+**What is manual.** Parallax generates no move, rename, copy, or transformation
+of stored data. Each relocation (`TableRelocated`, `SequenceRelocated`) yields a
+drain and a `Relocate` step. Each operation requiring a database migration that
+no generated statement carries yields one `TransformStoredData` step, and each
+requiring only an authoring change yields one `UpdateAuthoringSurface` step,
+without a drain, a transformation, or a statement of its own unless its
+consequences ask for one below.
+
+**What is generated.** Two families of statements:
+
+- **Ordinary statements** are exactly what a Schema Delta would plan for the
+  evolution's other operations, with the same naming, collision checks, causes,
+  and rendering. A Table operation is withheld — left to the manual step its
+  cause yields — when an operation requiring a database migration is among its
+  causes, when no operation is (a physical difference only such an operation
+  can explain, such as a moved storage location or layout), or when it adds or
+  restates a Column of a Table where such an operation alters an Entity owning
+  rows there at either endpoint. A domain an authoring-only change narrows keeps
+  its earlier, wider form, because that change leaves the rows it no longer
+  describes in place. An Index dropped from a relocated Table is dropped where
+  the relocation leaves the Table.
+- **Sequence statements**, from the endpoints' resolved allocators
+  (`m-database-binding` *Resolved sequences*) and `m-dialect`'s spellings:
+  - a sequence is **created** for each allocator the later binding resolves and
+    the earlier one does not, caused by the additions drawing from it and by the
+    key alterations joining it;
+  - a surviving allocator's `AllocatorSettingsChanged` **alters** its sequence
+    where its resolved definition differs; an `initialValue` change never does;
+  - a sequence is **positioned** when a surviving key joins it — moving from
+    application-assigned keys or from another allocator — and when an
+    alteration shrinks its physical step. Positioning moves the sequence forward
+    only, to the greatest of one past the largest key every consuming Table
+    stores — each table-per-concrete-subtype leaf, every unrelated Entity
+    sharing the allocator, and every history row — and the sequence's own next
+    value. A sequence that has answered a reservation computes that next value
+    under the physical step its last reservation was taken under, which for a
+    shrunken step is the earlier one: reading it under the later step alone
+    would overlap the last block a drained root reserved, whose keys may already
+    be stored. A position past the key range leaves the sequence exhausted
+    rather than wrapping;
+  - a sequence is **dropped** where the earlier binding placed it once the
+    later model references its allocator nowhere, caused by the removals and key
+    alterations that took its last consumer away — including when another
+    requirement is why the evolution is coordinated.
+
+**Order.** Prerequisites first: one `DrainEarlierRoots` step, naming every
+relocation, every settings change, every key joining an allocator, and every
+cause of a dropped sequence, precedes everything it is required for; then each
+`Relocate` in operation order; each `TransformStoredData` in operation order;
+each `UpdateAuthoringSurface` in requirement order; the ordinary statements in
+Schema Delta order; and the sequence statements last — creations, alterations,
+positionings, then drops, each in (physical local name, qualifier) order.
+Positioning therefore reads keys after every Table creation and transformation
+has run. An evolution with nothing to drain has no drain step.
+
+**Errors.** The same two as a Schema Delta, raised before any step escapes: an
+unsupported-operation refusal carrying every generated operation the Dialect
+cannot spell, a sequence's location being the physical sequence it acts on, and
+the Physical Index Name collision backstop.
+
+**Consumer.** A deploying application performs the steps in order, each only
+after the one before it completes: it drains, relocates, transforms, and updates
+its code where the steps say so, executes each statement, and publishes the later
+Model Edition — from replacement roots, where a drain was required — only after
+the last step. It grants access to created sequences itself. Production
+execution of a migration is the application's; Parallax runs none.
+
 ## Rule Set boundary
 
 `m-schema-delta` contributes no Model Formation Rule Set, no Issue Codes, no
 Model Compiler, and no facet. Both endpoints are already accepted before an
-Evolution exists, and classification already decided that this Evolution is
-unilateral, so there is no model question left for this module to answer and no
-input it refuses on model grounds. Its two errors are about the selected Dialect
+Evolution exists, and classification already decided which kind it is, so there
+is no model question left for this module to answer and no input it refuses on
+model grounds. Its two errors are about the selected Dialect
 and about generated names — never about the model.
 
 It also owns no physical fact. Table composition, canonical Column order,

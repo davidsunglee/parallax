@@ -775,6 +775,31 @@ Every sequence statement is the dialect's, taking a rendered sequence reference
   reads the sequence's own settings columns, which hold no data type:
   `select nextval(<name>) first_key, t0.increment, t0.minimum_value minimum,
   t0.maximum_value maximum, t0.cycle_option cycles from <name> t0`.
+- **Altering** one takes its earlier and later definitions and restates only the
+  settings that differ — data type, increment, minimum, maximum — never its start
+  and never its position: `alter sequence <name> [as <type>] [increment by <n>]
+  [minvalue <min>] [maxvalue <max>]` on both dialects. A Postgres sequence keeps
+  its last value and whether it was called; a MariaDB one keeps its next value.
+- **Positioning** one takes its definition, each consuming table's rendered name
+  and key column, and the physical step its last reservation was taken under,
+  and moves it forward only: its next reservation answers the greatest of one
+  past each table's largest key and its own next value, and a position past its
+  maximum leaves it exhausted. Postgres computes in exact numeric arithmetic and
+  reads its own next value from the sequence relation:
+  `select case when t0.next_key > <max> then pg_catalog.setval('<name>', <max>,
+  true) else pg_catalog.setval('<name>', cast(t0.next_key as <type>), false) end
+  from (select greatest((select case when t1.is_called then cast(t1.last_value as
+  numeric) + <reserved step> else t1.last_value end from <name> t1), (select
+  cast(max(t2.<key>) as numeric) + 1 from <table> t2), …) next_key) t0`, the name
+  inside each string literal with its quotes doubled. MariaDB's `setval` takes
+  only literal arguments and itself never moves a sequence backward or past
+  exhaustion, so one anonymous block computes the floor and spells the call:
+  `begin not atomic declare next_key decimal(65) default (select greatest(<min>,
+  coalesce((select cast(max(t1.<key>) as decimal(65)) + 1 from <table> t1),
+  <min>), …)); execute immediate concat('select setval(<name>, ', next_key, ',
+  0)'); end`. An altered MariaDB sequence already starts its next block where the
+  earlier step left it.
+- **Dropping** one is `drop sequence <name>` on both dialects.
 
 ### Identifier byte limit
 

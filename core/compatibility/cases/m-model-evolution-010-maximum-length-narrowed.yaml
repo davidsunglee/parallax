@@ -45,3 +45,32 @@ then:
           attribute: parallax.compatibility.Digest.title
           deltas: [{ kind: MaximumLengthChanged, earlier: 128, later: 32 }]
         reasons: [DatabaseMigrationRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Digest.body
+              deltas:
+                - { kind: MaximumLengthChanged, earlier: null, later: 64 }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Digest.title
+              deltas:
+                - { kind: MaximumLengthChanged, earlier: 128, later: 32 }
+    mariadb:
+      steps:
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Digest.body
+              deltas:
+                - { kind: MaximumLengthChanged, earlier: null, later: 64 }
+        - manual: TransformStoredData
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Digest.title
+              deltas:
+                - { kind: MaximumLengthChanged, earlier: 128, later: 32 }

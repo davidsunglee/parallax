@@ -1,0 +1,67 @@
+# One of two Entities sharing an allocator moves back to application-assigned
+# keys (m-model-evolution, m-schema-delta, m-pk-gen). Leaving withdraws keyless
+# construction, an authoring change alone: the migration's one step updates the
+# authoring surface, and the sequence the other Entity still draws from is
+# neither drained for, reset, nor dropped.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-settings-v1.yaml
+    later: models/evolution-key-sequence-members-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Pass.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier:
+              generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+            later: { generation: application-assigned }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Pass.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier:
+                generation: { strategy: key-sequence, name: credentialIds, batchSize: 50, initialValue: 1, incrementSize: 1 }
+              later: { generation: application-assigned }
+        reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1
+                  later: { generation: application-assigned }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - kind: AttributeAltered
+              attribute: parallax.compatibility.Pass.id
+              deltas:
+                - kind: PrimaryKeyChanged
+                  earlier:
+                    generation:
+                      strategy: key-sequence
+                      name: credentialIds
+                      batchSize: 50
+                      initialValue: 1
+                      incrementSize: 1
+                  later: { generation: application-assigned }

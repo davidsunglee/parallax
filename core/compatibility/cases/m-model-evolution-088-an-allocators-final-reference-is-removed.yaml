@@ -1,0 +1,43 @@
+# Removing the one Entity drawing from an allocator removes the allocator's
+# final model reference (m-model-evolution, m-schema-delta, m-pk-gen). The
+# removal is an authoring change, and it is also why the sequence is dropped:
+# the earlier roots that still reserve from it drain first.
+tags: [m-model-evolution, m-schema-delta, m-pk-gen, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-key-sequence-members-v1.yaml
+    later: models/evolution-key-sequence-retired-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+        reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+        - statement: "drop sequence px.\"credentialIds\""
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+    mariadb:
+      steps:
+        - manual: DrainEarlierRoots
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }
+        - statement: "drop sequence px.`credentialIds`"
+          causedBy:
+            - { kind: EntityRemoved, entity: parallax.compatibility.Badge }

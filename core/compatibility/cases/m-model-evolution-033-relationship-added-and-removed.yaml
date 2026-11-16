@@ -22,3 +22,14 @@ then:
           relationship: parallax.compatibility.Folder.notes
         reasons:
           - AuthoringSurfaceChangeRequired
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: RelationshipRemoved, relationship: parallax.compatibility.Folder.notes }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: RelationshipRemoved, relationship: parallax.compatibility.Folder.notes }

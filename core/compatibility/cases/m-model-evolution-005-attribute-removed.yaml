@@ -16,3 +16,14 @@ then:
     coordinationRequirements:
       - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Note.summary }
         reasons: [AuthoringSurfaceChangeRequired]
+  migration:
+    postgres:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Note.summary }
+    mariadb:
+      steps:
+        - manual: UpdateAuthoringSurface
+          causedBy:
+            - { kind: AttributeRemoved, attribute: parallax.compatibility.Note.summary }
