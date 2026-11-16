@@ -93,6 +93,7 @@ from parallax.core.internal.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
+    KeySequence,
     LocalIndices,
     MemberDefinition,
     MemberShape,
@@ -100,6 +101,7 @@ from parallax.core.internal.metamodel import (
     NestedValueObjectOccurrenceDeclaration,
     NullPlacement,
     PersistenceMode,
+    PrimaryKey,
     RelationshipIdentity,
     RelationshipReference,
     RelativeEntityReference,
@@ -1270,7 +1272,18 @@ def _build_entity(
         if attribute.framework_owned
     )
     _install_fields(
-        annotations, ns, shapes, vo_classes, collections, framework_owned=framework_owned_py
+        annotations,
+        ns,
+        shapes,
+        vo_classes,
+        collections,
+        framework_owned=framework_owned_py,
+        caller_omittable=frozenset(
+            name_to_py[attribute.identity.name]
+            for attribute in declared_attributes
+            if isinstance(key := attribute.primary_key, PrimaryKey)
+            and isinstance(key.generation, KeySequence)
+        ),
     )
     container = _container(cls_name, header)
     ns[_DECLARATION] = EntityDeclaration(
@@ -2051,13 +2064,20 @@ def _install_fields(
     collections: Mapping[str, ScalarDefinition],
     *,
     framework_owned: frozenset[str],
+    caller_omittable: frozenset[str] = frozenset(),
 ) -> None:
     """Rewrite the class body into ordinary Pydantic field declarations.
 
     ``Attr[T]`` collapses to ``T`` so Pydantic builds an inner-typed field, the
     declaration value leaves the namespace, and a member whose absence is
     representable takes the matching Python default: ``None`` for a nullable
-    member or a framework-owned one, and the empty tuple for a Many occurrence.
+    member, a framework-owned one, or a ``caller_omittable`` one, and the empty
+    tuple for a Many occurrence.
+
+    A ``caller_omittable`` member is a generated key: the caller may supply it
+    or leave it unset for the insert to allocate, so it is defaulted without a
+    refusing validator, and a stated ``None`` is still validated as the
+    member's own non-null type.
 
     A framework-owned member is defaulted because the caller never supplies its
     value and is refused for trying, so requiring one at construction would make
@@ -2068,7 +2088,7 @@ def _install_fields(
         annotations[py_name] = _field_annotation(shape)
         if shape.multiplicity is Multiplicity.MANY:
             ns[py_name] = ()
-        elif shape.nullable or py_name in framework_owned:
+        elif shape.nullable or py_name in framework_owned or py_name in caller_omittable:
             ns[py_name] = None
         else:
             ns.pop(py_name, None)

@@ -7,6 +7,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateIndex,
+    CreateSequence,
     CreateTable,
     DropIndex,
     PhysicalOperation,
@@ -43,15 +44,28 @@ def order(plan: Sequence[PhysicalOperation]) -> tuple[PhysicalOperation, ...]:
     """``plan`` in executable order.
 
     A prerequisite is depended on by every Table creation that requires it, so
-    each one precedes every Table operation; the Table operations keep their own
+    each one precedes every Table operation. A sequence depends on nothing and
+    nothing in the delta depends on it, so the sequences follow the
+    prerequisites in physical-name order. The Table operations keep their own
     order among themselves.
     """
     prerequisites = sorted(
         (operation for operation in plan if isinstance(operation, CreateExtension)),
         key=lambda operation: operation.name,
     )
+    sequences = sorted(
+        (operation for operation in plan if isinstance(operation, CreateSequence)),
+        key=lambda operation: (
+            operation.sequence.physical.name,
+            operation.sequence.physical.qualifier,
+        ),
+    )
     local = sorted(
-        (operation for operation in plan if not isinstance(operation, CreateExtension)),
+        (
+            operation
+            for operation in plan
+            if not isinstance(operation, CreateExtension | CreateSequence)
+        ),
         key=order_key,
     )
-    return (*prerequisites, *local)
+    return (*prerequisites, *sequences, *local)

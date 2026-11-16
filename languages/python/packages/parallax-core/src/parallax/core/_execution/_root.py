@@ -5,6 +5,7 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Self
 
+from parallax.core._execution._key_allocation import KeyAllocator
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import ServingModel
 from parallax.core._execution._routing import resolved_read_policy
@@ -43,13 +44,15 @@ class RootResources[Authorization]:
     """The one shared resource owner behind every root alias and scope.
 
     It holds the runtime, the Serving Model, the Clock, the installed
-    lifecycle, the shared read-plan cache instance, the transaction runner,
-    and one pool observation per source the runtime publishes, once, and is the
-    identity a joining transaction's ownership is settled against.
+    lifecycle, the shared read-plan cache instance, the key allocator, the
+    transaction runner, and one pool observation per source the runtime
+    publishes, once, and is the identity a joining transaction's ownership is
+    settled against.
     """
 
     __slots__ = (
         "clock",
+        "key_allocator",
         "lifecycle",
         "observations",
         "planner",
@@ -73,12 +76,14 @@ class RootResources[Authorization]:
         self.clock: Clock = clock if clock is not None else SystemClock()
         self.lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
         self.planner = ReadPlanCache(capacity)
+        self.key_allocator = KeyAllocator(runtime.reservation_source(), runtime.dialect)
         self.transaction_runner = TransactionRunner(
             self,
             self.clock,
             self.lifecycle,
             serving,
             self.planner,
+            self.key_allocator,
         )
         self.shutdown = threading.RLock()
         self.observations: tuple[PoolObservation, ...] = register_pool_observations(

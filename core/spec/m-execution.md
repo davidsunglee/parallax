@@ -163,9 +163,12 @@ publisher expected, compared by identity rather than by edition, and a stale
 publication is refused, naming the expected and the held selection, leaving the
 current one in place. Before that comparison, against the expected selection, a
 candidate prepared for another backend is refused, and so is one under which a
-table or sequence the expected selection also holds relocates
-(`m-database-binding` *Relocation*), naming each relocation: binding changes
-publish like model editions while nothing surviving moves. Holding a root
+table or sequence the expected selection also holds relocates, or an allocator
+it also declares changes its allocation settings (`m-database-binding`
+*Breaking changes*), naming each such change: binding and model changes publish
+like model editions while nothing surviving moves or changes how it allocates.
+A root's key reservations (`m-pk-gen`) are keyed by physical sequence and
+allocation settings alone, so a publication that changes neither keeps them. Holding a root
 confers no authority to change the model it serves.
 
 Every execution **adopts** a selection once and keeps it to completion:

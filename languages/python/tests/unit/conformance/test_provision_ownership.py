@@ -57,6 +57,9 @@ class _Runtime:
         del authorization
         return self.source
 
+    def reservation_source(self) -> Any:
+        return self.source
+
     def close(self) -> None:
         self._log.append(f"close {self._name}")
         self._closing()

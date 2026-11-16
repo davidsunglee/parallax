@@ -35,6 +35,7 @@ from parallax.core.internal.db_port import (
     PipelineStatement,
     PoolMetricsSource,
     ReleaseUnconfirmed,
+    ReservationContextSource,
     Route,
     RouteCapabilities,
     RoutePolicy,
@@ -746,6 +747,11 @@ class _ResourceFaultingRuntime[Authorization]:
             persistent=self._persistent,
             state=self._state,
         )
+
+    def reservation_source(self) -> ReservationContextSource:
+        """The inner reservation capacity, unfaulted: a resource fault targets
+        the acquisition its case's application work makes."""
+        return self._inner.reservation_source()
 
     def close(self) -> None:
         self._inner.close()

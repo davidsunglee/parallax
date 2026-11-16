@@ -25,14 +25,16 @@ from types import ModuleType
 import pytest
 
 from parallax.core.internal.base import STRING
-from parallax.core.internal.database_binding import ResolvedBinding
+from parallax.core.internal.database_binding import PhysicalSequence, ResolvedBinding
 from parallax.core.internal.dialect import (
     POSTGRES,
     Dialect,
 )
+from parallax.core.internal.entity import model_of
 from parallax.core.internal.metamodel import Column, EntityIdentity
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.storage_layout import ColumnSlot
+from parallax.descriptor import domain_model_from_yaml
 from parallax.descriptor._ingest import ingest_document
 from parallax.descriptor._records import Attribute, Entity
 from parallax.descriptor._records import Metamodel as DescribedMetamodel
@@ -887,3 +889,87 @@ def test_creating_a_table_addresses_no_member() -> None:
     )
     assert member_key(operation) == ""
     assert location_of(operation) == SchemaTarget(table=_TABLE.physical)
+
+
+# --------------------------------------------------------------------------- #
+# Native allocators: a sequence is created once, for an allocator the earlier  #
+# endpoint did not hold.                                                       #
+# --------------------------------------------------------------------------- #
+
+_ALLOCATING = """
+entities:
+  - name: Ticket
+    table: ticket
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: {{ strategy: key-sequence, name: tickets, batchSize: 20{settings} }}
+      - {{ name: label, type: string }}
+{more}
+"""
+_ANOTHER_CONSUMER = """
+  - name: Badge
+    table: badge
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: {{ strategy: key-sequence, name: tickets, batchSize: 20{settings} }}
+"""
+
+
+def _allocating(*, consumers: int = 1, settings: str = "") -> AcceptedMetamodel:
+    more = _ANOTHER_CONSUMER.format(settings=settings) if consumers > 1 else ""
+    return model_of(domain_model_from_yaml(_ALLOCATING.format(settings=settings, more=more)))
+
+
+def test_provisioning_creates_each_new_allocator_s_sequence_once_before_its_tables() -> None:
+    assert _statements(_allocating(consumers=2)) == [
+        "create sequence px.tickets as bigint increment by 20 "
+        "minvalue -9223372036854775808 maxvalue 9223372036854775807 start with 1 no cycle",
+        "create table px.badge (id bigint not null, primary key (id))",
+        "create table px.ticket (id bigint not null, label text not null, primary key (id))",
+    ]
+
+
+def test_a_created_sequence_is_caused_by_every_entity_that_draws_from_it() -> None:
+    evolution = evolve_resolved(ABSENT, bound_model(_allocating(consumers=2)))
+    assert isinstance(evolution, UnilateralEvolution)
+    (created,) = (
+        operation
+        for operation in plan(evolution).operations
+        if type(operation).__name__ == "CreateSequence"
+    )
+    assert {cause.entity.name for cause in created.caused_by if isinstance(cause, EntityAdded)} == {
+        "Badge",
+        "Ticket",
+    }
+    assert location_of(created) == SchemaTarget(sequence=PhysicalSequence(("px",), "tickets"))
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [
+        (_allocating(), _allocating(consumers=2)),
+        (_allocating(), _allocating(settings=", initialValue: 900")),
+    ],
+    ids=["consumer-added", "initial-value-changed"],
+)
+def test_a_surviving_allocator_s_sequence_is_never_created_again(
+    earlier: AcceptedMetamodel, later: AcceptedMetamodel
+) -> None:
+    evolution = evolve_resolved(bound_model(earlier), bound_model(later))
+    assert isinstance(evolution, UnilateralEvolution)
+    assert not any(
+        statement.startswith("create sequence") for statement in schema_delta(evolution).statements
+    )
+
+
+def test_a_coordinated_evolution_is_refused_before_anything_is_planned() -> None:
+    evolution = evolve_resolved(
+        bound_model(_allocating()), bound_model(_allocating(settings=", incrementSize: 2"))
+    )
+    assert isinstance(evolution, CoordinatedEvolution)
+    with pytest.raises(TypeError, match="schema_delta takes a UnilateralEvolution"):
+        schema_delta(evolution)  # pyright: ignore[reportArgumentType] - the refused input

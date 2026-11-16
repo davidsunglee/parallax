@@ -137,7 +137,7 @@ def test_server_role_refusal_disposes_the_session_before_login_source_resumes(
 
 
 def _measurements(runtime: Any) -> Any:
-    (source,) = runtime.pool_metrics
+    (source, _reservation) = runtime.pool_metrics
     sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
     return sample.measurements

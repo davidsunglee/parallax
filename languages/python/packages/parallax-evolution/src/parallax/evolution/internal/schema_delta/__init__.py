@@ -42,7 +42,7 @@ def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
     The ordered statements that apply ``evolution`` to a database, naming every
     table as the later binding places it and dropping every index where the
     earlier binding placed it. Nothing here moves, renames, or provisions a
-    table, schema, or sequence.
+    table or schema, or moves, alters, or repositions a sequence.
 
     The complete plan is named, ordered, and rendered before any statement
     escapes, so a Dialect that cannot spell one operation yields no partial
@@ -55,8 +55,19 @@ def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
 
     The statements are prefix-safe in the returned order and deliberately not
     idempotent; creating a unique Index is the authoritative validation of the
-    data already stored.
+    data already stored. A sequence is created exactly for each native allocator
+    the later binding resolves and the earlier one does not.
+
+    A :class:`~parallax.evolution.internal.model_evolution.CoordinatedEvolution`
+    raises :class:`TypeError` before anything is planned: its database
+    requirements need a coordinated migration, which a delta cannot express.
     """
+    if not isinstance(evolution, UnilateralEvolution):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so a coordinated evolution is refused rather than rendered
+        raise TypeError(
+            f"schema_delta takes a UnilateralEvolution, not a {type(evolution).__name__}: a "
+            "coordinated evolution's database requirements need a coordinated migration, "
+            "which a schema delta cannot express"
+        )
     dialect = evolution.later.dialect
     built = plan(evolution)
     _reject_collisions(built, dialect)

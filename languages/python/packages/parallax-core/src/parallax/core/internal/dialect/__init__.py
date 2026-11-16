@@ -45,6 +45,7 @@ __all__ = [
     "PhysicalIndexName",
     "RenderedScalarCell",
     "ScalarResult",
+    "SequenceDdl",
     "TableReference",
     "Unsupported",
     "decode_bytes_cell",
@@ -192,6 +193,23 @@ class ColumnDdl:
 
 
 @dataclass(frozen=True, slots=True)
+class SequenceDdl:
+    """One native sequence as a DDL primitive receives it: the sequence
+    counterpart of :class:`ColumnDdl`.
+
+    ``data_type`` is already the concrete type, ``increment`` the physical step
+    one reservation advances by, ``minimum`` and ``maximum`` its inclusive
+    bounds, and ``start`` the first value a newly created sequence returns.
+    """
+
+    data_type: str
+    increment: int
+    minimum: int
+    maximum: int
+    start: int
+
+
+@dataclass(frozen=True, slots=True)
 class IndexColumnDdl:
     """One Index component: its quoted Column and the domain an index over it has.
 
@@ -298,6 +316,11 @@ class Dialect:
     # The scope an index name is unique within (`m-dialect` "Object-name
     # scopes"): every relation of one qualifier, or the one table it indexes.
     index_name_scope: Literal["qualifier", "table"] = "qualifier"
+    # The inclusive values a native sequence can hold, or ``None`` for a
+    # database with no native sequence (`m-dialect` "Native sequences").
+    sequence_bounds: tuple[int, int] | None = None
+    # The native codes reporting a sequence that reached its bound.
+    sequence_exhaustion_codes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         limit = self.max_bind_parameters
@@ -716,6 +739,42 @@ class Dialect:
         """
         return f"drop index {self.render_table(_QualifiedName(table.qualifier, name.value))}"
 
+    def create_sequence(self, sequence: str, ddl: SequenceDdl) -> str | Unsupported:
+        """``create sequence`` for one native sequence, or why this dialect cannot.
+
+        ``sequence`` is already rendered. The sequence never cycles and keeps no
+        server-side cache beyond the one value a reservation takes.
+        """
+        if self.sequence_bounds is None:
+            return Unsupported(f"{self.name} has no native sequence")
+        return (
+            f"create sequence {sequence} as {ddl.data_type} increment by {ddl.increment} "
+            f"minvalue {ddl.minimum} maxvalue {ddl.maximum} start with {ddl.start} no cycle"
+        )
+
+    def reserve_sequence(self) -> str | Unsupported:
+        """The one statement that reserves a block and reads back the live
+        definition it was reserved under, or why this dialect cannot.
+
+        Its one ``?`` binds the rendered sequence name, resolved only as written:
+        neither the session's search path nor the invoking role can redirect it,
+        and a name that resolves to no sequence returns no row. The row holds the
+        reservation's first value, then the live increment, minimum, maximum,
+        whether it cycles, and its data type.
+        """
+        if self.sequence_bounds is None:
+            return Unsupported(f"{self.name} has no native sequence")
+        return (
+            "select pg_catalog.nextval(s.seqrelid) as first_key, s.seqincrement as increment, "
+            "s.seqmin as minimum, s.seqmax as maximum, s.seqcycle as cycles, "
+            "pg_catalog.format_type(s.seqtypid, null) as data_type "
+            "from pg_catalog.pg_sequence s where s.seqrelid = pg_catalog.to_regclass(?)"
+        )
+
+    def reports_sequence_exhaustion(self, code: str | None) -> bool:
+        """Whether native ``code`` reports a sequence that reached its bound."""
+        return code in self.sequence_exhaustion_codes
+
     # -- errors ------------------------------------------------------------ #
     def classify(self, code: str) -> str | None:
         """The neutral m-db-error category for a native code, or ``None``."""
@@ -787,5 +846,7 @@ POSTGRES: Final[Dialect] = Dialect(
     counts_unchanged_rows=True,
     binds_arrays=True,
     exclusion_violation_codes=frozenset({"23P01"}),
+    sequence_bounds=(-(2**63), 2**63 - 1),
+    sequence_exhaustion_codes=frozenset({"2200H"}),
 )
 """The PostgreSQL Dialect."""

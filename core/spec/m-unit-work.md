@@ -465,8 +465,8 @@ their object by key (*Target writes*).
 An **insertion-authorized write** is a write of an object this unit of work
 inserted, authorized by that insertion rather than by a read. Successful
 admission of an insertion grants an **authority** that belongs to the source the
-insertion was stated through — the value a typed insert took and answered and
-every value derived from it afterwards, or the node a document insert answered —
+insertion was stated through — the value a typed insert answered and every value
+derived from it afterwards, or the node a document insert answered —
 and is compared by identity alone: an equal key, physical address, or Transaction
 Instant never stands for it. A value derived before the admission, a value built
 independently with the same key, and a plain or serialized copy of a source carry
@@ -475,7 +475,9 @@ outside its members, so no data conversion can manufacture it. A value a read
 produced keeps that read's own evidence whatever this unit of work inserted.
 
 An insert answers its source at the call, as an immutable keyed value of the
-inserted Entity, while its row stays buffered. No flush writes into an answered
+inserted Entity, while its row stays buffered. A typed insert of a supplied key
+answers the value it took; one whose key it allocated (*Keyless drafts*) answers
+a new value holding exactly the row it opened, its key included. No flush writes into an answered
 value: a version or temporal endpoint the flush stores stays absent on it, and an
 ordinary participating read observes the stored state. An edit of an answered
 value derives a new value and leaves the answered one as it was; neither carries
@@ -519,6 +521,23 @@ so the removal it depends on precedes it whatever the batching, and a failed
 removal or insertion dooms the attempt. Removing only part of the coverage, or
 an interior gap, removes nothing in this sense. None of this permits removing
 and re-inserting state that existed before the attempt.
+
+### Keyless drafts
+
+A value whose `key-sequence` key was never set is a **keyless draft**
+(`m-pk-gen`). It names no object, so only an insert accepts one. The insert
+prepares the row in full first, then allocates the key and states it in the
+row, then admits the row under the object that key names: a row preparation
+refuses spends no key, and an allocation that fails buffers nothing and grants
+no authority. The answered value carries the allocated key and the insertion's
+authority; the draft is left as it was and carries none, so each insert of it
+allocates afresh.
+
+Every other keyed verb, and every target write, refuses a keyless draft as
+`write-key-absent` before anything else about it is judged — its provenance, its
+verb and window, and its payload — so no refusal of it spends a key. A
+predicate-selected write states no value and names no object, so it never
+allocates.
 
 ### Current-attempt source admission
 
@@ -1351,8 +1370,10 @@ stays decomposed as a whole, without smaller uniform sub-batches. A collapsed
 write retains row order, each addressed object, and every distinct source
 evidence in first-occurrence order.
 
-Temporal inserts and inserts with framework-generated primary keys remain
-separate. Insert rows state their applicable member set before collapse;
+Temporal inserts and inserts whose primary key the database computes as it
+writes the row (`max`, a registry `sequence`) remain separate; an insert whose
+`key-sequence` key was allocated at its call states that key like a supplied
+one, and collapses like one. Insert rows state their applicable member set before collapse;
 updates compare present assigned values excluding the addressing key. Deletes
 compare no non-key payload shape. Document presence remains a member-level
 shape even when several members share one physical document column.

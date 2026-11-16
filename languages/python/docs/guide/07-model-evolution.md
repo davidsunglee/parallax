@@ -387,9 +387,10 @@ def moves_in(evolution: Evolution) -> list[str]:
 ```
 <!-- /example -->
 
-`publish` refuses a candidate that relocates anything the selection it replaces holds, with
-a `UsageError` whose `code` is `PUBLICATION_RELOCATION_REFUSED` and whose message names
-each move, and the held selection keeps serving. It refuses one prepared for another
+`publish` refuses a candidate that relocates anything the selection it replaces holds, or
+changes a surviving allocator's batch size, increment size, or key range, with a
+`UsageError` whose `code` is `PUBLICATION_BREAKING_CHANGE_REFUSED` and whose message names
+each change, and the held selection keeps serving. It refuses one prepared for another
 backend in the same way. Changing an entity's `table=` relocates its table too, unless its
 binding entry gives the old physical name: then the change is the model's alone, publishes
 like any other, and needs no statement.

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import threading
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Final, Literal
 
 import psycopg_pool
@@ -11,13 +14,14 @@ from parallax.core.internal.db_port import (
     CredentialSource,
     DatabaseStartupError,
     DriverManaged,
+    PoolPurpose,
     Route,
     RouteReadiness,
     Row,
     report_route_readiness,
 )
 from parallax.postgres._connection import CONNECT_KWARGS, ConnectionEstablishment
-from parallax.postgres._options import PoolOptions
+from parallax.postgres._options import PoolOptions, reservation_retention
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 
 if TYPE_CHECKING:
@@ -26,7 +30,15 @@ if TYPE_CHECKING:
     from parallax.postgres._context import NativePool
     from parallax.postgres._endpoint import PostgresEndpoint
 
-__all__ = ["PROBE_SQL", "PostgresRoute", "ProbeMismatch", "check_probe", "open_route"]
+__all__ = [
+    "PROBE_SQL",
+    "PostgresRoute",
+    "ProbeMismatch",
+    "check_probe",
+    "open_reservation_route",
+    "open_route",
+    "reservation_socket_options",
+]
 
 PROBE_SQL: Final = """SELECT
     1 AS ready,
@@ -133,7 +145,11 @@ class PostgresRoute:
     )
 
     def __init__(
-        self, route: Route, pool: NativePool, establishment: ConnectionEstablishment
+        self,
+        route: Route,
+        pool: NativePool,
+        establishment: ConnectionEstablishment,
+        purpose: PoolPurpose = "application",
     ) -> None:
         self.route: Route = route
         self.pool = pool
@@ -142,7 +158,7 @@ class PostgresRoute:
         self._refusal: ProbeMismatch | None = None
         self._lock = threading.Lock()
         self._probe_slot = threading.Lock()
-        self.metrics = PostgresPoolMetrics(pool, route, self.readiness)
+        self.metrics = PostgresPoolMetrics(pool, route, self.readiness, purpose)
 
     def known_unreachable(self) -> bool:
         """Whether this route's latest establishment outcome is that it could not
@@ -252,12 +268,63 @@ def open_route(
     )
 
 
+def open_reservation_route(
+    writer: PostgresEndpoint, *, acquire_timeout: float, prepare_threshold: int | None
+) -> PostgresRoute:
+    """Create and open the writer capacity key reservations borrow, unproven.
+
+    Its pool dials the writer's endpoint with the writer's credentials under
+    :func:`~parallax.postgres._options.reservation_retention`, so it holds no
+    connection until the first reservation, and every connection it opens
+    carries :func:`reservation_socket_options`. It serves the writer route under
+    the ``reservation`` purpose, which no application Route Policy selects.
+    """
+    establishment = ConnectionEstablishment()
+    endpoint = replace(writer, pool=reservation_retention(writer.pool))
+    return PostgresRoute(
+        "writer",
+        _build_pool(
+            endpoint,
+            "writer",
+            acquire_timeout,
+            prepare_threshold,
+            establishment,
+            purpose="reservation",
+            connect_options=reservation_socket_options(acquire_timeout),
+        ),
+        establishment,
+        "reservation",
+    )
+
+
+def reservation_socket_options(acquire_timeout: float) -> Mapping[str, object]:
+    """libpq keepalive and unacknowledged-send limits for a reservation
+    connection, so the kernel ends one whose server vanished mid-statement
+    about ``acquire_timeout`` seconds in.
+
+    An approximate bound: a server that is alive but stalled is the session
+    ``statement_timeout`` setup installs, and nothing here is tied to a wall
+    clock.
+    """
+    seconds = max(1, math.ceil(acquire_timeout))
+    return {
+        "keepalives": 1,
+        "keepalives_idle": 1,
+        "keepalives_interval": 1,
+        "keepalives_count": seconds,
+        "tcp_user_timeout": seconds * 1000,
+    }
+
+
 def _build_pool(
     endpoint: PostgresEndpoint,
     route: Route,
     acquire_timeout: float,
     prepare_threshold: int | None,
     establishment: ConnectionEstablishment,
+    *,
+    purpose: PoolPurpose = "application",
+    connect_options: Mapping[str, object] | None = None,
 ) -> NativePool:
     """Create and open the native pool one route manages.
 
@@ -291,7 +358,12 @@ def _build_pool(
     conninfo = endpoint.connection_string
     options = endpoint.pool
     credentials: CredentialSource | DriverManaged = endpoint.credentials
-    base: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
+    base: dict[str, object] = {
+        **CONNECT_KWARGS,
+        **(connect_options or {}),
+        "prepare_threshold": prepare_threshold,
+    }
+    name = f"parallax-{route}" if purpose == "application" else f"parallax-{route}-{purpose}"
     kwargs: KwargsParam = (
         base
         if isinstance(credentials, DriverManaged)
@@ -313,7 +385,7 @@ def _build_pool(
             max_lifetime=options.max_lifetime,
             reconnect_timeout=options.reconnect_timeout,
             num_workers=options.num_workers,
-            name=f"parallax-{route}",
+            name=name,
         )
     else:
         pool = psycopg_pool.NullConnectionPool(
@@ -328,7 +400,7 @@ def _build_pool(
             max_lifetime=options.max_lifetime,
             reconnect_timeout=options.reconnect_timeout,
             num_workers=options.num_workers,
-            name=f"parallax-{route}",
+            name=name,
         )
     try:
         pool.open()
@@ -339,7 +411,8 @@ def _build_pool(
         if not isinstance(exc, Exception):
             raise
         raise DatabaseStartupError(
-            f"the database runtime's {route} connection pool could not be opened",
+            f"the database runtime's {name.removeprefix('parallax-')} connection pool could not "
+            "be opened",
             route=route,
             phase="open",
         ) from exc

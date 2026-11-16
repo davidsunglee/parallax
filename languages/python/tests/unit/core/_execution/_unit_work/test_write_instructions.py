@@ -837,16 +837,6 @@ def test_a_replacement_judges_its_members_in_declaration_order(
             id="destructive-member",
         ),
         pytest.param(
-            _target("delete", "Account", {"owner": "Bo"}, if_version=3),
-            "names the object it writes by its primary key",
-            id="destructive-no-key",
-        ),
-        pytest.param(
-            _target("amend", "Account", {"balance": 5}, if_version=3),
-            "names the object it writes by its primary key",
-            id="no-key",
-        ),
-        pytest.param(
             _target("amend", "Account", {"id": 1, "nope": 5}, if_version=3),
             "undeclared member",
             id="undeclared-member",
@@ -859,6 +849,23 @@ def test_target_preparation_refuses_the_first_fault_in_its_fixed_order(
     model = {"Account": _ACCOUNT, "Balance": _BALANCE, "Wallet": _WALLET}[instruction.entity]
     with raises_code(UsageError, "write-instruction-invalid", match=match):
         prepare(instruction, model)
+
+
+@_BOTH_PRODUCERS
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        _target("delete", "Account", {"owner": "Bo"}, if_version=3),
+        _target("amend", "Account", {"balance": 5}, if_version=3),
+        _target("terminateUntil", "Account", {"balance": 5}, if_version=3, until=_I2),
+    ],
+    ids=["destructive", "assignment", "before-its-window"],
+)
+def test_a_target_write_naming_no_key_is_refused_as_keyless_first(
+    prepare: Any, instruction: wi.TargetWriteInstruction
+) -> None:
+    with raises_code(UsageError, "write-key-absent", match="has no key"):
+        prepare(instruction, _ACCOUNT)
 
 
 def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> None:

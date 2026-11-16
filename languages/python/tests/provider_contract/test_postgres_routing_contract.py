@@ -103,9 +103,14 @@ def test_each_strict_policy_leases_from_its_own_route_under_the_same_login(
 
     assert writer == ("parallax-test-writer", runtime.login_identity)
     assert reader == ("parallax-test-reader", runtime.login_identity)
-    assert [source.route for source in runtime.pool_metrics] == ["writer", "reader"]
+    assert [(source.route, source.purpose) for source in runtime.pool_metrics] == [
+        ("writer", "application"),
+        ("reader", "application"),
+        ("writer", "reservation"),
+    ]
     assert all(isinstance(sample, PoolAvailable) for sample in samples)
     assert [sample.readiness for sample in samples if isinstance(sample, PoolAvailable)] == [
+        "verified",
         "verified",
         "verified",
     ]
@@ -168,7 +173,7 @@ def test_an_unreachable_reader_is_left_pending_and_refuses_reader_work(
         startup_timeout=10.0,
     ).open()
     try:
-        (_writer, reader) = [source.sample() for source in runtime.pool_metrics]
+        (_writer, reader, _reservation) = [source.sample() for source in runtime.pool_metrics]
         assert isinstance(reader, PoolAvailable) and reader.readiness == "pending"
         assert _where(runtime, "writer_only")[0] == "parallax-test-writer"
         with pytest.raises(ConnectionAcquisitionError) as refused:

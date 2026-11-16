@@ -7,7 +7,6 @@ from typing import Final
 from parallax.core.internal.base import NeutralType, UsageError
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
-    MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
@@ -32,7 +31,6 @@ from parallax.core.internal.metamodel import (
     NestedValueObjectOccurrenceDeclaration,
     NullPlacement,
     PersistenceMode,
-    PkGeneration,
     PrimaryKey,
     RelationshipIdentity,
     RelationshipReference,
@@ -58,7 +56,6 @@ from parallax.core.internal.metamodel import (
     derive_primary_key_index,
     designate_framework_owned,
 )
-from parallax.core.internal.metamodel import Sequence as SequenceGeneration
 from parallax.descriptor import _records
 from parallax.descriptor._errors import DESCRIPTOR_VALUE_INVALID, DescriptorError
 from parallax.descriptor._type_spelling import parse_type_spelling
@@ -216,7 +213,7 @@ def _attribute(
         identity=AttributeIdentity(entity, attribute.name),
         type=_neutral_type(attribute.type, f"{where} attribute {attribute.name!r}"),
         storage=Column(attribute.column),
-        primary_key=_primary_key(attribute, where),
+        primary_key=_primary_key(attribute),
         nullable=attribute.nullable,
         max_length=attribute.max_length,
         read_only=attribute.read_only,
@@ -225,7 +222,7 @@ def _attribute(
     )
 
 
-def _primary_key(attribute: _records.Attribute, where: str) -> AttributePrimaryKey:
+def _primary_key(attribute: _records.Attribute) -> AttributePrimaryKey:
     """The Attribute's primary-key state, generation included on the key branch.
 
     An omitted generator on a declared key normalizes to Application Assigned,
@@ -233,35 +230,8 @@ def _primary_key(attribute: _records.Attribute, where: str) -> AttributePrimaryK
     """
     if not attribute.primary_key:
         return NOT_PRIMARY_KEY
-    generator = attribute.pk_generator
-    if generator is None:
-        return PrimaryKey(APPLICATION_ASSIGNED)
-    return PrimaryKey(_generation(generator, f"{where} attribute {attribute.name!r}"))
-
-
-def _generation(generator: _records.PkGenerator, where: str) -> PkGeneration:
-    """The generation a record's strategy denotes, fully parameterized.
-
-    An omitted Sequence sizing parameter takes its semantic default, so an
-    accepted Sequence is never partially configured.
-    """
-    match generator.strategy:
-        case "none":
-            return APPLICATION_ASSIGNED
-        case "max":
-            return MAX
-        case "sequence":
-            name = generator.sequence_name
-            if name is None:
-                raise DescriptorError(
-                    DESCRIPTOR_VALUE_INVALID, f"{where}: a sequence generation names its sequence"
-                )
-            return SequenceGeneration(
-                name=name,
-                batch_size=1 if generator.batch_size is None else generator.batch_size,
-                initial_value=1 if generator.initial_value is None else generator.initial_value,
-                increment_size=1 if generator.increment_size is None else generator.increment_size,
-            )
+    generation = attribute.pk_generation
+    return PrimaryKey(APPLICATION_ASSIGNED if generation is None else generation)
 
 
 def _neutral_type(spelling: str, where: str) -> NeutralType:

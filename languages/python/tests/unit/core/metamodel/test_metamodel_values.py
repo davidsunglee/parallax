@@ -28,6 +28,7 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     ExactEntityReference,
     IndexIdentity,
+    KeySequence,
     Max,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -231,9 +232,11 @@ _NON_IDENTIFIERS = (
 
 
 @pytest.mark.parametrize("declared", _IDENTIFIERS)
-@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers")])
+@pytest.mark.parametrize(
+    "generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers"), KeySequence("identifiers")]
+)
 def test_key_construction_selects_its_generation_policy(
-    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence
+    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence | KeySequence
 ) -> None:
     identity = AttributeIdentity(_ORDERS, "id")
     if generation != APPLICATION_ASSIGNED and declared not in (base.INT32, base.INT64):
@@ -250,9 +253,11 @@ def test_key_construction_selects_its_generation_policy(
 
 
 @pytest.mark.parametrize("declared", _NON_IDENTIFIERS)
-@pytest.mark.parametrize("generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers")])
+@pytest.mark.parametrize(
+    "generation", [APPLICATION_ASSIGNED, MAX, Sequence("identifiers"), KeySequence("identifiers")]
+)
 def test_ineligible_keys_fail_without_a_length_bound(
-    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence
+    declared: base.NeutralType, generation: ApplicationAssigned | Max | Sequence | KeySequence
 ) -> None:
     identity = AttributeIdentity(_ORDERS, "id")
     with pytest.raises(ValueError) as caught:

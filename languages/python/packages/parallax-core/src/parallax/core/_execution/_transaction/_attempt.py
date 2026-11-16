@@ -5,7 +5,9 @@ from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self, cast
 
+from parallax.core._execution._connection_lifecycle import reservation_read
 from parallax.core._execution._family import entity_layout
+from parallax.core._execution._key_allocation import KeyAllocator
 from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
     KeyedWriteSource,
@@ -39,9 +41,11 @@ from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
+    PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     TargetMutation,
     TargetWriteInstruction,
+    derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -68,6 +72,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import ManagedValue
+from parallax.core.internal.database_binding import ResolvedSequence
 from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
@@ -467,7 +472,7 @@ class TxnAttempt(_TxnAttemptBase):
     about what it stores.
     """
 
-    __slots__ = ("_flush", "_options", "_step_executor", "_uow", "_write")
+    __slots__ = ("_flush", "_key_allocator", "_options", "_step_executor", "_uow", "_write")
 
     def __init__(
         self,
@@ -478,6 +483,7 @@ class TxnAttempt(_TxnAttemptBase):
         *,
         lifecycle: InstalledLifecycle | None,
         planner: ReadPlanner,
+        key_allocator: KeyAllocator,
         options: TxnOptions,
         clock: Clock,
         actor: ActorIdentity,
@@ -487,6 +493,9 @@ class TxnAttempt(_TxnAttemptBase):
             connection, read, activity, lifecycle=lifecycle, planner=planner, lifetime=lifetime
         )
         self._write = write
+        # The root's allocator, which every insert of this attempt that omits
+        # an allocated key draws from, reserving outside this transaction.
+        self._key_allocator = key_allocator
         # Every flush of this attempt executes its steps on this connection
         # through this one executor, handing it that flush's own activity.
         self._step_executor = WriteStepExecutor(
@@ -593,9 +602,32 @@ class TxnAttempt(_TxnAttemptBase):
             self._lifecycle,
             source,
             mutation,
+            keying=self._keyed,
             valid_from=valid_from,
             until=bound,
         )
+
+    def _keyed(
+        self, prepared: PreparedKeyedInstruction, /
+    ) -> tuple[PreparedKeyedInstruction, int | None]:
+        """``prepared`` stating the key its Entity's allocator hands out, where
+        the row omits a key a KeySequence generates."""
+        target = prepared.target
+        allocation = self._write.preparation.entity(target.identity).key_allocation
+        (row,) = prepared.rows
+        if allocation is None or row.stated(allocation.position):
+            return prepared, None
+        sequence = self._write.model.resolved.sequence(allocation.allocator)
+        # Resolution places every KeySequence allocator as a native sequence.
+        assert isinstance(sequence, ResolvedSequence)
+        activity = self._activity
+        key = self._key_allocator.next_key(
+            sequence,
+            lambda resource, statement, accept: reservation_read(
+                activity, target.identity, resource, statement, accept
+            ),
+        )
+        return derive_keyed_instruction(prepared, (row.with_cell(allocation.position, key),)), key
 
     def predicate_write(
         self, adapter: PredicateWriteAdapter, mutation: PredicateMutation, /

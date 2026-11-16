@@ -16,6 +16,7 @@ from parallax.core.internal.db_port import (
     ConnectionContextSource,
     PoolMetricsSource,
     ReleaseUnconfirmed,
+    ReservationContextSource,
     Route,
     RouteCapabilities,
     RoutePolicy,
@@ -46,8 +47,9 @@ class PostgresRuntime:
     Two runtimes built from one configuration share nothing: closing either
     leaves the other working, which is what makes reusing configuration safe.
     It serves its writer route through one pool and, where one is configured,
-    its reader route through another; both share one admission decision and
-    one close.
+    its reader route through another; key reservations borrow a third, lazy
+    pool of one writer connection. All share one admission decision and one
+    close.
     """
 
     dialect: Dialect = POSTGRES
@@ -58,6 +60,7 @@ class PostgresRuntime:
         "_closed",
         "_login_identity",
         "_reader",
+        "_reservation",
         "_routes",
         "_writer",
     )
@@ -67,10 +70,12 @@ class PostgresRuntime:
         writer: PostgresRoute,
         reader: PostgresRoute | None = None,
         *,
+        reservation: PostgresRoute,
         acquire_timeout: float,
     ) -> None:
         self._writer = writer
         self._reader = reader
+        self._reservation = reservation
         self._acquire_timeout = acquire_timeout
         self._routes: Mapping[Route, RouteCapabilities] = MappingProxyType(
             {"writer": _WRITER} if reader is None else {"writer": _WRITER, "reader": _READER}
@@ -88,14 +93,15 @@ class PostgresRuntime:
 
     @property
     def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
-        """One source per route's pool, each the same object for the runtime's whole life.
+        """One source per pool, each the same object for the runtime's whole life:
+        each route's, then the reservation pool's.
 
         A pool is what each route manages, so there is always something to
         measure and this is never empty. Each source stays the same object
         across the close as well: an exporter holding one keeps a handle that
         answers detached rather than a handle that has gone stale.
         """
-        return tuple(route.metrics for route in self._served())
+        return tuple(route.metrics for route in self._pools())
 
     @property
     def login_identity(self) -> str:
@@ -122,6 +128,22 @@ class PostgresRuntime:
                 AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
             )
         return _PostgresContextSource(self, authorization)
+
+    def reservation_source(self) -> ReservationContextSource:
+        """The lazy writer capacity key reservations borrow, under the login."""
+        return _PostgresReservationSource(self, self._acquire_timeout)
+
+    def _reservation_context(self, deadline: float) -> PostgresConnectionContext:
+        """A reservation's acquisition on the reservation pool, bounded by
+        ``deadline``, which its setup carries into the session as the
+        statement timeout."""
+        return PostgresConnectionContext(
+            ((self._reservation, deadline),),
+            self._admit,
+            None,
+            expected_login=self._login_identity,
+            statement_deadline=deadline,
+        )
 
     def acquisition(self, route: PostgresRoute, deadline: float) -> PostgresConnectionContext:
         """A fresh acquisition on ``route`` bounded by ``deadline`` rather than by
@@ -159,9 +181,10 @@ class PostgresRuntime:
             steps, self._admit, role, expected_login=self._login_identity
         )
 
-    def _served(self) -> tuple[PostgresRoute, ...]:
+    def _pools(self) -> tuple[PostgresRoute, ...]:
         reader = self._reader
-        return (self._writer,) if reader is None else (self._writer, reader)
+        writer, reservation = self._writer, self._reservation
+        return (writer, reservation) if reader is None else (writer, reader, reservation)
 
     def close(self) -> None:
         """Stop admitting work and close every route's native pool. Idempotent and permanent.
@@ -192,7 +215,7 @@ class PostgresRuntime:
             if self._closed:
                 return
             self._closed = True
-        routes = self._served()
+        routes = self._pools()
         for route in routes:
             route.metrics.detach()
         interrupted: BaseException | None = None
@@ -234,6 +257,15 @@ class _PostgresContextSource:
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
         return self.runtime._context(self.role, policy)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
+
+
+@dataclass(frozen=True, slots=True)
+class _PostgresReservationSource:
+    runtime: PostgresRuntime
+    reservation_timeout: float
+
+    def new_context(self, deadline: float, /) -> ConnectionContext:
+        return self.runtime._reservation_context(deadline)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
 
 
 def _shutdown_issue(exc: Exception) -> ReleaseUnconfirmed:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from parallax.evolution.internal.model_evolution import (
+    AllocatorSettingsChanged,
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,
@@ -75,6 +76,7 @@ from parallax.evolution.internal.model_evolution import (
 )
 
 __all__ = [
+    "AllocatorSettingsChanged",
     "AsOfAxisAdded",
     "AsOfAxisRemoved",
     "AttributeAdded",

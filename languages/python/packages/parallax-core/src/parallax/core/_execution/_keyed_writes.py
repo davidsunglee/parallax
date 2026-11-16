@@ -44,6 +44,7 @@ from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 __all__ = [
     "TRANSACTION_TIME_PIN_READ_ONLY",
+    "InsertKeying",
     "KeyedInsertSource",
     "KeyedWriteSource",
     "OpenedKeyedWrite",
@@ -242,18 +243,36 @@ class ResolvedKeyedInsert:
 class OpenedKeyedWrite:
     """The row an insert opened, and the authority its admission granted.
 
-    A Typed caller has ``authority`` bound to the instance it passed; a Wire
-    caller has nothing else to hold, so it renders the frozen node it will
-    revise the row through, carrying that authority. What the node publishes is
-    the buffered ROW rather than the payload. No read published it, so it
-    carries no Read Evidence: the writes that follow are licensed by the
-    insertion's authority instead.
+    A Typed caller that supplied its key has ``authority`` bound to the
+    instance it passed; one whose key was allocated, and a Wire caller, have
+    nothing else to hold, so their interface renders a fresh immutable value
+    from the buffered ROW rather than the payload, carrying that authority.
+    No read published it, so it carries no Read Evidence: the writes that
+    follow are licensed by the insertion's authority instead.
+    ``allocated_key`` is the key the insert allocated, and ``None`` where the
+    caller supplied one; an allocated key may be zero.
     """
 
     identity: EntityIdentity
     row: ManagedRow
     object_key: ObjectKey
     authority: InsertionIdentity
+    allocated_key: int | None = None
+
+
+class InsertKeying(Protocol):
+    """How an opening row whose key was omitted gets one.
+
+    Handed the prepared insert, it answers that instruction unchanged beside
+    ``None`` where the row states its key or its Entity allocates none, and
+    otherwise the instruction stating the key it allocated beside that key.
+    The ingress asks it once, after preparation admitted the row and before
+    the row names an object, so a refused row spends no key.
+    """
+
+    def __call__(
+        self, prepared: PreparedKeyedInstruction, /
+    ) -> tuple[PreparedKeyedInstruction, int | None]: ...
 
 
 class KeyedWriteSource(Protocol):
@@ -564,6 +583,7 @@ def keyed_insert(
     opening: KeyedInsertSource,
     mutation: KeyedMutation,
     *,
+    keying: InsertKeying,
     valid_from: dt.datetime | Omitted = OMITTED,
     until: dt.datetime | None = None,
 ) -> OpenedKeyedWrite:
@@ -578,6 +598,10 @@ def keyed_insert(
     read-only view is the more specific complaint. (On the source-backed door the
     two can never both be pending: a value the provenance rule refuses came from
     no read of this store at all, so it carries no view to be pinned.)
+
+    A row whose key its Entity allocates and the caller omitted is given one by
+    ``keying`` once preparation has admitted it, so a refused row spends no
+    key and a failed allocation buffers nothing and grants no authority.
 
     One stage stands after preparation, as buffering admits the insert: an
     insert of an object whose insertion in this transaction still stands is
@@ -614,10 +638,12 @@ def keyed_insert(
         inserted=False,
         advice=resolved.advice,
     )
-    prepared = opening.prepare(preparation, mutation, resolved, valid_from=start, until=until)
+    prepared, allocated = keying(
+        opening.prepare(preparation, mutation, resolved, valid_from=start, until=until)
+    )
     opened = object_key(prepared, meta)
-    # A Create Payload is a complete document, so the row it buffers always names
-    # its own object by the time validation has admitted it.
+    # A Create Payload is a complete document once its key is supplied or
+    # allocated, so the row it buffers always names its own object here.
     assert opened is not None
     authority = uow.buffer_insert(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
     assert authority is not None  # an insert naming its object opens an insertion of it
@@ -626,4 +652,5 @@ def keyed_insert(
         row=prepared.rows[0],
         object_key=opened,
         authority=authority,
+        allocated_key=allocated,
     )

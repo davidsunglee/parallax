@@ -18,6 +18,7 @@ from parallax.core.internal.base import INT64, UsageError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import (
+    MAX,
     AttributeIdentity,
     CompiledEntity,
     EntityIdentity,
@@ -84,7 +85,7 @@ def _generated_key_leaf() -> tuple[Metamodel, CompiledEntity]:
                 type="int64",
                 column="id",
                 primary_key=True,
-                pk_generator=_records.PkGenerator(strategy="max"),
+                pk_generation=MAX,
             ),
             _records.Attribute(name="title", type="string", column="title"),
         ),

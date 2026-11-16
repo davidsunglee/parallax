@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Final, overload
 
 from parallax.core.internal.base import UsageError
-from parallax.core.internal.database_binding import ResolvedBinding, relocations_between
+from parallax.core.internal.database_binding import ResolvedBinding, breaking_changes_between
 from parallax.evolution.internal.model_evolution._classify import classify
 from parallax.evolution.internal.model_evolution._diff import diff
 from parallax.evolution.internal.model_evolution._impacts import impacts
@@ -21,6 +21,7 @@ from parallax.evolution.internal.model_evolution._values import (
     VALUE_OBJECT_OCCURRENCE_DELTA_ORDER,
     WRITES_DISABLED,
     Absent,
+    AllocatorSettingsChanged,
     AsOfAxisAdded,
     AsOfAxisRemoved,
     AttributeAdded,
@@ -128,6 +129,7 @@ __all__ = [
     "VALUE_OBJECT_OCCURRENCE_DELTA_ORDER",
     "WRITES_DISABLED",
     "Absent",
+    "AllocatorSettingsChanged",
     "AsOfAxisAdded",
     "AsOfAxisRemoved",
     "AttributeAdded",
@@ -279,8 +281,8 @@ def _assemble(
     matching: Matching,
     logical: tuple[LogicalOperation, ...],
 ) -> Evolution:
-    """Fold per-operation classification, the impacts, and every relocation
-    into one result.
+    """Fold per-operation classification, the impacts, and every breaking
+    physical change into one result.
 
     Any nonempty reason set makes the whole evolution coordinated, carrying one
     requirement per coordinated operation in reported order; otherwise the
@@ -288,8 +290,8 @@ def _assemble(
     """
     classifications = classify(matching, logical)
     behavioral_impacts = impacts(earlier.meta, matching, logical)
-    relocations = relocations_between(earlier, later)
-    operations: tuple[EvolutionOperation, ...] = (*logical, *relocations)
+    breaking = breaking_changes_between(earlier, later)
+    operations: tuple[EvolutionOperation, ...] = (*logical, *breaking)
     requirements = (
         *(
             CoordinationRequirement(operation=operation, reasons=classification.reasons)
@@ -298,9 +300,9 @@ def _assemble(
         ),
         *(
             CoordinationRequirement(
-                operation=relocation, reasons=(CoordinationReason.DATABASE_MIGRATION_REQUIRED,)
+                operation=change, reasons=(CoordinationReason.DATABASE_MIGRATION_REQUIRED,)
             )
-            for relocation in relocations
+            for change in breaking
         ),
     )
     if requirements:

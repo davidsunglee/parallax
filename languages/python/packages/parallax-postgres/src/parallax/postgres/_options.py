@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-__all__ = ["OnDemandOptions", "PoolOptions", "RetentionOptions", "positive_seconds"]
+__all__ = [
+    "OnDemandOptions",
+    "PoolOptions",
+    "RetentionOptions",
+    "positive_seconds",
+    "reservation_retention",
+]
 
 
 def _integer(name: str, value: object) -> int:
@@ -148,3 +154,17 @@ class OnDemandOptions(_SharedRetention):
 
 type RetentionOptions = PoolOptions | OnDemandOptions
 """Either retention policy, as the one thing an adapter is configured with."""
+
+
+def reservation_retention(writer: RetentionOptions) -> RetentionOptions:
+    """The retention of the writer capacity key reservations borrow.
+
+    The writer's own policy at a capacity of one connection with one worker
+    and no retained minimum, so nothing connects until the first reservation;
+    its idle retirement and lifetime are the writer's, so the connection is
+    kept and replaced exactly as the writer's are. Waiting is unbounded because
+    every reservation already spends a deadline of its own.
+    """
+    if isinstance(writer, PoolOptions):
+        return replace(writer, min_size=0, max_size=1, max_waiting=0, num_workers=1)
+    return replace(writer, max_size=1, max_waiting=0, num_workers=1)

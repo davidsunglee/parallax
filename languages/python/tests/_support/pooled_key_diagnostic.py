@@ -28,8 +28,8 @@ __all__ = [
 OUT_VARIABLE: Final = "PARALLAX_POOLED_KEY_DIAGNOSTIC_OUT"
 MODE_VARIABLE: Final = "PARALLAX_POOLED_KEY_DIAGNOSTIC_MODE"
 
-type Mode = Literal["assigned"]
-MODES: Final[tuple[Mode, ...]] = ("assigned",)
+type Mode = Literal["assigned", "generated"]
+MODES: Final[tuple[Mode, ...]] = ("assigned", "generated")
 
 
 class DiagnosticRefused(AssertionError):
@@ -37,8 +37,8 @@ class DiagnosticRefused(AssertionError):
 
 
 def requested() -> tuple[Mode, Path | None]:
-    """The mode and output directory the launcher asked for, or the check run's
-    ``assigned`` mode and no output."""
+    """The mode and output directory the launcher asked for, or ``assigned``
+    and no output for a check run, which grades every mode it supports."""
     out = os.environ.get(OUT_VARIABLE)
     mode = os.environ.get(MODE_VARIABLE, "assigned")
     if mode not in MODES:

@@ -21,7 +21,11 @@ import pytest
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import INT32, STRING
-from parallax.core.internal.database_binding import ResolvedBinding, TableRelocated
+from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
+    ResolvedBinding,
+    TableRelocated,
+)
 from parallax.core.internal.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -36,6 +40,7 @@ from parallax.core.internal.metamodel import (
     Document,
     EntityIdentity,
     ExactEntityReference,
+    KeySequence,
     Metamodel,
     Multiplicity,
     PersistenceMode,
@@ -242,6 +247,38 @@ def test_key_membership_reaches_the_database_and_generation_alone_does_not() -> 
         _Verdict(_BOTH, False),
     ]
     assert _verdict(_keyed("id"), _keyed("id", generation=MAX)) == _Verdict((_AUTHORING,), False)
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later", "reasons"),
+    [
+        (APPLICATION_ASSIGNED, KeySequence("widgets"), (_MIGRATION,)),
+        (KeySequence("widgets"), APPLICATION_ASSIGNED, (_AUTHORING,)),
+        (KeySequence("widgets"), KeySequence("gadgets"), (_MIGRATION,)),
+        (KeySequence("widgets"), KeySequence("widgets", initial_value=900), ()),
+    ],
+    ids=["joining", "leaving", "changing-allocator", "initial-value-only"],
+)
+def test_a_key_sequence_generation_change_reads_its_direction(
+    earlier: PkGeneration, later: PkGeneration, reasons: tuple[CoordinationReason, ...]
+) -> None:
+    # Joining an allocator withdraws no caller input but must position its
+    # sequence past the stored keys; leaving one withdraws keyless construction;
+    # an initial value places only a sequence not yet created.
+    assert _verdict(_keyed("id", generation=earlier), _keyed("id", generation=later)) == _Verdict(
+        reasons, False
+    )
+
+
+def test_a_surviving_allocator_s_settings_change_is_classified_once_by_the_binding() -> None:
+    evolution = evolve_resolved(
+        bound_model(_keyed("id", generation=KeySequence("widgets"))),
+        bound_model(_keyed("id", generation=KeySequence("widgets", batch_size=5))),
+    )
+    altered, changed = evolution.operations
+    assert _verdict_on(evolution, altered) == _Verdict((), False)
+    assert isinstance(changed, AllocatorSettingsChanged)
+    assert _verdict_on(evolution, changed) == _Verdict((_MIGRATION,), False)
 
 
 def test_nullability_is_directional_and_expansion_is_overlap_visible() -> None:

@@ -302,12 +302,15 @@ class PoolWatchingProvider:
         """
         del error
 
-    def observe_pool(self, source: PoolMetricsSource, /) -> PoolWatch:
-        """Take an interest in this runtime's pool, once, at composition.
+    def observe_pool(self, source: PoolMetricsSource, /) -> PoolWatch | None:
+        """Take an interest in this runtime's application pool, once, at composition.
 
         ``source`` is stable for the runtime's whole life, so it is retained
-        rather than re-fetched. Returning ``None`` instead would decline.
+        rather than re-fetched. The pool key reservations borrow is declined by
+        returning ``None``: this story watches the capacity application work uses.
         """
+        if source.purpose != "application":
+            return None
         self.watch = PoolWatch(source)
         return self.watch
 

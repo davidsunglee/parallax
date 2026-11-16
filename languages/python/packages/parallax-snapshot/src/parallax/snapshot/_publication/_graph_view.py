@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Final, cast
 
-from parallax.core._execution._unit_work.evidence import ReadEvidence
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core.internal.base import InternalError
-from parallax.core.internal.entity import UNLOADED
+from parallax.core.internal.entity import UNLOADED, EntityGraphConstruction
 from parallax.core.internal.entity._errors import ENTITY_GRAPH_INVALID_MEMBER
 from parallax.core.internal.entity._layout import EntityLayout
 from parallax.core.internal.metamodel import (
@@ -35,8 +35,10 @@ from parallax.core.internal.read_delivery._page import (
 )
 from parallax.core.internal.temporal_read import Pin
 from parallax.core.internal.write_plan import ObjectKey
+from parallax.core.internal.write_plan.managed_row import ManagedRow, full_width
+from parallax.snapshot._inspection import insertion_authoring
 
-__all__ = ["SNAPSHOT_FETCHED_ROW_CONFLICT", "GraphView", "fetched_row_refusal"]
+__all__ = ["SNAPSHOT_FETCHED_ROW_CONFLICT", "GraphView", "fetched_row_refusal", "inserted_value"]
 
 SNAPSHOT_FETCHED_ROW_CONFLICT: Final = "snapshot-fetched-row-conflict"
 """Two fetched rows one root reached under one row key hold unequal stored
@@ -796,3 +798,46 @@ def _notify(observer: object | None, name: str, *args: object) -> None:
     if observer is not None:
         callback = getattr(observer, name)
         callback(*args)
+
+
+class _InsertedRowGraph:
+    """The one-node graph of a row an insert opened: its member row in the
+    layout's member order, unstated members absent, and every relationship
+    unloaded, since an insert loads none."""
+
+    __slots__ = ("_layout", "_row")
+
+    def __init__(self, layout: EntityLayout, row: ManagedRow) -> None:
+        self._layout = layout
+        self._row = row
+
+    def __len__(self) -> int:
+        return 1
+
+    def layout(self, node: int) -> EntityLayout:
+        return self._layout
+
+    def member_values(self, node: int) -> tuple[object, ...]:
+        return full_width(self._row)
+
+    def relationship_values(self, node: int) -> tuple[object, ...]:
+        return (UNLOADED,) * len(self._layout.relationships)
+
+
+def inserted_value(
+    construction: EntityGraphConstruction,
+    layout: EntityLayout,
+    row: ManagedRow,
+    authority: InsertionIdentity,
+) -> object:
+    """A fresh immutable instance of ``layout``'s Entity holding exactly what
+    ``row`` states, carrying the insertion's ``authority`` and no Read Evidence.
+
+    ``row`` is the prepared opening row, so the instance holds the canonical
+    values the insert stated, its allocated key included, and every
+    framework-owned member reads absent: the flush that stamps them writes
+    into the stored row only.
+    """
+    return construction.publish(
+        _InsertedRowGraph(layout, row), lambda _instances: (insertion_authoring(authority),)
+    )

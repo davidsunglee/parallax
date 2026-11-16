@@ -144,7 +144,7 @@ class TxnContext:
         from instance fields: an As-Of Axis endpoint is framework-owned."""
         source = TypedKeyedInsertSource(instance)
         opened = self._attempt.keyed_insert(source, valid_from=valid_from, until=until)
-        return source.publish(opened)
+        return source.publish(self._attempt, opened)
 
     def amend[E: EntityBase](
         self,

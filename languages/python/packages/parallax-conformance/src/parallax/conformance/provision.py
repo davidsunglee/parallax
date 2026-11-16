@@ -16,7 +16,11 @@ from parallax.core.internal.base import (
     NeutralType,
     retain_document_value,
 )
-from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
+from parallax.core.internal.database_binding import (
+    DatabaseBinding,
+    ResolvedBinding,
+    sequence_physical,
+)
 from parallax.core.internal.db_port import DatabaseRuntime, Password, StructuredDocument
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.document_codec import (
@@ -70,6 +74,7 @@ if TYPE_CHECKING:
         OrderedWriteTransport,
         PipelineStatement,
         PoolMetricsSource,
+        ReservationContextSource,
         Route,
         RouteCapabilities,
         Row,
@@ -112,7 +117,7 @@ def bound_qualifiers(resolved: ResolvedBinding) -> frozenset[str]:
         component
         for physical in (
             *(table.physical for table in resolved.tables),
-            *resolved.sequences.values(),
+            *map(sequence_physical, resolved.sequences.values()),
         )
         for component in physical.qualifier
     )
@@ -510,7 +515,10 @@ def reset_database(
 ) -> frozenset[str]:
     """Reset every schema ``resolved`` places a table in and every earlier-owned
     one, apply the model-derived DDL, load the fixtures, and grant the
-    conformance roles what a case's sessions do with them in each bound schema.
+    conformance roles what a case's sessions do with them in each bound schema:
+    every role its table privileges, and the login's own default role alone the
+    sequence privilege key reservations take, as a deployment's service login
+    holds it and its application roles do not.
 
     ``owned`` names the schemas earlier resets created, which are dropped
     again so no case leaks a table into the next; the answer is the schemas this
@@ -535,6 +543,9 @@ def reset_database(
                 f'{quoted} to "{role}"',
                 [],
             )
+        session.execute_write(
+            f'grant usage on all sequences in schema {quoted} to "{_DEFAULT_ROLE}"', []
+        )
     return bound | owned
 
 
@@ -691,6 +702,9 @@ class _TrackedRuntime:
 
     def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         return self._inner.principal_source(authorization)
+
+    def reservation_source(self) -> ReservationContextSource:
+        return self._inner.reservation_source()
 
     def close(self) -> None:
         self._inner.close()

@@ -51,16 +51,18 @@ class SchemaDelta:
 
 @dataclass(frozen=True, slots=True)
 class SchemaTarget:
-    """The table and member, or database extension, a schema operation acts on.
+    """The table and member, sequence, or database extension a schema operation acts on.
 
     Where one physical operation acts: its physical table and the member within
-    it, or the database-wide ``extension`` a tableless prerequisite installs.
+    it, the physical ``sequence`` a native allocator creates, or the
+    database-wide ``extension`` a tableless prerequisite installs.
     """
 
     table: PhysicalTable | None = None
     column: Column | None = None
     index: PhysicalIndexName | None = None
     extension: str | None = None
+    sequence: PhysicalSequence | None = None
 
 
 @dataclass(frozen=True, slots=True)

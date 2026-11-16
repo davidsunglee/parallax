@@ -16,6 +16,7 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     IndexMetadata,
     InheritanceMetadata,
+    KeySequence,
     Max,
     Metamodel,
     Multiplicity,
@@ -193,23 +194,33 @@ def _pk_generation(generation: PkGeneration) -> object | None:
     """The ``pkGeneration`` spelling, or ``None`` when application-assigned.
 
     Application Assigned is the default a bare declared key re-derives, so it is
-    omitted; ``max`` is the bare strategy token; a Sequence is the object form
-    with its name and every non-default sizing parameter.
+    omitted; ``max`` is the bare strategy token; a Sequence or KeySequence is
+    the object form with its name and every sizing parameter that differs from
+    its strategy's default.
     """
     match generation:
         case ApplicationAssigned():
             return None
         case Max():
             return "max"
+        case KeySequence():
+            return _allocator_spelling("key-sequence", generation, default_batch_size=100)
         case Sequence():
-            out: dict[str, object] = {"strategy": "sequence", "name": generation.name}
-            if generation.batch_size != 1:
-                out["batchSize"] = generation.batch_size
-            if generation.initial_value != 1:
-                out["initialValue"] = generation.initial_value
-            if generation.increment_size != 1:
-                out["incrementSize"] = generation.increment_size
-            return out
+            return _allocator_spelling("sequence", generation, default_batch_size=1)
+
+
+def _allocator_spelling(
+    strategy: str, generation: Sequence | KeySequence, *, default_batch_size: int
+) -> dict[str, object]:
+    spelled: dict[str, object] = {"strategy": strategy, "name": generation.name}
+    for key, value, default in (
+        ("batchSize", generation.batch_size, default_batch_size),
+        ("initialValue", generation.initial_value, 1),
+        ("incrementSize", generation.increment_size, 1),
+    ):
+        if value != default:
+            spelled[key] = value
+    return spelled
 
 
 def _relationship(relationship: RelationshipDeclaration) -> dict[str, object]:

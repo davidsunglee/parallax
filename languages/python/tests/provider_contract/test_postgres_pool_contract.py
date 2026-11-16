@@ -24,7 +24,7 @@ from typing import Any, cast
 import psycopg_pool
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, attr
+from parallax.core import Attr, DomainModel, Entity, KeySequence, attr
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
@@ -48,7 +48,7 @@ from parallax.postgres._connection import IncompatibleSessionError
 from parallax.snapshot import TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend, named_backend
-from tests._support.pooled_key_diagnostic import requested, write_readings
+from tests._support.pooled_key_diagnostic import MODES, Mode, requested, write_readings
 
 _BACKEND = "select pg_backend_pid() as pid"
 _SESSION_USER = "select session_user as login_identity"
@@ -276,7 +276,7 @@ def _wait_until_queued(runtime: Any) -> None:
     neutral publication of exactly this: queue depth, taken without a
     connection and without a statement.
     """
-    (source,) = runtime.pool_metrics
+    (source, _reservation) = runtime.pool_metrics
     assert source.route == "writer"
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
@@ -1081,7 +1081,7 @@ def _grade_model() -> tuple[Any, Any]:
 
 
 def _measurements(runtime: Any) -> Any:
-    (source,) = runtime.pool_metrics
+    (source, _reservation) = runtime.pool_metrics
     assert source.route == "writer"
     sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
@@ -1165,13 +1165,14 @@ def test_an_on_demand_runtime_keeps_no_idle_inventory_to_report(profile_run: Any
 @pytest.mark.adapter_smoke
 def test_a_closed_runtime_answers_detached_through_the_same_source(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
-    (source,) = runtime.pool_metrics
+    (source, _reservation) = runtime.pool_metrics
     assert source.route == "writer"
     assert isinstance(source.sample(), PoolAvailable)
 
     runtime.close()
 
     assert runtime.pool_metrics[0] is source
+    assert _reservation.purpose == "reservation"
     assert isinstance(source.sample(), PoolDetached)
 
 
@@ -1209,7 +1210,7 @@ def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answ
     # than an exception it has to defend against, and the source stays attached.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
     try:
-        (source,) = runtime.pool_metrics
+        (source, _reservation) = runtime.pool_metrics
         assert source.route == "writer"
 
         def refuse(pool: object) -> dict[str, int]:
@@ -1237,7 +1238,14 @@ class FootprintRow(Entity, table="pool_footprint_row", namespace="pool.footprint
     label: Attr[str] = attr(max_length=16)
 
 
-_FOOTPRINT_MODEL = DomainModel(FootprintRow)
+class GeneratedFootprintRow(
+    Entity, table="pool_footprint_generated_row", namespace="pool.footprint"
+):
+    id: Attr[int] = attr(primary_key=KeySequence("pool_footprint_ids"))
+    label: Attr[str] = attr(max_length=16)
+
+
+_FOOTPRINT_MODEL = DomainModel(FootprintRow, GeneratedFootprintRow)
 _FOOTPRINT_POOL = PoolOptions(min_size=1, max_size=2)
 _FOOTPRINT_SCHEMA = "parallax.diagnostic.pooled-primary-keys.provider/1"
 
@@ -1282,7 +1290,11 @@ def _pool_readings(sources: list[PoolMetricsSource]) -> list[dict[str, object]]:
     readings: list[dict[str, object]] = []
     for source in sources:
         sample = source.sample()
-        reading: dict[str, object] = {"route": source.route, "state": type(sample).__name__}
+        reading: dict[str, object] = {
+            "route": source.route,
+            "purpose": source.purpose,
+            "state": type(sample).__name__,
+        }
         if isinstance(sample, PoolAvailable):
             reading |= dataclasses.asdict(sample.measurements)
         readings.append(reading)
@@ -1311,21 +1323,20 @@ def _quiescent(
         time.sleep(0.01)
 
 
-def _insert_one(key: int) -> Callable[[TxnContext], None]:
+def _insert_one(mode: Mode, key: int) -> Callable[[TxnContext], None]:
     def insert(tx: TxnContext) -> None:
-        tx.insert(FootprintRow(id=key, label="inserted"))
+        if mode == "assigned":
+            tx.insert(FootprintRow(id=key, label="inserted"))
+        else:
+            tx.insert(GeneratedFootprintRow(label="inserted"))
 
     return insert
 
 
-def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
-    profile_run: Any,
-) -> None:
-    # The frozen footprint protocol: quiescent checkpoints before the root,
-    # after its startup, after its first insert, after a second one, and after
-    # it closed. The pool's connection-attempt counter is not a count of the
-    # connections it retains; the server's own session list is.
-    mode, out = requested()
+def _footprint(profile_run: Any, mode: Mode) -> dict[str, dict[str, object]]:
+    """The frozen footprint protocol's checkpoints for ``mode``: before the root,
+    after its startup, after its first insert, after a second one, and after it
+    closed."""
     profile_run.reset(model_of(_FOOTPRINT_MODEL), {}, TEST_BINDING)
     application_name = f"parallax_footprint_{uuid.uuid4().hex[:12]}"
     pools = _PoolSources()
@@ -1345,11 +1356,11 @@ def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
         checkpoints["after-startup"] = _quiescent(
             profile_run, application_name, pools.sources, None
         )
-        db.transact(_insert_one(1))
+        db.transact(_insert_one(mode, 1))
         checkpoints["after-first-insert"] = _quiescent(
             profile_run, application_name, pools.sources, None
         )
-        db.transact(_insert_one(2))
+        db.transact(_insert_one(mode, 2))
         checkpoints["after-second-insert"] = _quiescent(
             profile_run, application_name, pools.sources, None
         )
@@ -1358,32 +1369,58 @@ def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
     checkpoints["after-closure"] = _quiescent(
         profile_run, application_name, pools.sources, baseline
     )
+    return checkpoints
 
-    started, first, second = (
-        checkpoints[name] for name in ("after-startup", "after-first-insert", "after-second-insert")
+
+def _check_footprint(mode: Mode, checkpoints: dict[str, dict[str, object]]) -> None:
+    started, first, second, closed = (
+        checkpoints[name]
+        for name in ("after-startup", "after-first-insert", "after-second-insert", "after-closure")
     )
-    assert [pool["route"] for pool in cast("list[dict[str, object]]", started["pools"])] == [
-        "writer"
+
+    def pools(checkpoint: dict[str, object]) -> list[dict[str, object]]:
+        return cast("list[dict[str, object]]", checkpoint["pools"])
+
+    assert [(pool["route"], pool["purpose"]) for pool in pools(started)] == [
+        ("writer", "application"),
+        ("writer", "reservation"),
     ]
-    assert started["serverSessions"] == first["serverSessions"] == second["serverSessions"] == 1
     assert started["threads"] == first["threads"] == second["threads"]
-    (started_pool,) = cast("list[dict[str, object]]", started["pools"])
-    (second_pool,) = cast("list[dict[str, object]]", second["pools"])
-    assert second_pool["connections_num"] == started_pool["connections_num"]
-    assert second_pool["requests_num"] == cast("int", started_pool["requests_num"]) + 2
-    closed = checkpoints["after-closure"]
+    (started_writer, started_reservation) = pools(started)
+    (_, first_reservation) = pools(first)
+    (second_writer, second_reservation) = pools(second)
+    assert second_writer["connections_num"] == started_writer["connections_num"]
+    assert second_writer["requests_num"] == cast("int", started_writer["requests_num"]) + 2
+    # The reservation pool holds nothing until a reservation needs it, and a
+    # local handout takes no further connection.
+    assert started_reservation["pool_size"] == 0
+    assert started["serverSessions"] == 1
+    reserved = 0 if mode == "assigned" else 1
+    assert first_reservation["requests_num"] == second_reservation["requests_num"] == reserved
+    assert first_reservation["pool_size"] == second_reservation["pool_size"] == reserved
+    assert first["serverSessions"] == second["serverSessions"] == 1 + reserved
     assert closed["serverSessions"] == 0
-    assert [pool["state"] for pool in cast("list[dict[str, object]]", closed["pools"])] == [
-        "PoolDetached"
-    ]
-    if out is not None:
-        write_readings(
-            out,
-            "provider",
-            {
-                "schema": _FOOTPRINT_SCHEMA,
-                "mode": mode,
-                "pool": dataclasses.asdict(_FOOTPRINT_POOL),
-                "checkpoints": checkpoints,
-            },
-        )
+    assert [pool["state"] for pool in pools(closed)] == ["PoolDetached", "PoolDetached"]
+
+
+def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
+    profile_run: Any,
+) -> None:
+    # The pool's connection-attempt counter is not a count of the connections
+    # it retains; the server's own session list is. A check run grades every
+    # mode; a capture takes the one the launcher named.
+    requested_mode, out = requested()
+    for mode in MODES if out is None else (requested_mode,):
+        checkpoints = _footprint(profile_run, mode)
+        _check_footprint(mode, checkpoints)
+        if out is not None:
+            write_readings(
+                out,
+                "provider",
+                {
+                    "schema": _FOOTPRINT_SCHEMA,
+                    "mode": mode,
+                    "pool": dataclasses.asdict(_FOOTPRINT_POOL),
+                    "checkpoints": checkpoints,
+                },
+            )

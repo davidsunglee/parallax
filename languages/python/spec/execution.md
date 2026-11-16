@@ -27,8 +27,9 @@ atomically compares the held selection by identity and either replaces it or
 raises `PublicationConflictError` with the exact `expected` and `held` values.
 Before that, against `expected`, a candidate for another backend raises
 `UsageError` code `publication-backend-mismatch`, and one that relocates a
-surviving table or sequence raises `UsageError` code
-`PUBLICATION_RELOCATION_REFUSED`.
+surviving table or sequence, or changes a surviving allocator's batch size,
+increment size, or key range, raises `UsageError` code
+`PUBLICATION_BREAKING_CHANGE_REFUSED` naming every such change.
 There is no automatic publication retry, edition ordering, or implicit DDL.
 The application prepares, makes the physical schema ready, and publishes.
 
@@ -310,11 +311,16 @@ edit history.
 
 Typed `insert[E](instance: E) -> E` returns the immutable keyed value the
 insertion was stated through, typed as its argument; for a supplied key that is
-`instance` itself, and `tx.wire.insert` likewise answers a node. What a flush
+`instance` itself, and `tx.wire.insert` likewise answers a node. For a key the
+insert allocated (`m-unit-work` *Keyless drafts*) it is a new instance of the
+class the selection composed for that Entity, holding the allocated key and the
+instance's stated members; the instance passed in is left unchanged and carries
+no authority, and a Wire payload omitting the key answers a node holding the
+allocated one. What a flush
 leaves on that value and the insertion's authority it carries are
 `m-unit-work`'s (*Insertion authority*); the authority rides its source
-privately. `tx.insert` binds it to the instance it took and returns,
-beside any Snapshot state that instance already carries, and `edit` carries it
+privately. `tx.insert` binds it to the instance it returns,
+beside any Snapshot state a supplied-key instance already carries, and `edit` carries it
 to every value derived from that instance afterwards; `tx.wire.insert` answers
 a node carrying it and no Read Evidence. It is no member and no mapping key:
 `model_dump`, `dict(node)`, and JSON drop it, and a pickled inserted instance or

@@ -40,13 +40,16 @@ class Resolution:
     names declared Entity members that hydration supplies and construction
     refuses. ``restores_presence`` selects the Value Object rule that preserves
     absent versus explicit-null state. ``violations`` resolves authored names
-    and applies the shared assignment judgement.
+    and applies the shared assignment judgement. ``caller_omittable`` names the
+    generated keys a caller may leave unset, which a copy leaves unset while
+    the edit does not assign one.
     """
 
     declared: frozenset[str]
     framework_owned: frozenset[str]
     restores_presence: bool
     violations: Callable[[Mapping[str, object]], tuple[EditViolation, ...]]
+    caller_omittable: frozenset[str] = frozenset()
 
 
 def _is_derived_cache(cls: type, key: str) -> bool:
@@ -127,6 +130,9 @@ def derive[M: BaseModel](value: M, changes: Mapping[str, object], resolution: Re
     if violations:
         raise EditError(violations) from None
 
+    for py_name in resolution.caller_omittable:
+        if py_name not in changes and declared_state.get(py_name) is None:
+            del declared_state[py_name]
     declared_state.update(changes)
     held = {
         py_name: declared_state.pop(py_name)

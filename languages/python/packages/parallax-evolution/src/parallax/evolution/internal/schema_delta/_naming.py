@@ -8,6 +8,7 @@ from parallax.core.internal.database_binding import (
     PhysicalSequence,
     PhysicalTable,
     ResolvedBinding,
+    sequence_physical,
 )
 from parallax.core.internal.dialect import Dialect, PhysicalIndexName
 from parallax.core.internal.metamodel import (
@@ -223,7 +224,7 @@ def relation_census(
             continue
         relations = (
             *(table.physical for table in resolved.tables),
-            *resolved.sequences.values(),
+            *map(sequence_physical, resolved.sequences.values()),
         )
         for relation in relations:
             entries[relation] = IndexPresence.BOTH if relation in entries else presence

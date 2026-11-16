@@ -661,7 +661,8 @@ is better told now.
 ## Observing the pool
 
 The runtime publishes read-only measurements, one source per pool, each naming
-the route its pool serves. A `lifecycle_provider` that also implements
+the route its pool serves and its purpose: `application` for a route's pool, and
+`reservation` for the one-connection pool key reservations borrow on the writer. A `lifecycle_provider` that also implements
 `observe_pool` is offered each source once at composition; what it answers with
 is closed when the handle closes.
 
@@ -755,12 +756,15 @@ class PoolWatchingProvider:
         """
         del error
 
-    def observe_pool(self, source: PoolMetricsSource, /) -> PoolWatch:
-        """Take an interest in this runtime's pool, once, at composition.
+    def observe_pool(self, source: PoolMetricsSource, /) -> PoolWatch | None:
+        """Take an interest in this runtime's application pool, once, at composition.
 
         ``source`` is stable for the runtime's whole life, so it is retained
-        rather than re-fetched. Returning ``None`` instead would decline.
+        rather than re-fetched. The pool key reservations borrow is declined by
+        returning ``None``: this story watches the capacity application work uses.
         """
+        if source.purpose != "application":
+            return None
         self.watch = PoolWatch(source)
         return self.watch
 

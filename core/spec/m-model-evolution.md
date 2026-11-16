@@ -50,9 +50,10 @@ its own, and a generator cannot be handed an unrelated target.
 
 Each endpoint is an accepted model resolved under its own Database Binding
 (`m-database-binding`). The logical operations compare the two accepted models
-alone; the physical comparison then appends one `TableRelocated` or
-`SequenceRelocated` operation per relocation between the two resolved bindings,
-in relocation order, after every logical operation. Endpoints bound for
+alone; the physical comparison then appends one `TableRelocated`,
+`SequenceRelocated`, or `AllocatorSettingsChanged` operation per breaking change
+between the two resolved bindings (`m-database-binding`), in that comparison's
+order, after every logical operation. Endpoints bound for
 different backends are refused as `evolution-backend-mismatch` before any
 comparison: equal components on two engines are no evidence of one physical
 object, and no cross-backend operation exists.
@@ -106,11 +107,14 @@ IndexAltered
 DeclarationOrderChanged
 TableRelocated
 SequenceRelocated
+AllocatorSettingsChanged
 ```
 
 `TableRelocated` carries the mapping owner and its earlier and later physical
 tables; `SequenceRelocated` carries the logical allocator key and its earlier
-and later physical sequences, each a qualifier and a local name.
+and later physical sequences, each a qualifier and a local name;
+`AllocatorSettingsChanged` carries the logical allocator key and its earlier and
+later allocation settings — batch size, increment size, and key range.
 
 The generic Entity add and remove variants **exclude** concrete-subtype add and
 remove; a surviving concrete subtype uses `EntityAltered`. Value Object
@@ -319,8 +323,21 @@ ancestry makes applicable.
   storage location, because the two editions cannot address both locations
   through one compiled operation surface; authored forms normalizing to the same
   accepted Storage Location produce no change at all.
-- **Keys.** Every change to primary-key membership or Primary-Key Generation
-  requires coordination.
+- **Keys.** Every change to primary-key membership requires
+  `AuthoringSurfaceChangeRequired` and `DatabaseMigrationRequired`. A
+  Primary-Key Generation change reads its direction. Moving from
+  application-assigned to `key-sequence`, or from one allocator to another,
+  withdraws no caller input but makes stored rows consume an allocator whose
+  sequence must be positioned past them, so it requires
+  `DatabaseMigrationRequired` alone; moving from `key-sequence` to
+  application-assigned withdraws keyless construction and requires
+  `AuthoringSurfaceChangeRequired` alone. A surviving allocator whose
+  allocation settings change is classified once, by its
+  `AllocatorSettingsChanged` operation, rather than at each consuming key, and a
+  change to `initialValue` alone places only a sequence not yet created, so it
+  requires nothing. Every other generation change requires
+  `AuthoringSurfaceChangeRequired`. An Entity added with a `key-sequence` key is
+  an empty table joining its allocator, and adding it is unilateral.
 - **Write surface.** Making an editable Attribute read-only, or a caller-authored
   Attribute framework-owned, requires coordination; the inverses are unilateral
   where they need no destructive transformation. The gating behavior an
@@ -383,9 +400,10 @@ ancestry makes applicable.
   (`StorageContainerChanged`) is a logical change and unilateral by itself: a
   declared name is only the binding's default physical name, so whether a table
   moved is a physical fact. Every `TableRelocated` (a surviving mapping owner
-  whose resolved physical table differs) and `SequenceRelocated` (a surviving
-  logical allocator whose resolved physical sequence differs) requires
-  `DatabaseMigrationRequired`. A declared rename a binding masks by pinning the
+  whose resolved physical table differs), `SequenceRelocated` (a surviving
+  logical allocator whose resolved physical sequence differs), and
+  `AllocatorSettingsChanged` (a surviving `key-sequence` allocator whose
+  allocation settings differ) requires `DatabaseMigrationRequired`. A declared rename a binding masks by pinning the
   local name therefore relocates nothing; a move between qualifiers preserves
   every derived name; a physical local-name rename also changes the derived
   constraint and index names the later endpoint expects. Reparenting compares the

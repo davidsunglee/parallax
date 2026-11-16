@@ -150,6 +150,7 @@ instead of placing a table at the default:
 | `binding-table-collision` | a mapping owner resolves to the physical table an earlier owner (canonical owner order) holds | the later owner's entry, related to the earlier one's |
 | `binding-sequence-collision` | an allocator resolves to the physical sequence an earlier allocator (codepoint order) holds | the later allocator's entry, related to the earlier one's |
 | `binding-sequence-table-collision` | a physical sequence and a physical table share one qualifier and name | the allocator's entry, related to the owner's |
+| `binding-sequence-unrepresentable` | the backend cannot hold a `key-sequence` allocator's declared settings: it has no native sequence, the physical increment `batchSize × incrementSize` exceeds the key range, or `initialValue` lies outside it | `("sequences", allocator)` |
 
 Components compare exactly: no case folding, no trimming, and no dotted-name
 parsing. Tables and sequences share one relation namespace per qualifier on both
@@ -171,18 +172,43 @@ therefore fixes every derived name however the declared name changes; one that
 moves a table between qualifiers changes no derived name. Every statement and
 DDL naming the table reads this one reference.
 
-## Relocation between two resolved bindings
+### Resolved sequences
 
-Two resolved bindings of one backend are compared by **relocation**: every
-mapping owner both hold whose physical table differs is a **table relocation**
-(owner, earlier physical table, later physical table), in canonical owner order,
-followed by every logical allocator both declare whose physical sequence differs
-as a **sequence relocation** (allocator, earlier, later), in codepoint order. An
-owner or allocator only one side holds was added or removed, not relocated.
+A `key-sequence` allocator resolves to a **resolved sequence**: its allocator
+key, its physical sequence, its SQL reference rendered as a table's is, the
+model's `key-sequence` declaration, the concrete type of its key, its **key
+range** — the key type's values intersected with what the backend's sequences
+hold (`m-dialect` *Native sequences*) — and its **consuming tables**: the
+resolved tables whose rows take keys from it, in canonical owner order, every
+table-per-concrete-subtype table and every unrelated Entity sharing the key
+among them. Its **allocation settings** are its batch size, its increment size,
+and its key range; its initial value only places a newly created sequence and is
+no part of them. The definition a live sequence must hold is derived from it
+alone: a step of `batchSize × incrementSize`, the key range as its bounds, the
+initial value as its start, and no cycling. Allocation, sequence DDL, and the
+comparison below all read this one view, and the qualified reference is the only
+way any of them names the sequence, so no session search path or role affects
+which sequence they reach. A registry `sequence` allocator resolves to its
+physical sequence alone.
+
+## Breaking changes between two resolved bindings
+
+Two resolved bindings of one backend are compared for **breaking changes**:
+every mapping owner both hold whose physical table differs is a **table
+relocation** (owner, earlier physical table, later physical table), in canonical
+owner order, followed, in codepoint order of allocator, by every logical
+allocator both declare whose physical sequence differs as a **sequence
+relocation** (allocator, earlier, later), then every `key-sequence` allocator
+both declare whose allocation settings differ as an **allocation-settings
+change** (allocator, earlier resolved sequence, later resolved sequence). An
+owner or allocator only one side holds was added or removed, an allocator one
+side generates natively and the other through a registry changed strategy, and
+an initial value changes no allocation setting; none of these is a breaking
+change.
 
 A serving model publishes a candidate prepared under a binding only when the
 candidate's backend is the expected selection's and the comparison finds no
-relocation (`m-execution`); `m-model-evolution` reports the same relocations as
+breaking change (`m-execution`); `m-model-evolution` reports the same changes as
 coordinated operations. Publishing a binding change therefore needs no
-replacement root while nothing surviving moves, and every move needs a
-coordinated migration behind one.
+replacement root while nothing surviving moves or changes how it allocates, and
+every breaking change needs a coordinated migration behind replacement roots.

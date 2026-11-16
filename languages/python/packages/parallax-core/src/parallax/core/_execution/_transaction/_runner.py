@@ -9,6 +9,7 @@ from parallax.core._execution._connection_lifecycle import (
     TransactionPreparation,
     exit_connection,
 )
+from parallax.core._execution._key_allocation import KeyAllocator
 from parallax.core._execution._options import (
     OMITTED,
     Omitted,
@@ -158,7 +159,8 @@ class TransactionRunner:
     Holds what every invocation shares and nothing scope-specific: the resource
     identity used for ownership, the Clock the unit of work reads, the installed
     lifecycle every root and attempt reports through, the Serving Model each
-    attempt adopts from, and the read planner transactions participate through.
+    attempt adopts from, the read planner transactions participate through, and
+    the key allocator every writable attempt's inserts allocate from.
     The calling scope supplies its authority, defaults, and read policy. Neither the selection,
     a connection, nor the active transaction is held here — that is
     what makes the first two per attempt, so a retry adopts afresh and acquires
@@ -171,7 +173,7 @@ class TransactionRunner:
     resolves, and the access mode each asks the port for.
     """
 
-    __slots__ = ("_clock", "_lifecycle", "_planner", "_root", "_serving")
+    __slots__ = ("_clock", "_key_allocator", "_lifecycle", "_planner", "_root", "_serving")
 
     def __init__(
         self,
@@ -180,12 +182,14 @@ class TransactionRunner:
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
+        key_allocator: KeyAllocator,
     ) -> None:
         self._root = root
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
         self._planner = planner
+        self._key_allocator = key_allocator
 
     def transact[Tx, T](
         self,
@@ -259,6 +263,7 @@ class TransactionRunner:
                 physical,
                 lifecycle=self._lifecycle,
                 planner=self._planner,
+                key_allocator=self._key_allocator,
                 options=options,
                 clock=self._clock,
                 actor=authority.actor,

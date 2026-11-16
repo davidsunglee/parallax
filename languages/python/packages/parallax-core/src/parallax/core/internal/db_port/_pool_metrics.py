@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from parallax.core.internal.diagnostics import FailureDiagnostic
 
@@ -13,9 +13,15 @@ __all__ = [
     "PoolDetached",
     "PoolMeasurements",
     "PoolMetricsSource",
+    "PoolPurpose",
     "PoolSample",
     "PoolUnavailable",
 ]
+
+
+type PoolPurpose = Literal["application", "reservation"]
+"""What a pool's connections serve: application work a Route Policy selects,
+or the key reservations a root's allocator makes on the writer."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -137,6 +143,13 @@ class PoolMetricsSource(Protocol):
     @property
     def route(self) -> Route:
         """The route whose pool this source reads, fixed for the source's life."""
+        ...
+
+    @property
+    def purpose(self) -> PoolPurpose:
+        """What the pool's connections serve, fixed for the source's life: a
+        reservation pool reads the writer's route without being one an
+        application Route Policy can select."""
         ...
 
     def sample(self) -> PoolSample:

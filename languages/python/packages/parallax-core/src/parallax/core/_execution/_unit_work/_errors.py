@@ -11,6 +11,7 @@ __all__ = [
     "WRITE_EVIDENCE_CONSUMED",
     "WRITE_EVIDENCE_INSERTED",
     "WRITE_EVIDENCE_UNAVAILABLE",
+    "WRITE_KEY_ABSENT",
     "WRITE_VALUE_ALREADY_STORED",
     "WRITE_VALUE_FOREIGN_LIFECYCLE",
     "WRITE_VALUE_NOT_STORED",
@@ -86,6 +87,11 @@ is never retained: what the refusal is about is which source published it, and
 the message names the Entity the write addressed and the verb that does accept
 the value.
 """
+
+WRITE_KEY_ABSENT: Final = "write-key-absent"
+"""A write other than an insert was handed a value whose key is absent: a
+keyless draft names no object, and only an insert gives one an identity.
+Refused before anything else about the value is judged, so it spends no key."""
 
 WRITE_VALUE_NOT_STORED: Final = "write-value-not-stored"
 WRITE_VALUE_ALREADY_STORED: Final = "write-value-already-stored"

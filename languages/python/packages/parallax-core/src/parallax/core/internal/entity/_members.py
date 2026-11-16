@@ -41,6 +41,7 @@ from parallax.core.internal.metamodel import (
     AttributePrimaryKey,
     Cardinality,
     Document,
+    KeySequence,
     Max,
     Multiplicity,
     NullPlacement,
@@ -262,16 +263,16 @@ def _primary_key(value: object) -> AttributePrimaryKey:
     """The normalized primary-key state a ``primary_key=`` spelling denotes.
 
     A generation is authored as the algebra member itself: the payload-free
-    ``MAX`` constant, or a ``Sequence(...)`` instance.
+    ``MAX`` constant, or a ``Sequence(...)`` or ``KeySequence(...)`` instance.
     """
     if value is False:
         return NOT_PRIMARY_KEY
     if value is True:
         return PrimaryKey(APPLICATION_ASSIGNED)
-    if isinstance(value, (Max, Sequence)):
+    if isinstance(value, Max | Sequence | KeySequence):
         return PrimaryKey(value)
     raise _invalid(
-        f"primary_key= takes False, True, MAX, or Sequence(...), got {value!r}",
+        f"primary_key= takes False, True, KeySequence(...), MAX, or Sequence(...), got {value!r}",
     )
 
 

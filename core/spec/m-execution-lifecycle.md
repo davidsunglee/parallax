@@ -187,10 +187,15 @@ ReadStarted(target, purpose, edition)
 ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
-`purpose` is `typed`, `wire`, or `row-acquisition`. `typed` and `wire` name the
-representation a read publishes; `row-acquisition` names the Read of a write's
-target acquisition, which publishes neither: its rows are recorded for the write
-(`m-unit-work` *Row acquisition*). A Read starts after public
+`purpose` is `typed`, `wire`, `row-acquisition`, or `reservation`. `typed` and
+`wire` name the representation a read publishes; `row-acquisition` names the Read
+of a write's target acquisition, which publishes neither: its rows are recorded
+for the write (`m-unit-work` *Row acquisition*). `reservation` names the Read an
+insert's key reservation runs as (`m-pk-gen`), which publishes nothing either: it
+is a child of the attempt whose insert needed the key, holds its own Acquisition,
+its one row-returning Database Call, and its own Release, and occurs only when the
+root's reservation is spent — a key handed out of a block the root already holds
+opens no activity at all. A Read starts after public
 preflight and any read-dependency Flush. It spans planning, lowering, all
 of its Database Calls, conversion, materialization, and publication until the
 public result is ready. It has no root-count or materialized-node count.
@@ -465,9 +470,10 @@ nests a duplicate Read activity.
 ## Resource events
 
 An operation reaches the database through a connection it holds for the bounded
-work that needs it, and how long it held one is observable. Three activity kinds own
-one: a standalone Read, a Transaction Attempt, and each Stream Batch of a standalone
-Stream. A stream still adopts one Model Edition for its whole delivery, but
+work that needs it, and how long it held one is observable. Four activity kinds own
+one: a standalone Read, a Transaction Attempt, each Stream Batch of a standalone
+Stream, and a `reservation` Read, which acquires the runtime's reservation
+capacity (`m-db-port`) beside its attempt's own connection. A stream still adopts one Model Edition for its whole delivery, but
 each page owns its own connection lease (`m-db-port`). Each owner opens at most one
 **Acquisition** and at most one **Release**, both as its own direct children:
 
@@ -503,7 +509,9 @@ replacement happens inside the owner's one hold, and a statement submitted again
 on it is still one Database Call.
 
 `policy` is the Read Policy that acquisition requested (`m-execution` *Read
-routing*): `writer-only`, `reader-only`, or `reader-preferred`. `route` is the
+routing*): `writer-only`, `reader-only`, or `reader-preferred`, and absent for a
+`reservation` Read's acquisition, which no Read Policy selects: the writer's
+reservation capacity serves it, on the writer. `route` is the
 `m-db-port` Route the lease landed on — `writer` or `reader` — and `fallback`
 the reason a preferred acquisition moved to the writer before any modeled work,
 `unavailable` or `connection-lost`, absent where it did not. Both are the

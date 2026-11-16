@@ -16,14 +16,16 @@ from parallax.core.internal.document_codec._plan import (
 from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
+    KeySequence,
     Metamodel,
     Multiplicity,
+    PrimaryKey,
     judge_assignment,
 )
 from parallax.core.internal.wire._codec import wire_converter
 from parallax.core.internal.write_plan.managed_row import RowSelection
 
-__all__ = ["TYPED_LANE", "WIRE_LANE", "EntityPreparation", "WritePreparation"]
+__all__ = ["TYPED_LANE", "WIRE_LANE", "EntityPreparation", "KeyAllocation", "WritePreparation"]
 
 TYPED_LANE: Final = 0
 """The authoring lane of a developer's native carriers."""
@@ -33,6 +35,15 @@ _LANES: Final = (
     AuthoringLane(typed_converter, BORROWED_DOCUMENTS),
     AuthoringLane(wire_converter, MAPPING_DOCUMENTS),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class KeyAllocation:
+    """Where an opening row's omitted key comes from: the key's member
+    ``position`` and the logical ``allocator`` its family root declares."""
+
+    position: int
+    allocator: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +59,9 @@ class EntityPreparation:
     one in ``replace_nulled`` it leaves unstated as null.
     ``typed_class`` is the Entity Class whose instances hold their members in
     ``selection``'s order, proven so when the model was prepared, or ``None``
-    where no class was.
+    where no class was. ``key_allocation`` is present exactly for an Entity
+    whose family key a :class:`~parallax.core.internal.metamodel.KeySequence`
+    generates, whose opening row may therefore omit its key.
     """
 
     selection: RowSelection
@@ -60,6 +73,7 @@ class EntityPreparation:
     replace_required: int
     replace_nulled: int
     typed_class: type | None
+    key_allocation: KeyAllocation | None = None
 
     def assignment_rules(self, position: int, raw: object) -> None:
         """Judge stating ``raw`` at ``position`` beside the key by the
@@ -128,6 +142,12 @@ def _entity_preparation(
 ) -> EntityPreparation:
     selection = view.member_selection
     key = selection.index[view.primary_key.identity]
+    generation = view.primary_key.primary_key
+    allocation = (
+        KeyAllocation(key, generation.generation.name)
+        if isinstance(generation, PrimaryKey) and isinstance(generation.generation, KeySequence)
+        else None
+    )
     required = 0
     framework_owned = 0
     read_only = 0
@@ -151,10 +171,11 @@ def _entity_preparation(
         selection=RowSelection(selection, absent),
         plan=catalog.plan(selection.shape),
         key=key,
-        insert_required=required,
+        insert_required=required if allocation is None else required & ~(1 << key),
         framework_owned=framework_owned,
         read_only=read_only,
         replace_required=replaced & required,
         replace_nulled=replaced & ~required,
         typed_class=typed_class,
+        key_allocation=allocation,
     )

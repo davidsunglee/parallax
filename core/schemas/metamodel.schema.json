@@ -291,7 +291,7 @@
           }
         },
         {
-          "$comment": "Generated primary keys are integral (m-pk-gen): `max` allocates max(col)+1 and `sequence` advances an integer registry counter, so both are legal only on an `int32`/`int64` attribute. Application-assigned keys follow m-metamodel eligibility.",
+          "$comment": "Generated primary keys are integral (m-pk-gen): `key-sequence` hands out keys from a native integer sequence, `max` allocates max(col)+1, and `sequence` advances an integer registry counter, so each is legal only on an `int32`/`int64` attribute. Application-assigned keys follow m-metamodel eligibility.",
           "if": {
             "required": ["pkGeneration"],
             "properties": {
@@ -588,9 +588,21 @@
       ]
     },
     "pkGeneration": {
-      "description": "Primary-key generation strategy. Only the strategy keyword is required; sequence carries extra fields.",
+      "description": "Primary-key generation strategy. Only the strategy keyword is required; key-sequence and sequence carry extra fields.",
       "oneOf": [
         { "enum": ["application-assigned", "max"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "name"],
+          "properties": {
+            "strategy": { "const": "key-sequence" },
+            "name": { "type": "string", "minLength": 1 },
+            "batchSize": { "type": "integer", "minimum": 1, "default": 100 },
+            "initialValue": { "type": "integer", "default": 1 },
+            "incrementSize": { "type": "integer", "minimum": 1, "default": 1 }
+          }
+        },
         {
           "type": "object",
           "additionalProperties": false,

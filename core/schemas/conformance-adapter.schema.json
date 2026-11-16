@@ -426,10 +426,9 @@
       "properties": {}
     },
     "lifecycleAcquisitionStarted": {
-      "description": "The activity that owns an operation's connection asks for one, and `policy` is the routing role that acquisition requested (m-execution): `writer-only`, `reader-only`, or `reader-preferred` — the operation's own read policy, `writer-only` for a writable transaction, or `writer-only` once an earlier acquisition of the same operation fell back. Which activity is asking reads off the envelope, and everything about the connection itself — its pool, its endpoint, its identity — belongs to the adapter and is never observable here.",
+      "description": "The activity that owns an operation's connection asks for one, and `policy` is the routing role that acquisition requested (m-execution): `writer-only`, `reader-only`, or `reader-preferred` — the operation's own read policy, `writer-only` for a writable transaction, or `writer-only` once an earlier acquisition of the same operation fell back. A `reservation` Read's acquisition requests no policy and omits it: the writer's reservation capacity serves it (m-execution-lifecycle). Which activity is asking reads off the envelope, and everything about the connection itself — its pool, its endpoint, its identity — belongs to the adapter and is never observable here.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["policy"],
       "properties": {
         "policy": {"enum": ["writer-only", "reader-only", "reader-preferred"]}
       }
@@ -526,13 +525,13 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` for `purpose`, after public preflight and after any read-dependency Flush. `purpose` is what the Read serves — `typed` or `wire` for a read publishing its result in that representation, or `row-acquisition` for the Read of a write's target acquisition, which publishes neither — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
+      "description": "A Read opened over `target` for `purpose`, after public preflight and after any read-dependency Flush. `purpose` is what the Read serves — `typed` or `wire` for a read publishing its result in that representation, `row-acquisition` for the Read of a write's target acquisition, or `reservation` for the Read an insert's key reservation runs as, neither of which publishes — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "purpose"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
-        "purpose": {"enum": ["typed", "wire", "row-acquisition"]},
+        "purpose": {"enum": ["typed", "wire", "row-acquisition", "reservation"]},
         "edition": {"type": "string", "minLength": 1}
       }
     },
@@ -834,8 +833,26 @@
         "IndexAltered",
         "DeclarationOrderChanged",
         "TableRelocated",
-        "SequenceRelocated"
+        "SequenceRelocated",
+        "AllocatorSettingsChanged"
       ]
+    },
+    "allocationSettings": {
+      "description": "A native allocator's allocation settings: what a reservation a root holds depends on. The initial value only places a newly created sequence, so it is no part of them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["batchSize", "incrementSize", "keyRange"],
+      "properties": {
+        "batchSize": {"type": "integer", "minimum": 1},
+        "incrementSize": {"type": "integer", "minimum": 1},
+        "keyRange": {
+          "description": "The inclusive lowest and highest key the sequence may hand out.",
+          "type": "array",
+          "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+          "items": false,
+          "minItems": 2
+        }
+      }
     },
     "evolutionFieldDeltaKind": {
       "description": "The closed field-delta vocabulary an alteration carries (m-model-evolution). Each name carries one value type wherever it appears, so one spelling serves every declaration kind that owns it.",
@@ -964,17 +981,19 @@
           "minLength": 1
         },
         "earlier": {
-          "description": "For a declaration-order change, the surviving declaration identities in the earlier endpoint's order; for a relocation, the physical object the earlier binding resolved.",
+          "description": "For a declaration-order change, the surviving declaration identities in the earlier endpoint's order; for a relocation, the physical object the earlier binding resolved; for an allocation-settings change, the earlier allocation settings.",
           "anyOf": [
             {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
-            {"$ref": "#/$defs/physicalTable"}
+            {"$ref": "#/$defs/physicalTable"},
+            {"$ref": "#/$defs/allocationSettings"}
           ]
         },
         "later": {
-          "description": "For a declaration-order change, the same identities in the later endpoint's order, which differs; for a relocation, the physical object the later binding resolves.",
+          "description": "For a declaration-order change, the same identities in the later endpoint's order, which differs; for a relocation, the physical object the later binding resolves; for an allocation-settings change, the later allocation settings, which differ.",
           "anyOf": [
             {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
-            {"$ref": "#/$defs/physicalTable"}
+            {"$ref": "#/$defs/physicalTable"},
+            {"$ref": "#/$defs/allocationSettings"}
           ]
         }
       },
@@ -1009,6 +1028,16 @@
             "kind": {"enum": ["SequenceRelocated"]},
             "earlier": {"$ref": "#/$defs/physicalTable"},
             "later": {"$ref": "#/$defs/physicalTable"}
+          },
+          "required": ["kind", "sequence", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "sequence", "earlier", "later"]}
+        },
+        {
+          "description": "A surviving native allocator whose batch size, increment size, or key range the two endpoints resolve differently (m-database-binding).",
+          "properties": {
+            "kind": {"enum": ["AllocatorSettingsChanged"]},
+            "earlier": {"$ref": "#/$defs/allocationSettings"},
+            "later": {"$ref": "#/$defs/allocationSettings"}
           },
           "required": ["kind", "sequence", "earlier", "later"],
           "propertyNames": {"enum": ["kind", "sequence", "earlier", "later"]}

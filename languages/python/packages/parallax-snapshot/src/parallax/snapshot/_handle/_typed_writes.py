@@ -11,7 +11,7 @@ from parallax.core._execution._keyed_writes import (
     ResolvedKeyedWriteSource,
 )
 from parallax.core._execution._publication import SelectedWriteModel
-from parallax.core._execution._transaction._attempt import TargetWriteInput
+from parallax.core._execution._transaction._attempt import TargetWriteInput, TxnAttempt
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
@@ -44,6 +44,7 @@ from parallax.snapshot._handle._sources import (
     resolve_keyed_write_source,
 )
 from parallax.snapshot._inspection import bind_insertion
+from parallax.snapshot._publication._graph_view import inserted_value
 
 __all__ = [
     "TypedInstanceTargetWriteAdapter",
@@ -87,6 +88,26 @@ def declared_values(
     if type(instance) is prepared.typed_class:
         return instance.__parallax_member_values__()
     return instance.__parallax_row_values__(prepared.selection.members.shape, entity.identity)
+
+
+def states_key(meta: Metamodel, entity: CompiledEntity, instance: EntityBase) -> bool:
+    """Whether ``instance`` holds its family key rather than leaving it absent.
+
+    A key is never null, so a value whose key reads null, or whose class holds
+    nothing under it, holds none. A class naming its members otherwise answers
+    nothing here and is refused where its row is acquired.
+    """
+    view = family_view(meta, entity)
+    selection = view.member_selection
+    try:
+        ((_, key),) = instance.__parallax_identity_pairs__(
+            selection.shape, entity.identity, selection.index[view.primary_key.identity]
+        )
+    except AttributeError:
+        return False
+    except UsageError:
+        return True
+    return key is not None
 
 
 def writable_row(
@@ -167,8 +188,23 @@ class TypedKeyedWriteSource:
             )
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
-        """The facts this value states about the state the write revises."""
-        return resolve_keyed_write_source(metadata_of_instance(model, self._value), self._value)
+        """The facts this value states about the state the write revises,
+        refusing a value whose key is absent before any of them is judged.
+
+        Only a value no source published and no insertion authorizes can lack
+        its key, so only such a value, which the provenance rule refuses
+        anyway, has its key asked after.
+        """
+        value = self._value
+        entity = metadata_of_instance(model, value)
+        resolved = resolve_keyed_write_source(entity, value)
+        if (
+            resolved.provenance == "none"
+            and resolved.authoring is None
+            and not states_key(model, entity, value)
+        ):
+            raise instructions.key_absent_refusal(entity.identity, mutation)
+        return resolved
 
     def prepare(
         self,
@@ -258,11 +294,30 @@ class TypedKeyedInsertSource[E: EntityBase]:
     def __init__(self, instance: E) -> None:
         self._instance = instance
 
-    def publish(self, opened: OpenedKeyedWrite) -> E:
-        """The value the insert answers: the instance it was stated through,
-        which carries the insertion's authority from here on."""
-        bind_insertion(self._instance, opened.authority)
-        return self._instance
+    def publish(self, attempt: TxnAttempt, opened: OpenedKeyedWrite) -> E:
+        """The value the insert answers.
+
+        Where the instance supplied its key, it is that instance, which carries
+        the insertion's authority from here on. Where the insert allocated the
+        key, it is a fresh immutable instance of the Entity published from the
+        opened row, holding the allocated key and carrying the authority; the
+        instance it was stated through is left as it was and carries none.
+        """
+        if opened.allocated_key is None:
+            bind_insertion(self._instance, opened.authority)
+            return self._instance
+        construction = attempt.selected.construction
+        # An instance's class was composed into the model, so the model publishes instances.
+        assert construction is not None
+        return cast(
+            "E",
+            inserted_value(
+                construction,
+                attempt.model.layouts.entity(opened.identity),
+                opened.row,
+                opened.authority,
+            ),
+        )
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         return None

@@ -63,8 +63,10 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     EntityLocation,
     IndexMetadata,
+    KeySequence,
     MemberShape,
     PersistenceMode,
+    PrimaryKey,
     RelationshipLocation,
     StorageContainer,
     StorageLayout,
@@ -418,6 +420,13 @@ def _resolution_of(cls: type) -> Resolution:
         framework_owned=names.framework_owned_py,
         restores_presence=False,
         violations=lambda changes: _edit_violations(entity, cls.__name__, names, validate, changes),
+        caller_omittable=frozenset(
+            py_name
+            for py_name, member in names.members.items()
+            if isinstance(member, AttributeMetadata)
+            and isinstance(key := member.primary_key, PrimaryKey)
+            and isinstance(key.generation, KeySequence)
+        ),
     )
     type.__setattr__(cls, _EDIT_RESOLUTION_SLOT, resolution)
     return resolution

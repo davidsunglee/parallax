@@ -10,7 +10,7 @@ import pytest
 
 from parallax.core import (
     POSTGRES,
-    PUBLICATION_RELOCATION_REFUSED,
+    PUBLICATION_BREAKING_CHANGE_REFUSED,
     Attr,
     BindingError,
     DomainModel,
@@ -71,7 +71,7 @@ def test_a_binding_only_table_move_is_refused_by_publication_and_coordinated_by_
     serving = ServingModel(current)
     with pytest.raises(UsageError) as refused:
         serving.publish(_selection(_LEDGERS, moved, "r2"), expected=current)
-    assert refused.value.code == PUBLICATION_RELOCATION_REFUSED
+    assert refused.value.code == PUBLICATION_BREAKING_CHANGE_REFUSED
     assert "px.bp_ledger to px_archive.bp_ledger" in str(refused.value)
     assert serving.current() is current
 
@@ -92,7 +92,7 @@ def test_a_binding_only_sequence_move_is_refused_and_coordinated_alike() -> None
     current = _selection(_TICKETS, _DEFAULT)
     with pytest.raises(UsageError) as refused:
         ServingModel(current).publish(_selection(_TICKETS, moved, "r2"), expected=current)
-    assert refused.value.code == PUBLICATION_RELOCATION_REFUSED
+    assert refused.value.code == PUBLICATION_BREAKING_CHANGE_REFUSED
     assert "sequence 'ticketNumbers' from px.ticketNumbers to px_keys.ticketNumbers" in str(
         refused.value
     )

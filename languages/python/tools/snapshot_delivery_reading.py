@@ -22,6 +22,7 @@ from time import perf_counter
 from types import ModuleType, TracebackType
 from typing import TYPE_CHECKING, Any, Final, cast
 
+from parallax.conformance._mechanism.sole_connection import BoundReservationSource
 from parallax.conformance.bindings import DEFAULT_BINDING
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL, OrderItem
@@ -265,6 +266,13 @@ class _SoleRuntime:
     def principal_source(self, authorization: object) -> _SoleRuntime:
         del authorization
         return self
+
+    def reservation_source(self) -> BoundReservationSource:
+        return BoundReservationSource(self)
+
+    def new_reservation_context(self, deadline: float) -> _SoleScope:
+        del deadline
+        return _SoleScope(self._connection)
 
     def new_context(self, policy: RoutePolicy, /) -> _SoleScope:
         del policy

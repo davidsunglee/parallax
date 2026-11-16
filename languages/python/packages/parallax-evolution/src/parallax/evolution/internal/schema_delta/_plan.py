@@ -8,6 +8,7 @@ from parallax.core.internal import storage_layout
 from parallax.core.internal.base import JSON, STRING, NeutralType
 from parallax.core.internal.database_binding import (
     ResolvedBinding,
+    ResolvedSequence,
     ResolvedTable,
     ResolvedTemporalConstraints,
 )
@@ -22,7 +23,9 @@ from parallax.core.internal.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     IndexIdentity,
+    KeySequence,
     Metamodel,
+    PrimaryKey,
     TablePerHierarchy,
     inheritance_parent,
 )
@@ -62,6 +65,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateIndex,
+    CreateSequence,
     CreateTable,
     DocumentRootCheck,
     DropIndex,
@@ -122,7 +126,11 @@ def plan(evolution: UnilateralEvolution) -> Plan:
         for operation in _lower(layout, later, earlier, causes, dialect)
     )
     return Plan(
-        operations=(*_prerequisites(operations, evolution.operations), *operations),
+        operations=(
+            *_prerequisites(operations, evolution.operations),
+            *_created_sequences(evolution),
+            *operations,
+        ),
         collisions=collision_groups(
             census(
                 _authored_indices(earlier),
@@ -161,6 +169,43 @@ def _prerequisites(
         if any(operation in dependent.caused_by for dependent in dependents)
     )
     return (CreateExtension(name=_EXCLUSION_PREREQUISITE, caused_by=caused_by),)
+
+
+def _created_sequences(evolution: UnilateralEvolution) -> tuple[CreateSequence, ...]:
+    """One creation for each native allocator the later binding resolves and
+    the earlier one does not, caused by the operations that added an Entity
+    drawing from it.
+
+    An allocator surviving both endpoints already has its sequence, however its
+    consumers changed, so none is created, reset, or repositioned for it.
+    """
+    held: Mapping[str, object] = {} if evolution.earlier is None else evolution.earlier.sequences
+    created = tuple(
+        sequence
+        for allocator, sequence in evolution.later.sequences.items()
+        if isinstance(sequence, ResolvedSequence) and allocator not in held
+    )
+    if not created:
+        return ()
+    families = inheritance_facet_of(evolution.later.meta)
+    drawing: dict[str, set[EntityIdentity]] = {}
+    for entity in evolution.later.meta.entities:
+        view = families.entity(entity.identity)
+        key = None if view is None else view.primary_key.primary_key
+        if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
+            drawing.setdefault(key.generation.name, set()).add(entity.identity)
+    return tuple(
+        CreateSequence(
+            sequence=sequence,
+            caused_by=tuple(
+                operation
+                for operation in evolution.operations
+                if isinstance(operation, EntityAdded | ConcreteSubtypeAdded)
+                and operation.entity in drawing.get(sequence.allocator, ())
+            ),
+        )
+        for sequence in created
+    )
 
 
 def temporal_backing_indices(resolved: ResolvedBinding) -> tuple[TemporalBackingIndex, ...]:

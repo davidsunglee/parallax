@@ -35,6 +35,7 @@ __all__ = [
     "DatabaseStartupError",
     "Invalidated",
     "ReleaseUnconfirmed",
+    "ReservationContextSource",
     "Returned",
     "StartupPhase",
 ]
@@ -335,6 +336,30 @@ class ConnectionContextSource(Protocol):
 
 
 @runtime_checkable
+class ReservationContextSource(Protocol):
+    """A resource-free source of the single-use contexts a key reservation runs in.
+
+    Each context acquires the writer under the runtime's own login, whatever
+    authority the execution that needed keys runs under, from capacity apart
+    from every application route: at most one connection per runtime, opened
+    only when a reservation first needs it. Its acquisition, setup, statement,
+    and cleanup all spend one deadline, which entering bounds and the setup
+    carries into the session so a statement waiting on the server is bounded
+    too.
+    """
+
+    @property
+    def reservation_timeout(self) -> float:
+        """Seconds one reservation may take, from its start to its completion."""
+        ...
+
+    def new_context(self, deadline: float, /) -> ConnectionContext:
+        """Construct a context bounded by ``deadline``, an instant on
+        :func:`time.monotonic`'s clock, without acquiring or performing I/O."""
+        ...
+
+
+@runtime_checkable
 class DatabaseRuntime[Authorization = object](Protocol):
     """The running database resource one connected ``Database`` owns.
 
@@ -387,6 +412,14 @@ class DatabaseRuntime[Authorization = object](Protocol):
 
     def principal_source(self, authorization: Authorization) -> ConnectionContextSource:
         """Validate and bind one provider authorization without I/O."""
+        ...
+
+    def reservation_source(self) -> ReservationContextSource:
+        """The writer capacity key reservations borrow, without I/O.
+
+        A closed runtime refuses a reservation's acquisition as it refuses any
+        other.
+        """
         ...
 
     def close(self) -> None:

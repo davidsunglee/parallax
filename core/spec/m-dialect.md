@@ -743,6 +743,34 @@ enforcement (`m-unit-work`), and the unchanged-milestone guard alike. A dialect
 answering no keeps every write's ordinary close-and-chain, and no planning or
 lowering step substitutes another proof for the count.
 
+### Native sequences
+
+A dialect states the values its native sequences hold, or that it has none, and
+the native codes that report a sequence past its bound. Postgres sequences hold
+`[-2^63, 2^63 - 1]` and report exhaustion as `2200H`
+(`sequence_generator_limit_exceeded`); MariaDB sequences hold
+`[-2^63 + 1, 2^63 - 2]` as signed values and report exhaustion as error `4084`.
+`m-database-binding` intersects a key type's values with these bounds, and refuses
+an allocator a dialect cannot represent before anything executes.
+
+Every sequence statement is the dialect's, taking a rendered sequence reference
+(*Physical table references*) and a small definition value, never a binding:
+
+- **Creating** one takes its data type, its increment, its inclusive bounds, and
+  its start. Postgres spells
+  `create sequence <name> as <type> increment by <n> minvalue <min> maxvalue <max>
+  start with <start> no cycle`, which leaves the server-side cache at one value.
+- **Reserving** from one is a single row-returning statement with one bind, the
+  rendered name, answering one row — the reservation's first value, then the live
+  increment, minimum, maximum, whether the sequence cycles, and its data type — or
+  no row where the name resolves to no sequence. Postgres spells
+  `select pg_catalog.nextval(s.seqrelid) as first_key, s.seqincrement as increment,
+  s.seqmin as minimum, s.seqmax as maximum, s.seqcycle as cycles,
+  pg_catalog.format_type(s.seqtypid, null) as data_type from pg_catalog.pg_sequence s
+  where s.seqrelid = pg_catalog.to_regclass(?)`. Every catalog name is qualified
+  and the bind is resolved as written, so neither the session's search path nor
+  its role redirects which sequence it reserves from or reads back.
+
 ### Identifier byte limit
 
 `maxIdentifierBytes` is how many bytes of an identifier the database stores

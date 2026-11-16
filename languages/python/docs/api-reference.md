@@ -71,6 +71,7 @@ Declare models, configure and observe execution, and handle errors.
 - `Int64`: Column type for 64-bit signed integers.
 - `InvalidData`: One result root that stored data contradicted, with the issues found.
 - `Json`: Column type for JSON values, except a bare top-level null.
+- `KeySequence`: Key generation that hands out keys from blocks a native database sequence reserves.
 - `LoggingLifecycleProvider`: A Provider that logs each root execution through a Logger you configure.
 - `MetamodelIssue`: One fatal model defect, located in the model's own vocabulary.
 - `ModelSelection`: A Domain Model prepared under a named edition, ready for a `ServingModel` to serve.
@@ -142,7 +143,7 @@ Declare models, configure and observe execution, and handle errors.
 - `ONE_TO_ONE`: Relationship cardinality: one source row has at most one target row.
 - `POSTGRES`: The PostgreSQL Dialect.
 - `PRINCIPAL_INVALID`: Code for a Principal whose subject or authorization the database runtime cannot accept.
-- `PUBLICATION_RELOCATION_REFUSED`: `publish` refused a candidate that moves a surviving table or sequence.
+- `PUBLICATION_BREAKING_CHANGE_REFUSED`: `publish` refused a candidate that breaks a surviving table, sequence, or allocator.
 - `PoolSample`: One pool metrics sample: available, unavailable or detached.
 - `QUERY_TARGET_NOT_IN_MODEL`: Code for a query whose target Entity the connected model does not declare.
 - `READ_ONLY`: Persistence mode for an Entity whose rows another system writes.
@@ -282,7 +283,7 @@ Compare two Domain Models and produce the schema change between them.
 - `CoordinationRequirement`: An operation that needs coordination, with its reasons.
 - `CreatedIndex`: An index a schema change creates, so a later violation can be traced to it.
 - `SchemaDelta`: The ordered dialect statements carrying a database to the later model.
-- `SchemaTarget`: The table and member, or database extension, a schema operation acts on.
+- `SchemaTarget`: The table and member, sequence, or database extension a schema operation acts on.
 - `UnilateralEvolution`: A model change a live database can apply directly with `schema_delta`.
 - `UnsupportedSchemaOperation`: An operation the Dialect cannot express as SQL.
 
@@ -301,6 +302,7 @@ The operations and behavioral impacts an evolution reports.
 
 ### Classes
 
+- `AllocatorSettingsChanged`: A native allocator both selections declare changes its allocation settings.
 - `AsOfAxisAdded`: An As-Of Axis present only in the later endpoint.
 - `AsOfAxisRemoved`: An As-Of Axis present only in the earlier endpoint.
 - `AttributeAdded`: A scalar Attribute present only in the later endpoint.
@@ -372,7 +374,7 @@ The operations and behavioral impacts an evolution reports.
 ### Constants and types
 
 - `BehavioralImpact`: Any behavioral impact an evolution reports.
-- `EvolutionOperation`: Any operation an evolution reports, logical or a relocation.
+- `EvolutionOperation`: Any operation an evolution reports, logical or a breaking physical change.
 
 ## `parallax.postgres`
 

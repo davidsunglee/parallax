@@ -1,5 +1,9 @@
 # Model evolution is described at model altitude and applied by the application
 
+*Superseded in part (2026-11, [ADR 0098](0098-native-key-generation-rolls-out-through-publication-and-evolution.md)):*
+a KeySequence key is caller-omittable rather than framework-owned, and a
+generation change's classification reads its direction.
+
 Carrying a live tenant from one accepted Metamodel to the next is two deep
 modules with a real seam between them. `m-model-evolution` exposes
 `evolve(earlier: Metamodel | absent, later: Metamodel)`, returning the closed

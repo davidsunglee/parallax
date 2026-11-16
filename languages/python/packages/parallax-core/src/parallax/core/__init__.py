@@ -5,7 +5,7 @@ from __future__ import annotations
 from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import (
-    PUBLICATION_RELOCATION_REFUSED,
+    PUBLICATION_BREAKING_CHANGE_REFUSED,
     ModelSelection,
     PublicationConflictError,
     ServingModel,
@@ -113,7 +113,12 @@ from parallax.core.internal.entity import (
     rel,
 )
 from parallax.core.internal.execution_authority._authority import PRINCIPAL_INVALID, Principal
-from parallax.core.internal.metamodel import ApplicationAssigned, Columns, MetamodelIssue
+from parallax.core.internal.metamodel import (
+    ApplicationAssigned,
+    Columns,
+    KeySequence,
+    MetamodelIssue,
+)
 from parallax.core.internal.model_formation import MetamodelValidationError
 from parallax.core.internal.object_query import LATEST, TX_TIME, VALID_TIME
 from parallax.core.internal.temporal_read import Edge, Pin
@@ -130,7 +135,7 @@ __all__ = [
     "ONE_TO_ONE",
     "POSTGRES",
     "PRINCIPAL_INVALID",
-    "PUBLICATION_RELOCATION_REFUSED",
+    "PUBLICATION_BREAKING_CHANGE_REFUSED",
     "QUERY_TARGET_NOT_IN_MODEL",
     "READ_ONLY",
     "READ_WRITE",
@@ -179,6 +184,7 @@ __all__ = [
     "InvalidDataError",
     "InvalidValueError",
     "Json",
+    "KeySequence",
     "LoggingLifecycleProvider",
     "MetamodelIssue",
     "MetamodelValidationError",

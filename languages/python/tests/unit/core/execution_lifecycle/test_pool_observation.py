@@ -318,6 +318,9 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
             del authorization
             return self
 
+        def reservation_source(self) -> Any:
+            return self
+
         def new_context(self, policy: object, /) -> Any:
             raise AssertionError("no acquisition expected")
 
@@ -365,6 +368,9 @@ class _ParkedRuntime:
 
     def principal_source(self, authorization: object) -> _ParkedRuntime:
         del authorization
+        return self
+
+    def reservation_source(self) -> Any:
         return self
 
     def new_context(self, policy: object, /) -> Any:

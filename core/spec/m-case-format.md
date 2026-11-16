@@ -2722,6 +2722,10 @@ endpoint of its Entity (see `m-metamodel`),
 endpoint bears a reserved temporal endpoint name (see `m-metamodel`),
 `pk-gen-sequence-conflict`: two key declarations share a Sequence allocator key
 but disagree on its settings or key type (see `m-pk-gen`),
+`pk-gen-key-sequence-conflict`: two key declarations share a KeySequence
+allocator key but disagree on its strategy, settings, or key type (see `m-pk-gen`),
+`pk-gen-key-sequence-subtype-override`: an inheritance subtype declares a
+KeySequence key of its own (see `m-pk-gen`),
 `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,

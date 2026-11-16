@@ -19,6 +19,7 @@ from parallax.core.internal.base import (
     Uuid,
 )
 from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
     PhysicalSequence,
     PhysicalTable,
     SequenceRelocated,
@@ -39,6 +40,7 @@ from parallax.core.internal.metamodel import (
     IndexIdentity,
     Inheritance,
     InheritanceStrategy,
+    KeySequence,
     Max,
     Multiplicity,
     NotPrimaryKey,
@@ -374,8 +376,8 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
             }
         case IndexAdded() | IndexRemoved() | IndexAltered():
             return _subject_operation(operation, "index", _index(operation.index))
-        case TableRelocated() | SequenceRelocated():
-            return _relocation(operation)
+        case TableRelocated() | SequenceRelocated() | AllocatorSettingsChanged():
+            return _breaking_change(operation)
         case DeclarationOrderChanged():
             return {
                 "kind": type(operation).__name__,
@@ -388,7 +390,21 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
             }
 
 
-def _relocation(operation: TableRelocated | SequenceRelocated) -> dict[str, Any]:
+def _allocation_settings(settings: tuple[int, int, tuple[int, int]]) -> dict[str, Any]:
+    batch_size, increment_size, (low, high) = settings
+    return {"batchSize": batch_size, "incrementSize": increment_size, "keyRange": [low, high]}
+
+
+def _breaking_change(
+    operation: TableRelocated | SequenceRelocated | AllocatorSettingsChanged,
+) -> dict[str, Any]:
+    if isinstance(operation, AllocatorSettingsChanged):
+        return {
+            "kind": type(operation).__name__,
+            "sequence": operation.allocator,
+            "earlier": _allocation_settings(operation.earlier.allocation_settings),
+            "later": _allocation_settings(operation.later.allocation_settings),
+        }
     subject = (
         {"entity": _entity(operation.mapping_owner)}
         if isinstance(operation, TableRelocated)
@@ -659,6 +675,14 @@ def _generation(generation: PkGeneration) -> Any:
             return "application-assigned"
         case Max():
             return "max"
+        case KeySequence():
+            return {
+                "strategy": "key-sequence",
+                "name": generation.name,
+                "batchSize": generation.batch_size,
+                "initialValue": generation.initial_value,
+                "incrementSize": generation.increment_size,
+            }
         case _:
             return {
                 "strategy": "sequence",

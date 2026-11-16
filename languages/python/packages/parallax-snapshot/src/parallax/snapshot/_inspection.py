@@ -50,6 +50,7 @@ __all__ = [
     "SnapshotInspectionCode",
     "SnapshotNodeState",
     "bind_insertion",
+    "insertion_authoring",
     "insertion_of",
     "inspection_refusal",
     "is_view_loaded",
@@ -256,6 +257,13 @@ def bind_insertion(value: Entity, identity: InsertionIdentity) -> None:
     attach_lifecycle_state(
         value, _InsertionAuthoring(identity) if node is None else _AuthoredNode(identity, node)
     )
+
+
+def insertion_authoring(identity: InsertionIdentity) -> DetachedLifecycleState:
+    """The lifecycle state a value an allocating insert published carries: the
+    insertion's authority alone, with no materialized node state and so no
+    read provenance."""
+    return _InsertionAuthoring(identity)
 
 
 def typed_pin_of(node: object) -> Pin:
