@@ -182,8 +182,8 @@ class Protocol:
 CHECK: Final = Protocol(warmup=0, repeats=1)
 """What a run with no output asks of each case: one transaction, fully graded."""
 
-_CAPTURE: Final = Protocol(warmup=20, repeats=50)
-_CAPTURE_LARGE_BATCH: Final = Protocol(warmup=3, repeats=15)
+_CAPTURE: Final = Protocol(warmup=50, repeats=200)
+_CAPTURE_LARGE_BATCH: Final = Protocol(warmup=5, repeats=30)
 _LARGE_BATCH: Final = 1_000
 
 

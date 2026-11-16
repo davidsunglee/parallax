@@ -42,7 +42,9 @@ from tests.api._pooled_primary_key_diagnostic_support import (
     CHECK,
     MODEL,
     CallCounter,
+    Case,
     CaseReading,
+    Protocol,
     Tally,
     capture_protocol,
     check_stored,
@@ -60,20 +62,30 @@ def _server_version(profile_run: Any) -> str:
     return str(version)
 
 
+def _graded(profile_run: Any, case: Case, protocol: Protocol) -> CaseReading:
+    """``case`` run on a fresh root over freshly provisioned tables, then
+    graded by what it stored."""
+    profile_run.reset(model_of(MODEL), {}, TEST_BINDING)
+    counter = CallCounter()
+    root = own_root(
+        connect(profile_run.port, MODEL, binding=TEST_BINDING, lifecycle_provider=counter)
+    )
+    reading = run_case(root.using_database_login(), counter, case, protocol)
+    root.close()
+    check_stored(profile_run, case, 1 + protocol.warmup + protocol.repeats)
+    return reading
+
+
 def test_every_frozen_case_tallies_and_stores_only_its_inserts(profile_run: Any) -> None:
+    # A capture first runs every case once unrecorded, so no case's first
+    # reading pays for warming the process rather than for its own root.
     mode, out = requested()
-    readings: list[CaseReading] = []
-    for case in CASES:
-        profile_run.reset(model_of(MODEL), {}, TEST_BINDING)
-        counter = CallCounter()
-        root = own_root(
-            connect(profile_run.port, MODEL, binding=TEST_BINDING, lifecycle_provider=counter)
-        )
-        protocol = CHECK if out is None else capture_protocol(case)
-        reading = run_case(root.using_database_login(), counter, case, protocol)
-        root.close()
-        check_stored(profile_run, case, 1 + protocol.warmup + protocol.repeats)
-        readings.append(reading)
+    if out is None:
+        readings = [_graded(profile_run, case, CHECK) for case in CASES]
+    else:
+        for case in CASES:
+            _graded(profile_run, case, CHECK)
+        readings = [_graded(profile_run, case, capture_protocol(case)) for case in CASES]
     document = readings_document(mode, readings, _server_version(profile_run))
     if out is not None:
         write_readings(out, "live", document)
