@@ -314,8 +314,8 @@ names the gap:
   [locking](05-transactions.md#optimistic-and-locking-concurrency) of a family stored
   table per concrete subtype, through a type that spans several of its tables, such as
   `Delivery` in [Modeling](02-modeling.md#inheritance-families).
-- `schema-evolution-unsupported`: `schema_delta` was asked for a schema change the
-  Dialect can't render. That refusal is an `UnsupportedSchemaEvolutionError`, whose
+- `schema-evolution-unsupported`: `schema_delta` or `coordinated_migration` was asked
+  for a schema change the Dialect can't render. That refusal is an `UnsupportedSchemaEvolutionError`, whose
   `dialect_identity` names the Dialect and whose `operations` lists every operation it
   can't render.
 
@@ -742,7 +742,7 @@ isn't caught: the client asked for something reasonable, so it reaches
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool; try later when it `is_transient` |
 | `DatabaseStartupError` | by `connect` | No | Check the route its `route` and `phase` name, and its cause |
 | `CredentialResolutionError` | as the cause of a `ConnectionAcquisitionError` or `DatabaseStartupError` | No | Check the credential source and the secret it reads; the message never carries the secret |
-| `UnsupportedSchemaEvolutionError` | by `schema_delta`, before any statement is produced | No | Write a migration by hand for each change its `operations` lists |
+| `UnsupportedSchemaEvolutionError` | by `schema_delta` or `coordinated_migration`, before any statement is produced | No | Write a migration by hand for each change its `operations` lists |
 | A `UsageError` whose `code` is `"lifecycle-provider-failed"` or `"lifecycle-reentered"` | before the operation does any work | No | Fix the Provider whose `open` failed (its `__cause__`), or stop the Handler calling back into the Handle it observes |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |
 
