@@ -235,10 +235,6 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
-    if case.reservations and not case.is_write_sequence:
-        raise CaseFailure(
-            f"{case.path.name}: only a writeSequence's then.statements may hold a reservation"
-        )
 
 
 def _assert_write_sequence_shape(case: Case) -> None:
@@ -684,7 +680,8 @@ def _keyless_rows(case: Case, step: Mapping[str, Any]) -> int:
 
 def _reservation_steps(case: Case) -> dict[int, int]:
     """Each reservation's golden statement index to the step whose writes follow
-    it: a step's keys are allocated at its calls, before its flush writes them."""
+    it: a step's keys are allocated at its calls, before its flush writes any of
+    them."""
     steps = case.write_sequence
     owners: dict[int, int] = {}
     step, written = 0, 0
@@ -694,6 +691,12 @@ def _reservation_steps(case: Case) -> dict[int, int]:
                 raise CaseFailure(
                     f"{case.path.name}: then.statements[{index}] reserves keys after the "
                     "sequence's last write, so no keyless row takes them"
+                )
+            if written:
+                raise CaseFailure(
+                    f"{case.path.name}: then.statements[{index}] reserves keys after "
+                    f"writeSequence step {step} already wrote, so its rows were bound before "
+                    "their keys were reserved"
                 )
             owners[index] = step
             continue

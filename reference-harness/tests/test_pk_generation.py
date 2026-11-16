@@ -344,6 +344,15 @@ def test_reservations_a_steps_keyless_rows_do_not_need_are_rejected(
         _native_allocation(case, "postgres")
 
 
+def test_a_reservation_after_its_steps_first_write_is_rejected() -> None:
+    case = copy.deepcopy(_pkgen_case("m-pk-gen-020"))
+    case.when["writeSequence"][0]["statements"] = 2
+    reservation, insert = case.then["statements"]
+    case.then["statements"] = [insert, reservation, copy.deepcopy(insert)]
+    with pytest.raises(CaseFailure, match="after writeSequence step 0 already wrote"):
+        _native_allocation(case, "postgres")
+
+
 class _AnsweringDb:
     """Answers every query with one row holding *value*, recording what it ran."""
 

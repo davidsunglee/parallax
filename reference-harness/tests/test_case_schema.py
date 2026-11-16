@@ -1710,6 +1710,36 @@ def _error_statement_step_grading_rows() -> dict[str, Any]:
     return doc
 
 
+def _reservation_on_a_read() -> dict[str, Any]:
+    doc = _read_case()
+    doc["then"]["statements"][0]["purpose"] = "reservation"
+    return doc
+
+
+def _reservation_on_a_scenario_step() -> dict[str, Any]:
+    doc = _scenario_case()
+    doc["when"]["scenario"][0]["statements"][0]["purpose"] = "reservation"
+    return doc
+
+
+def _reservation_on_a_retry_attempt() -> dict[str, Any]:
+    doc = _conflict_retry_case()
+    doc["when"]["attempts"][0]["statements"][0]["purpose"] = "reservation"
+    return doc
+
+
+def _reservation_on_a_concurrency_step() -> dict[str, Any]:
+    doc = _concurrency_success_case()
+    doc["when"]["concurrency"]["rounds"][0]["A"]["statements"][0]["purpose"] = "reservation"
+    return doc
+
+
+def test_a_write_sequence_golden_statement_may_be_a_reservation() -> None:
+    doc = _write_sequence_case()
+    doc["then"]["statements"][0]["purpose"] = "reservation"
+    assert _is_valid(doc)
+
+
 def _isolation_on_a_scenario_step() -> dict[str, Any]:
     # A level is the whole case's, declared once under `when.uow`; a step naming its
     # own would leave one scenario's groups running at levels nothing states together.
@@ -1921,6 +1951,10 @@ REJECTED_CASES = {
     "error-step-declaring-a-write-kind": _error_step_declaring_a_write_kind,
     "error-step-declaring-a-read-kind": _error_step_declaring_a_read_kind,
     "error-statement-step-grading-rows": _error_statement_step_grading_rows,
+    "reservation-on-a-read": _reservation_on_a_read,
+    "reservation-on-a-scenario-step": _reservation_on_a_scenario_step,
+    "reservation-on-a-retry-attempt": _reservation_on_a_retry_attempt,
+    "reservation-on-a-concurrency-step": _reservation_on_a_concurrency_step,
 }
 
 
