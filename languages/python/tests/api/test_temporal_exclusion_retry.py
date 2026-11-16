@@ -477,7 +477,7 @@ def _await(ready: Callable[[], bool]) -> None:
 # --------------------------------------------------------------------------- #
 # Two writers racing over one object's coverage.                               #
 # --------------------------------------------------------------------------- #
-type _Work = Callable[[TxnContext], None]
+type _Work = Callable[[TxnContext], object]
 
 
 def _race(

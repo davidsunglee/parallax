@@ -735,8 +735,8 @@ def opened_wire_entity(
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
 
-    A Wire insert's caller holds nothing afterwards — the Typed peer leaves the
-    caller holding the instance it passed — so the verb answers the row it
+    A Wire insert's caller holds no carrier of its own afterwards — the Typed
+    peer answers the instance it was passed — so the verb answers the row it
     buffered, in the one representation that can be handed straight back to a
     keyed verb. The node carries the insertion's ``authority``, which is what
     makes it a keyed source at all, and no Read Evidence, since no read published

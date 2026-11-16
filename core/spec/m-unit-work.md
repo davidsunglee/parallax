@@ -465,14 +465,21 @@ their object by key (*Target writes*).
 An **insertion-authorized write** is a write of an object this unit of work
 inserted, authorized by that insertion rather than by a read. Successful
 admission of an insertion grants an **authority** that belongs to the source the
-insertion was stated through — the value a typed insert took and every value
-derived from it afterwards, or the node a document insert answered — and is
-compared by identity alone: an equal key, physical address, or Transaction
+insertion was stated through — the value a typed insert took and answered and
+every value derived from it afterwards, or the node a document insert answered —
+and is compared by identity alone: an equal key, physical address, or Transaction
 Instant never stands for it. A value derived before the admission, a value built
 independently with the same key, and a plain or serialized copy of a source carry
 none; a refused admission grants none. The authority is private to its source and
 outside its members, so no data conversion can manufacture it. A value a read
 produced keeps that read's own evidence whatever this unit of work inserted.
+
+An insert answers its source at the call, as an immutable keyed value of the
+inserted Entity, while its row stays buffered. No flush writes into an answered
+value: a version or temporal endpoint the flush stores stays absent on it, and an
+ordinary participating read observes the stored state. An edit of an answered
+value derives a new value and leaves the answered one as it was; neither carries
+Read Evidence for what the edit wrote.
 
 The authority survives flushes and joined scopes, and ends with the attempt:
 commit, rollback, and every retry end it, so a source carrying an earlier

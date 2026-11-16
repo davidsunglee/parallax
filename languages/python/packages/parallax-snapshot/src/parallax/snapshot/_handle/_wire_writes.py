@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
+    OpenedKeyedWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     keyed_instruction,
@@ -126,22 +127,18 @@ def wire_insert(
     still holds where a Typed one did, which is the only carrier that exists in
     each case.
 
-    The returned node is what closes the one Typed/Wire parity gap on the write
-    surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure
-    Wire caller must be handed something too or it can never revise the row it
-    just opened. What it publishes is the buffered ROW rather than the payload —
+    The returned node is the Wire counterpart of the instance ``tx.insert``
+    answers: a pure Wire caller holds no carrier of its own, so without it it
+    could never revise the row it just opened. What it publishes is the
+    buffered ROW rather than the payload —
     a ``many`` the payload left out is answered as the empty collection that row
     stores. It carries the insertion's authority and no Read Evidence, since no
     read published it: the writes off it are licensed by that authority, before
     and after a flush, and compose with the insert while it is pending.
     """
-    opened = attempt.keyed_insert(
-        WireKeyedInsertSource(entity_name, data), valid_from=valid_from, until=until
-    )
-    row = opened.row
-    return opened_wire_entity(
-        attempt.model, opened.identity, row.stated_cells(), row.selection.absent, opened.authority
-    )
+    source = WireKeyedInsertSource(entity_name, data)
+    opened = attempt.keyed_insert(source, valid_from=valid_from, until=until)
+    return source.publish(attempt, opened)
 
 
 def wire_keyed_write(
@@ -605,6 +602,19 @@ class WireKeyedInsertSource:
             self._payload,
             valid_from=valid_from,
             until=until,
+        )
+
+    def publish(self, attempt: TxnAttempt, opened: OpenedKeyedWrite) -> WireEntity:
+        """The frozen node the insert answers, published from the buffered row
+        rather than the payload, carrying the insertion's authority and no Read
+        Evidence."""
+        row = opened.row
+        return opened_wire_entity(
+            attempt.model,
+            opened.identity,
+            row.stated_cells(),
+            row.selection.absent,
+            opened.authority,
         )
 
 

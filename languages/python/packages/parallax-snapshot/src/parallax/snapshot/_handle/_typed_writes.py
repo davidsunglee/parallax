@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
+    OpenedKeyedWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
 )
@@ -42,6 +43,7 @@ from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,
 )
+from parallax.snapshot._inspection import bind_insertion
 
 __all__ = [
     "TypedInstanceTargetWriteAdapter",
@@ -240,7 +242,7 @@ class TypedKeyedWriteSource:
         return lambda: instructions.assigned_members(meta, entity, assignments)
 
 
-class TypedKeyedInsertSource:
+class TypedKeyedInsertSource[E: EntityBase]:
     """The Typed Keyed Insert Source: what a fresh Entity instance answers the
     ingress's insert door.
 
@@ -253,8 +255,14 @@ class TypedKeyedInsertSource:
 
     __slots__ = ("_instance",)
 
-    def __init__(self, instance: EntityBase) -> None:
+    def __init__(self, instance: E) -> None:
         self._instance = instance
+
+    def publish(self, opened: OpenedKeyedWrite) -> E:
+        """The value the insert answers: the instance it was stated through,
+        which carries the insertion's authority from here on."""
+        bind_insertion(self._instance, opened.authority)
+        return self._instance
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         return None

@@ -308,11 +308,16 @@ members into fresh mutable mappings and lists, preserving Wire spellings and
 absent members; it queries, completes, and authorizes nothing, and records no
 edit history.
 
-An insertion's authority (`m-unit-work` *Insertion authority*) rides its source
-privately. `tx.insert` binds it to the instance it took, beside any Snapshot
-state that instance already carries, and `edit` carries it to every value
-derived from that instance afterwards; `tx.wire.insert` answers a node carrying
-it and no Read Evidence. It is no member and no mapping key:
+Typed `insert[E](instance: E) -> E` returns the immutable keyed value the
+insertion was stated through, typed as its argument; for a supplied key that is
+`instance` itself, and `tx.wire.insert` likewise answers a node. A flush never
+writes into a returned value: a version or temporal endpoint the flush stores
+stays absent on it, and an ordinary participating read observes the stored
+state. An insertion's authority (`m-unit-work` *Insertion authority*) rides its
+source privately. `tx.insert` binds it to the instance it took and returns,
+beside any Snapshot state that instance already carries, and `edit` carries it
+to every value derived from that instance afterwards; `tx.wire.insert` answers
+a node carrying it and no Read Evidence. It is no member and no mapping key:
 `model_dump`, `dict(node)`, and JSON drop it, and a pickled inserted instance or
 node unpickles as plain domain data that authorizes nothing — so pickling an
 inserted instance succeeds, unlike a read's node. Inserting the same instance

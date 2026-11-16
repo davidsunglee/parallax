@@ -17,7 +17,7 @@ every instant known in advance.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any, Literal
+from typing import Any, Literal, assert_type
 
 import pytest
 
@@ -197,8 +197,7 @@ def _insert_span(
 ) -> _Opened:
     bounds: dict[str, Any] = {} if until is None else {"until": until}
     if representation == "typed":
-        source = entity(id=1, amount=amount, spec=_SPEC)
-        tx.insert(source, valid_from=valid_from, **bounds)
+        source = tx.insert(entity(id=1, amount=amount, spec=_SPEC), valid_from=valid_from, **bounds)
         return _Opened(tx, representation, source)
     node = tx.wire.insert(
         _name(entity),
@@ -584,9 +583,10 @@ def test_an_edit_through_an_insertion_whose_anchor_was_removed_rolls_back(
     assert _span_rows(profile_run, entity) == []
 
 
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
 def test_an_insertion_authority_ends_with_its_attempt(
-    profile_run: Any, representation: _Representation
+    profile_run: Any, representation: _Representation, concurrency: _Concurrency
 ) -> None:
     db = _db(profile_run, _ATTEMPT, _LATER)
     opened: list[_Opened] = []
@@ -594,7 +594,7 @@ def test_an_insertion_authority_ends_with_its_attempt(
     def insert(tx: TxnContext) -> None:
         opened.append(_insert_span(tx, ColumnsSpan, representation, valid_from=_JAN))
 
-    db.transact(insert)
+    db.transact(insert, concurrency=concurrency)
 
     def later(tx: TxnContext) -> None:
         source = opened[0]
@@ -602,7 +602,7 @@ def test_an_insertion_authority_ends_with_its_attempt(
         with raises_code(UsageError, "write-value-not-stored"):
             source.update(amount=150)
 
-    db.transact(later)
+    db.transact(later, concurrency=concurrency)
     assert _span_rows(profile_run, ColumnsSpan) == _current((_JAN, None, 100))
 
 
@@ -653,3 +653,52 @@ def test_a_reinsertion_at_a_later_anchor_is_removed_from_its_own_anchor(
 
     db.transact(edit)
     assert _span_rows(profile_run, entity) == _current((_MAR, None, 300))
+
+
+# --------------------------------------------------------------------------- #
+# What a Typed insert answers: the instance it was passed, which carries the   #
+# insertion and which no flush writes into.                                    #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("entity", [ColumnsLedger, DocumentLedger])
+def test_an_insert_answers_its_instance_which_edits_across_a_flush_and_stays_as_inserted(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+) -> None:
+    db = _db(profile_run)
+    drafted: ColumnsLedger | DocumentLedger = entity(id=1, label="opened")
+
+    def edit(tx: TxnContext) -> None:
+        inserted = tx.insert(drafted)
+        assert_type(inserted, ColumnsLedger | DocumentLedger)
+        assert inserted is drafted
+        first = inserted.edit(label="first")
+        tx.amend(first)
+        stored = tx.find(entity.where(entity.id == 1)).result()
+        assert (stored.label, stored.version) == ("first", 1)
+        assert (inserted.label, inserted.version) == ("opened", None)
+        assert "version" not in inserted.model_fields_set
+        tx.amend(first.edit(label="second"))
+        with raises_code(UsageError, "write-value-already-stored"):
+            tx.insert(inserted)
+        with raises_code(UsageError, "write-value-already-stored"):
+            tx.insert(entity(id=1, label="again"))
+
+    db.transact(edit, concurrency=concurrency)
+    assert _ledger_rows(profile_run, entity) == [(1, "second", 2)]
+
+
+@pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
+def test_a_transaction_time_insert_answers_its_instance_without_its_stored_start(
+    profile_run: Any, entity: type[Any]
+) -> None:
+    db = _db(profile_run)
+
+    def insert(tx: TxnContext) -> None:
+        inserted = tx.insert(entity(id=1, label="opened", spec=_SPEC))
+        assert tx.find(entity.where(entity.id == 1)).result().tx_start == _ATTEMPT
+        assert inserted.tx_start is None
+        assert "tx_start" not in inserted.model_fields_set
+        tx.amend(inserted.edit(label="revised"))
+
+    db.transact(insert)
+    assert _log_rows(profile_run, entity) == [(_ATTEMPT, None, "revised")]

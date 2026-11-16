@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+`tx.insert(instance)` now returns `instance`, typed as the entity class you passed, instead
+of `None`. The returned instance is the one you passed, still carrying the insertion's
+licence, so `customer = tx.insert(Customer(...))` reads the same as Wire's
+`node = tx.wire.insert(...)`. Nothing is written into it at flush: a version or
+Transaction-Time start the database stores stays absent on it, and an ordinary `find`
+returns the stored values. Code that ignored the result is unaffected; a type annotation
+or check that expected `None` needs updating.
+
 A Bitemporal table's primary key now ends with `out_z` before `thru_z`, and so does every
 index you declare on a Bitemporal entity: `price` is keyed `(sku, out_z, thru_z)` rather
 than `(sku, thru_z, out_z)`. On PostgreSQL 18 the old order made the planner skip the key
