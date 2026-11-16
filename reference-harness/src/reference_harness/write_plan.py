@@ -121,10 +121,9 @@ def unit_resolving_reads(
     writing against existing state reads it first — once per Entity, resolving
     every row of that Entity the unit addresses, because a read interleaved
     between two writes would force-flush the first and destroy the batch collapse
-    the goldens pin. Three kinds of entry owe nothing: an insert
-    OPENS its row, a row an earlier entry of the same unit opened is
-    read-your-own-writes, and an entry carrying a DB-computed write marker states
-    the framework's own bookkeeping, which no public verb accepts.
+    the goldens pin. Two kinds of entry owe nothing: an insert
+    OPENS its row, and a row an earlier entry of the same unit opened is
+    read-your-own-writes.
 
     A target entry resolves no source either. Under Locking it owes
     one acquisition of each object it writes instead, which a second write of
@@ -584,11 +583,7 @@ def classify_write_row(
     the domain ``set`` — all keyed by physical column. A value object resolves to
     its single structured-document column and its value is the WHOLE document
     (m-value-object): it binds atomically as one document value at its Document-tier
-    slot, never decomposed into path-level binds. Because that role is resolved
-    HERE (from the entity's declared members), a value-object column's value is ALWAYS
-    literal document content downstream — never a DB-computed marker
-    (``computed`` / ``increment``), even when the document is marker-SHAPED; marker
-    interpretation applies only to a scalar-attribute column.
+    slot, never decomposed into path-level binds.
 
     A value object's ① value is the occurrence's neutral write input, so it is
     ENCODED here (``document_codec``) rather than taken as the document. That is what
@@ -596,8 +591,8 @@ def classify_write_row(
     a conforming writer must produce from the case's own member values, and
     :func:`assert_write_values` compares it to the authored bind — so a leaf spelled
     any other way fails the case instead of surviving it. A scalar attribute's literal
-    is encoded the same way at its declared type; a DB-computed marker and a temporal
-    end column's ``infinity`` are not literals and bind as authored. An OPENING statement
+    is encoded the same way at its declared type; a temporal end column's ``infinity``
+    is no literal and binds as authored. An OPENING statement
     additionally binds every `many` occurrence's column whether ① names it or not:
     absence and the empty array are one logical zero state (m-value-object).
 

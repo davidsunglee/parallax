@@ -97,7 +97,7 @@ class RowPayload:
     """The persisted cells one Write Row stores under the Row Slots its
     presence selects, aligned with their contributors.
 
-    A value is a planned scalar or generated-value expression, a complete
+    A value is a planned scalar, a complete
     encoded document (``None`` for a null Value Object, which binds SQL NULL),
     or the discriminator's tag.
     ``source`` is the Write Row the cells were prepared from, held by identity

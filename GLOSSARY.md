@@ -60,7 +60,7 @@ contract owners; this index does not add requirements.
 | Publication | The lifecycle behavior delivery invokes to turn Page states into values | [Read delivery](core/spec/m-read-delivery.md) |
 | Snapshot | A published value graph with explicit loading state | [Snapshot reads](core/spec/m-snapshot-read.md) |
 | Execution Activity | An observable unit of execution work | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
-| Single statement / Returning insert / Ordered invocation / Grouped insert | The call shapes execution presents a sequence of Planned Steps in: one statement alone, an insert answering the keys the database allocated, contiguous count-only effects in one ordered transport invocation, and contiguous single-entry inserts in one multi-row statement | [Execution](core/spec/m-execution.md) |
+| Single statement / Ordered invocation / Grouped insert | The call shapes execution presents a sequence of Planned Steps in: one statement alone, contiguous count-only effects in one ordered transport invocation, and contiguous single-entry inserts in one multi-row statement | [Execution](core/spec/m-execution.md) |
 | Flush | The activity spanning one flush of a unit-of-work buffer, and of a predicate-selected write executing after it, from planning through every Database Call and affected-row enforcement | [Execution lifecycle](core/spec/m-execution-lifecycle.md) |
 | Model Edition / Serving Model | Model evolution identity, which implies no placement or physical identity, and the published model holder | [Execution](core/spec/m-execution.md) |
 | Conformance Slice | An exact corpus claim, not a package or implementation layer | [Slices](core/spec/slices.md) |

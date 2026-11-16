@@ -289,8 +289,7 @@ implements the step-execution port: it runs the Planned Steps of a Write Group
 inside the Flush the unit of work opened. It prepares what a statement stores
 when that statement is about to run, renders it through `m-sql`, executes it
 through the database port, and has the unit of work enforce each step's affected
-rows; for steps opening rows whose keys the database allocates, it answers those
-keys in step order. No later group's Planned Step is prepared or lowered before
+rows. No later group's Planned Step is prepared or lowered before
 the earlier group completes, so a later step's lowering failure cannot overtake
 it. A shared coverage read for a later
 write of an acquisition span is row acquisition, not a step, and may run

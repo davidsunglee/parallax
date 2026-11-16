@@ -1308,8 +1308,9 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     bookkeeping DERIVED, never authored (:func:`_assert_temporal_input`). A
     full-bitemporal ``*Until`` step is the rectangle-split analogue: its ① carries the
     valid-time window (``at`` / ``until`` / ``validFrom``), cross-checked by
-    :func:`_assert_until_input`. pk-gen ``rows`` carry DB-computed markers
-    (``computed`` / ``increment``) whose bind is derived by the strategy, not authored.
+    :func:`_assert_until_input`. A keyless row of a key-sequence step is cross-checked
+    as stating the key the native allocation oracle derives for it
+    (:func:`_native_allocation`).
 
     ① is REQUIRED on every writeSequence step (the permanent Family A + Family B
     contract, enforced in the schema), so there is no presence-tolerance here: a step

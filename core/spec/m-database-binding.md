@@ -188,8 +188,7 @@ alone: a step of `batchSize × incrementSize`, the key range as its bounds, the
 initial value as its start, and no cycling. Allocation, sequence DDL, and the
 comparison below all read this one view, and the qualified reference is the only
 way any of them names the sequence, so no session search path or role affects
-which sequence they reach. A registry `sequence` allocator resolves to its
-physical sequence alone.
+which sequence they reach.
 
 ## Breaking changes between two resolved bindings
 
@@ -201,10 +200,8 @@ allocator both declare whose physical sequence differs as a **sequence
 relocation** (allocator, earlier, later), then every `key-sequence` allocator
 both declare whose allocation settings differ as an **allocation-settings
 change** (allocator, earlier resolved sequence, later resolved sequence). An
-owner or allocator only one side holds was added or removed, an allocator one
-side generates natively and the other through a registry changed strategy, and
-an initial value changes no allocation setting; none of these is a breaking
-change.
+owner or allocator only one side holds was added or removed, and an initial
+value changes no allocation setting; neither is a breaking change.
 
 A serving model publishes a candidate prepared under a binding only when the
 candidate's backend is the expected selection's and the comparison finds no

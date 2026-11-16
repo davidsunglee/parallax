@@ -247,10 +247,10 @@ class LoweringCursor:
         Its column arrays bind one parameter per cell slot however many entries
         join, so no entry count or bind limit ends the run. Before a taken
         step's payload is demanded the step must be a single-entry insert of
-        the same Entity naming the same members and holding no generated
-        value; values, origins, and audit values may differ. Every entry stores
-        the Row Slots ``first`` selects, and each entry's cells are the backing
-        it already carries, or the ones gathered now. ``first`` failing raises,
+        the same Entity naming the same members; values, origins, and audit
+        values may differ. Every entry stores the Row Slots ``first`` selects,
+        and each entry's cells are the backing it already carries, or the ones
+        gathered now. ``first`` failing raises,
         and a control-flow or fatal exception propagates with nothing returned.
         """
         (entry,) = first.entries

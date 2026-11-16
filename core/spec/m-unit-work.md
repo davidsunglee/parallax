@@ -990,10 +990,9 @@ Which writes share one is the implementation's, within these rules:
   As-Of Axis ends apply as one grouped effect (`m-sql` *Grouped effects*), each
   enforced against its own count, unless a write's own step order or an effect
   keeping its authored place separates them.
-- An effect advancing a registry (`m-pk-gen`), or assigning a member of a unique
-  key other than the primary key, an As-Of Axis end excepted, keeps its authored
-  place, since a unique value one object hands another must be released in
-  authored order.
+- An effect assigning a member of a unique key other than the primary key, an
+  As-Of Axis end excepted, keeps its authored place, since a unique value one
+  object hands another must be released in authored order.
 
 A group's size is bounded, and no smaller than an acquisition span's bound
 (*Shared coverage acquisition*), so a group's inserts wait behind the non-insert
@@ -1016,10 +1015,9 @@ settled write in the group its binding forms (*Shared coverage acquisition*),
 every write of which binds before any step of the group executes. It hands each
 group's Planned Steps to the step-execution port as one sequence, which executes
 every step of the sequence and has its effect enforced. As soon as every step
-of a group has succeeded — at once for a group with no step — and the keys the
-database allocated are as many as the group's writes open with keys it
-allocates, and before any step of a later group executes or any later write
-binds, the unit of work completes every write of the group synchronously, in
+of a group has succeeded — at once for a group with no step — and before any
+step of a later group executes or any later write binds, the unit of work
+completes every write of the group synchronously, in
 order. A coverage read is no step:
 within an acquisition span a later write's coverage can be read before an
 earlier group completes, while its binding, steps, and completion still wait
@@ -1081,8 +1079,8 @@ releases them all.
 ### Shared coverage acquisition
 
 An **acquisition span** is a bounded run of at least two consecutive plan entries,
-each one deferred settled write that names its one complete Object Key, a key the
-database does not allocate, whatever its Entity's temporal shape or the verb that
+each one deferred settled write that names its one complete Object Key,
+whatever its Entity's temporal shape or the verb that
 wrote it. Its writes belong to one mutation phase, target one concrete Entity — so
 one key attribute and one member selection — and either all take the shared lock
 their coverage read takes under Locking or none do. Each names an object no
@@ -1330,10 +1328,10 @@ Delete whose Key Target holds several key tuples.
 
 ### Set-based flush
 
-- Multiple inserts of the same entity stating the same member set and
-  generated-value shape collapse into a **single multi-row `INSERT`** rather than
-  one statement per row, spelled in the dialect's multi-row insert form (`m-sql`
-  *Batched insert / update*, `m-dialect`). Inserts differing in either stay
+- Multiple inserts of the same entity stating the same member set collapse into
+  a **single multi-row `INSERT`** rather than one statement per row, spelled in
+  the dialect's multi-row insert form (`m-sql` *Batched insert / update*,
+  `m-dialect`). Inserts differing in it stay
   separate steps.
 - Multiple updates of the same entity that set the same columns collapse into a
   single statement over a membership of their keys when the new value is

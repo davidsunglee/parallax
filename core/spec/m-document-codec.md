@@ -486,9 +486,7 @@ A complete document is judged in `MemberShape` order: a missing required member
 and an inadmissible value are found in the one pass, and the first one met is
 the document's finding. A partial document — only the top-level members its
 author states — is judged in the order they are stated, and its stated members
-take `MemberShape` order all the same. Root computed markers are
-admitted only when the resolved top-level Attribute role allows them, at that
-member's judgment point, and are never interpreted inside an occurrence.
+take `MemberShape` order all the same.
 
 Validating a member reports its first finding, carrying its path relative to that
 member.

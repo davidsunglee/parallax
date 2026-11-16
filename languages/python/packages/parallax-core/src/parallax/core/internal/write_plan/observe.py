@@ -254,8 +254,8 @@ class PredecessorRow:
 
     ``members`` holds every applicable member of the observed row by its declared
     name — every scalar Attribute, every complete Value Object occurrence, the
-    complete primary key, every temporal bound, and every audit value — and no
-    generated-value expression. Completeness is required because temporal
+    complete primary key, every temporal bound, and every audit value.
+    Completeness is required because temporal
     expansion carries members the authored mutation never mentioned, and because
     audit finalization must tell carried state from changed state without a
     second read.

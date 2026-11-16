@@ -64,6 +64,6 @@ Type; documents — the shared Structured Column, Value Object columns, scalar
 collection columns, and `json` members — compare by the codec's exact persisted
 equality, so unknown keys,
 presence, array order, JSON kinds, and exact numeric meaning all participate. A
-row that leaves some Column to the database's default, or holds a generated
-value, establishes no known state and equals nothing. Object identity and
-Transaction-Time bounds are the caller's eligibility questions, not this one.
+row that leaves some Column to the database's default establishes no known
+state and equals nothing. Object identity and Transaction-Time bounds are the
+caller's eligibility questions, not this one.

@@ -5,16 +5,16 @@ alone, whichever path reaches it. The corpus goldens own the byte-exact emission
 of the shapes they author; these tests pin what no golden reaches: the
 ``m-concurrency`` version gate and shortfall policy (observation-required for
 BOTH update and delete, a row-carried version value refused outright, the derived
-initial version), the layout-order rules on rows a corpus case never authors, the
-pk-gen ``max``/``increment`` marker lowering, and dialects binding no arrays. The
+initial version), the layout-order rules on rows a corpus case never authors, a
+document at a scalar member refused as no value of its declared type, and
+dialects binding no arrays. The
 temporal keyed forms are pinned in
 ``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. Planning
 refuses a materializing predicate write that reaches lowering, a mixed-shape
 multi-row instruction, and a milestone verb on a non-temporal entity with a loud
-``write-planning-failed`` ``InternalError``, preparation refuses an unsupported DB-computed marker
-before anything is buffered, and payload preparation refuses a target with no
-effective table the same way: each a forward-error posture, never a wrong
-emission, mirroring the read compiler's own.
+``write-planning-failed`` ``InternalError``, and payload preparation refuses a
+target with no effective table the same way: each a forward-error posture, never
+a wrong emission, mirroring the read compiler's own.
 
 A later section pins the halves the non-temporal insert family crosses
 separately: the Write Planner settling an instruction into finalized steps, and
