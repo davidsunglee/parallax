@@ -23,13 +23,6 @@ from parallax.snapshot._handle._typed_writes import (
 )
 from parallax.snapshot._handle._wire import WireDatabaseView, WireTransactionView
 
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`, not by
-# per-name underscores, which under pyright strict would make every intra-package
-# import a reportPrivateUsage error.
-from parallax.snapshot._inspection import bind_insertion
-
 __all__ = ["ReadOnlyTxnContext", "TxnContext", "read_only_context_for", "transaction_for"]
 
 
@@ -105,21 +98,25 @@ class TxnContext:
         """
         return self._attempt.options
 
-    def insert(
+    def insert[E: EntityBase](
         self,
-        instance: EntityBase,
+        instance: E,
         *,
         valid_from: dt.datetime | Omitted = OMITTED,
         until: dt.datetime | Omitted = OMITTED,
-    ) -> None:
+    ) -> E:
         """Buffer a keyed insert of a full instance (the Create Payload,
-        the Python binding): every member the instance actually SET. A framework-owned
+        the Python binding): every member the instance actually SET, and answer
+        the value that carries the insertion. A framework-owned
         member is never among them: the interval bounds (``in_z``/``out_z``,
         bitemporal ``from_z``/``thru_z``) are stamped at flush from the Clock
         Strategy and the version is derived, so the Entity constructor refuses a
         caller-authored one and the row carries none.
 
-        The admitted instance carries the insertion's authority from then on, and
+        The answer is ``instance`` itself, unchanged: a flush never writes a
+        version or an interval bound back into it, so an ordinary participating
+        read is what observes those once stored. It carries the insertion's
+        authority from then on, and
         so does every value derived from it afterwards by ``edit``: through them
         the amend, replace, and terminate verbs revise what the insert opened for the rest
         of the attempt, starting at ``valid_from``, before and after a flush. A
@@ -145,10 +142,9 @@ class TxnContext:
         with no Valid Time refuses one outright. The window is judged at THIS
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
-        opened = self._attempt.keyed_insert(
-            TypedKeyedInsertSource(instance), valid_from=valid_from, until=until
-        )
-        bind_insertion(instance, opened.authority)
+        source = TypedKeyedInsertSource(instance)
+        opened = self._attempt.keyed_insert(source, valid_from=valid_from, until=until)
+        return source.publish(opened)
 
     def amend[E: EntityBase](
         self,

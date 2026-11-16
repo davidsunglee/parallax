@@ -597,7 +597,7 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 # No golden DML: a rejected write never reaches the port (`api_suite.EXAMPLES`'#
 # own entries are these exact snippets).                                      #
 # --------------------------------------------------------------------------- #
-REJECTED_WRITE_BUILDERS: dict[str, Callable[[TxnContext], None]] = {
+REJECTED_WRITE_BUILDERS: dict[str, Callable[[TxnContext], object]] = {
     "m-inheritance-088": lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))),
 }
 

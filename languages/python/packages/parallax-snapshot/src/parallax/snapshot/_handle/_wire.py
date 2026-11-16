@@ -192,8 +192,8 @@ class WireTransactionView(WireDatabaseView):
         rather than stored, since the interval bounds come from the Clock
         Strategy at flush and the version is derived.
 
-        The returned node is the Wire peer of the instance ``tx.insert`` leaves
-        its caller holding: it publishes the payload's own members in canonical
+        The returned node is the Wire peer of the instance ``tx.insert``
+        returns: it publishes the payload's own members in canonical
         Wire spelling and carries the insertion's authority, so a pure Wire
         caller revises the row it opened through it for the rest of the attempt,
         before and after a flush, without re-reading it. Only this node carries

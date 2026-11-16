@@ -49,9 +49,9 @@ WIRE_KEYED_WRITE_ADVICE: Final = KeyedWriteRefusalAdvice(
     ),
 )
 """Each repeated-insert repair names the carrier its own opening produced:
-``tx.insert`` leaves the caller holding the instance it passed, while
-``tx.wire.insert`` answers a frozen node and took a mapping that is no keyed
-source. The not-stored repair is one spelling for both interfaces."""
+``tx.insert`` answers the instance it was passed, while ``tx.wire.insert``
+answers a frozen node and took a mapping that is no keyed source. The
+not-stored repair is one spelling for both interfaces."""
 
 
 def resolve_keyed_write_source(

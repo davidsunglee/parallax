@@ -87,7 +87,7 @@ def _created(rollout: SchemaDelta, name: str) -> tuple[str, str]:
     return created.physical_table.name, created.physical_index_name.value
 
 
-def _refused(db: ScopedDatabase, work: Callable[[TxnContext], None]) -> DatabaseError:
+def _refused(db: ScopedDatabase, work: Callable[[TxnContext], object]) -> DatabaseError:
     with pytest.raises(DatabaseError) as failure:
         db.transact(work)
     cause = failure.value
@@ -278,7 +278,7 @@ def _amend_tenancy(tx: TxnContext) -> None:
     tx.amend(tx.find(Tenancy.where(Tenancy.id == 1).as_of(valid_time=_JUN)).result().edit(rent=200))
 
 
-_UNIQUE_WRITES: Final[dict[str, tuple[Callable[[TxnContext], None], ...]]] = {
+_UNIQUE_WRITES: Final[dict[str, tuple[Callable[[TxnContext], object], ...]]] = {
     "tai_ledger_code": (
         lambda tx: tx.insert(Ledger(id=1, code="X", label="a")),
         _amend_ledger,

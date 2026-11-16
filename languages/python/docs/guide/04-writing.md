@@ -61,7 +61,7 @@ from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 
 ### Insert, then read your own write
 
-`tx.insert` takes a new instance and returns `None`:
+`tx.insert` takes a new instance and returns that same instance:
 
 <!-- example: insert-and-read-your-own-write -->
 ```python
@@ -87,8 +87,11 @@ whose `category` is `"uniqueViolation"`.
 [Errors](08-errors.md#failures-the-database-reports) shows how to tell it from other
 failures.
 
-The instance you inserted carries a licence of its own for the rest of the attempt. You
-can amend or delete it, or an edited copy of it, without reading it back.
+The instance `insert` returns, the one you passed, carries a licence of its own for the
+rest of the attempt. You can amend or delete it, or an edited copy of it, without reading
+it back. The flush never writes into it: a version or a Transaction-Time start the
+database stores reads as absent on that instance, and a `find` like the one above
+returns the stored values.
 
 ### Amend or replace an edited value
 
