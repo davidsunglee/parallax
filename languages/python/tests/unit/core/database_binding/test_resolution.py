@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Final
 
 import pytest
@@ -19,11 +20,12 @@ from parallax.core.internal.database_binding import (
     breaking_changes_between,
     sequence_ddl,
 )
-from parallax.core.internal.dialect import SequenceDdl
+from parallax.core.internal.dialect import POSTGRES, SequenceDdl, Unsupported
 from parallax.core.internal.entity import model_of
 from parallax.core.internal.metamodel import EntityIdentity, KeySequence, Metamodel
 from parallax.descriptor import domain_model_from_yaml
 from parallax.postgres import PostgresBinding, PostgresLocation, PostgresSequence, PostgresTable
+from tests._support.bindings import binding_for
 
 _MODEL_YAML: Final = """
 entities:
@@ -671,3 +673,16 @@ def test_a_moved_allocator_whose_settings_also_change_names_both() -> None:
 
 def test_an_initial_value_change_breaks_nothing() -> None:
     assert breaking_changes_between(_settled(""), _settled(", initialValue: 500")) == ()
+
+
+def test_a_backend_with_no_native_sequence_refuses_a_native_allocator() -> None:
+    sequenceless = dataclasses.replace(POSTGRES, name="sequenceless", sequence_bounds=None)
+    assert isinstance(sequenceless.reserve_sequence(), Unsupported)
+    assert isinstance(
+        sequenceless.create_sequence("px.ids", SequenceDdl("bigint", 1, 1, 9, 1)), Unsupported
+    )
+    with pytest.raises(BindingError) as raised:
+        ResolvedBinding(_native(), binding_for(sequenceless))
+    assert [(issue.code, issue.path) for issue in raised.value.issues] == [
+        ("binding-sequence-unrepresentable", ("sequences", "vehicleIds"))
+    ]

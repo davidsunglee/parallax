@@ -17,7 +17,9 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.core import (
+    AbstractRoot,
     Attr,
+    ConcreteSubtype,
     Document,
     DomainModel,
     Entity,
@@ -25,6 +27,7 @@ from parallax.core import (
     ExecutionLifecycleHandlerError,
     KeySequence,
     RootExecution,
+    TablePerHierarchy,
     UsageError,
     ValueObject,
     attr,
@@ -63,7 +66,21 @@ class DocumentTicket(Entity, table="pkg_document_ticket", namespace=_NAMESPACE, 
     version: Attr[int] = attr(optimistic_locking=True)
 
 
-_MODEL = DomainModel(ColumnsTicket, DocumentTicket)
+class Shape(
+    Entity,
+    table="pkg_shape",
+    namespace=_NAMESPACE,
+    inheritance=AbstractRoot(TablePerHierarchy("kind")),
+):
+    id: Attr[int] = attr(primary_key=KeySequence("pkg_shape_ids", batch_size=3))
+    label: Attr[str] = attr(max_length=8)
+
+
+class Square(Shape, namespace=_NAMESPACE, inheritance=ConcreteSubtype(tag_value="square")):
+    side: Attr[int]
+
+
+_MODEL = DomainModel(ColumnsTicket, DocumentTicket, Shape, Square)
 _TABLES: dict[type[Any], str] = {
     ColumnsTicket: "pkg_columns_ticket",
     DocumentTicket: "pkg_document_ticket",
@@ -387,3 +404,18 @@ def test_a_keyed_result_inserts_under_its_own_key_after_a_rollback(
     assert (
         db.transact(lambda tx: _key(_insert(tx, ColumnsTicket, representation, label="new"))) == 2
     )
+
+
+def test_a_family_subtype_takes_its_key_from_the_root_s_allocator(profile_run: Any) -> None:
+    db = _db(profile_run, _Events())
+
+    def insert(tx: TxnContext) -> tuple[object, object]:
+        typed = tx.insert(Square(label="typed", side=2))
+        node = tx.wire.insert(f"{_NAMESPACE}.Square", {"label": "wired", "side": 3})
+        assert type(typed) is Square
+        return typed.id, node["id"]
+
+    assert db.transact(insert) == (1, 2)
+    assert list(
+        profile_run.port.execute("select id, kind, side from px.pkg_shape order by id", [])
+    ) == [(1, "square", 2), (2, "square", 3)]

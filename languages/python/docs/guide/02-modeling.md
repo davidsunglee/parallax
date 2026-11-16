@@ -560,9 +560,10 @@ A binding has four parts, each keyed by what the model declares:
 - `entities`, an override per entity that owns a table, keyed by its canonical name
   (`Customer`, or `audit.Entry` for a namespaced one), which may give a schema, a
   physical table name, or both;
-- `sequences`, an override per `Sequence(...)` key-generation name, which entities
-  declaring the same name share. This version of Parallax creates no database sequence
-  and allocates no key from one; a binding fixes only where each sequence belongs.
+- `sequences`, an override per `KeySequence(...)` or `Sequence(...)` key-generation name,
+  which entities declaring the same name share. A `KeySequence` allocates keys from the
+  native sequence placed here, which `schema_delta` creates; a binding fixes where each
+  sequence belongs.
 
 A table's schema comes from its entity's own entry, then its namespace's, then the
 default, and its name from its entry, or else its `table=`. A table-per-hierarchy family

@@ -1268,7 +1268,9 @@ def prepare_typed_insert(
     if target.inheritance is not None:
         values = tuple(values)
         inheritance.validate_subtype_write(
-            preparation.meta, target, _stated_names(entry, values, entry.framework_owned)
+            preparation.meta,
+            target,
+            _opening_shape(entry, _stated_names(entry, values, entry.framework_owned)),
         )
     row = _opened_row(entry, target, values, lane=TYPED_LANE)
     return _prepared_keyed_instruction(
@@ -1294,7 +1296,9 @@ def prepare_wire_insert(
     """
     _refuse_observation_keys(payload.keys())
     entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
-    _judge_row_members(preparation.meta, target, entry, payload, payload.keys(), "keyed")
+    _judge_row_members(
+        preparation.meta, target, entry, _opening_shape(entry, payload), payload.keys(), "keyed"
+    )
     row = _opened_row(entry, target, entry.plan.authored_values(payload), lane=WIRE_LANE)
     return _prepared_keyed_instruction(
         mutation, _assigns_beside_key((row,), position), target, (row,), window
@@ -1650,6 +1654,17 @@ def _marked(values: Iterable[object]) -> bool:
 
 
 _MARKER_KEYS: Final = frozenset({"computed", "increment"})
+
+
+def _opening_shape(entry: EntityPreparation, row: Mapping[str, object]) -> Mapping[str, object]:
+    """``row`` as an opening's shape is judged: stating the key its Entity
+    allocates where the caller omitted it, since the insert states that key
+    before the row names its object."""
+    allocation = entry.key_allocation
+    if allocation is None:
+        return row
+    key = entry.selection.members.shape.members[allocation.position].name
+    return row if key in row else {key: None, **row}
 
 
 def _stated_names(

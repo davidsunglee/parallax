@@ -1,8 +1,9 @@
-"""What an idle single-connection pool costs the interpreter before it connects.
+"""What an idle key-reservation pool costs the interpreter before it connects.
 
-The pool is the production route's own: ``open_route`` over an endpoint whose
-capacity is one connection, kept by one worker, with nothing retained at the
-minimum, so opening it starts the pool's threads and dials nothing. Its
+The pool is the production one: ``open_reservation_route`` over a writer
+endpoint at its default retention, whose reservation capacity is one
+connection, kept by one worker, with nothing retained at the minimum, so
+opening it starts the pool's threads and dials nothing. Its
 credential source refuses and records being asked, so an accidental connection
 attempt fails the reading rather than measuring a connection that should not
 exist.
@@ -32,7 +33,7 @@ import pytest
 from parallax.core.internal.db_port import CredentialResolutionError, Password
 from parallax.postgres import PoolOptions
 from parallax.postgres._endpoint import PostgresEndpoint
-from parallax.postgres._route import PostgresRoute, open_route
+from parallax.postgres._route import PostgresRoute, open_reservation_route, open_route
 from tests._support.pooled_key_diagnostic import requested, write_readings
 from tests.unit.memory_instruments import (
     REPEATS,
@@ -44,7 +45,6 @@ from tests.unit.memory_instruments import (
     serve_one_measurement,
 )
 
-_IDLE: Final = PoolOptions(min_size=0, max_size=1, num_workers=1)
 _SCHEMA: Final = "parallax.diagnostic.pooled-primary-keys.pool-memory/1"
 
 
@@ -60,9 +60,15 @@ class _Refusing:
         raise CredentialResolutionError("this pool is measured idle and must never connect")
 
 
-def _route(credentials: _Refusing, options: PoolOptions = _IDLE) -> PostgresRoute:
-    endpoint = PostgresEndpoint("host=127.0.0.1 port=1", credentials=credentials, pool=options)
-    return open_route(endpoint, "writer", acquire_timeout=1.0, prepare_threshold=None)
+def _endpoint(credentials: _Refusing, options: PoolOptions) -> PostgresEndpoint:
+    return PostgresEndpoint("host=127.0.0.1 port=1", credentials=credentials, pool=options)
+
+
+def _route(credentials: _Refusing) -> PostgresRoute:
+    """The reservation pool a writer at its default retention opens."""
+    return open_reservation_route(
+        _endpoint(credentials, PoolOptions()), acquire_timeout=1.0, prepare_threshold=None
+    )
 
 
 def never_dialed(credentials: _Refusing, route: PostgresRoute) -> None:
@@ -158,7 +164,12 @@ def test_an_idle_pool_opened_and_closed_repeatedly_dials_nothing_and_ends_its_th
 
 def test_a_pool_that_reaches_for_a_connection_fails_the_reading() -> None:
     credentials = _Refusing()
-    route = _route(credentials, PoolOptions(min_size=1, max_size=1, num_workers=1))
+    route = open_route(
+        _endpoint(credentials, PoolOptions(min_size=1, max_size=1, num_workers=1)),
+        "writer",
+        acquire_timeout=1.0,
+        prepare_threshold=None,
+    )
     try:
         assert credentials.asked.wait(timeout=10.0)
         with pytest.raises(AssertionError, match="reached for a connection"):

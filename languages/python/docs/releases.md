@@ -10,6 +10,29 @@ Transaction-Time start the database stores stays absent on it, and an ordinary `
 returns the stored values. Code that ignored the result is unaffected; a type annotation
 or check that expected `None` needs updating.
 
+A key can now come from a native PostgreSQL sequence: declare
+`attr(primary_key=KeySequence("order_ids"))` (descriptor
+`pkGeneration: {strategy: key-sequence, name: order_ids}`), and an insert of an instance or
+Wire payload that leaves the key unset takes the next key at the call. The insert answers
+a new value holding that key; the draft you passed is left unset and can be inserted again
+for another key. A key you set, `0` included, is used as given. Each `Database` reserves
+`batch_size` keys (100 by default) at a time on one extra writer connection, opened at the
+first reservation and logged in as the database login, so the login needs `USAGE` on the
+sequence and your application roles don't; plan for one more connection per process.
+`schema_delta` creates each new allocator's sequence where the binding places it. Every
+verb but `insert` refuses an unset key with `UsageError` code `write-key-absent`.
+
+`ServingModel.publish` now refuses a candidate that changes a surviving allocator's batch
+size, increment size, or key range, as it refuses a relocation, and both refusals use the
+renamed code `PUBLICATION_BREAKING_CHANGE_REFUSED` (`publication-breaking-change-refused`),
+which replaces `PUBLICATION_RELOCATION_REFUSED`. Code matching the old constant or string
+needs the new one. `evolve` reports such a change as the new `AllocatorSettingsChanged`
+operation, so code matching every evolution operation needs a case for it, and
+`schema_delta` now raises `TypeError` when handed a `CoordinatedEvolution` rather than
+rendering an incomplete delta. A pool metrics source now names its `purpose`,
+`"application"` or `"reservation"`; an observer watching only application pools can
+decline the reservation pool's source.
+
 A Bitemporal table's primary key now ends with `out_z` before `thru_z`, and so does every
 index you declare on a Bitemporal entity: `price` is keyed `(sku, out_z, thru_z)` rather
 than `(sku, thru_z, out_z)`. On PostgreSQL 18 the old order made the planner skip the key
