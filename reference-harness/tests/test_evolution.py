@@ -266,15 +266,25 @@ _TX_OPEN = {
 }
 
 
-def test_a_populated_join_starts_past_every_leaf_and_history_key(provider) -> None:
+@pytest.mark.parametrize(
+    ("car_key", "truck_key", "closed_key"),
+    [
+        pytest.param(93, 40, 7, id="eu-leaf-greatest"),
+        pytest.param(7, 93, 40, id="us-leaf-greatest"),
+        pytest.param(7, 40, 93, id="closed-history-greatest"),
+    ],
+)
+def test_a_populated_join_starts_past_every_leaf_and_history_key(
+    provider, car_key: int, truck_key: int, closed_key: int
+) -> None:
     case = _case("m-model-evolution-085")
     _provision_earlier(case, provider)
-    provider.execute("insert into px_eu.car (id, name) values (7, 'c')")
-    provider.execute("insert into px_us.truck (id, name) values (40, 't')")
-    # The garage's largest key survives only in a closed history row.
+    provider.execute(f"insert into px_eu.car (id, name) values ({car_key}, 'c')")
+    provider.execute(f"insert into px_us.truck (id, name) values ({truck_key}, 't')")
+    # The closed garage key survives only in a history row.
     garage = "insert into px.garage (id, label, in_z, out_z) values"
-    provider.execute(f"{garage} (93, 'old', {_TX[provider.dialect]})")
-    provider.execute(f"{garage} (12, 'g', {_TX_OPEN[provider.dialect]})")
+    provider.execute(f"{garage} ({closed_key}, 'old', {_TX[provider.dialect]})")
+    provider.execute(f"{garage} (2, 'g', {_TX_OPEN[provider.dialect]})")
     _migrate(case, provider)
     assert _next_key(provider, "fleetIds") == 94
 

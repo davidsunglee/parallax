@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final
 
 from parallax.core.internal import storage_layout
@@ -40,11 +40,14 @@ from parallax.evolution.internal.model_evolution import (
     AttributeAdded,
     AttributeAltered,
     AttributeDelta,
+    AttributeRemoved,
     ConcreteSubtypeAdded,
+    ConcreteSubtypeRemoved,
     CoordinatedEvolution,
     CoordinationReason,
     EntityAdded,
     EntityAltered,
+    EntityRemoved,
     EvolutionOperation,
     IndexAdded,
     IndexAltered,
@@ -85,8 +88,7 @@ from parallax.evolution.internal.schema_delta._values import CollisionGroup
 
 __all__ = [
     "Plan",
-    "drawing_entities",
-    "joined_allocator",
+    "abandoned_by",
     "joined_allocators",
     "plan",
     "temporal_backing_indices",
@@ -191,8 +193,8 @@ def _created_sequences(
     evolution: UnilateralEvolution | CoordinatedEvolution,
 ) -> tuple[CreateSequence, ...]:
     """One creation for each native allocator the later binding resolves and
-    the earlier one does not, caused by the operations that added an Entity
-    drawing from it or moved a surviving key onto it.
+    the earlier one does not, caused by the operations that brought each Entity
+    drawing from it there.
 
     An allocator surviving both endpoints already has its sequence, however its
     consumers changed, so none is created, reset, or repositioned for it.
@@ -205,61 +207,94 @@ def _created_sequences(
     )
     if not created:
         return ()
-    drawing = drawing_entities(evolution.later)
+    draws = _draws(evolution.later)
     return tuple(
         CreateSequence(
             sequence=sequence,
-            caused_by=tuple(
-                operation
-                for operation in evolution.operations
-                if (
-                    isinstance(operation, EntityAdded | ConcreteSubtypeAdded)
-                    and operation.entity in drawing.get(sequence.allocator, ())
-                )
-                or sequence.allocator in joined_allocators(operation)
-            ),
+            caused_by=_moving(evolution.operations, draws.get(sequence.allocator, ())),
         )
         for sequence in created
     )
 
 
-def drawing_entities(resolved: ResolvedBinding) -> Mapping[str, frozenset[EntityIdentity]]:
-    """Each native allocator ``resolved`` declares beside every Entity whose
-    family key draws from it."""
+def abandoned_by(evolution: CoordinatedEvolution, allocator: str) -> tuple[EvolutionOperation, ...]:
+    """The operations that took each Entity drawing from ``allocator`` at the
+    earlier endpoint away from it: a removal, a key alteration or removal, or a
+    move out of the family drawing from it."""
+    return _moving(evolution.operations, _draws(evolution.earlier).get(allocator, ()))
+
+
+def joined_allocators(
+    evolution: CoordinatedEvolution,
+) -> Mapping[str, tuple[EvolutionOperation, ...]]:
+    """Each native allocator an Entity of the earlier endpoint starts drawing
+    from, beside the operations that moved it there.
+
+    Whatever moves it — its key's generation, a key it is promoted to or gains
+    in place of another, or a move into a family drawing from the allocator —
+    the rows it already stores hold keys the allocator never answered.
+    """
+    earlier = _draws(evolution.earlier)
+    survivors = frozenset(entity.identity for entity in evolution.earlier.meta.entities)
+    joined: dict[str, tuple[EvolutionOperation, ...]] = {}
+    for allocator, draws in _draws(evolution.later).items():
+        held = earlier.get(allocator, frozenset())
+        arriving = tuple(draw for draw in draws if draw.entity in survivors and draw not in held)
+        if arriving:
+            joined[allocator] = _moving(evolution.operations, arriving)
+    return joined
+
+
+@dataclass(frozen=True, slots=True)
+class _Draw:
+    """An Entity whose family key draws from a native allocator, beside the
+    ancestry placing it in that family."""
+
+    entity: EntityIdentity
+    key: AttributeIdentity
+    ancestry: frozenset[EntityIdentity] = field(compare=False)
+
+
+def _draws(resolved: ResolvedBinding) -> Mapping[str, frozenset[_Draw]]:
+    """Each native allocator ``resolved`` declares beside every Entity drawing from it."""
     families = inheritance_facet_of(resolved.meta)
-    drawing: dict[str, set[EntityIdentity]] = {}
-    for entity in resolved.meta.entities:
-        view = families.entity(entity.identity)
-        key = None if view is None else view.primary_key.primary_key
-        if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
-            drawing.setdefault(key.generation.name, set()).add(entity.identity)
+    drawing: dict[str, set[_Draw]] = {}
+    views = (families.entity(entity.identity) for entity in resolved.meta.entities)
+    for view in filter(None, views):
+        key = view.primary_key
+        if isinstance(key.primary_key, PrimaryKey) and isinstance(
+            generation := key.primary_key.generation, KeySequence
+        ):
+            drawing.setdefault(generation.name, set()).add(
+                _Draw(view.entity, key.identity, frozenset(view.ancestry))
+            )
     return {allocator: frozenset(held) for allocator, held in drawing.items()}
 
 
-def joined_allocators(operation: EvolutionOperation) -> frozenset[str]:
-    """The native allocators a surviving key starts drawing from at ``operation``."""
-    if not isinstance(operation, AttributeAltered):
-        return frozenset()
-    return frozenset(
-        allocator for delta in operation.deltas if (allocator := joined_allocator(delta))
+def _moving(
+    operations: Sequence[EvolutionOperation], draws: Iterable[_Draw]
+) -> tuple[EvolutionOperation, ...]:
+    """The operations, in canonical order, that add, remove, or move any of ``draws``."""
+    chosen = tuple(draws)
+    return tuple(
+        operation for operation in operations if any(_moves(operation, draw) for draw in chosen)
     )
 
 
-def joined_allocator(delta: AttributeDelta) -> str | None:
-    """The native allocator a key starts drawing from at ``delta``: one its
-    generation moves onto from application-assigned keys or another allocator."""
-    if not (
-        isinstance(delta, PrimaryKeyChanged)
-        and isinstance(earlier := delta.earlier, PrimaryKey)
-        and isinstance(later := delta.later, PrimaryKey)
-        and isinstance(later.generation, KeySequence)
-    ):
-        return None
-    stays = (
-        isinstance(earlier.generation, KeySequence)
-        and earlier.generation.name == later.generation.name
-    )
-    return None if stays else later.generation.name
+def _moves(operation: EvolutionOperation, draw: _Draw) -> bool:
+    match operation:
+        case EntityAdded() | EntityRemoved() | ConcreteSubtypeAdded() | ConcreteSubtypeRemoved():
+            return operation.entity == draw.entity
+        case AttributeAdded() | AttributeRemoved():
+            return operation.attribute == draw.key
+        case AttributeAltered():
+            return operation.attribute == draw.key and any(
+                isinstance(delta, PrimaryKeyChanged) for delta in operation.deltas
+            )
+        case EntityAltered():
+            return operation.entity in draw.ancestry and _reparents(operation)
+        case _:
+            return False
 
 
 def temporal_backing_indices(resolved: ResolvedBinding) -> tuple[TemporalBackingIndex, ...]:

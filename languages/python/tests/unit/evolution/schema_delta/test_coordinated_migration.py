@@ -36,6 +36,8 @@ from parallax.evolution import (
 from parallax.evolution.internal.model_evolution import (
     AttributeAdded,
     AttributeAltered,
+    AttributeRemoved,
+    EntityAltered,
     EntityRemoved,
     EvolutionOperation,
     evolve_resolved,
@@ -243,6 +245,103 @@ def test_removing_an_allocator_s_last_consumer_drops_it_for_that_removal() -> No
     assert all(
         isinstance(cause, EntityRemoved) for step in migration.steps for cause in step.caused_by
     )
+
+
+def _badge(*attributes: str) -> Metamodel:
+    body = "".join(f"\n      - {attribute}" for attribute in attributes)
+    return model_of(
+        domain_model_from_yaml(
+            f"entities:\n  - name: Badge\n    table: badge\n    attributes:{body}"
+        )
+    )
+
+
+_IDS = "pkGeneration: { strategy: key-sequence, name: ids }"
+
+
+def test_removing_an_allocator_s_last_key_drains_then_drops_it_for_that_removal() -> None:
+    _, migration = _migration(
+        _badge(
+            f"{{ name: id, type: int64, primaryKey: true, {_IDS} }}", "{ name: code, type: int64 }"
+        ),
+        _badge("{ name: code, type: int64, primaryKey: true }"),
+    )
+    drain, *_, drop = migration.steps
+    assert drain == ManualStep(ManualAction.DRAIN_EARLIER_ROOTS, drain.caused_by)
+    assert drop == MigrationStatement(sql="drop sequence px.ids", caused_by=drain.caused_by)
+    (removal,) = drop.caused_by
+    assert isinstance(removal, AttributeRemoved) and removal.attribute.name == "id"
+
+
+@pytest.mark.parametrize(
+    "later_key",
+    [
+        pytest.param(
+            (
+                "{ name: id, type: int64 }",
+                f"{{ name: code, type: int64, primaryKey: true, {_IDS} }}",
+            ),
+            id="promoted",
+        ),
+        pytest.param((f"{{ name: code, type: int64, primaryKey: true, {_IDS} }}",), id="replacing"),
+    ],
+)
+def test_a_populated_entity_gaining_a_generated_key_creates_then_positions_its_allocator(
+    later_key: tuple[str, ...],
+) -> None:
+    _, migration = _migration(
+        _badge("{ name: id, type: int64, primaryKey: true }", "{ name: code, type: int64 }"),
+        _badge(*later_key),
+    )
+    drain = migration.steps[0]
+    create, position = migration.steps[-2:]
+    assert drain == ManualStep(ManualAction.DRAIN_EARLIER_ROOTS, drain.caused_by)
+    assert isinstance(create, MigrationStatement) and create.sql.startswith(
+        "create sequence px.ids"
+    )
+    assert isinstance(position, MigrationStatement) and "from px.badge t2" in position.sql
+    (cause,) = create.caused_by
+    assert isinstance(cause, AttributeAltered | AttributeAdded) and cause.attribute.name == "code"
+    assert drain.caused_by == position.caused_by == create.caused_by
+
+
+def _fleet(van_parent: str) -> Metamodel:
+    def family(root: str, allocator: str, *leaves: str) -> str:
+        members = "".join(
+            f"""
+  - name: {leaf}
+    table: {leaf.lower()}
+    inheritance: {{ role: concrete-subtype, parent: {root} }}
+    attributes: [{{ name: note, type: string, maxLength: 8, nullable: true }}]
+"""
+            for leaf in leaves
+        )
+        return f"""
+  - name: {root}
+    inheritance: {{ role: root, strategy: table-per-concrete-subtype }}
+    attributes:
+      - {{ name: id, type: int64, primaryKey: true{_generation(allocator)} }}
+{members}"""
+
+    leaves: dict[str, tuple[str, ...]] = {"Fleet": ("Truck",), "Other": ("Car",)}
+    leaves[van_parent] = (*leaves[van_parent], "Van")
+    return model_of(
+        domain_model_from_yaml(
+            "entities:"
+            + family("Fleet", "fleet_ids", *leaves["Fleet"])
+            + family("Other", "other_ids", *leaves["Other"])
+        )
+    )
+
+
+def test_a_leaf_moved_into_another_allocator_s_family_positions_that_allocator() -> None:
+    _, migration = _migration(_fleet("Fleet"), _fleet("Other"))
+    assert _shape(migration) == ["DrainEarlierRoots", "TransformStoredData", "select case"]
+    position = _statement(migration, "select")
+    assert "px.other_ids" in position.sql and "from px.van" in position.sql
+    (move,) = position.caused_by
+    assert isinstance(move, EntityAltered) and move.entity.name == "Van"
+    assert migration.steps[0].caused_by == (move,)
 
 
 # --- combined changes and ordinary statements ------------------------------------

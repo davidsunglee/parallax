@@ -429,11 +429,13 @@ consequences ask for one below.
   (`m-database-binding` *Resolved sequences*) and `m-dialect`'s spellings:
   - a sequence is **created** for each allocator the later binding resolves and
     the earlier one does not, caused by the additions drawing from it and by the
-    key alterations joining it;
+    operations joining a surviving Entity to it;
   - a surviving allocator's `AllocatorSettingsChanged` **alters** its sequence
     where its resolved definition differs; an `initialValue` change never does;
-  - a sequence is **positioned** when a surviving key joins it — moving from
-    application-assigned keys or from another allocator — and when an
+  - a sequence is **positioned** when a surviving Entity joins it — its key
+    moving from application-assigned keys or from another allocator, an
+    Attribute becoming or replacing its key, or the Entity moving into a family
+    drawing from it, each of which those operations cause — and when an
     alteration shrinks its physical step. Positioning moves the sequence forward
     only, to the greatest of one past the largest key every consuming Table
     stores — each table-per-concrete-subtype leaf, every unrelated Entity
@@ -445,12 +447,13 @@ consequences ask for one below.
     be stored. A position past the key range leaves the sequence exhausted
     rather than wrapping;
   - a sequence is **dropped** where the earlier binding placed it once the
-    later model references its allocator nowhere, caused by the removals and key
-    alterations that took its last consumer away — including when another
-    requirement is why the evolution is coordinated.
+    later model references its allocator nowhere, caused by the Entity and key
+    removals, key alterations, and family moves that took its last consumers
+    away — including when another requirement is why the evolution is
+    coordinated.
 
 **Order.** Prerequisites first: one `DrainEarlierRoots` step, naming every
-relocation, every settings change, every key joining an allocator, and every
+relocation, every settings change, every join onto an allocator, and every
 cause of a dropped sequence, precedes everything it is required for; then each
 `Relocate` in operation order; each `TransformStoredData` in operation order;
 each `UpdateAuthoringSurface` in requirement order; the ordinary statements in

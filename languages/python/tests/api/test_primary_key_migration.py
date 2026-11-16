@@ -12,6 +12,8 @@ from __future__ import annotations
 from contextlib import closing
 from typing import Any
 
+import pytest
+
 from parallax.core import (
     AbstractRoot,
     Attr,
@@ -107,8 +109,16 @@ def _rows(profile_run: Any, sql: str) -> list[tuple[object, ...]]:
     return [tuple(row) for row in profile_run.port.execute(sql, [])]
 
 
+@pytest.mark.parametrize(
+    ("truck_key", "van_key", "retired_key"),
+    [
+        pytest.param(93, 40, 7, id="eu-leaf-greatest"),
+        pytest.param(7, 93, 40, id="us-leaf-greatest"),
+        pytest.param(7, 40, 93, id="closed-history-greatest"),
+    ],
+)
 def test_a_populated_family_and_its_history_join_a_new_allocator_past_every_stored_key(
-    profile_run: Any,
+    profile_run: Any, truck_key: int, van_key: int, retired_key: int
 ) -> None:
     earlier, truck, van, depot = _fleet(True)
     later, new_truck, new_van, new_depot = _fleet(KeySequence("mig_fleet_ids", batch_size=10))
@@ -118,16 +128,16 @@ def test_a_populated_family_and_its_history_join_a_new_allocator_past_every_stor
         db = root.using_database_login()
         db.transact(
             lambda tx: [
-                tx.insert(truck(id=7, label="hauler", axles=3)),
-                tx.insert(van(id=40, label="courier", doors=2)),
-                tx.insert(depot(id=93, label="old")),
+                tx.insert(truck(id=truck_key, label="hauler", axles=3)),
+                tx.insert(van(id=van_key, label="courier", doors=2)),
+                tx.insert(depot(id=retired_key, label="old")),
             ]
         )
 
         def retire_and_open(tx: TxnContext) -> None:
-            # The depot's largest key survives only in a closed history row.
-            tx.terminate(tx.find(depot.where(depot.id == 93)).result())
-            tx.insert(depot(id=12, label="new"))
+            # The retired depot's key survives only in a closed history row.
+            tx.terminate(tx.find(depot.where(depot.id == retired_key)).result())
+            tx.insert(depot(id=2, label="new"))
 
         db.transact(retire_and_open)
 
@@ -142,8 +152,14 @@ def test_a_populated_family_and_its_history_join_a_new_allocator_past_every_stor
         ]
     )
     assert keys == [94, 95, 96]
-    assert _rows(profile_run, "select id from px_eu.mig_vehicle order by id") == [(7,), (94,)]
-    assert _rows(profile_run, "select id from px_us.mig_vehicle order by id") == [(40,), (95,)]
+    assert _rows(profile_run, "select id from px_eu.mig_vehicle order by id") == [
+        (truck_key,),
+        (94,),
+    ]
+    assert _rows(profile_run, "select id from px_us.mig_vehicle order by id") == [
+        (van_key,),
+        (95,),
+    ]
 
 
 def test_a_shrunken_step_starts_the_replacement_root_past_the_earlier_root_s_block(
