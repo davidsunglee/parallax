@@ -71,13 +71,24 @@ Snapshot delivery ceilings move by at most 0.08%.
 Provider-free, control, read-plan, and write-lowering timings are mostly within
 noise or faster. Live Snapshot delivery is slower on both runtimes: 69 of 70
 live and first-result `maxMs` readings, by 0.4–121% (median 58%), with
-page-32 streams and first results moving most. Alternating diagnostic runs on
-the same host reproduce the slower readings at the pre-change base and at the
-outgoing producing commit, which alternate between the outgoing values and
-this capture's from run to run with unchanged code; the live instrument reads
-through a sole-connection provider that opens no reservation pool. This is a
-host-state difference, not a code effect, and it is advisory: timing is never
-gated. Ungated live-window streamed heap moved as well, for example
+page-32 streams and first results moving most. The live instrument reads
+through a `PostgresAdapter` runtime, whose startup at the producing commit also
+opens the reservation pool: two idle threads beside the writer pool's four, and
+no server connection, because reads reserve no keys. Twelve alternating
+diagnostic rounds on CPython 3.15, on the same host, measured the pre-change
+base, which has no reservation pool, the producing commit, and the producing
+commit with its reservation pool closed after startup. The base reproduces this
+capture's slower readings, for example `conventional-fanout` page32 at a median
+of 14.5 ms against 15.1 here and 8.1 outgoing, and all three read
+outgoing-like values only in occasional runs, as the outgoing producing commit
+also does. Same-round pairs show no effect of the pool or its threads: the
+producing commit is slower than the base in 94 of 180 live and first-result
+pairs (median ratio 1.004) and slower than the closed-pool variant in 93 (1.003).
+Per-workload medians against the base still differ within the noise allowance,
+by +3.7% on `conventional-fanout` and −2.8% on `versioned-document`. The
+movement against the outgoing capture is therefore a host-state difference, not
+a code effect, and it is advisory: timing is never gated. Ungated live-window
+streamed heap moved as well, for example
 `document-heavy` page-1 peaks +8.5–13.3% and `bitemporal-current` page-1 peaks
 +11.5% on 3.14 and −20.1% on 3.15. Repeated diagnostic runs of unchanged code
 vary these readings by similar amounts (`versioned-document` page-1 peak
@@ -92,7 +103,11 @@ collector and verification logs, load samples, outgoing capture and gates,
 comparisons, gate-derivation script, and the attribution diagnostics are beside
 it in `final-canonical-cost-0253277ec-review/`, verified by `SHA256SUMS`
 (manifest SHA-256
-`7898b8d7e69492a758405b4f7cd5e437d274ee2b2c7be16dd053a8fa046d9c4e`).
+`7898b8d7e69492a758405b4f7cd5e437d274ee2b2c7be16dd053a8fa046d9c4e`). The
+reservation-pool diagnostic, with its runs, thread and session probes, scripts,
+and the throwaway patch that closes the pool, is in
+`live-delivery-reservation-pool-0253277ec/` (manifest SHA-256
+`efdec3ced19fadb3d7be951df8ccd8ad5853bcf63e73b739cf18198db7274a29`).
 The current portfolio SHA-256 is
 `e3eac920edf33f03227a559fdc613e70a97adb8d280b62243cae4e695b1c8863`,
 conditions SHA-256 is
