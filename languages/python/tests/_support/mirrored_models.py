@@ -819,6 +819,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-inherited-multiplicity-v2": _EVOLUTION_ENDPOINT,
         "evolution-interposed-subtype-v1": _EVOLUTION_ENDPOINT,
         "evolution-interposed-subtype-v2": _EVOLUTION_ENDPOINT,
+        "evolution-key-sequence-settings-v1": _EVOLUTION_ENDPOINT,
+        "evolution-key-sequence-settings-v2": _EVOLUTION_ENDPOINT,
         "evolution-nullability-v1": _EVOLUTION_ENDPOINT,
         "evolution-nullability-v2": _EVOLUTION_ENDPOINT,
         "evolution-nullable-member-v1": _EVOLUTION_ENDPOINT,
