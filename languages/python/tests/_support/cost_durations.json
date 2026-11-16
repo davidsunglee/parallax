@@ -34,6 +34,7 @@
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_a_completed_transaction_leaves_no_lifecycle_object_alive": 1.6,
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_a_hundred_sequential_roots_leave_exactly_what_one_leaves": 1.3,
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_alive": 1.2,
+ "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_a_transaction_that_reserved_keys_leaves_no_lifecycle_object_alive": 0.4,
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_an_observed_root_costs_the_same_over_ten_times_the_result": 4.3,
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_once": 10.9,
  "tests/unit/core/execution_lifecycle/test_execution_lifecycle_retention.py::test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once": 8.1,

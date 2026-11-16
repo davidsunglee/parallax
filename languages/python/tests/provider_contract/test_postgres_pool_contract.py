@@ -1424,3 +1424,124 @@ def test_a_root_holds_its_pools_threads_and_sessions_only_until_it_closes(
                     "checkpoints": checkpoints,
                 },
             )
+
+
+# --------------------------------------------------------------------------- #
+# The reservation capacity: one more writer connection, dialled lazily with    #
+# the writer's credentials and retention, and bounded by its own deadline.     #
+# --------------------------------------------------------------------------- #
+
+
+def _reservation(runtime: Any, budget: float = 10.0) -> Any:
+    return runtime.reservation_source().new_context(time.monotonic() + budget)
+
+
+def _timeout_ms(connection: Any) -> int:
+    ((setting,),) = connection.execute(
+        "select setting from pg_settings where name = 'statement_timeout'", []
+    )
+    return int(setting)
+
+
+def test_a_reservation_connection_dials_once_with_the_writer_s_credentials_and_is_reused(
+    profile_run: Any,
+) -> None:
+    runtime, source = _counted(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        assert source.calls == 1
+        with _reservation(runtime) as first:
+            reserved = _backend_pid(first)
+            ((login,),) = first.execute(_SESSION_USER, [])
+        with _reservation(runtime) as second:
+            assert _backend_pid(second) == reserved
+        with _context(runtime) as application:
+            assert _backend_pid(application) != reserved
+        assert login == runtime.login_identity
+        assert source.calls == 2
+    finally:
+        runtime.close()
+
+
+def test_a_reservation_adds_one_connection_beside_an_application_holding_its_only_one(
+    profile_run: Any,
+) -> None:
+    application_name = f"parallax_reservation_{uuid.uuid4().hex[:12]}"
+    runtime = _runtime(
+        profile_run,
+        pool=PoolOptions(min_size=1, max_size=1),
+        settings={"application_name": application_name},
+    )
+    try:
+        with _context(runtime) as application, _reservation(runtime) as reserving:
+            assert _backend_pid(application) != _backend_pid(reserving)
+            assert _sessions(profile_run, application_name) == 2
+        # Capacity one: a second reservation lease waits on the first.
+        with _reservation(runtime), pytest.raises(ConnectionAcquisitionError) as refused:
+            _reservation(runtime, budget=0.2).__enter__()
+        assert refused.value.reason == "timeout"
+    finally:
+        runtime.close()
+
+
+def test_an_on_demand_writer_reserves_on_a_connection_it_keeps_no_longer_than_the_lease(
+    profile_run: Any,
+) -> None:
+    application_name = f"parallax_reservation_{uuid.uuid4().hex[:12]}"
+    runtime = _runtime(
+        profile_run,
+        pool=OnDemandOptions(max_size=1),
+        settings={"application_name": application_name},
+    )
+    try:
+        with _reservation(runtime) as first:
+            first_pid = _backend_pid(first)
+        with _reservation(runtime) as second:
+            assert _backend_pid(second) != first_pid
+        deadline = time.monotonic() + 10.0
+        while _sessions(profile_run, application_name) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert _sessions(profile_run, application_name) == 0
+    finally:
+        runtime.close()
+
+
+def test_an_idle_reservation_connection_is_released_by_the_writer_s_idle_limit(
+    profile_run: Any,
+) -> None:
+    application_name = f"parallax_reservation_{uuid.uuid4().hex[:12]}"
+    runtime = _runtime(
+        profile_run,
+        pool=PoolOptions(min_size=1, max_size=1, max_idle=0.5),
+        settings={"application_name": application_name},
+    )
+    try:
+        with _reservation(runtime):
+            assert _sessions(profile_run, application_name) == 2
+        deadline = time.monotonic() + 15.0
+        while _sessions(profile_run, application_name) > 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        # The writer keeps its minimum; the reservation pool keeps none.
+        assert _sessions(profile_run, application_name) == 1
+    finally:
+        runtime.close()
+
+
+def test_each_reservation_lease_installs_its_own_deadline_and_no_role(profile_run: Any) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    role = profile_run.authorization("role-a")
+    try:
+        with runtime.principal_source(role).new_context("writer_only") as application:
+            ((current,),) = application.execute("select current_user", [])
+            assert current == role.name
+            assert _timeout_ms(application) == 0
+        with _reservation(runtime, budget=2.0) as short:
+            short_timeout = _timeout_ms(short)
+            ((reserving_as,),) = short.execute("select current_user", [])
+        with _reservation(runtime, budget=10.0) as long:
+            long_timeout = _timeout_ms(long)
+        with _context(runtime) as application:
+            assert _timeout_ms(application) == 0
+        assert 0 < short_timeout <= 2000 < long_timeout <= 10_000
+        assert reserving_as == profile_run.default_role.name
+    finally:
+        runtime.close()

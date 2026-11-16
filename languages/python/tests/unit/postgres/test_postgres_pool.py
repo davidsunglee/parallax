@@ -4023,3 +4023,65 @@ def test_an_interrupt_installing_the_statement_timeout_propagates_once_disposed(
 
     assert pool.returned == [interrupted]
     assert _issues(resource.cleanup_result) == [("inspect", "suspect")]
+
+
+def test_a_reservation_lease_over_a_session_ended_while_idle_bounds_a_replacement() -> None:
+    broken = _FakeConnection(lost=_lost())
+    fresh = _FakeConnection()
+    pool = _pool(broken, fresh)
+    resource = (
+        _runtime(_pool(), reservation=pool).reservation_source().new_context(monotonic() + 5.0)
+    )
+
+    with resource:
+        pass
+
+    (installed,) = fresh.statements
+    assert "statement_timeout" in installed
+    assert (broken.closes, fresh.closes) == (1, 0)
+    assert pool.returned == [broken, fresh]
+    assert resource.cleanup_result == Returned()
+
+
+class _LostAtReservation(_FakeConnection):
+    """A session that installs its setup and then is lost under the reservation
+    statement, leaving the driver unsure whether the server ran it."""
+
+    def submit(self, text: str, binds: Sequence[object] | None) -> None:
+        if self.statements:
+            self.lost = _lost()
+        super().submit(text, binds)
+
+
+def test_a_reservation_statement_that_loses_its_session_is_never_sent_again() -> None:
+    # The server may have reserved a block before the session went, so the
+    # statement is not resent on a replacement: the failure is the caller's,
+    # and the lease is disposed of rather than handed to the next reservation.
+    lost = _LostAtReservation()
+    pool = _pool(lost, _FakeConnection())
+    resource = (
+        _runtime(_pool(), reservation=pool).reservation_source().new_context(monotonic() + 5.0)
+    )
+
+    with resource as leased, pytest.raises(DatabaseError):
+        leased.execute("select pg_catalog.nextval(?)", ["px.ids"])
+
+    assert len(pool.checkouts) == 1
+    assert len(lost.statements) == 2
+    assert lost.closes == 1
+    assert isinstance(resource.cleanup_result, Invalidated)
+
+
+def test_a_reservation_checkout_waits_only_what_remains_of_its_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The allocator's wait on another reservation already spent part of the
+    # budget; the checkout gets the rest of it, not a fresh acquire timeout.
+    _Clock(monkeypatch, now=6.0)
+    pool = _pool(_FakeConnection())
+    resource = _runtime(_pool(), reservation=pool).reservation_source().new_context(10.0)
+
+    with resource:
+        pass
+
+    assert pool.checkouts == [pytest.approx(4.0)]

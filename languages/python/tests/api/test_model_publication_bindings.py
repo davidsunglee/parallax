@@ -602,6 +602,31 @@ def test_a_publication_moving_nothing_keeps_the_root_s_reservation(profile_run: 
         assert control.execute("select last_value from px.mpb_ledger_ids", []) == [(1,)]
 
 
+def test_a_reservation_outlives_a_selection_that_consumes_no_allocator(profile_run: Any) -> None:
+    # The root keeps its block by physical sequence and settings, not by
+    # edition: an intervening application-assigned selection neither returns
+    # nor discards it, and the generated selection published after it resumes
+    # the same block without reserving again.
+    profile_run.reset(model_of(_ledger()), {}, _LEDGERS)
+    held = _prepared(_ledger(), _LEDGERS, "a")
+    serving = ServingModel(held)
+    db = own_root(connect(profile_run.port, serving)).using_database_login()
+    assert db.transact(_ledger_insert()) == 1
+    assigned = _prepared(_assigned_ledger(), _LEDGERS, "b")
+    serving.publish(assigned, expected=held)
+    db.transact(lambda tx: tx.wire.insert(f"{_SHOP}.Ledger", {"id": 50, "note": "given"}))
+    serving.publish(_prepared(_ledger(), _LEDGERS, "c"), expected=assigned)
+
+    assert db.transact(_ledger_insert()) == 2
+    with closing(profile_run.control()) as control:
+        assert control.execute("select last_value from px.mpb_ledger_ids", []) == [(1,)]
+        assert control.execute("select id from px.mpb_ledger order by id", []) == [
+            (1,),
+            (2,),
+            (50,),
+        ]
+
+
 def _ledger_insert() -> Any:
     def insert(tx: TxnContext) -> object:
         return tx.wire.insert(f"{_SHOP}.Ledger", {"note": "entry"})["id"]

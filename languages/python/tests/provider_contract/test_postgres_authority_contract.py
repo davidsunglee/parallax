@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
+from parallax.core import Attr, DomainModel, Entity, KeySequence, attr
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
+from parallax.core.internal.entity._model import model_of
 from parallax.postgres import PoolOptions, PostgresRole
+from parallax.snapshot import TxnContext, connect
 from tests._support.aws_run import AS_LOGIN
 from tests._support.bindings import TEST_BINDING
 from tests._support.ended_sessions import end_backend
+from tests._support.root_ownership import own_root
 
 
 def _identity(connection: Any) -> tuple[int, str, str]:
@@ -210,3 +216,80 @@ def _grade_model() -> tuple[Any, Any]:
 
     case = load_case(default_cases_dir() / "m-descriptor-001-quoted-reserved-identifier.yaml")
     return engine.load_case_metamodel(case), provision.load_fixtures(str(case.document["model"]))
+
+
+# --------------------------------------------------------------------------- #
+# A key reservation runs under the service login; the application's DML still #
+# runs under its principal and that principal's row policy.                    #
+# --------------------------------------------------------------------------- #
+
+
+class Memo(Entity, table="authority_memo", namespace="authority.keys"):
+    id: Attr[int] = attr(primary_key=KeySequence("authority_memo_ids", batch_size=2))
+    label: Attr[str] = attr(max_length=16)
+
+
+_MEMO_MODEL = DomainModel(Memo)
+
+
+@dataclass(frozen=True, slots=True)
+class _Principal:
+    subject: str
+    database_authorization: object
+
+
+def _keyless(label: str) -> Any:
+    def insert(tx: TxnContext) -> int:
+        return tx.insert(Memo(label=label)).id
+
+    return insert
+
+
+def test_a_principal_s_keyless_insert_reserves_as_the_login_and_writes_under_its_row_policy(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_MEMO_MODEL), {}, TEST_BINDING)
+    role = profile_run.authorization("role-a")
+    quoted = profile_run.port.dialect.quote(role.name)
+    with closing(profile_run.control()) as control:
+        control.execute_write("alter table px.authority_memo enable row level security", [])
+        control.execute_write(
+            f"create policy memo_a on px.authority_memo to {quoted} "
+            "using (label like 'a%') with check (label like 'a%')",
+            [],
+        )
+        login_role = profile_run.port.dialect.quote(profile_run.default_role.name)
+        control.execute_write(
+            f"create policy memo_login on px.authority_memo to {login_role} "
+            "using (true) with check (true)",
+            [],
+        )
+        # The role itself cannot reserve: it holds no privilege on the sequence.
+        control.execute_write(f"set role {quoted}", [])
+        with pytest.raises(DatabaseError) as denied:
+            control.execute("select nextval('px.authority_memo_ids')", [])
+        control.execute_write("reset role", [])
+    assert denied.value.native_code == "42501"
+
+    root = own_root(connect(profile_run.port, _MEMO_MODEL, binding=TEST_BINDING))
+    as_role = root.using_principal(_Principal("memo-writer", role))
+    as_login = root.using_database_login()
+
+    assert as_role.transact(_keyless("allowed")) == 1
+    # The policy refuses the row at the role's flush; the key it was handed is
+    # spent, as any rolled-back insert's is.
+    with pytest.raises(DatabaseError) as refused:
+        as_role.transact(_keyless("blocked"))
+    assert refused.value.native_code == "42501"
+    assert as_login.transact(_keyless("zeta")) == 3
+    assert as_role.transact(_keyless("again")) == 4
+
+    def visible(tx: TxnContext) -> list[int]:
+        return sorted(memo.id for memo in tx.find(Memo.where(Memo.id > 0)).results())
+
+    assert as_role.transact(visible) == [1, 4]
+    with closing(profile_run.control()) as control:
+        stored = control.execute("select id, label from px.authority_memo order by id", [])
+        ((last,),) = control.execute("select last_value from px.authority_memo_ids", [])
+    assert [tuple(row) for row in stored] == [(1, "allowed"), (3, "zeta"), (4, "again")]
+    assert last == 3

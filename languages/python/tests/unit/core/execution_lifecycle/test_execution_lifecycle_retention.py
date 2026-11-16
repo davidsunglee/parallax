@@ -1325,6 +1325,37 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
         assert _left_behind(lambda: database.transact(body)) == []
 
 
+@in_a_child_interpreter
+def test_a_transaction_that_reserved_keys_leaves_no_lifecycle_object_alive() -> None:
+    # The root's key allocator outlives every transaction and keeps the block a
+    # reservation Read answered, so it is where that Read, its acquisition, its
+    # call, or its release would hang if anything of them were kept beside the
+    # keys.
+    reservation = {
+        "first_key": 100,
+        "increment": 30,
+        "minimum": 1,
+        "maximum": 2**63 - 1,
+        "cycles": False,
+        "data_type": "bigint",
+    }
+    port = ScriptedAdapter(Transact(Read(rows=[reservation]), Write()), Transact(Write()))
+    with connect(
+        port,
+        mm.PK_KEY_SEQUENCE_MODEL,
+        clock=FixedClock(FIXED),
+        lifecycle_provider=PROVIDER,
+        binding=TEST_BINDING,
+    ) as root:
+        database = root.using_database_login()
+
+        def run() -> None:
+            for holder in ("reserved", "handed-out"):
+                database.transact(lambda tx, h=holder: tx.insert(mm.KeySequencePass(holder=h)))
+
+        assert _left_behind(run) == []
+
+
 # A scripted commit failure is one the port still holds when the sample is
 # taken, and a live `DatabaseError` holds the traceback of every scope it
 # unwound through — so the script itself would keep the activities this pin

@@ -8,6 +8,7 @@ reservation is a callable answering the rows each test names.
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -365,3 +366,92 @@ def test_waiters_on_one_reservation_take_the_winner_s_block() -> None:
 
     assert sorted(taken) == [1, 2, 3]
     assert calls == [1]
+
+
+def test_concurrent_handouts_on_one_root_never_repeat_a_key() -> None:
+    sequence = _sequence(batch_size=7)
+    reserved = iter(range(1, 10_000, 7))
+    calls: list[int] = []
+    lock = threading.Lock()
+
+    def reserve(
+        resource: ConnectionContext,
+        statement: LoweredStatement,
+        accept: Callable[[list[Row]], int],
+    ) -> int:
+        with lock:
+            calls.append(1)
+            first = next(reserved)
+        return accept([_row(sequence, first)])
+
+    allocator = _allocator()
+    workers, each = 8, 40
+    start = threading.Barrier(workers)
+    taken: list[list[int]] = [[] for _ in range(workers)]
+
+    def work(index: int) -> None:
+        start.wait(5)
+        taken[index].extend(allocator.next_key(sequence, reserve) for _ in range(each))
+
+    threads = [threading.Thread(target=work, args=(index,)) for index in range(workers)]
+    # Switching threads as often as the interpreter allows interleaves handouts
+    # inside one another where a GIL build would otherwise run each to its end.
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+    finally:
+        sys.setswitchinterval(interval)
+
+    keys = sorted(key for keys in taken for key in keys)
+    assert keys == list(range(1, workers * each + 1))
+    # Every block was handed out whole before the next was reserved.
+    assert len(calls) == -(-(workers * each) // 7)
+
+
+def test_an_interrupt_during_a_reservation_publishes_nothing_and_frees_its_lock() -> None:
+    sequence = _sequence()
+    allocator = _allocator()
+
+    def interrupted(
+        resource: ConnectionContext,
+        statement: LoweredStatement,
+        accept: Callable[[list[Row]], int],
+    ) -> int:
+        accept([_row(sequence, 1)])
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        allocator.next_key(sequence, interrupted)
+
+    assert allocator.next_key(sequence, _Reservations([[_row(sequence, 4)]])) == 4
+
+
+def test_a_stalled_reservation_holds_up_no_other_sequence() -> None:
+    stalled_sequence = _sequence("stalled", batch_size=1)
+    other = _sequence("other", batch_size=3)
+    allocator = _allocator()
+    allocator.next_key(other, _Reservations([[_row(other, 1)]]))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def stalled(
+        resource: ConnectionContext,
+        statement: LoweredStatement,
+        accept: Callable[[list[Row]], int],
+    ) -> int:
+        entered.set()
+        release.wait(5)
+        return accept([_row(stalled_sequence, 1)])
+
+    holder = threading.Thread(target=lambda: allocator.next_key(stalled_sequence, stalled))
+    holder.start()
+    try:
+        assert entered.wait(5)
+        assert _keys(allocator, other, _Reservations([]), 2) == [2, 3]
+    finally:
+        release.set()
+        holder.join(5)
