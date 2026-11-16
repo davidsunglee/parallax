@@ -539,6 +539,11 @@ class PostgresConnectionContext:
                 "the reservation's statement timeout could not be installed",
                 reason="preparation_failed",
             ) from exc
+        try:
+            self._admit(self._step_deadline)
+        except BaseException:
+            self._cleanup_result = self._settled(suspect=False, restore_role=self._authorized)
+            raise
 
     def _verify(self, route: PostgresRoute) -> None:
         """Prove this lease's connection before anything else runs on it.

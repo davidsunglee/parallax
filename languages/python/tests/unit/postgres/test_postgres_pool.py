@@ -3967,6 +3967,37 @@ def test_a_reservation_whose_deadline_passed_takes_no_connection() -> None:
     assert pool.returned == []
 
 
+class _SlowSetup(_FakeConnection):
+    """A connection whose every statement completes once ``clock`` reads ``after``."""
+
+    def __init__(self, clock: _Clock, after: float) -> None:
+        super().__init__()
+        self._clock = clock
+        self._after = after
+
+    def submit(self, text: str, binds: Sequence[object] | None) -> None:
+        super().submit(text, binds)
+        self._clock.now = self._after
+
+
+def test_a_reservation_whose_deadline_passes_installing_its_statement_timeout_is_not_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(monkeypatch)
+    slow = _SlowSetup(clock, after=11.0)
+    pool = _pool(slow)
+    resource = _runtime(_pool(), reservation=pool).reservation_source().new_context(10.0)
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "timeout"
+    (installed,) = slow.statements
+    assert "statement_timeout" in installed
+    assert resource.cleanup_result == Returned()
+    assert pool.returned == [slow]
+
+
 def test_a_statement_timeout_the_session_refuses_fails_preparation_and_disposes_it() -> None:
     refusal = psycopg.errors.InsufficientPrivilege("cannot set statement_timeout")
     refusing = _FakeConnection(execute_error=refusal)

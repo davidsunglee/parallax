@@ -48,6 +48,8 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
+    refuse_keyless_target,
+    resolve_target,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
@@ -155,10 +157,10 @@ class TargetWriteAdapter(Protocol):
     """A representation's target write, inert until the attempt asks for it.
 
     Constructed around the caller's original addressed input, judging nothing,
-    so no representation refusal precedes the attempt's re-entry and
-    stated-start checks. :meth:`write_input` is asked once, after both: it
-    captures that input and judges its shape, borrowing ``write_model`` for
-    the call alone. No source evidence, pin, provenance, or insertion
+    so no representation refusal precedes the attempt's re-entry check.
+    :meth:`write_input` is asked once, after it and before the stated start is
+    judged: it captures that input and judges its shape, borrowing
+    ``write_model`` for the call alone. No source evidence, pin, provenance, or insertion
     authority admits the write.
     """
 
@@ -660,19 +662,24 @@ class TxnAttempt(_TxnAttemptBase):
         buffer it, reading the state it starts from where its Effective
         Concurrency Strategy needs participation.
 
-        Re-entry is refused first, then a stated start judged, and only then is
-        ``adapter`` asked for its input under this attempt's write projection.
-        The canonical instruction states that input under the caller's
-        revision and window, and the target, the window, the revision, and the
-        payload are preparation's to judge. A stated ``until``, ``None``
-        included, selects the bounded verb, and every revision keyword stated,
-        ``None`` included, reaches preparation as stated.
+        Re-entry is refused first, then ``adapter`` asked for its input under
+        this attempt's write projection, then a write naming no object refused
+        (`write-key-absent`) ahead of everything else about it, and only then a
+        stated start judged. The canonical instruction states that input under
+        the caller's revision and window, and the target, the window, the
+        revision, and the payload are preparation's to judge. A stated
+        ``until``, ``None`` included, selects the bounded verb, and every
+        revision keyword stated, ``None`` included, reaches preparation as
+        stated.
         """
         refuse_reentry(self._lifecycle)
-        start = stated_valid_from(valid_from)
         mutation, bound = _bounded_mutation(verb, until)
-        revision = target_revision_arguments(version=version, tx_start=tx_start)
         write = adapter.write_input(self._write, mutation)
+        meta = self._write.preparation.meta
+        target = write.target if write.target is not None else resolve_target(meta, write.entity)
+        refuse_keyless_target(meta, target, mutation, write.row)
+        start = stated_valid_from(valid_from)
+        revision = target_revision_arguments(version=version, tx_start=tx_start)
         instruction = TargetWriteInstruction(
             mutation,
             write.entity,

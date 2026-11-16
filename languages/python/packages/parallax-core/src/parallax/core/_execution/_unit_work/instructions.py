@@ -115,6 +115,7 @@ __all__ = [
     "prepare_typed_write",
     "prepare_wire_insert",
     "prepare_wire_write",
+    "refuse_keyless_target",
     "refuse_opening_registry_advance",
     "resolve_target",
     "serialize",
@@ -549,6 +550,15 @@ def key_absent_refusal(entity: EntityIdentity, mutation: str) -> UsageError:
         f"{entity.canonical}: `{mutation}` addresses the object a value's key names, and this "
         "value has no key; insert it to give it one, and write the value the insert answers",
     )
+
+
+def refuse_keyless_target(
+    model: AcceptedMetamodel, entity: CompiledEntity, mutation: str, row: Mapping[str, object]
+) -> None:
+    """Refuse a target write of ``entity`` whose ``row`` states no key
+    (:func:`key_absent_refusal`), so it names no object to address."""
+    if _inheritance_entity_view(model, entity).primary_key.identity.name not in row:
+        raise key_absent_refusal(entity.identity, mutation)
 
 
 def derive_keyed_instruction(
@@ -1998,8 +2008,7 @@ def _prepare_target_write(
     whose required revision is missing is refused before any member it names
     is weighed.
     """
-    if position.primary_key.identity.name not in instruction.row:
-        raise key_absent_refusal(entity.identity, instruction.mutation)
+    refuse_keyless_target(model, entity, instruction.mutation, instruction.row)
     shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,

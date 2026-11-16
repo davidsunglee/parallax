@@ -309,8 +309,9 @@ class LifecycleObservation:
         for.
         """
         calls: list[ObservedCall] = []
-        reservations: set[int] = set()
         for root in self.roots:
+            # Activity IDs are scoped to their root.
+            reservations: set[int] = set()
             for event in root.events:
                 if isinstance(event, ReadStarted) and event.purpose == "reservation":
                     reservations.add(event.activity_id)

@@ -1,7 +1,7 @@
 """The target-write order, stated once and asserted of both representations.
 
 Every ``_if`` verb, Typed or Wire, enters one ingress: lifecycle re-entry, then
-the stated start, then the representation's own capture of what it addresses,
+the representation's own capture of what it addresses, then the stated start,
 then the one preparation that judges the target, the verb, the window, the
 revision, and only then the payload, and finally the buffering that drops an
 amendment of nothing, refuses an object this attempt inserted, and under Locking
@@ -479,9 +479,9 @@ def test_an_amendment_of_nothing_is_judged_then_dropped_before_admission(row: _R
 
 
 # --------------------------------------------------------------------------- #
-# The stated start is judged first: a stated `valid_from=None` is refused      #
-# ahead of every fault the address, the target, the revision, or the payload  #
-# carries.                                                                     #
+# The stated start is judged once the address is captured: a stated            #
+# `valid_from=None` is refused ahead of every fault the target, the revision,  #
+# or the payload carries, and after an address that names no Entity.          #
 # --------------------------------------------------------------------------- #
 _STATED_NONE_START: Final[tuple[_Row, ...]] = (
     _Row(
@@ -491,22 +491,32 @@ _STATED_NONE_START: Final[tuple[_Row, ...]] = (
         _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
     _Row(
-        TargetWriteScenario(_ACCOUNT, "amend", valid_from="none", address="unaddressable"),
+        TargetWriteScenario(_POSITION, "terminate", valid_from="none", revision="omitted"),
         _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
+    ),
+    _Row(
+        TargetWriteScenario(_ACCOUNT, "amend", valid_from="none", address="unaddressable"),
+        {
+            "typed": _refused(TypeError, "<class 'int'> is not an Entity Class"),
+            "wire": _refused(
+                UsageError,
+                "a Wire `amend` addresses an Entity spelling, and int is neither",
+                code="write-instruction-invalid",
+            ),
+        },
     ),
     _Row(
         TargetWriteScenario(UNDECLARED_TARGET_WRITE, "replace", valid_from="none"),
-        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
-    ),
-    _Row(
-        TargetWriteScenario(_POSITION, "terminate", valid_from="none", revision="omitted"),
-        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
+        {
+            "typed": _refused(TypeError, _UNDECLARED_MODEL_TYPED),
+            "wire": _refused(UsageError, _UNDECLARED_MODEL_WIRE, code="write-instruction-invalid"),
+        },
     ),
 )
 
 
 @pytest.mark.parametrize("row", _STATED_NONE_START, ids=str)
-def test_a_stated_none_start_is_refused_before_anything_else_is_judged(row: _Row) -> None:
+def test_a_stated_none_start_is_refused_once_the_address_is_captured(row: _Row) -> None:
     _assert_row(row)
 
 

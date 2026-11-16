@@ -142,7 +142,7 @@ class TxnContext:
         with no Valid Time refuses one outright. The window is judged at THIS
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
-        source = TypedKeyedInsertSource(instance)
+        source = TypedKeyedInsertSource(instance, self._attempt.selected.construction)
         opened = self._attempt.keyed_insert(source, valid_from=valid_from, until=until)
         return source.publish(self._attempt, opened)
 

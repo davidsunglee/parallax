@@ -730,6 +730,25 @@ def test_a_failed_call_is_the_database_call_it_was_charged_for() -> None:
     assert observation.database_calls == 1
 
 
+def test_a_reservation_marks_only_the_calls_of_its_own_root() -> None:
+    # Activity IDs restart in each root, so a later root's Flush may reuse the
+    # reservation Read's.
+    observation = LifecycleObservation()
+    _Handler(observation).deliver(
+        ReadStarted(_EXECUTION, 1, 4, None, "Account", "reservation", None),
+        _flush_call(2, 5, 4, "read", "select nextval"),
+    )
+    _Handler(observation).deliver(
+        FlushStarted(_EXECUTION, 1, 4, None, "pre_commit"),
+        _flush_call(2, 5, 4, "write", "insert 1"),
+    )
+
+    assert [(call.statement.sql, call.purpose) for call in observation.calls] == [
+        ("select nextval", "reservation"),
+        ("insert 1", None),
+    ]
+
+
 def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
     """A call charged to the resolving reads consumes no emission.
 
