@@ -1,24 +1,31 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal
 
 from parallax.core._execution._routing import OperationRouting
 from parallax.core.execution_lifecycle._activity import (
+    ActivityTarget,
     ConnectionAcquisitionActivity,
     ConnectionOwnerActivity,
     ConnectionReleaseActivity,
+    TransactionAttemptActivity,
 )
 from parallax.core.internal.db_port import (
     ConnectionContext,
     DatabaseConnection,
+    Row,
     report_resource_issues,
 )
+from parallax.core.internal.sql_gen import LoweredStatement
 
-__all__ = ["TransactionPreparation", "enter_connection", "exit_connection"]
+__all__ = ["TransactionPreparation", "enter_connection", "exit_connection", "reservation_read"]
 
 
 def enter_connection(
-    resource: ConnectionContext, owner: ConnectionOwnerActivity, routing: OperationRouting
+    resource: ConnectionContext,
+    owner: ConnectionOwnerActivity,
+    routing: OperationRouting | None,
 ) -> tuple[DatabaseConnection, int | None]:
     """Acquire ``resource``'s connection under ``owner``, or raise having
     consumed its cleanup facts.
@@ -26,7 +33,9 @@ def enter_connection(
     ``resource`` is the context ``routing`` created for this acquisition. The
     route it selected is recorded on the acquisition activity and on
     ``routing`` whichever way entry ends, so the operation's later
-    acquisitions request what that selection requires.
+    acquisitions request what that selection requires. A key reservation's
+    context comes from no routing: it requests no Route Policy, and records its
+    route on the activity alone.
 
     Answers the scoped execution and the moment the hold began — ``None`` where
     nothing measured it, which is every operation nobody is observing. The
@@ -49,7 +58,7 @@ def enter_connection(
     the caller can no longer be told about, which is what the fallback log is
     for.
     """
-    acquisition = owner.acquisition(routing.policy)
+    acquisition = owner.acquisition(None if routing is None else routing.policy)
     acquired: DatabaseConnection | None = None
     try:
         with acquisition:
@@ -58,12 +67,14 @@ def enter_connection(
             except BaseException:
                 acquisition.call_returned()
                 selection = resource.selection
-                routing.record(selection)
+                if routing is not None:
+                    routing.record(selection)
                 acquisition.unacquired(resource.cleanup_result, selection)
                 raise
             acquisition.call_returned()
             selection = resource.selection
-            routing.record(selection)
+            if routing is not None:
+                routing.record(selection)
             acquisition.acquired(selection)
     except BaseException:
         if acquired is not None:
@@ -212,6 +223,36 @@ def exit_connection(
         _report_unheard(release, resource)
         raise
     _report_unheard(release, resource)
+
+
+def reservation_read[T](
+    owner: TransactionAttemptActivity,
+    target: ActivityTarget,
+    resource: ConnectionContext,
+    statement: LoweredStatement,
+    accept: Callable[[list[Row]], T],
+) -> T:
+    """Run ``statement`` on ``resource``'s own connection as one ``reservation``
+    Read of the attempt ``owner``, and answer what ``accept`` makes of its rows.
+
+    The Read owns the acquisition, the one row-returning Database Call, and the
+    release, as its own children, beside whatever else the attempt holds; the
+    attempt's connection takes no part. ``accept`` runs inside the Read once
+    the connection is released, so a reservation it refuses is a failed Read.
+    """
+    with owner.read(target, "reservation") as read:
+        connection, held_since_ns = enter_connection(resource, read, None)
+        failure: BaseException | None = None
+        try:
+            with read.database_call(statement, "read", target) as call:
+                rows = connection.execute(statement.sql, list(statement.binds))
+                call.read_completed(rows)
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            exit_connection(resource, read, held_since_ns, failure)
+        return accept(rows)
 
 
 def _leave(resource: ConnectionContext, failure: BaseException | None) -> None:

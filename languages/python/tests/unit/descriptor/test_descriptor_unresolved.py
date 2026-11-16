@@ -29,6 +29,7 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     ExactEntityReference,
     IndexIdentity,
+    KeySequence,
     Multiplicity,
     PersistenceMode,
     PrimaryKey,
@@ -252,7 +253,7 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
                 {"name": "id", "type": "int64", "primaryKey": True, "pkGeneration": "wild"}
             ),
             "entity Bad.attributes.id: `pkGeneration` must be one of "
-            "['application-assigned', 'max', 'sequence'], got 'wild'",
+            "['application-assigned', 'key-sequence', 'max', 'sequence'], got 'wild'",
         ),
         (
             _attributed(
@@ -263,7 +264,8 @@ def _ordered(term: dict[str, object]) -> dict[str, Any]:
                     "pkGeneration": {"strategy": "max"},
                 }
             ),
-            "entity Bad.attributes.id: object pkGeneration requires `strategy: sequence`",
+            "entity Bad.attributes.id: object pkGeneration requires "
+            "`strategy: key-sequence` or `sequence`",
         ),
         (
             _entity_with(indices=[{"name": "i", "attributes": "id"}]),
@@ -699,17 +701,42 @@ def test_a_declared_key_without_a_generator_is_application_assigned() -> None:
     assert declaration.attributes[0].primary_key == PrimaryKey(APPLICATION_ASSIGNED)
 
 
-def test_a_sequence_generation_without_a_name_is_rejected() -> None:
-    key = records.Attribute(
-        name="id",
-        type="int64",
-        column="id",
-        primary_key=True,
-        pk_generator=records.PkGenerator(strategy="sequence"),
+@pytest.mark.parametrize(
+    ("spelled", "generation"),
+    [
+        ("{strategy: key-sequence, name: account_ids}", KeySequence("account_ids")),
+        (
+            "{strategy: key-sequence, name: account_ids, batchSize: 1, initialValue: -5, "
+            "incrementSize: 3}",
+            KeySequence("account_ids", batch_size=1, initial_value=-5, increment_size=3),
+        ),
+    ],
+)
+def test_a_key_sequence_generation_takes_its_defaults_and_stated_settings(
+    spelled: str, generation: KeySequence
+) -> None:
+    text = f"""
+    entity:
+      name: Account
+      namespace: parallax.fixture
+      table: account
+      attributes:
+        - name: id
+          type: int64
+          primaryKey: true
+          pkGeneration: {spelled}
+    """
+    assert _only(text).attributes[0].primary_key == PrimaryKey(generation)
+
+
+def test_a_key_sequence_spelled_as_a_bare_token_names_its_object_form() -> None:
+    document = _attributed(
+        {"name": "id", "type": "int64", "primaryKey": True, "pkGeneration": "key-sequence"}
     )
-    entity = records.Entity(name="Account", table="account", attributes=(key,))
-    with raises_code(DescriptorError, DESCRIPTOR_VALUE_INVALID, match="names its sequence"):
-        unresolved_metamodel(records.Metamodel((entity,)))
+    with raises_code(
+        DescriptorError, DESCRIPTOR_SCHEMA_INVALID, match="the object form with `strategy"
+    ):
+        validate_inheritance_families(document)
 
 
 def test_a_temporal_profile_derives_its_axis_endpoints_and_columns() -> None:

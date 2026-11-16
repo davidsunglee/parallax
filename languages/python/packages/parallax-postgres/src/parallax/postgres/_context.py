@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Callable
 from time import monotonic
@@ -28,8 +29,9 @@ from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres._authorization import (
     PostgresRole,
-    _install_role,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
+    _install_setup,  # pyright: ignore[reportPrivateUsage] - the lease's session setup, run as its first send
     _role_statement,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
+    statement_timeout,
 )
 from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import (
@@ -295,7 +297,8 @@ class PostgresConnectionContext:
     Creating it takes nothing. Entering it checks out, verifies the connection
     is idle, checks admission against the step's deadline, proves the
     connection where its route's readiness is still pending, installs any
-    bound role, rechecks admission after that provider work, and yields fresh
+    bound role, installs a statement timeout where the lease carries a statement
+    deadline, rechecks admission after that provider work, and yields fresh
     execution access. Leaving it revokes that access and releases the
     connection once, restoring an installed role only where the session
     remains reusable.
@@ -342,6 +345,7 @@ class PostgresConnectionContext:
         "_role",
         "_route",
         "_selection",
+        "_statement_deadline",
         "_step",
         "_step_deadline",
         "_steps",
@@ -356,6 +360,7 @@ class PostgresConnectionContext:
         role: PostgresRole | None,
         *,
         expected_login: str | None,
+        statement_deadline: float | None = None,
     ) -> None:
         route, step_deadline = steps[0]
         self._steps = steps
@@ -366,6 +371,7 @@ class PostgresConnectionContext:
         self._admit = admit
         self._role = role
         self._expected_login = expected_login
+        self._statement_deadline = statement_deadline
         self._used = False
         self._entering = False
         self._opening = False
@@ -437,6 +443,7 @@ class PostgresConnectionContext:
             else:
                 self._require_unrefused(route)
             self._authorize()
+            self._bound_statements()
         finally:
             if probing:
                 route.release_probe()
@@ -486,7 +493,7 @@ class PostgresConnectionContext:
         if role is None:
             return
         try:
-            self._run_native(_install_role, _role_statement(role), replay_safe=True, setup=True)
+            self._run_native(_install_setup, _role_statement(role), replay_safe=True, setup=True)
         except _FellBack:
             raise
         except BaseException as exc:
@@ -504,6 +511,39 @@ class PostgresConnectionContext:
             self._cleanup_result = self._settled(suspect=False, restore_role=True)
             self._authorized = False
             raise
+
+    def _bound_statements(self) -> None:
+        """Install what remains of the statement deadline as the session's
+        ``statement_timeout``, so a statement stalled on a live server — on a
+        lock included — fails within it.
+
+        Setup rather than a modeled statement, like the role installation. Only
+        the reservation pool's leases carry a statement deadline, and every one
+        of them installs its own, so the setting never outlives its purpose on
+        a session another lease reuses.
+        """
+        deadline = self._statement_deadline
+        if deadline is None:
+            return
+        try:
+            self._admit(deadline)
+            milliseconds = max(1, math.ceil((deadline - monotonic()) * 1000))
+            self._run_native(
+                _install_setup, statement_timeout(milliseconds), replay_safe=True, setup=True
+            )
+        except _FellBack:
+            raise
+        except ConnectionAcquisitionError:
+            self._cleanup_result = self._settled(suspect=False, restore_role=self._authorized)
+            raise
+        except BaseException as exc:
+            self._cleanup_result = self._settled(suspect=True)
+            if not isinstance(exc, Exception):
+                raise
+            raise ConnectionAcquisitionError(
+                "the reservation's statement timeout could not be installed",
+                reason="preparation_failed",
+            ) from exc
 
     def _verify(self, route: PostgresRoute) -> None:
         """Prove this lease's connection before anything else runs on it.

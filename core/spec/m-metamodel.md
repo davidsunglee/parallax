@@ -446,6 +446,10 @@ reserved variant this contract gave up.
 ```text
 PrimaryKeyGeneration =
     ApplicationAssigned
+  | KeySequence(name: nonempty string,
+                batch_size: positive integer,
+                initial_value: integer,
+                increment_size: positive integer)
   | Max
   | Sequence(name: nonempty string,
              batch_size: positive integer,
@@ -472,8 +476,13 @@ AttributeMetadata
 Primary-key
 generation is available only through the `PrimaryKey` branch; a
 non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
-Max, or Sequence value. Frontends normalize an omitted generator on a declared
-primary key to `PrimaryKey(ApplicationAssigned)`.
+KeySequence, Max, or Sequence value. Frontends normalize an omitted generator on
+a declared primary key to `PrimaryKey(ApplicationAssigned)`.
+
+A KeySequence key is caller-omittable rather than framework-owned: a caller may
+supply it or leave it unset for an insert to allocate (`m-pk-gen`), so it keeps
+`framework_owned` false and admits caller insert input as an application-assigned
+key does. A Max or Sequence key admits none, because the database computes it.
 
 `multiplicity` defaults to `One`. A `Many` Attribute is a **scalar
 collection**: an ordered, duplicate-preserving sequence of non-null values whose
@@ -485,7 +494,7 @@ roles are refused by their owners: an As-Of Axis endpoint below, a relationship
 join endpoint by `m-relationship`, and an Index component by `m-storage-layout`.
 `column` and `read_only` keep their ordinary meaning for it.
 
-An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Numeric, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. Max and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
+An application-assigned primary key MUST have exactly one of the declared scalar types Int32, Int64, String, or Uuid. Boolean, Float32, Float64, Numeric, Bytes, Date, Time, and Timestamp remain valid ordinary scalar attributes but cannot be primary keys. Structured values and collections cannot be primary keys. KeySequence, Max, and Sequence require Int32 or Int64 as specified by [Primary-Key Generation](m-pk-gen.md); Uuid eligibility introduces no framework UUID generator.
 
 These reference-free key invariants hold at normalized Attribute construction, before the Unresolved Metamodel seam. This policy does not add a primary-key nullability restriction or change the single-attribute key model.
 

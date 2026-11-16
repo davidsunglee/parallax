@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from psycopg.sql import SQL, Composed, Identifier
+from psycopg.sql import SQL, Composed, Identifier, Literal
 
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_port import AUTHORIZATION_INVALID
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from parallax.postgres._context import PostgresConnectionContext
 
-__all__ = ["PostgresRole", "install_role", "restore_role"]
+__all__ = ["PostgresRole", "install_role", "restore_role", "statement_timeout"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +38,16 @@ def _role_statement(role: PostgresRole) -> Composed:
     return SQL("SET ROLE {}").format(Identifier(role.name))
 
 
-def _install_role(
+def statement_timeout(milliseconds: int) -> Composed:
+    return SQL("SET statement_timeout = {}").format(Literal(milliseconds))
+
+
+def _install_setup(
     connection: psycopg.Connection[TupleRow],
     context: PostgresConnectionContext | None,
     statement: Composed,
 ) -> None:
+    """Run one session setup statement as the lease's possible first send."""
     with connection.cursor() as cursor:
         _start_first_send(context)
         cursor.execute(statement)
@@ -50,7 +55,7 @@ def _install_role(
 
 
 def install_role(connection: Any, role: PostgresRole) -> None:
-    _install_role(connection, None, _role_statement(role))
+    _install_setup(connection, None, _role_statement(role))
 
 
 def restore_role(connection: Any) -> None:

@@ -6,6 +6,8 @@ from typing import Final
 
 from parallax.core.internal.base import NeutralType
 from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
+    BreakingChange,
     ResolvedBinding,
     SequenceRelocated,
     TableRelocated,
@@ -60,6 +62,7 @@ __all__ = [
     "VALUE_OBJECT_OCCURRENCE_DELTA_ORDER",
     "WRITES_DISABLED",
     "Absent",
+    "AllocatorSettingsChanged",
     "AsOfAxisAdded",
     "AsOfAxisRemoved",
     "AttributeAdded",
@@ -635,11 +638,12 @@ type LogicalOperation = (
 )
 """Any operation the logical comparison of two models reports."""
 
-type EvolutionOperation = LogicalOperation | TableRelocated | SequenceRelocated
-"""Any operation an evolution reports, logical or a relocation.
+type EvolutionOperation = LogicalOperation | BreakingChange
+"""Any operation an evolution reports, logical or a breaking physical change.
 
-A relocation is a surviving table or sequence whose physical object moved
-between the two bindings."""
+A breaking physical change is a surviving table or sequence whose physical
+object moved between the two bindings, or a surviving allocator whose
+allocation settings changed."""
 
 
 def _model_location(operation: LogicalOperation) -> ModelLocation:
@@ -858,10 +862,12 @@ CALLER_INPUT_ORDER: Final[tuple[AttributeWriteCapability, ...]] = (
 def attribute_write_capability(attribute: AttributeMetadata) -> AttributeWriteCapability:
     """What caller input one accepted Attribute admits.
 
-    Ownership is derived, not declared: a generated primary key joins the
-    framework-owned designations because the framework rather than the caller
-    supplies its value, while an application-assigned key and a read-only
-    Attribute admit insert input alone. Classification and the write-capability
+    Ownership is derived, not declared: a key the database computes, by ``MAX``
+    or a registry ``Sequence``, joins the framework-owned designations because
+    the framework rather than the caller supplies its value, while a
+    KeySequence key — which a caller may supply or omit — an
+    application-assigned key, and a read-only Attribute admit insert input
+    alone. Classification and the write-capability
     impact read the contract here so a raw flag is never mistaken for it.
     """
     capability = attribute.write_capability

@@ -8,6 +8,7 @@ from parallax.core.internal.db_port import (
     ConnectionContextSource,
     DatabaseAdapter,
     DatabaseConnection,
+    ReservationContextSource,
 )
 
 if TYPE_CHECKING:
@@ -79,6 +80,9 @@ class _DecoratingRuntime[Authorization]:
     def principal_source(self, authorization: Authorization) -> ConnectionContextSource:
         return _DecoratingSource(self._inner.principal_source(authorization), self._decorate)
 
+    def reservation_source(self) -> ReservationContextSource:
+        return _DecoratingReservationSource(self._inner.reservation_source(), self._decorate)
+
     def close(self) -> None:
         self._inner.close()
 
@@ -124,3 +128,16 @@ class _DecoratingSource:
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
         return _DecoratingContext(self.inner.new_context(policy), self.decorate)
+
+
+@dataclass(frozen=True, slots=True)
+class _DecoratingReservationSource:
+    inner: ReservationContextSource
+    decorate: Decorate
+
+    @property
+    def reservation_timeout(self) -> float:
+        return self.inner.reservation_timeout
+
+    def new_context(self, deadline: float, /) -> ConnectionContext:
+        return _DecoratingContext(self.inner.new_context(deadline), self.decorate)

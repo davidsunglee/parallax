@@ -37,6 +37,7 @@ from parallax.core.internal.db_port import (
     OrderedWriteTransport,
     PipelineStatement,
     PoolMetricsSource,
+    ReservationContextSource,
     Route,
     RouteCapabilities,
     RoutePolicy,
@@ -90,6 +91,9 @@ class _RecordingRuntime:
 
     def principal_source(self, authorization: object) -> ConnectionContextSource:
         return _RecordingSource(self._inner.principal_source(authorization), self._writes)
+
+    def reservation_source(self) -> ReservationContextSource:
+        return self._inner.reservation_source()
 
     def close(self) -> None:
         self._inner.close()

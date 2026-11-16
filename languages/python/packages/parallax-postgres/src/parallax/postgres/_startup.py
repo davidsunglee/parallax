@@ -19,6 +19,7 @@ from parallax.postgres._route import (
     PostgresRoute,
     ProbeMismatch,
     check_probe,
+    open_reservation_route,
     open_route,
 )
 from parallax.postgres._runtime import PostgresRuntime
@@ -65,7 +66,8 @@ def open_runtime(
     wall-clock time. The writer must prove itself; the reader then proves the
     same login within what remains, or — where ``reader_startup`` permits and
     the reader could only not be reached — is left pending, to be proved by
-    the first connection it hands over.
+    the first connection it hands over. The writer's reservation pool opens
+    beside them holding no connection, and the writer's proof stands for it.
 
     Every failure below publishes no runtime: every pool opened so far is closed
     on the way out, and a startup connection that was already acquired is
@@ -89,12 +91,24 @@ def open_runtime(
                 prepare_threshold=prepare_threshold,
             )
             opened.append(reader_route)
-        runtime = PostgresRuntime(writer_route, reader_route, acquire_timeout=acquire_timeout)
+        reservation_route = open_reservation_route(
+            writer, acquire_timeout=acquire_timeout, prepare_threshold=prepare_threshold
+        )
+        opened.append(reservation_route)
+        runtime = PostgresRuntime(
+            writer_route,
+            reader_route,
+            reservation=reservation_route,
+            acquire_timeout=acquire_timeout,
+        )
         try:
             login = _prove(runtime, writer_route, writer, deadline, None)
         except _ReadinessFailure as failure:
             raise failure.error from failure.error.__cause__
         writer_route.proved_at_startup()
+        # The writer's proof is the reservation pool's: it dials the same
+        # endpoint with the same credentials.
+        reservation_route.proved_at_startup()
         runtime._complete_startup(login)  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
         if reader is not None and reader_route is not None:
             _start_reader(runtime, reader_route, reader, deadline, login, reader_startup)

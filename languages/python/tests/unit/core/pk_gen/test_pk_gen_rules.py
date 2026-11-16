@@ -1,4 +1,5 @@
-"""m-pk-gen: equal Sequence allocator keys share one allocator and must agree."""
+"""m-pk-gen: equal allocator keys share one allocator and must agree, and a
+family allocates from its root's declaration alone."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from parallax.core.internal.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
+    KeySequence,
     MetamodelIssue,
     PrimaryKey,
     Sequence,
@@ -21,7 +23,11 @@ from parallax.core.internal.metamodel import (
     UnresolvedEntityDeclaration,
 )
 from parallax.core.internal.model_formation import MetamodelValidationError
-from parallax.core.internal.pk_gen._rules import SEQUENCE_CONFLICT
+from parallax.core.internal.pk_gen._rules import (
+    KEY_SEQUENCE_CONFLICT,
+    KEY_SEQUENCE_SUBTYPE_OVERRIDE,
+    SEQUENCE_CONFLICT,
+)
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _BADGE = identity("Badge")
@@ -30,7 +36,7 @@ _VOUCHER = identity("Voucher")
 
 
 def _standalone(
-    entity: EntityIdentity, sequence: Sequence, *, wide: bool = True
+    entity: EntityIdentity, sequence: Sequence | KeySequence, *, wide: bool = True
 ) -> UnresolvedEntityDeclaration:
     return Declaration(
         identity=entity,
@@ -101,7 +107,7 @@ def test_every_disagreeing_declaration_is_related_to_the_first_canonical_one() -
     )
 
 
-def _tpcs_family(sequence: Sequence) -> tuple[UnresolvedEntityDeclaration, ...]:
+def _tpcs_family(sequence: Sequence | KeySequence) -> tuple[UnresolvedEntityDeclaration, ...]:
     root, car, truck = identity("Vehicle"), identity("Car"), identity("Truck")
     return (
         Declaration(
@@ -138,3 +144,53 @@ def test_a_tableless_family_root_declaration_counts_once() -> None:
 def test_an_inherited_family_allocator_shares_with_an_agreeing_standalone() -> None:
     shared = Sequence("vehicle_seq", batch_size=4)
     form_metamodel(source(_standalone(identity("Fleet"), shared), *_tpcs_family(shared)))
+
+
+@pytest.mark.parametrize(
+    ("later", "wide"),
+    [
+        (KeySequence("shared_ids", batch_size=2), True),
+        (KeySequence("shared_ids", initial_value=50), True),
+        (KeySequence("shared_ids", increment_size=3), True),
+        (KeySequence("shared_ids"), False),
+        (Sequence("shared_ids", batch_size=100), True),
+    ],
+    ids=["batch-size", "initial-value", "increment-size", "key-type", "legacy-strategy"],
+)
+def test_a_key_sequence_disagreement_is_a_key_sequence_conflict(
+    later: KeySequence | Sequence, wide: bool
+) -> None:
+    issues = _rejection(
+        _standalone(_BADGE, KeySequence("shared_ids")), _standalone(_TICKET, later, wide=wide)
+    )
+    assert issues == (MetamodelIssue(KEY_SEQUENCE_CONFLICT, _id(_TICKET), (_id(_BADGE),)),)
+
+
+def test_unrelated_entities_naming_one_key_sequence_share_it() -> None:
+    shared = KeySequence("shared_ids", batch_size=5, initial_value=-7, increment_size=2)
+    formed = form_metamodel(source(_standalone(_BADGE, shared), _standalone(_TICKET, shared)))
+    assert {entity.identity for entity in formed.entities} == {_BADGE, _TICKET}
+
+
+def test_a_family_root_key_sequence_serves_every_subtype() -> None:
+    form_metamodel(source(*_tpcs_family(KeySequence("vehicle_ids"))))
+
+
+def test_a_subtype_declaring_its_own_key_sequence_is_refused() -> None:
+    root, car = identity("Vehicle"), identity("Car")
+    issues = _rejection(
+        Declaration(
+            identity=root,
+            attributes=(attribute(root, "name"),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=car,
+            container=Table("car"),
+            attributes=(
+                attribute(car, "id", type=INT64, primary_key=PrimaryKey(KeySequence("car_ids"))),
+            ),
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+        ),
+    )
+    assert MetamodelIssue(KEY_SEQUENCE_SUBTYPE_OVERRIDE, _id(car)) in issues

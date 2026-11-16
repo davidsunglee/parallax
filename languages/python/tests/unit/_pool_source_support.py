@@ -6,6 +6,7 @@ from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
     PoolMeasurements,
+    PoolPurpose,
     PoolSample,
     Route,
     RouteReadiness,
@@ -30,8 +31,10 @@ class DetachableSource:
         *,
         route: Route = "writer",
         readiness: RouteReadiness = "verified",
+        purpose: PoolPurpose = "application",
     ) -> None:
         self.route: Route = route
+        self.purpose: PoolPurpose = purpose
         self.readiness: RouteReadiness = readiness
         self.measurements = (
             measurements

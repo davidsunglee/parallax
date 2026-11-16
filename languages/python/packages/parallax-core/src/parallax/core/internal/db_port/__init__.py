@@ -18,6 +18,7 @@ from parallax.core.internal.db_port._pool_metrics import (
     PoolDetached,
     PoolMeasurements,
     PoolMetricsSource,
+    PoolPurpose,
     PoolSample,
     PoolUnavailable,
 )
@@ -43,6 +44,7 @@ from parallax.core.internal.db_port._resources import (
     DatabaseStartupError,
     Invalidated,
     ReleaseUnconfirmed,
+    ReservationContextSource,
     Returned,
     StartupPhase,
 )
@@ -97,9 +99,11 @@ __all__ = [
     "PoolDetached",
     "PoolMeasurements",
     "PoolMetricsSource",
+    "PoolPurpose",
     "PoolSample",
     "PoolUnavailable",
     "ReleaseUnconfirmed",
+    "ReservationContextSource",
     "ResourceCondition",
     "Returned",
     "RollbackFailed",

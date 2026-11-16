@@ -1,5 +1,10 @@
 # A Database Binding places each prepared selection, and publication never relocates
 
+*Superseded in part (2026-11, [ADR 0098](0098-native-key-generation-rolls-out-through-publication-and-evolution.md)):*
+publication also refuses a surviving allocator's allocation-settings change,
+under the one code `publication-breaking-change-refused`, and a unilateral
+schema delta creates a newly declared native allocator's sequence.
+
 One logical Domain Model has to serve several tenants, or an existing database whose
 tables sit in other schemas under other names. Until now Parallax placed nothing: every
 statement named a bare declared table, and PostgreSQL found it through the connection's

@@ -308,6 +308,7 @@ class AuthoringPlan:
         root: RootPolicy | None = None,
         addressing: int = 0,
         check: MemberCheck | None = None,
+        nonnull: int = 0,
     ) -> PreparedAuthoringRow:
         """The owned cells ``lane`` authors for a row stating every member it
         carries.
@@ -316,7 +317,8 @@ class AuthoringPlan:
         none. A member in ``omitted`` is read as unstated. An unstated member
         in ``excluded`` stays unstated; any other unstated ``many`` member is
         its empty collection, an unstated member in ``nulled`` is stated as
-        null, and an unstated or null member in ``required`` is refused.
+        null, and an unstated or null member in ``required`` is refused, as is
+        a null member in ``nonnull``, which may be left unstated.
         ``check`` judges each stated member first, and ``root`` authors a
         marker-shaped document at a top-level scalar outside ``addressing``,
         where it is the ordinary value it spells.
@@ -342,7 +344,7 @@ class AuthoringPlan:
             if check is not None:
                 check(position, raw)
             if raw is None:
-                if (required | many) & bit:
+                if (required | many | nonnull) & bit:
                     raise self._missing(position)
                 cells.append(None)
             elif scalar & bit:

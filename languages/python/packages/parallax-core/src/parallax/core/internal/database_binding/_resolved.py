@@ -4,7 +4,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from parallax.core.internal.database_binding._authored import DatabaseBinding
-from parallax.core.internal.database_binding._physical import PhysicalSequence, ResolvedTable
+from parallax.core.internal.database_binding._physical import (
+    PhysicalSequence,
+    ResolvedSequence,
+    ResolvedTable,
+)
 from parallax.core.internal.database_binding._resolution import resolve
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel
@@ -26,7 +30,9 @@ class ResolvedBinding:
     meta: Metamodel
     binding: DatabaseBinding
     _tables: Mapping[EntityIdentity, ResolvedTable] = field(init=False, compare=False, repr=False)
-    _sequences: Mapping[str, PhysicalSequence] = field(init=False, compare=False, repr=False)
+    _sequences: Mapping[str, PhysicalSequence | ResolvedSequence] = field(
+        init=False, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         tables, sequences = resolve(self.meta, self.binding)
@@ -44,8 +50,12 @@ class ResolvedBinding:
         return tuple(self._tables.values())
 
     @property
-    def sequences(self) -> Mapping[str, PhysicalSequence]:
-        """Every logical allocator's physical sequence, by allocator key in codepoint order."""
+    def sequences(self) -> Mapping[str, PhysicalSequence | ResolvedSequence]:
+        """Every logical allocator's sequence, by allocator key in codepoint order.
+
+        A native allocator resolves to its :class:`ResolvedSequence`; an
+        allocator a registry ``Sequence`` declares keeps its bare placement.
+        """
         return self._sequences
 
     def table(self, mapping_owner: EntityIdentity) -> ResolvedTable:
@@ -55,8 +65,8 @@ class ResolvedBinding:
         except KeyError:
             raise LookupError(f"{mapping_owner.canonical} owns no table") from None
 
-    def sequence(self, allocator: str) -> PhysicalSequence:
-        """``allocator``'s physical sequence; an undeclared key is a :class:`LookupError`."""
+    def sequence(self, allocator: str) -> PhysicalSequence | ResolvedSequence:
+        """``allocator``'s sequence; an undeclared key is a :class:`LookupError`."""
         try:
             return self._sequences[allocator]
         except KeyError:

@@ -194,7 +194,7 @@ def test_no_target_verb_takes_an_unversioned_assertion(method: Callable[..., Non
     ("document", "match", "code"),
     [
         ({"id": 1, "owner": "Bo"}, "primary key alone", "write-instruction-invalid"),
-        ({"owner": "Bo"}, "states no 'id'", "write-instruction-invalid"),
+        ({"owner": "Bo"}, "has no key", "write-key-absent"),
         ({"id": 1, "nickname": "Bo"}, "undeclared", "write-instruction-invalid"),
         ({"id": "one"}, "id", "neutral-literal-type-mismatch"),
     ],

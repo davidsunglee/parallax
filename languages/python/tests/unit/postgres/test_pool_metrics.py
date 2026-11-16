@@ -299,7 +299,11 @@ def _runtime(pool: _StatsPool) -> PostgresRuntime:
     from parallax.postgres._route import PostgresRoute
 
     return PostgresRuntime(
-        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()), acquire_timeout=15.0
+        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()),
+        reservation=PostgresRoute(
+            "writer", cast("Any", _StatsPool()), ConnectionEstablishment(), "reservation"
+        ),
+        acquire_timeout=15.0,
     )
 
 

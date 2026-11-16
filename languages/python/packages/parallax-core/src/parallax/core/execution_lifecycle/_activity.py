@@ -100,7 +100,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
 from parallax.core.internal.sql_gen import LoweredStatement
 
-type _ReadPurpose = ResultRepresentation | Literal["row-acquisition"]
+type _ReadPurpose = ResultRepresentation | Literal["row-acquisition", "reservation"]
 
 
 @runtime_checkable
@@ -552,14 +552,15 @@ class ConnectionReleaseActivity(Protocol):
 class ConnectionOwnerActivity(Protocol):
     """An activity that owns one bounded connection lease.
 
-    The three kinds that do are a standalone Read, a Transaction Attempt, and a
-    standalone Stream Batch. Participating work receives the attempt's
-    connection and owns no lease of its own.
+    The kinds that do are a standalone Read, a Transaction Attempt, a
+    standalone Stream Batch, and a key reservation's Read. Other participating
+    work receives the attempt's connection and owns no lease of its own.
     """
 
-    def acquisition(self, route_policy: RoutePolicy, /) -> ConnectionAcquisitionActivity:
+    def acquisition(self, route_policy: RoutePolicy | None, /) -> ConnectionAcquisitionActivity:
         """The scope this activity's one acquisition, requesting
-        ``route_policy``, runs inside."""
+        ``route_policy``, runs inside; a reservation's acquisition requests no
+        Route Policy, being served by the writer's reservation capacity."""
         ...
 
     def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
@@ -861,7 +862,7 @@ class _InertActivity:
     def attempt(self, edition: str, /) -> _InertActivity:
         return self
 
-    def acquisition(self, route_policy: RoutePolicy, /) -> _InertActivity:
+    def acquisition(self, route_policy: RoutePolicy | None, /) -> _InertActivity:
         return self
 
     def release(self, held_since_ns: int | None, /) -> _InertActivity:
@@ -1263,7 +1264,7 @@ class _LiveConnectionOwner(_LiveActivity):
 
     __slots__ = ()
 
-    def acquisition(self, route_policy: RoutePolicy, /) -> _LiveAcquisition:
+    def acquisition(self, route_policy: RoutePolicy | None, /) -> _LiveAcquisition:
         return _LiveAcquisition(self._publisher, self, route_policy)
 
     def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
@@ -1496,10 +1497,10 @@ class _LiveAcquisition(_LiveActivity):
     )
 
     def __init__(
-        self, publisher: _Publisher, parent: _LiveActivity, route_policy: RoutePolicy
+        self, publisher: _Publisher, parent: _LiveActivity, route_policy: RoutePolicy | None
     ) -> None:
         super().__init__(publisher, parent)
-        self._route_policy: RoutePolicy = route_policy
+        self._route_policy: RoutePolicy | None = route_policy
         self._started_ns = 0
         self._returned_ns = 0
         self._completed_ns = 0

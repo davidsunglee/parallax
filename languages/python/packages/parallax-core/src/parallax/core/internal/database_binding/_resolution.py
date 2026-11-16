@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final
 
+from parallax.core.internal.base import Int32, Int64, integer_bounds
 from parallax.core.internal.database_binding._authored import DatabaseBinding, DatabaseLocation
 from parallax.core.internal.database_binding._errors import (
     BINDING_RESOLUTION_REJECTED,
@@ -15,11 +16,20 @@ from parallax.core.internal.database_binding._physical import (
     PhysicalSequence,
     PhysicalTable,
     ResolvedDocumentRootConstraint,
+    ResolvedSequence,
     ResolvedTable,
     ResolvedTemporalConstraints,
 )
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.metamodel import EntityIdentity, Metamodel, PrimaryKey, Sequence
+from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.metamodel import (
+    AttributeMetadata,
+    EntityIdentity,
+    KeySequence,
+    Metamodel,
+    PrimaryKey,
+    Sequence,
+)
 from parallax.core.internal.storage_layout import (
     TableLayout,
     document_root_check_name,
@@ -34,6 +44,7 @@ __all__ = [
     "BINDING_SEQUENCE_COLLISION",
     "BINDING_SEQUENCE_TABLE_COLLISION",
     "BINDING_SEQUENCE_UNKNOWN",
+    "BINDING_SEQUENCE_UNREPRESENTABLE",
     "BINDING_SEQUENCE_UNRESOLVED",
     "BINDING_TABLE_COLLISION",
     "BINDING_TABLE_UNRESOLVED",
@@ -59,27 +70,47 @@ BINDING_SEQUENCE_COLLISION: Final = "binding-sequence-collision"
 """Two logical allocators resolve to one physical sequence."""
 BINDING_SEQUENCE_TABLE_COLLISION: Final = "binding-sequence-table-collision"
 """A physical sequence and a physical table share one name in one location."""
+BINDING_SEQUENCE_UNREPRESENTABLE: Final = "binding-sequence-unrepresentable"
+"""The binding's backend cannot hold a native allocator's declared settings: it
+has no native sequence, its physical step exceeds the key range, or its initial
+value lies outside it."""
 
 _IDENTIFIER_INVALID: Final = "binding-identifier-invalid"
 
 
-def _logical_allocators(model: Metamodel) -> tuple[str, ...]:
-    """Every logical allocator key ``model`` declares, once each, in codepoint order.
+type _Declared = tuple[Sequence | KeySequence, AttributeMetadata]
+
+
+def _logical_allocators(model: Metamodel) -> Mapping[str, _Declared]:
+    """Every logical allocator key ``model`` declares, once each, in codepoint
+    order, beside the first declaration of it and the key Attribute declaring it.
 
     Equal keys name one shared allocator, and a family's key is declared by its
     root alone, so each key appears once however many Entities draw from it.
+    Formation has already refused declarations of one key that disagree.
     """
-    return tuple(
-        sorted(
-            {
-                key.generation.name
-                for entity in model.entities
-                for attribute in entity.declared_attributes
-                if isinstance(key := attribute.primary_key, PrimaryKey)
-                and isinstance(key.generation, Sequence)
-            }
-        )
-    )
+    declared: dict[str, _Declared] = {}
+    for entity in sorted(model.entities, key=lambda entity: entity.identity.sort_key):
+        for attribute in entity.declared_attributes:
+            key = attribute.primary_key
+            if isinstance(key, PrimaryKey) and isinstance(key.generation, Sequence | KeySequence):
+                declared.setdefault(key.generation.name, (key.generation, attribute))
+    return {allocator: declared[allocator] for allocator in sorted(declared)}
+
+
+def _consumers(
+    model: Metamodel, tables: Mapping[EntityIdentity, ResolvedTable]
+) -> Mapping[str, tuple[ResolvedTable, ...]]:
+    """Each allocator's consuming tables: every resolved table whose family key
+    it generates, in canonical owner order."""
+    families = inheritance_facet_of(model)
+    consumers: dict[str, list[ResolvedTable]] = {}
+    for owner, table in tables.items():
+        view = families.entity(owner)
+        key = None if view is None else view.primary_key.primary_key
+        if isinstance(key, PrimaryKey) and isinstance(key.generation, KeySequence):
+            consumers.setdefault(key.generation.name, []).append(table)
+    return {allocator: tuple(held) for allocator, held in consumers.items()}
 
 
 def _owner_path(owner: EntityIdentity) -> BindingPath:
@@ -166,16 +197,26 @@ class _Resolver:
         return tables
 
     def sequences(
-        self, allocators: tuple[str, ...], tables: Mapping[EntityIdentity, ResolvedTable]
-    ) -> dict[str, PhysicalSequence]:
+        self,
+        allocators: Mapping[str, _Declared],
+        tables: Mapping[EntityIdentity, ResolvedTable],
+        consumers: Mapping[str, tuple[ResolvedTable, ...]],
+    ) -> dict[str, PhysicalSequence | ResolvedSequence]:
         relations = {table.physical: owner for owner, table in tables.items()}
-        sequences: dict[str, PhysicalSequence] = {}
+        sequences: dict[str, PhysicalSequence | ResolvedSequence] = {}
         by_sequence: dict[PhysicalSequence, str] = {}
-        for allocator in allocators:
+        for allocator, (generation, attribute) in allocators.items():
             physical = self.sequence(allocator)
             if physical is None:
                 continue
-            sequences[allocator] = physical
+            if isinstance(generation, KeySequence):
+                resolved = self.native(
+                    allocator, physical, generation, attribute, consumers.get(allocator, ())
+                )
+                if resolved is not None:
+                    sequences[allocator] = resolved
+            else:
+                sequences[allocator] = physical
             first = by_sequence.setdefault(physical, allocator)
             if first != allocator:
                 self.issue(
@@ -193,6 +234,56 @@ class _Resolver:
                     (_owner_path(clash),),
                 )
         return sequences
+
+    def native(
+        self,
+        allocator: str,
+        physical: PhysicalSequence,
+        declaration: KeySequence,
+        attribute: AttributeMetadata,
+        consumers: tuple[ResolvedTable, ...],
+    ) -> ResolvedSequence | None:
+        """``allocator`` as the native sequence ``physical`` holds, or ``None``
+        having reported why this backend cannot represent its settings."""
+        provider = self.dialect.sequence_bounds
+        if provider is None:
+            self.issue(
+                BINDING_SEQUENCE_UNREPRESENTABLE,
+                _sequence_path(allocator),
+                f"the {self.dialect.name} backend has no native sequence to allocate keys from",
+            )
+            return None
+        key_type = attribute.type
+        assert isinstance(key_type, Int32 | Int64)  # metadata admits no other generated key
+        type_low, type_high = integer_bounds(key_type)
+        low, high = max(type_low, provider[0]), min(type_high, provider[1])
+        step = declaration.batch_size * declaration.increment_size
+        problems: list[str] = []
+        if step > provider[1] or step > high - low:
+            problems.append(
+                f"its physical increment, batch size {declaration.batch_size} times increment "
+                f"size {declaration.increment_size}, is {step}, which a sequence over "
+                f"[{low}, {high}] cannot step by"
+            )
+        if not low <= declaration.initial_value <= high:
+            problems.append(
+                f"its initial value {declaration.initial_value} lies outside the key range "
+                f"[{low}, {high}]"
+            )
+        if problems:
+            self.issue(
+                BINDING_SEQUENCE_UNREPRESENTABLE, _sequence_path(allocator), "; ".join(problems)
+            )
+            return None
+        return ResolvedSequence(
+            allocator=allocator,
+            physical=physical,
+            sql=self.dialect.render_table(physical),
+            key_sequence=declaration,
+            data_type=self.dialect.column_type(key_type, None),
+            key_range=(low, high),
+            consuming_tables=consumers,
+        )
 
     def location(self, owner: EntityIdentity) -> tuple[DatabaseLocation, BindingPath] | None:
         entry = self.binding.entities.get(owner)
@@ -272,7 +363,9 @@ class _Resolver:
 
 def resolve(
     meta: Metamodel, binding: DatabaseBinding
-) -> tuple[Mapping[EntityIdentity, ResolvedTable], Mapping[str, PhysicalSequence]]:
+) -> tuple[
+    Mapping[EntityIdentity, ResolvedTable], Mapping[str, PhysicalSequence | ResolvedSequence]
+]:
     """Every mapping owner's table and every allocator's sequence ``binding`` places.
 
     Raises :class:`BindingError` with every resolution issue at once.
@@ -282,7 +375,7 @@ def resolve(
     allocators = _logical_allocators(meta)
     resolver.keys(meta, owners, frozenset(allocators))
     tables = resolver.tables(owners)
-    sequences = resolver.sequences(allocators, tables)
+    sequences = resolver.sequences(allocators, tables, _consumers(meta, tables))
     if resolver.issues:
         raise BindingError(BINDING_RESOLUTION_REJECTED, resolver.issues)
     return MappingProxyType(tables), MappingProxyType(sequences)

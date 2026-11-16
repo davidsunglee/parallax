@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast, overload
 
+from parallax.core._execution._unit_work._errors import WRITE_KEY_ABSENT
 from parallax.core._execution._unit_work.preparation import (
     TYPED_LANE,
     WIRE_LANE,
@@ -107,6 +108,7 @@ __all__ = [
     "assigned_members",
     "derive_keyed_instruction",
     "deserialize",
+    "key_absent_refusal",
     "keyed_instruction_from_target",
     "prepare_typed_insert",
     "prepare_typed_keyed_write",
@@ -536,6 +538,16 @@ def keyed_instruction_from_target(prepared: PreparedTargetInstruction) -> Prepar
         prepared.target,
         (prepared.row,),
         prepared.valid_time_window,
+    )
+
+
+def key_absent_refusal(entity: EntityIdentity, mutation: str) -> UsageError:
+    """The refusal of a ``mutation`` other than an insert handed a value of
+    ``entity`` whose key is absent (:data:`WRITE_KEY_ABSENT`)."""
+    return UsageError(
+        WRITE_KEY_ABSENT,
+        f"{entity.canonical}: `{mutation}` addresses the object a value's key names, and this "
+        "value has no key; insert it to give it one, and write the value the insert answers",
     )
 
 
@@ -1321,9 +1333,12 @@ def _opened_row(
     ``lane``'s plan, a refusal worded as a stated row's is.
 
     A framework-owned member is read as unstated whatever ``raws`` holds
-    there: the framework supplies it when the row settles.
+    there: the framework supplies it when the row settles. A key the Entity
+    allocates may be left unstated, for the insert to allocate, but is never
+    stated as null.
     """
     shape = entry.selection.members.shape
+    allocation = entry.key_allocation
     try:
         prepared = entry.plan.complete_row(
             raws,
@@ -1331,6 +1346,7 @@ def _opened_row(
             required=entry.insert_required,
             omitted=entry.framework_owned,
             root=_marker_planning(entity, shape, "insert"),
+            nonnull=0 if allocation is None else 1 << allocation.position,
         )
     except AuthoringRefusal as refusal:
         error = _row_refusal(entity, shape, refusal)
@@ -1957,8 +1973,8 @@ def _prepare_target_write(
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedTargetInstruction:
-    """Judge a target write: its verb and window, then its revision
-    arguments, then its payload.
+    """Judge a target write: whether it names its object at all, its verb and
+    window, then its revision arguments, then its payload.
 
     The verb's applicability follows the keyed rule
     (:func:`_judge_applicability`). The revision arguments are judged ahead of
@@ -1967,6 +1983,8 @@ def _prepare_target_write(
     whose required revision is missing is refused before any member it names
     is weighed.
     """
+    if position.primary_key.identity.name not in instruction.row:
+        raise key_absent_refusal(entity.identity, instruction.mutation)
     shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,
@@ -2107,12 +2125,6 @@ def _prepare_target_payload(
     row = instruction.row
     key = position.primary_key.identity.name
     _judge_row_members(model, entity, entry, row, authored_members, "target")
-    if key not in row:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"{entity.identity.name}: a target write names the object it writes by its primary "
-            f"key, and this row states no {key!r}",
-        )
     mutation = instruction.mutation
     if mutation in DESTRUCTIVE_MUTATIONS:
         stated = sorted(name for name in row if name != key)

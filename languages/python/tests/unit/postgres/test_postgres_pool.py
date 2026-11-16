@@ -311,9 +311,19 @@ def _pool(*connections: _FakeConnection, **kwargs: Any) -> Any:
     return cast("Any", _FakePool(*connections, **kwargs))
 
 
-def _runtime(pool: Any, *, acquire_timeout: float = 15.0) -> PostgresRuntime:
+def _reservation_route(pool: Any = None) -> PostgresRoute:
+    return PostgresRoute(
+        "writer", _pool() if pool is None else pool, _establishment(), "reservation"
+    )
+
+
+def _runtime(
+    pool: Any, *, acquire_timeout: float = 15.0, reservation: Any = None
+) -> PostgresRuntime:
     return PostgresRuntime(
-        PostgresRoute("writer", pool, _establishment()), acquire_timeout=acquire_timeout
+        PostgresRoute("writer", pool, _establishment()),
+        reservation=_reservation_route(reservation),
+        acquire_timeout=acquire_timeout,
     )
 
 
@@ -368,8 +378,8 @@ def _opened(monkeypatch: pytest.MonkeyPatch, pool: Any) -> Any:
     """Make ``open_runtime`` build ``pool`` rather than a native one."""
     from parallax.postgres import _route as route_module
 
-    def build(*_args: object, **_kwargs: object) -> Any:
-        return pool
+    def build(*_args: object, purpose: str = "application", **_kwargs: object) -> Any:
+        return pool if purpose == "application" else _pool()
 
     monkeypatch.setattr(route_module, "_build_pool", build)
     return pool
@@ -462,8 +472,8 @@ def test_a_configuration_every_connection_is_refused_under_is_named_rather_than_
     establishment.failed(refusal)
     pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
 
-    def build(*_args: object, **_kwargs: object) -> Any:
-        return pool
+    def build(*_args: object, purpose: str = "application", **_kwargs: object) -> Any:
+        return pool if purpose == "application" else _pool()
 
     monkeypatch.setattr(route_module, "_build_pool", build)
     monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
@@ -491,8 +501,8 @@ def test_a_source_that_authenticates_nothing_is_named_rather_than_timed_out(
     establishment.failed(refusal)
     pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
 
-    def build(*_args: object, **_kwargs: object) -> Any:
-        return pool
+    def build(*_args: object, purpose: str = "application", **_kwargs: object) -> Any:
+        return pool if purpose == "application" else _pool()
 
     monkeypatch.setattr(route_module, "_build_pool", build)
     monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
@@ -2211,6 +2221,7 @@ def _routed(
     runtime = PostgresRuntime(
         PostgresRoute("writer", writer_pool, _establishment()),
         reader,
+        reservation=_reservation_route(),
         acquire_timeout=acquire_timeout,
     )
     runtime._complete_startup("runtime-login")  # pyright: ignore[reportPrivateUsage] - the startup transition this harness stands in for
@@ -2239,7 +2250,11 @@ def _opened_routes(monkeypatch: pytest.MonkeyPatch, **pools: Any) -> list[tuple[
 
     built: list[tuple[str, Any]] = []
 
-    def build(endpoint: Any, route: str, *_args: object) -> Any:
+    def build(
+        endpoint: Any, route: str, *_args: object, purpose: str = "application", **_kwargs: object
+    ) -> Any:
+        if purpose != "application":
+            return pools.get(purpose, _pool())
         built.append((route, endpoint))
         return pools[route]
 
@@ -2323,7 +2338,11 @@ def test_a_routed_runtime_declares_a_reader_that_cannot_begin_serializable() -> 
         "writer": RouteCapabilities.every_level(),
         "reader": RouteCapabilities(frozenset({"read_committed", "repeatable_read"})),
     }
-    assert [source.route for source in runtime.pool_metrics] == ["writer", "reader"]
+    assert [(source.route, source.purpose) for source in runtime.pool_metrics] == [
+        ("writer", "application"),
+        ("reader", "application"),
+        ("writer", "reservation"),
+    ]
     with pytest.raises(TypeError):
         cast("Any", runtime.routes)["reader"] = RouteCapabilities.every_level()
 
@@ -2441,7 +2460,9 @@ def test_routed_startup_opens_both_pools_before_proving_the_writer_then_the_read
 
 
 def _available_samples(runtime: PostgresRuntime) -> list[Any]:
-    samples = [source.sample() for source in runtime.pool_metrics]
+    samples = [
+        source.sample() for source in runtime.pool_metrics if source.purpose == "application"
+    ]
     assert all(type(sample).__name__ == "PoolAvailable" for sample in samples), samples
     return samples
 
@@ -2496,7 +2517,7 @@ def test_a_reader_pool_that_will_not_open_closes_the_writer_pool_already_open(
 
     writer_pool = _pool()
 
-    def build(_endpoint: Any, route: str, *_args: object) -> Any:
+    def build(_endpoint: Any, route: str, *_args: object, **_kwargs: object) -> Any:
         if route == "reader":
             raise DatabaseStartupError("no reader pool", route="reader", phase="open")
         return writer_pool
@@ -2623,7 +2644,9 @@ def test_a_reader_whose_budget_ran_out_with_a_refusal_on_record_fails_deferrable
     readings = iter([0.0, 0.0, 0.0, 31.0])
     monkeypatch.setattr(startup_module, "monotonic", lambda: next(readings))
     refusal = CredentialResolutionError("RDS IAM token could not be generated")
-    establishments = iter([_establishment(), reader_establishment := _establishment()])
+    establishments = iter(
+        [_establishment(), reader_establishment := _establishment(), _establishment()]
+    )
     reader_establishment.failed(refusal)
     monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: next(establishments))
     writer_pool, reader_pool = _pool(), _pool()
@@ -2655,7 +2678,9 @@ def test_a_reader_refused_rather_than_unreachable_fails_even_deferrable_startup(
 
     writer_pool = _pool()
     reader_pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
-    establishments = iter([_establishment(), reader_establishment := _establishment()])
+    establishments = iter(
+        [_establishment(), reader_establishment := _establishment(), _establishment()]
+    )
     reader_establishment.failed(refusal)
     monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: next(establishments))
     _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
@@ -2674,7 +2699,9 @@ def test_a_reader_minimum_that_met_only_an_unreachable_server_is_left_pending(
     from parallax.postgres import _route as route_module
 
     reader_pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
-    establishments = iter([_establishment(), reader_establishment := _establishment()])
+    establishments = iter(
+        [_establishment(), reader_establishment := _establishment(), _establishment()]
+    )
     reader_establishment.failed(_lost("connection refused"))
     monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: next(establishments))
     _opened_routes(monkeypatch, writer=_pool(), reader=reader_pool)

@@ -302,6 +302,20 @@ class _ControlledContextSource:
         return ControlledScope(self.runtime)
 
 
+@dataclass(frozen=True, slots=True)
+class _RefusedReservationSource:
+    """The reservation capacity a one-session runtime does not have."""
+
+    reservation_timeout: float = 0.0
+
+    def new_context(self, deadline: float, /) -> ConnectionContext:
+        del deadline
+        raise UsageError(
+            "controlled-runtime-reserves-no-keys",
+            "a controlled runtime holds one session and reserves no keys; state each key",
+        )
+
+
 class ControlledRuntime:
     """A runtime over exactly ONE dedicated driver session.
 
@@ -381,6 +395,9 @@ class ControlledRuntime:
         raise UsageError(
             AUTHORIZATION_INVALID, "a controlled runtime executes under its database login alone"
         )
+
+    def reservation_source(self) -> _RefusedReservationSource:
+        return _RefusedReservationSource()
 
     def admit(self, scope: ControlledScope) -> PostgresConnection:
         with self._admission, self._state:

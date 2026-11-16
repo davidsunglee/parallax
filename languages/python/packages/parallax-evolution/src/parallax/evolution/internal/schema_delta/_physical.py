@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from parallax.core.internal.base import NeutralType
-from parallax.core.internal.database_binding import ResolvedTable
+from parallax.core.internal.database_binding import ResolvedSequence, ResolvedTable
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
@@ -19,6 +19,7 @@ __all__ = [
     "AddColumn",
     "CreateExtension",
     "CreateIndex",
+    "CreateSequence",
     "CreateTable",
     "DocumentRootCheck",
     "DropIndex",
@@ -137,6 +138,18 @@ class CreateExtension:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateSequence:
+    """Create the native sequence a newly declared allocator draws from.
+
+    Tableless: the sequence is one object however many Tables consume it,
+    caused by every operation that added a consumer of it.
+    """
+
+    sequence: ResolvedSequence
+    caused_by: tuple[EvolutionOperation, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CreateTable:
     """Create one whole Table: every target Column, the derived primary key,
     its checks, and a temporal Table's exclusion.
@@ -206,7 +219,7 @@ class DropIndex:
 type TableOperation = CreateTable | AddColumn | RestateColumnDomain | CreateIndex | DropIndex
 """An operation local to a single Table."""
 
-type PhysicalOperation = CreateExtension | TableOperation
+type PhysicalOperation = CreateExtension | CreateSequence | TableOperation
 """Everything a Unilateral Evolution can ask a relational schema to do."""
 
 
@@ -245,6 +258,8 @@ def location_of(operation: PhysicalOperation) -> SchemaTarget:
     match operation:
         case CreateExtension():
             return SchemaTarget(extension=operation.name)
+        case CreateSequence():
+            return SchemaTarget(sequence=operation.sequence.physical)
         case CreateTable():
             return SchemaTarget(table=operation.table.physical)
         case AddColumn():

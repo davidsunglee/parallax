@@ -69,9 +69,13 @@ from the annotation (`T | None`); there is no `nullable=` option. `int` means
 Int64 and `float` means Float64; `type=Int32` and `type=Float32` narrow those
 families. Numeric requires both `precision=` and `scale=`. `parallax.core`
 publishes each Neutral Type as the class an attribute's metadata reads back, named
-as the core names it. `primary_key=True` means application-assigned; `MAX` and
-`Sequence(...)` imply an integer primary
-key. No free-form JSON member annotation exists.
+as the core names it. `primary_key=True` means application-assigned;
+`KeySequence(name, *, batch_size=100, initial_value=1, increment_size=1)`, `MAX`,
+and `Sequence(...)` imply an integer primary key. A `KeySequence` key defaults to
+unset: constructing an instance without it reads `None` and leaves it out of
+`model_fields_set`, an explicit `None` fails the key's own `int` validation, and
+an explicit `0` is a supplied key. `edit` keeps an unset key unset. No free-form
+JSON member annotation exists.
 
 Ineligible key types and incompatible generation fail at class creation with `UsageError` and code `entity-option-context-invalid`, before a `DomainModel` can be constructed. Eligibility belongs to the [Metamodel](../../../core/spec/m-metamodel.md#attributes-and-primary-keys). Public descriptor inputs reject serialized key-policy violations in the schema phase instead.
 

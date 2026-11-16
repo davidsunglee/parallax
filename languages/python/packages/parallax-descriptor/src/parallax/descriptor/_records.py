@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, Literal
 
+from parallax.core.internal.metamodel import PkGeneration, default_column_name
 from parallax.core.internal.metamodel import TemporalDimension as CanonicalTemporalDimension
-from parallax.core.internal.metamodel import default_column_name
 
 __all__ = [
     "TEMPORAL_DIMENSIONS",
@@ -24,8 +24,6 @@ __all__ = [
     "NestedValueObject",
     "OrderByTerm",
     "Persistence",
-    "PkGenerator",
-    "PkStrategy",
     "RelationshipCardinality",
     "RelationshipDeclaration",
     "RelationshipJoin",
@@ -50,7 +48,6 @@ carries. Every As-Of Axis, its two endpoint attributes, and their framework-fixe
 columns are derived from it, so it is the only temporal fact a descriptor
 spells."""
 
-PkStrategy = Literal["none", "max", "sequence"]
 RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many"]
 Multiplicity = Literal["one", "many"]
 TemporalDimension = Literal["valid-time", "transaction-time"]
@@ -68,17 +65,6 @@ TEMPORAL_DIMENSIONS: Final[Mapping[CanonicalTemporalDimension, TemporalDimension
 
 
 @dataclass(frozen=True, slots=True)
-class PkGenerator:
-    """A primary-key generation strategy (m-pk-gen)."""
-
-    strategy: PkStrategy
-    sequence_name: str | None = None
-    batch_size: int | None = None
-    initial_value: int | None = None
-    increment_size: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class Attribute:
     """A scalar entity attribute mapped to one physical column.
 
@@ -93,7 +79,7 @@ class Attribute:
     max_length: int | None = None
     read_only: bool = False
     optimistic_locking: bool = False
-    pk_generator: PkGenerator | None = None
+    pk_generation: PkGeneration | None = None
     multiplicity: Multiplicity = "one"
 
 

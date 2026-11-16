@@ -97,6 +97,8 @@ A provider MUST apply subject authorization after checkout and before transactio
 
 On every exit path, the provider MUST attempt to revoke subject authorization before releasing the connection. This includes successful commit, rollback, callback failure, retry, begin failure after authorization setup, cancellation, and standalone-operation completion.
 
+A key reservation (`m-pk-gen`) is the one operation that runs under the Database Login Identity whatever Execution Actor the execution that needed keys captured. Accepting a model whose keys a KeySequence generates authorizes exactly that narrowly defined statement, on the runtime's reservation capacity (`m-db-port`), outside the application's transaction and committed on its own; it installs no subject authorization, elevates nothing the application's transaction runs, and offers no general privileged-execution interface. The application's own statements keep the captured authorization and whatever row-level policies apply to it, so an application role needs no privilege on the sequence.
+
 Cleanup has exactly the portable terminal results defined by `m-db-port`:
 
 - **returned** — revocation and ordinary cleanup completed and the connection was returned;

@@ -40,6 +40,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateIndex,
+    CreateSequence,
     CreateTable,
     DropIndex,
     Exclusion,
@@ -95,7 +96,7 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
     }
     violations: list[str] = []
     for position, operation in enumerate(ordered):
-        if isinstance(operation, CreateExtension):
+        if isinstance(operation, CreateExtension | CreateSequence):
             continue
         if (
             isinstance(operation, CreateTable)
@@ -198,7 +199,9 @@ def test_within_one_table_the_kind_decides() -> None:
 def test_two_operations_of_one_kind_sort_by_the_member_they_address() -> None:
     ordered = order([_create_index("second"), _create_index("first")])
     assert [
-        member_key(operation) for operation in ordered if not isinstance(operation, CreateExtension)
+        member_key(operation)
+        for operation in ordered
+        if not isinstance(operation, CreateExtension | CreateSequence)
     ] == ["pxi_first", "pxi_second"]
 
 
@@ -305,7 +308,7 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule(
     assert [
         (type(operation).__name__, table_of(operation).physical.name)
         for operation in ordered
-        if not isinstance(operation, CreateExtension)
+        if not isinstance(operation, CreateExtension | CreateSequence)
     ] == [
         ("CreateIndex", "alpha"),
         ("DropIndex", "alpha"),
@@ -363,7 +366,11 @@ def test_a_prerequisite_precedes_every_table_operation_whatever_their_names() ->
     )
     ordered = order([_create_index("alpha"), _create_table(), extension, other])
     assert ordered[0] is extension
-    local = [operation for operation in ordered[1:] if not isinstance(operation, CreateExtension)]
+    local = [
+        operation
+        for operation in ordered[1:]
+        if not isinstance(operation, CreateExtension | CreateSequence)
+    ]
     assert ordered[1:] == tuple(sorted(local, key=order_key))
 
 

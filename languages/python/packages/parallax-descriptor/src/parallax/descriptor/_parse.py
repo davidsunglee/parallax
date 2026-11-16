@@ -3,7 +3,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal, cast
 
-from parallax.core.internal.metamodel import default_column_name, derive_temporal_structure
+from parallax.core.internal.metamodel import (
+    APPLICATION_ASSIGNED,
+    MAX,
+    KeySequence,
+    PkGeneration,
+    Sequence,
+    default_column_name,
+    derive_temporal_structure,
+)
 from parallax.descriptor._errors import DESCRIPTOR_SCHEMA_INVALID, DescriptorError
 from parallax.descriptor._records import (
     TEMPORAL_DIMENSIONS,
@@ -21,8 +29,6 @@ from parallax.descriptor._records import (
     NestedValueObject,
     OrderByTerm,
     Persistence,
-    PkGenerator,
-    PkStrategy,
     RelationshipCardinality,
     RelationshipDeclaration,
     RelationshipJoin,
@@ -36,7 +42,10 @@ from parallax.descriptor._records import (
 __all__ = ["parse_document"]
 
 _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
-_PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "max", "sequence"})
+_PK_STRATEGIES: frozenset[str] = frozenset(
+    {"application-assigned", "max", "sequence", "key-sequence"}
+)
+_PK_OBJECT_STRATEGIES: frozenset[str] = frozenset({"sequence", "key-sequence"})
 _REL_CARDINALITIES: frozenset[str] = frozenset({"one-to-one", "many-to-one", "one-to-many"})
 _VO_CARDINALITIES: frozenset[str] = frozenset({"one", "many"})
 _TEMPORALITIES: frozenset[str] = frozenset({"nontemporal", "transaction-time", "bitemporal"})
@@ -108,13 +117,19 @@ def _closed(m: Mapping[str, object], allowed: frozenset[str], where: str) -> Non
         raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: unknown properties: {rendered}")
 
 
-def _pk_from(value: object, where: str) -> PkGenerator:
+def _pk_from(value: object, where: str) -> PkGeneration:
+    """The generation a ``pkGeneration`` spelling denotes, every omitted sizing
+    parameter at its strategy's semantic default."""
     if isinstance(value, str):
-        wire_strategy = _enum(value, _PK_STRATEGIES, "pkGeneration", where)
-        strategy = cast(
-            "PkStrategy", "none" if wire_strategy == "application-assigned" else wire_strategy
+        token = _enum(value, _PK_STRATEGIES, "pkGeneration", where)
+        if token == "application-assigned":
+            return APPLICATION_ASSIGNED
+        if token == "max":
+            return MAX
+        raise DescriptorError(
+            DESCRIPTOR_SCHEMA_INVALID,
+            f"{where}: pkGeneration `{token}` is the object form with `strategy: {token}`",
         )
-        return PkGenerator(strategy=strategy)
     m = _mapping(value, f"{where}.pkGeneration")
     _closed(
         m,
@@ -123,20 +138,31 @@ def _pk_from(value: object, where: str) -> PkGenerator:
     )
     raw = _str(m, "strategy", where)
     _enum(raw, _PK_STRATEGIES, "strategy", where)
-    if raw != "sequence":
+    if raw not in _PK_OBJECT_STRATEGIES:
         raise DescriptorError(
-            DESCRIPTOR_SCHEMA_INVALID, f"{where}: object pkGeneration requires `strategy: sequence`"
+            DESCRIPTOR_SCHEMA_INVALID,
+            f"{where}: object pkGeneration requires `strategy: key-sequence` or `sequence`",
         )
+    name = _str(m, "name", where)
     batch_size = _opt_int(m, "batchSize", where)
     initial_value = _opt_int(m, "initialValue", where)
     increment_size = _opt_int(m, "incrementSize", where)
-    return PkGenerator(
-        strategy="sequence",
-        sequence_name=_str(m, "name", where),
-        batch_size=1 if batch_size is None else batch_size,
-        initial_value=1 if initial_value is None else initial_value,
-        increment_size=1 if increment_size is None else increment_size,
-    )
+    try:
+        if raw == "key-sequence":
+            return KeySequence(
+                name,
+                batch_size=100 if batch_size is None else batch_size,
+                initial_value=1 if initial_value is None else initial_value,
+                increment_size=1 if increment_size is None else increment_size,
+            )
+        return Sequence(
+            name=name,
+            batch_size=1 if batch_size is None else batch_size,
+            initial_value=1 if initial_value is None else initial_value,
+            increment_size=1 if increment_size is None else increment_size,
+        )
+    except ValueError as error:
+        raise DescriptorError(DESCRIPTOR_SCHEMA_INVALID, f"{where}: {error}") from None
 
 
 def _attribute_from(value: object, where: str) -> Attribute:
@@ -176,10 +202,10 @@ def _attribute_from(value: object, where: str) -> Attribute:
         max_length=_opt_int(m, "maxLength", f"{where}.{name}"),
         read_only=_bool(m, "readOnly", default=False, where=f"{where}.{name}"),
         optimistic_locking=_bool(m, "optimisticLocking", default=False, where=f"{where}.{name}"),
-        pk_generator=(
+        pk_generation=(
             _pk_from(pk, f"{where}.{name}")
             if pk is not None
-            else (PkGenerator(strategy="none") if primary_key else None)
+            else (APPLICATION_ASSIGNED if primary_key else None)
         ),
         multiplicity=_vo_multiplicity(m, f"{where}.{name}"),
     )

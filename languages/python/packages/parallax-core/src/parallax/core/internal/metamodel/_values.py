@@ -277,7 +277,38 @@ class Sequence:
             raise ValueError(f"a Sequence increment size is positive, got {self.increment_size}")
 
 
-type PkGeneration = ApplicationAssigned | Max | Sequence
+@dataclass(frozen=True, slots=True)
+class KeySequence:
+    """Key generation that hands out keys from blocks a native database sequence reserves.
+
+    ``name`` is the model-wide logical allocator the binding places. Each
+    reservation advances the sequence by ``batch_size * increment_size`` and
+    hands its keys out ``increment_size`` apart; ``initial_value`` is where a
+    newly created sequence starts. An empty name, or a nonpositive batch or
+    increment size, raises :class:`ValueError`.
+    """
+
+    name: str
+    batch_size: int = 100
+    initial_value: int = 1
+    increment_size: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("a KeySequence name is nonempty")
+        for label, value in (
+            ("batch size", self.batch_size),
+            ("increment size", self.increment_size),
+        ):
+            if type(value) is not int or value < 1:
+                raise ValueError(f"a KeySequence {label} is a positive integer, got {value!r}")
+        if type(self.initial_value) is not int:
+            raise ValueError(
+                f"a KeySequence initial value is an integer, got {self.initial_value!r}"
+            )
+
+
+type PkGeneration = ApplicationAssigned | Max | Sequence | KeySequence
 """The normalized primary-key generation algebra."""
 
 
@@ -451,9 +482,10 @@ class AttributeMetadata:
 
         if self.multiplicity is Multiplicity.MANY:
             _check_collection_attribute(self)
-        generated_key = isinstance(self.primary_key, PrimaryKey) and not isinstance(
-            self.primary_key.generation, ApplicationAssigned
+        generation = (
+            self.primary_key.generation if isinstance(self.primary_key, PrimaryKey) else None
         )
+        generated_key = generation is not None and not isinstance(generation, ApplicationAssigned)
         restriction = (
             AssignmentRestriction.PRIMARY_KEY
             if isinstance(self.primary_key, PrimaryKey)
@@ -468,7 +500,7 @@ class AttributeMetadata:
             self,
             "write_capability",
             AttributeWriteCapability(
-                caller_insert=not (self.framework_owned or generated_key),
+                caller_insert=not (self.framework_owned or isinstance(generation, Max | Sequence)),
                 caller_update=restriction is None,
                 assignment_restriction=restriction,
             ),
@@ -484,11 +516,11 @@ class AttributeMetadata:
             ),
         )
         if isinstance(self.primary_key, PrimaryKey):
-            if isinstance(self.primary_key.generation, Max | Sequence):
+            if isinstance(self.primary_key.generation, Max | Sequence | KeySequence):
                 if not isinstance(self.type, Int32 | Int64):
                     raise ValueError(
                         f"{self.identity.entity.canonical}.{self.identity.name}: "
-                        "Max and Sequence generation require Int32 or Int64, "
+                        "KeySequence, Max, and Sequence generation require Int32 or Int64, "
                         f"not {self.type}"
                     )
             elif not isinstance(self.type, Int32 | Int64 | String | Uuid):

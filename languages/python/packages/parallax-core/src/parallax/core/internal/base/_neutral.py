@@ -56,6 +56,7 @@ __all__ = [
     "exceeds_json_int_value_space",
     "host_float_binary32",
     "host_float_number",
+    "integer_bounds",
     "is_decimal_member",
     "is_integer_member",
     "is_string_member",
@@ -354,6 +355,11 @@ _INTEGER_BOUNDS: Final[_Mapping[type[Int32 | Int64], tuple[int, int]]] = {
     Int32: _INT32_BOUNDS,
     Int64: _INT64_BOUNDS,
 }
+
+
+def integer_bounds(declared: Int32 | Int64) -> tuple[int, int]:
+    """The inclusive ``(low, high)`` value space of ``declared``."""
+    return _INTEGER_BOUNDS[type(declared)]
 
 
 def is_integer_member(value: object, declared: Int32 | Int64) -> bool:

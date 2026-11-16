@@ -7,17 +7,21 @@ from typing import Final
 import pytest
 
 from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
     BindingError,
     BindingIssue,
     PhysicalSequence,
     PhysicalTable,
     ResolvedBinding,
+    ResolvedSequence,
     SequenceRelocated,
     TableRelocated,
-    relocations_between,
+    breaking_changes_between,
+    sequence_ddl,
 )
+from parallax.core.internal.dialect import SequenceDdl
 from parallax.core.internal.entity import model_of
-from parallax.core.internal.metamodel import EntityIdentity, Metamodel
+from parallax.core.internal.metamodel import EntityIdentity, KeySequence, Metamodel
 from parallax.descriptor import domain_model_from_yaml
 from parallax.postgres import PostgresBinding, PostgresLocation, PostgresSequence, PostgresTable
 
@@ -389,7 +393,7 @@ def test_relocations_name_surviving_tables_in_owner_order_then_surviving_sequenc
             sequences={"customerIds": PostgresSequence(schema="keys")},
         ),
     )
-    assert relocations_between(earlier, later) == (
+    assert breaking_changes_between(earlier, later) == (
         TableRelocated(_NOTE, PhysicalTable(("app",), "note"), PhysicalTable(("app",), "notes")),
         TableRelocated(
             _EVENT, PhysicalTable(("app",), "event"), PhysicalTable(("audit",), "event")
@@ -400,7 +404,7 @@ def test_relocations_name_surviving_tables_in_owner_order_then_surviving_sequenc
             PhysicalSequence(("keys",), "customerIds"),
         ),
     )
-    assert relocations_between(later, later) == ()
+    assert breaking_changes_between(later, later) == ()
 
 
 def test_an_owner_only_one_side_holds_is_never_a_relocation() -> None:
@@ -434,7 +438,7 @@ def test_an_owner_only_one_side_holds_is_never_a_relocation() -> None:
             },
         ),
     )
-    assert relocations_between(earlier, later) == ()
+    assert breaking_changes_between(earlier, later) == ()
     assert later.table(EntityIdentity("billing", "Refund")).physical == PhysicalTable(
         ("next",), "refund"
     )
@@ -527,3 +531,143 @@ def test_a_columns_table_resolves_no_document_root_check() -> None:
         ResolvedBinding(_MODEL, PostgresBinding(default=_APP)).table(_NOTE).document_root_constraint
         is None
     )
+
+
+# --------------------------------------------------------------------------- #
+# Native allocators resolve to the one view allocation, DDL, and publication   #
+# read.                                                                        #
+# --------------------------------------------------------------------------- #
+
+_NATIVE_YAML: Final = """
+entities:
+  - name: Vehicle
+    namespace: fleet
+    inheritance: {{ role: root, strategy: table-per-concrete-subtype }}
+    attributes:
+      - name: id
+        type: {key_type}
+        primaryKey: true
+        pkGeneration: {{ strategy: key-sequence, name: vehicleIds{settings} }}
+  - name: Car
+    namespace: fleet
+    table: car
+    inheritance: {{ role: concrete-subtype, parent: fleet.Vehicle }}
+    attributes:
+      - {{ name: seats, type: int32 }}
+  - name: Truck
+    namespace: fleet
+    table: truck
+    inheritance: {{ role: concrete-subtype, parent: fleet.Vehicle }}
+    attributes:
+      - {{ name: axles, type: int32 }}
+  - name: Depot
+    namespace: fleet
+    table: depot
+    attributes:
+      - name: id
+        type: {key_type}
+        primaryKey: true
+        pkGeneration: {{ strategy: key-sequence, name: vehicleIds{settings} }}
+  - name: Legacy
+    table: legacy
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: {{ strategy: sequence, name: legacyIds }}
+"""
+
+
+def _native(settings: str = "", key_type: str = "int64") -> Metamodel:
+    return model_of(
+        domain_model_from_yaml(_NATIVE_YAML.format(settings=settings, key_type=key_type))
+    )
+
+
+def test_a_native_allocator_resolves_its_declaration_range_and_every_consuming_table() -> None:
+    resolved = ResolvedBinding(
+        _native(),
+        PostgresBinding(
+            default=_APP,
+            entities={"fleet.Truck": PostgresTable(schema="haulage")},
+            sequences={"vehicleIds": PostgresSequence(schema="Key.Ring", name="vehicle.ids")},
+        ),
+    )
+    sequence = resolved.sequence("vehicleIds")
+    assert isinstance(sequence, ResolvedSequence)
+    assert sequence.physical == PhysicalSequence(("Key.Ring",), "vehicle.ids")
+    assert sequence.sql == '"Key.Ring"."vehicle.ids"'
+    assert sequence.key_sequence == KeySequence("vehicleIds")
+    assert sequence.key_range == (-(2**63), 2**63 - 1)
+    assert sequence.allocation_settings == (100, 1, (-(2**63), 2**63 - 1))
+    assert [table.physical for table in sequence.consuming_tables] == [
+        PhysicalTable(("app",), "car"),
+        PhysicalTable(("app",), "depot"),
+        PhysicalTable(("haulage",), "truck"),
+    ]
+    assert sequence_ddl(sequence) == SequenceDdl("bigint", 100, -(2**63), 2**63 - 1, 1)
+    # A registry Sequence keeps its bare placement beside the native allocator.
+    assert resolved.sequence("legacyIds") == PhysicalSequence(("app",), "legacyIds")
+
+
+def test_an_int32_key_bounds_its_allocator_by_the_key_type() -> None:
+    resolved = ResolvedBinding(
+        _native(", batchSize: 10, incrementSize: 3, initialValue: -7", "int32"),
+        PostgresBinding(default=_APP),
+    )
+    sequence = resolved.sequence("vehicleIds")
+    assert isinstance(sequence, ResolvedSequence)
+    assert sequence_ddl(sequence) == SequenceDdl("integer", 30, -(2**31), 2**31 - 1, -7)
+
+
+@pytest.mark.parametrize(
+    ("settings", "key_type", "detail"),
+    [
+        (", batchSize: 100000, incrementSize: 100000", "int32", "cannot step by"),
+        (", initialValue: 3000000000", "int32", "lies outside the key range"),
+        (", batchSize: 4294967296, incrementSize: 4294967296", "int64", "cannot step by"),
+    ],
+    ids=["step-over-int32", "start-outside-int32", "step-over-int64"],
+)
+def test_settings_the_backend_cannot_represent_are_refused_before_anything_connects(
+    settings: str, key_type: str, detail: str
+) -> None:
+    with pytest.raises(BindingError) as raised:
+        ResolvedBinding(_native(settings, key_type), PostgresBinding(default=_APP))
+    ((code, path, message),) = [
+        (issue.code, issue.path, issue.message) for issue in raised.value.issues
+    ]
+    assert (code, path) == ("binding-sequence-unrepresentable", ("sequences", "vehicleIds"))
+    assert detail in message
+
+
+def _settled(settings: str, binding: PostgresBinding | None = None) -> ResolvedBinding:
+    return ResolvedBinding(_native(settings), binding or PostgresBinding(default=_APP))
+
+
+def test_a_surviving_allocator_whose_settings_change_is_a_breaking_change() -> None:
+    earlier = _settled("")
+    later = _settled(", batchSize: 50")
+    (change,) = breaking_changes_between(earlier, later)
+    assert isinstance(change, AllocatorSettingsChanged)
+    assert change.allocator == "vehicleIds"
+    assert (change.earlier.allocation_settings, change.later.allocation_settings) == (
+        (100, 1, (-(2**63), 2**63 - 1)),
+        (50, 1, (-(2**63), 2**63 - 1)),
+    )
+
+
+def test_a_moved_allocator_whose_settings_also_change_names_both() -> None:
+    earlier = _settled("")
+    later = _settled(
+        ", incrementSize: 2",
+        PostgresBinding(default=_APP, sequences={"vehicleIds": PostgresSequence(schema="keys")}),
+    )
+    assert [type(change) for change in breaking_changes_between(earlier, later)] == [
+        SequenceRelocated,
+        AllocatorSettingsChanged,
+    ]
+
+
+def test_an_initial_value_change_breaks_nothing() -> None:
+    assert breaking_changes_between(_settled(""), _settled(", initialValue: 500")) == ()

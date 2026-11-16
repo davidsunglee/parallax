@@ -9,7 +9,9 @@ query, and prescribes no rollout procedure.
 
 It consumes a Unilateral Evolution and nothing else. A Coordinated Evolution is
 an equally complete description whose application needs authoring, data, or
-rollout coordination, so it is not an input to schema generation at all.
+rollout coordination, so it is not an input to schema generation at all: one
+handed to the generator is refused, at run time where the language's types
+cannot refuse it statically, before anything is planned.
 
 It depends on `m-model-evolution` for the description it lowers, on `m-metamodel`
 for the declarations an operation names, on `m-inheritance` for the position each
@@ -21,7 +23,11 @@ Dialect Identity: the later endpoint's binding names the backend, and its
 dialect determines the whole output. Every created or altered table is named as
 the later binding places it, and every dropped index where the earlier binding
 placed its table. It never emits a schema or database creation, a table move or
-rename, a data copy, or any sequence allocation.
+rename, a data copy, or any sequence allocation. The one sequence statement it
+emits creates the native sequence of a `key-sequence` allocator the later
+binding resolves and the earlier one does not (`m-database-binding` *Resolved
+sequences*); a surviving allocator's sequence is never created, reset,
+altered, or positioned, however its consumers change.
 
 The decision record is
 [ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md).
@@ -80,6 +86,9 @@ private algebra. It is the closed choice below and, except for the refusal recor
 
 ```text
 CreateExtension      one database-wide prerequisite, named by the provider
+CreateSequence       one newly declared native allocator's sequence, under its
+                     resolved definition, caused by every operation that added
+                     an Entity drawing from it
 CreateTable          the complete target Table Layout: every target Column, the
                      derived primary key, a temporal Table's named key,
                      interval checks, and exclusion, and a Document Table's
@@ -170,6 +179,9 @@ Every Table-local edge those rules can produce stays inside **one Table**: the
 algebra emits no foreign key, and an Index is always local. The only edge that
 leaves a Table is a Table creation's on a prerequisite, which is not local to
 any Table, so every prerequisite precedes every Table operation, in name order.
+A sequence creation depends on nothing and nothing in a delta depends on it, so
+the sequence creations follow the prerequisites in (physical local name,
+qualifier) order and precede every Table operation.
 Among the Table operations the algebra admits a total key —
 
 ```text
@@ -314,7 +326,7 @@ different scopes never collide, and identifies each definition by its physical
 table and mapping owner. Where that scope is a qualifier's relation namespace,
 the census also holds every table and sequence either endpoint's binding places
 in it. One holding an Index's name in its scope is a collision whatever either
-lifetime: no delta drops a table or touches a sequence, so the one disjoint
+lifetime: no delta drops a table or touches a surviving sequence, so the one disjoint
 pairing is a table the delta creates after dropping that Index, and the census
 does not tell that reuse of a derived name apart from a clash.
 

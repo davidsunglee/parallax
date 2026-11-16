@@ -285,6 +285,21 @@ creates is fresh and carries that binding through exactly one acquisition.
 The runtime has no direct context-producing operation. Selection of login or
 principal authority is therefore explicit before any context can be created.
 
+**Key reservations borrow a capacity of their own.** A runtime also offers a
+resource-free **reservation source** (`m-pk-gen`), which states the budget one
+reservation may spend — its acquisition timeout — and creates single-use
+contexts each bounded by one absolute deadline rather than a Read Policy. Each
+acquires the `writer` under the runtime's own Database Login Identity, whatever
+authority the execution that needed keys runs under, from capacity apart from
+every route a Read Policy selects: at most one connection per runtime, shared by
+every sequence and every caller, and opened only when a reservation first needs
+it, so a runtime whose routes hold N connections holds at most N + 1. Its
+checkout, setup, statement, and cleanup all spend that one deadline: the setup
+carries what remains of it into the session as a statement timeout, which bounds
+a statement waiting on a live server, a lock wait included, and the connection's
+socket liveness settings bound one whose server vanished only approximately. A
+closed runtime refuses a reservation's acquisition as it refuses any other.
+
 **Routes are roles defined by what a caller observes.** A runtime declares the
 **Routes** it serves, immutably and without I/O: `writer` always, `reader`
 optionally. `writer` serves writes and sees every committed change; `reader`
@@ -550,8 +565,11 @@ that was produced and then refused.
 
 A runtime that manages a pool keeps bookkeeping an operator wants and MAY
 publish a read-only **Pool Metrics Source** for it — one per pool, each naming
-the Route whose pool it reads. One that manages no pool publishes none, and
-absence is an honest answer rather than a source that reports nothing.
+the Route whose pool it reads and the **pool purpose** its connections serve:
+`application` for a pool a Read Policy selects, or `reservation` for the
+capacity key reservations borrow on the writer. One that manages no pool
+publishes none, and absence is an honest answer rather than a source that
+reports nothing.
 
 The source is **stable**: one object for the runtime's whole life, shutdown
 included, so a holder keeps what it was given and what a close changes is the

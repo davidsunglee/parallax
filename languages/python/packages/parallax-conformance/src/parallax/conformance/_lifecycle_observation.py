@@ -171,6 +171,7 @@ _READ_PURPOSE: Final[dict[str, str]] = {
     "typed": "typed",
     "wire": "wire",
     "row-acquisition": "row-acquisition",
+    "reservation": "reservation",
 }
 
 _FLUSH_TRIGGER: Final[dict[FlushTrigger, str]] = {
@@ -642,7 +643,11 @@ def _started(event: _ActivityStarted, indexer: _StatementIndexer) -> dict[str, o
         case StreamBatchStarted():
             return {"streamBatchStarted": {}}
         case AcquisitionStarted(route_policy=route_policy):
-            return {"acquisitionStarted": {"policy": _ROUTE_POLICY[route_policy]}}
+            return {
+                "acquisitionStarted": _stated(
+                    "policy", None if route_policy is None else _ROUTE_POLICY[route_policy]
+                )
+            }
         case ReleaseStarted():
             return {"releaseStarted": {}}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard

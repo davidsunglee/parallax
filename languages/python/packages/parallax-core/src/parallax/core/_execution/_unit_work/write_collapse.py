@@ -17,7 +17,8 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
 )
 from parallax.core.internal import inheritance, temporal_read
-from parallax.core.internal.metamodel import AttributeMetadata, Metamodel
+from parallax.core.internal.metamodel import AttributeMetadata, Max, Metamodel, PrimaryKey
+from parallax.core.internal.metamodel import Sequence as RegistrySequence
 from parallax.core.internal.write_plan.keys import ObjectKey
 from parallax.core.internal.write_plan.managed_row import ManagedRow
 
@@ -80,7 +81,7 @@ def _collapsed(
         shape = temporal_read.temporal_facet_of(model).shape(instruction.target.identity)
         if isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal):
             return None
-        if _primary_key(model, instruction).generated_key:
+        if _database_computes_key(_primary_key(model, instruction)):
             return None
     elif instruction.mutation != "delete" and not _uniform_assignments(model, run):
         return None
@@ -113,6 +114,16 @@ def _primary_key(model: Metamodel, instruction: PreparedKeyedInstruction) -> Att
     position = inheritance.inheritance_facet_of(model).entity(instruction.target.identity)
     assert position is not None
     return position.primary_key
+
+
+def _database_computes_key(key: AttributeMetadata) -> bool:
+    """Whether the database computes ``key`` as the row is written, which no
+    grouped statement can do for each of its rows; a KeySequence key is
+    allocated, and so concrete, before the row is buffered."""
+    generation = key.primary_key
+    return isinstance(generation, PrimaryKey) and isinstance(
+        generation.generation, Max | RegistrySequence
+    )
 
 
 def _uniform_assignments(model: Metamodel, run: Sequence[KeyedInsert | ObjectLockedWrite]) -> bool:

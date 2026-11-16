@@ -434,3 +434,26 @@ def test_export_wraps_an_induced_defect_with_no_partial_output() -> None:
     # No partial document escaped, and the underlying model is untouched: it still
     # exports its complete canonical form.
     assert export_document(model) == export_document(model)
+
+
+@pytest.mark.parametrize(
+    ("authored", "canonical"),
+    [
+        (
+            {"strategy": "key-sequence", "name": "ledger_ids", "batchSize": 100, "initialValue": 1},
+            {"strategy": "key-sequence", "name": "ledger_ids"},
+        ),
+        (
+            {"strategy": "key-sequence", "name": "ledger_ids", "batchSize": 1, "incrementSize": 7},
+            {"strategy": "key-sequence", "name": "ledger_ids", "batchSize": 1, "incrementSize": 7},
+        ),
+    ],
+)
+def test_export_spells_a_key_sequence_with_only_its_non_default_settings(
+    authored: dict[str, object], canonical: dict[str, object]
+) -> None:
+    def document(generation: dict[str, object]) -> dict[str, object]:
+        attribute = {"name": "id", "type": "int64", "primaryKey": True, "pkGeneration": generation}
+        return {"entity": {"name": "Ledger", "table": "ledger", "attributes": [attribute]}}
+
+    assert export_document(models.accepted_model(document(authored))) == document(canonical)

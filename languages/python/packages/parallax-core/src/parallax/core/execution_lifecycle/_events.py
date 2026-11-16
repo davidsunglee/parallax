@@ -90,8 +90,9 @@ type ReadOutcome = ReadCompleted | ReadFailed
 class ReadStarted(_Event):
     """A Read opened over ``target`` for ``purpose``.
 
-    ``purpose`` is the representation it publishes, or ``row-acquisition`` for
-    the Read of a write's target acquisition, which publishes neither. It
+    ``purpose`` is the representation it publishes, ``row-acquisition`` for
+    the Read of a write's target acquisition, or ``reservation`` for the Read
+    an insert's key reservation runs as; neither of the last two publishes. It
     starts after public preflight and any read-dependency Flush, and
     spans planning, lowering, all of its Database Calls, conversion,
     materialization, and publication. ``edition`` is the Model Edition a
@@ -100,7 +101,7 @@ class ReadStarted(_Event):
     """
 
     target: str
-    purpose: ResultRepresentation | Literal["row-acquisition"]
+    purpose: ResultRepresentation | Literal["row-acquisition", "reservation"]
     edition: str | None
 
 
@@ -614,13 +615,15 @@ class AcquisitionStarted(_Event):
     """An activity is asking for a database connection.
 
     ``route_policy`` is the routing role the acquisition requested — the
-    operation's own, or ``writer_only`` once it has fallen back. Which activity
-    is asking reads off the correlation envelope, and everything about the
-    connection itself — its pool, its identity, its configuration — belongs to
-    the adapter and never becomes observable here.
+    operation's own, or ``writer_only`` once it has fallen back — and ``None``
+    for a key reservation's acquisition, which the writer's reservation
+    capacity serves under no Route Policy. Which activity is asking reads off
+    the correlation envelope, and everything about the connection itself — its
+    pool, its identity, its configuration — belongs to the adapter and never
+    becomes observable here.
     """
 
-    route_policy: RoutePolicy
+    route_policy: RoutePolicy | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -49,6 +49,7 @@
     "InvalidDataError",
     "InvalidValueError",
     "Json",
+    "KeySequence",
     "LATEST",
     "LIFECYCLE_PROVIDER_FAILED",
     "LIFECYCLE_REENTERED",
@@ -66,7 +67,7 @@
     "ObjectQuery",
     "POSTGRES",
     "PRINCIPAL_INVALID",
-    "PUBLICATION_RELOCATION_REFUSED",
+    "PUBLICATION_BREAKING_CHANGE_REFUSED",
     "ParallaxError",
     "Password",
     "PhysicalIndexName",
@@ -224,6 +225,7 @@
     "schema_delta"
   ],
   "parallax.evolution.operations": [
+    "AllocatorSettingsChanged",
     "AsOfAxisAdded",
     "AsOfAxisRemoved",
     "AttributeAdded",

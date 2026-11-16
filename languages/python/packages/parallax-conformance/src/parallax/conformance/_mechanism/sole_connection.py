@@ -37,7 +37,9 @@ from parallax.core.internal.dialect import Dialect
 
 __all__ = [
     "STAND_IN_LOGIN",
+    "STAND_IN_RESERVATION_TIMEOUT",
     "BoundContextSource",
+    "BoundReservationSource",
     "ConnectsAsItself",
     "SoleConnectionRuntime",
     "SoleConnectionScope",
@@ -49,6 +51,9 @@ _RETURNED: Final[CleanupResult] = Returned()
 
 STAND_IN_LOGIN: Final = "test-login"
 """The login identity every stand-in runtime reports."""
+
+STAND_IN_RESERVATION_TIMEOUT: Final = 15.0
+"""The reservation budget, in seconds, a stand-in runtime grants by default."""
 
 _ROUTES: Final[Mapping[Route, RouteCapabilities]] = {"writer": RouteCapabilities.every_level()}
 """The one route a stand-in serves, at every read-only level."""
@@ -63,6 +68,10 @@ class _BindsContexts(Protocol):
     ) -> ConnectionContext: ...
 
 
+class _ReservesContexts(Protocol):
+    def new_reservation_context(self, deadline: float) -> ConnectionContext: ...
+
+
 @dataclass(frozen=True, slots=True)
 class BoundContextSource:
     """A stand-in runtime's execution source, bound to one authorization or none."""
@@ -72,6 +81,17 @@ class BoundContextSource:
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
         return self.runtime.new_bound_context(self.authorization, policy)
+
+
+@dataclass(frozen=True, slots=True)
+class BoundReservationSource:
+    """A stand-in runtime's reservation source, granting ``reservation_timeout``."""
+
+    runtime: _ReservesContexts
+    reservation_timeout: float = STAND_IN_RESERVATION_TIMEOUT
+
+    def new_context(self, deadline: float, /) -> ConnectionContext:
+        return self.runtime.new_reservation_context(deadline)
 
 
 class SoleConnectionScope:
@@ -145,10 +165,20 @@ class SoleConnectionRuntime:
     def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
+    def reservation_source(self) -> BoundReservationSource:
+        return BoundReservationSource(self)
+
     def new_bound_context(
         self, authorization: object | None, policy: RoutePolicy
     ) -> ConnectionContext:
         del authorization, policy
+        return self._scope()
+
+    def new_reservation_context(self, deadline: float) -> ConnectionContext:
+        del deadline
+        return self._scope()
+
+    def _scope(self) -> ConnectionContext:
         if self.closed:
             raise ConnectionAcquisitionError(
                 "this runtime is closed, so it opens no new connection", reason="closed"

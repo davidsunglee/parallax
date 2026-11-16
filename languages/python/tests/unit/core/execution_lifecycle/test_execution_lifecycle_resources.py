@@ -985,6 +985,9 @@ class _UnusableRuntime:
         del authorization
         return self
 
+    def reservation_source(self) -> Any:
+        return self
+
     def new_context(self, policy: object, /) -> Any:
         return _UnusableContext(self._failure)
 

@@ -8,11 +8,12 @@ from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.internal.base import ConflictError, UsageError
 from parallax.core.internal.database_binding import (
+    AllocatorSettingsChanged,
+    BreakingChange,
     PhysicalSequence,
     PhysicalTable,
-    Relocation,
     TableRelocated,
-    relocations_between,
+    breaking_changes_between,
 )
 from parallax.core.internal.entity import DomainModel, EntityGraphConstruction
 from parallax.core.internal.entity._layout import CatalogedModel
@@ -22,7 +23,7 @@ from parallax.core.internal.wire._facts import WireModelFacts
 
 __all__ = [
     "PUBLICATION_BACKEND_MISMATCH",
-    "PUBLICATION_RELOCATION_REFUSED",
+    "PUBLICATION_BREAKING_CHANGE_REFUSED",
     "ModelSelection",
     "PublicationConflictError",
     "SelectedReadModel",
@@ -35,8 +36,11 @@ __all__ = [
 ]
 
 
-PUBLICATION_RELOCATION_REFUSED: Final = "publication-relocation-refused"
-"""`publish` refused a candidate that moves a surviving table or sequence."""
+PUBLICATION_BREAKING_CHANGE_REFUSED: Final = "publication-breaking-change-refused"
+"""`publish` refused a candidate that breaks a surviving table, sequence, or allocator.
+
+It moves a surviving table or sequence, or changes a surviving allocator's batch
+size, increment size, or key range."""
 
 PUBLICATION_BACKEND_MISMATCH: Final = "publication-backend-mismatch"
 """`publish` refused a candidate prepared for another backend."""
@@ -281,9 +285,11 @@ class ServingModel:
 
         A candidate prepared for another backend than ``expected`` is refused
         with ``publication-backend-mismatch``, and one under which any table or
-        sequence ``expected`` also holds resolves to another physical object
-        with ``publication-relocation-refused``: moving a surviving object
-        needs a coordinated migration behind a replacement root. Raises
+        sequence ``expected`` also holds resolves to another physical object,
+        or a surviving allocator's batch size, stride, or key range changes,
+        with ``publication-breaking-change-refused``: either invalidates what
+        a root holds, so it needs a coordinated migration behind replacement
+        roots. Both refusals precede the identity check. Raises
         :class:`PublicationConflictError` when the held selection is not
         ``expected`` by identity; the error carries what was actually held.
         """
@@ -303,7 +309,7 @@ class ServingModel:
 
 
 def _check_placement(expected: ModelSelection, candidate: ModelSelection) -> None:
-    """Refuse ``candidate`` if it changes backend or moves a surviving physical object.
+    """Refuse ``candidate`` if it changes backend or breaks a surviving physical object.
 
     Compared against ``expected`` rather than the held selection, outside the
     lock: the identity check under the lock then confirms ``expected`` is what
@@ -317,24 +323,34 @@ def _check_placement(expected: ModelSelection, candidate: ModelSelection) -> Non
             f"publication refused: {candidate!r} is prepared for {placed.dialect.name!r}, "
             f"but {expected!r} serves {held.dialect.name!r}",
         )
-    relocations = relocations_between(held, placed)
-    if relocations:
-        moved = "; ".join(_spelled(relocation) for relocation in relocations)
+    changes = breaking_changes_between(held, placed)
+    if changes:
+        named = "; ".join(_spelled(change) for change in changes)
         raise UsageError(
-            PUBLICATION_RELOCATION_REFUSED,
-            f"publication refused: {candidate!r} moves objects {expected!r} serves ({moved}); "
-            "relocating a surviving table or sequence needs a coordinated migration and a "
-            "replacement root",
+            PUBLICATION_BREAKING_CHANGE_REFUSED,
+            f"publication refused: {candidate!r} changes objects {expected!r} serves ({named}); "
+            "relocating a surviving table or sequence, or changing a surviving allocator's "
+            "batch size, increment size, or key range, needs a coordinated migration and "
+            "replacement roots",
         )
 
 
-def _spelled(relocation: Relocation) -> str:
+def _spelled(change: BreakingChange) -> str:
+    if isinstance(change, AllocatorSettingsChanged):
+        earlier = _settings(change.earlier.allocation_settings)
+        later = _settings(change.later.allocation_settings)
+        return f"allocator {change.allocator!r} settings from {earlier} to {later}"
     subject = (
-        relocation.mapping_owner.canonical
-        if isinstance(relocation, TableRelocated)
-        else f"sequence {relocation.allocator!r}"
+        change.mapping_owner.canonical
+        if isinstance(change, TableRelocated)
+        else f"sequence {change.allocator!r}"
     )
-    return f"{subject} from {_location(relocation.earlier)} to {_location(relocation.later)}"
+    return f"{subject} from {_location(change.earlier)} to {_location(change.later)}"
+
+
+def _settings(settings: tuple[int, int, tuple[int, int]]) -> str:
+    batch_size, increment_size, (low, high) = settings
+    return f"batch size {batch_size}, increment size {increment_size}, key range [{low}, {high}]"
 
 
 def _location(physical: PhysicalTable | PhysicalSequence) -> str:

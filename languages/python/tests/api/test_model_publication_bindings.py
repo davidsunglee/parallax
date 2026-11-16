@@ -14,12 +14,13 @@ from parallax.conformance.boundary_runner import fault_injecting_adapter
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
     POSTGRES,
-    PUBLICATION_RELOCATION_REFUSED,
+    PUBLICATION_BREAKING_CHANGE_REFUSED,
     Attr,
     BindingError,
     DatabaseError,
     DomainModel,
     Entity,
+    KeySequence,
     ModelSelection,
     PublicationConflictError,
     ServingModel,
@@ -39,7 +40,7 @@ from parallax.evolution import (
     schema_delta,
 )
 from parallax.evolution.operations import TableRelocated
-from parallax.postgres import PostgresBinding, PostgresLocation, PostgresTable
+from parallax.postgres import PostgresBinding, PostgresLocation, PostgresSequence, PostgresTable
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
@@ -301,7 +302,7 @@ def test_a_stale_binding_publisher_is_refused_and_its_rebase_is_judged_against_t
     # winner it moves the Credit table the winner placed in `px`.
     with pytest.raises(UsageError) as refused:
         serving.publish(loser, expected=stale.value.held)
-    assert refused.value.code == PUBLICATION_RELOCATION_REFUSED
+    assert refused.value.code == PUBLICATION_BREAKING_CHANGE_REFUSED
     assert f"{_SHOP}.Credit from px.mpb_credit to px_next.mpb_credit" in str(refused.value)
     assert serving.current() is winner
 
@@ -342,7 +343,7 @@ def test_an_unmasked_declared_rename_relocates_and_publication_refuses_it() -> N
     r1 = _prepared(_VAULTS, _DEFAULT, "r1")
     with pytest.raises(UsageError) as refused:
         ServingModel(r1).publish(_prepared(_ARCHIVED, _DEFAULT, "r2"), expected=r1)
-    assert refused.value.code == PUBLICATION_RELOCATION_REFUSED
+    assert refused.value.code == PUBLICATION_BREAKING_CHANGE_REFUSED
     assert f"{_VAULT_KEY} from px.mpb_vault to px.mpb_vault_archive" in str(refused.value)
 
 
@@ -401,7 +402,7 @@ def test_a_masked_declared_rename_publishes_and_its_temporal_conflicts_stay_reco
 def _relocation_refused(earlier: ModelSelection, later: ModelSelection) -> None:
     with pytest.raises(UsageError) as refused:
         ServingModel(earlier).publish(later, expected=earlier)
-    assert refused.value.code == PUBLICATION_RELOCATION_REFUSED
+    assert refused.value.code == PUBLICATION_BREAKING_CHANGE_REFUSED
 
 
 def test_a_schema_move_behind_a_replacement_root_keeps_every_derived_name(
@@ -489,3 +490,120 @@ def _reconciled_names(earlier: PostgresBinding, later: PostgresBinding) -> list[
         f"alter table {after.sql} rename constraint {POSTGRES.quote(old)} to {POSTGRES.quote(new)}"
         for old, new in pairs
     ]
+
+
+# --------------------------------------------------------------------------- #
+# A surviving allocator's settings change is refused with its relocations;     #
+# every other allocator change publishes.                                      #
+# --------------------------------------------------------------------------- #
+
+
+def _ledger(**settings: int) -> DomainModel:
+    allocator = KeySequence("mpb_ledger_ids", **settings)
+    ledger: Any = type(
+        "Ledger",
+        (Entity,),
+        {
+            "__module__": __name__,
+            "__annotations__": {"id": Attr[int], "note": Attr[str]},
+            "id": attr(primary_key=allocator),
+            "note": attr(max_length=16),
+        },
+        table="mpb_ledger",
+        namespace=_SHOP,
+    )
+    return DomainModel(ledger)
+
+
+def _assigned_ledger() -> DomainModel:
+    ledger: Any = type(
+        "Ledger",
+        (Entity,),
+        {
+            "__module__": __name__,
+            "__annotations__": {"id": Attr[int], "note": Attr[str]},
+            "id": attr(primary_key=True),
+            "note": attr(max_length=16),
+        },
+        table="mpb_ledger",
+        namespace=_SHOP,
+    )
+    return DomainModel(ledger)
+
+
+_LEDGERS: Final = PostgresBinding(default=_PX)
+
+
+@pytest.mark.parametrize(
+    ("later", "named"),
+    [
+        (
+            {"batch_size": 50},
+            "allocator 'mpb_ledger_ids' settings from batch size 100, increment size 1, "
+            "key range [-9223372036854775808, 9223372036854775807] to batch size 50",
+        ),
+        ({"increment_size": 2}, "to batch size 100, increment size 2"),
+    ],
+    ids=["batch-size", "increment-size"],
+)
+def test_a_surviving_allocator_s_settings_change_is_refused_and_the_held_selection_serves(
+    later: dict[str, int], named: str
+) -> None:
+    held = _prepared(_ledger(), _LEDGERS, "a")
+    serving = ServingModel(held)
+    with raises_code(UsageError, PUBLICATION_BREAKING_CHANGE_REFUSED) as refused:
+        serving.publish(_prepared(_ledger(**later), _LEDGERS, "b"), expected=held)
+    assert named in str(refused.value)
+    assert serving.current() is held
+
+
+def test_the_breaking_change_refusal_precedes_the_stale_selection_check() -> None:
+    held = _prepared(_ledger(), _LEDGERS, "a")
+    serving = ServingModel(held)
+    serving.publish(_prepared(_ledger(), _LEDGERS, "winner"), expected=held)
+    with raises_code(UsageError, PUBLICATION_BREAKING_CHANGE_REFUSED):
+        serving.publish(_prepared(_ledger(batch_size=7), _LEDGERS, "loser"), expected=held)
+
+
+@pytest.mark.parametrize(
+    "later",
+    [
+        lambda: _ledger(initial_value=500),
+        _assigned_ledger,
+        lambda: DomainModel(Invoice),
+    ],
+    ids=["initial-value-only", "strategy-move", "allocator-removed"],
+)
+def test_an_allocator_change_invalidating_no_reservation_publishes(later: Any) -> None:
+    held = _prepared(_ledger(), _LEDGERS, "a")
+    serving = ServingModel(held)
+    candidate = _prepared(later(), _LEDGERS, "b")
+    serving.publish(candidate, expected=held)
+    assert serving.current() is candidate
+    serving.publish(_prepared(_ledger(), _LEDGERS, "c"), expected=candidate)
+
+
+def test_a_publication_moving_nothing_keeps_the_root_s_reservation(profile_run: Any) -> None:
+    profile_run.reset(model_of(_ledger()), {}, _LEDGERS)
+    held = _prepared(_ledger(), _LEDGERS, "a")
+    serving = ServingModel(held)
+    root = own_root(connect(profile_run.port, serving))
+    db = root.using_database_login()
+    insert = _ledger_insert()
+    assert db.transact(insert) == 1
+    moved_nothing = PostgresBinding(
+        default=_PX, sequences={"mpb_ledger_ids": PostgresSequence(schema=_PX.schema)}
+    )
+    serving.publish(_prepared(_ledger(initial_value=40), moved_nothing, "b"), expected=held)
+
+    assert db.transact(lambda tx: tx.edition) == "b"
+    assert db.transact(insert) == 2
+    with closing(profile_run.control()) as control:
+        assert control.execute("select last_value from px.mpb_ledger_ids", []) == [(1,)]
+
+
+def _ledger_insert() -> Any:
+    def insert(tx: TxnContext) -> object:
+        return tx.wire.insert(f"{_SHOP}.Ledger", {"note": "entry"})["id"]
+
+    return insert

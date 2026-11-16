@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core.internal.database_binding import sequence_ddl
 from parallax.core.internal.dialect import (
     ColumnDdl,
     Dialect,
@@ -13,6 +14,7 @@ from parallax.evolution.internal.schema_delta._physical import (
     AddColumn,
     CreateExtension,
     CreateIndex,
+    CreateSequence,
     CreateTable,
     DocumentRootCheck,
     DropIndex,
@@ -32,6 +34,8 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
     match operation:
         case CreateExtension():
             return dialect.create_extension(dialect.quote(operation.name))
+        case CreateSequence():
+            return dialect.create_sequence(operation.sequence.sql, sequence_ddl(operation.sequence))
         case CreateTable():
             return dialect.create_table(
                 operation.table.sql,

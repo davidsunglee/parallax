@@ -45,6 +45,7 @@ from typing import Final, Protocol, Self, cast, runtime_checkable
 from parallax.conformance._mechanism.sole_connection import (
     STAND_IN_LOGIN,
     BoundContextSource,
+    BoundReservationSource,
     ConnectsAsItself,
     SoleConnectionRuntime,
     SoleConnectionScope,
@@ -421,12 +422,17 @@ class ScriptedContext:
 
     It reports the selection the script names for this acquisition, or the
     route its requested policy names where the script names none — a scripted
-    refusal carrying its own selection reports that one instead.
+    refusal carrying its own selection reports that one instead. A key
+    reservation's acquisition requests no policy, lands on the writer, and is
+    counted in ``reservation_deadlines`` rather than ``requested_policies``.
     """
 
-    def __init__(self, runtime: ScriptedRuntime, policy: RoutePolicy) -> None:
+    def __init__(
+        self, runtime: ScriptedRuntime, policy: RoutePolicy | None, deadline: float | None = None
+    ) -> None:
         self._runtime = runtime
-        self._policy: RoutePolicy = policy
+        self._policy: RoutePolicy | None = policy
+        self._deadline = deadline
         self._connection: _ScriptedConnection | None = None
         self._spent = False
         self._cleanup_result: CleanupResult | None = None
@@ -445,7 +451,11 @@ class ScriptedContext:
             raise RuntimeError("a scripted connection context is entered exactly once")
         self._spent = True
         adapter = self._runtime.adapter
-        adapter.requested_policies.append(self._policy)
+        if self._policy is None:
+            assert self._deadline is not None  # a reservation context carries its deadline
+            adapter.reservation_deadlines.append(self._deadline)
+        else:
+            adapter.requested_policies.append(self._policy)
         # Closure first: a runtime that stopped admitting refuses whatever a
         # script had planned for this acquisition, exactly as a real one does,
         # and before any route was selected.
@@ -453,7 +463,9 @@ class ScriptedContext:
             raise ConnectionAcquisitionError("this scripted runtime is closed", reason="closed")
         scripted = adapter.next_selection()
         selection = (
-            scripted if scripted is not None else RouteSelection(_natural_route(self._policy))
+            scripted
+            if scripted is not None
+            else RouteSelection("writer" if self._policy is None else _natural_route(self._policy))
         )
         refusal = adapter.next_acquisition_failure()
         if refusal is not None:
@@ -534,11 +546,17 @@ class ScriptedRuntime:
     def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
+    def reservation_source(self) -> BoundReservationSource:
+        return BoundReservationSource(self, self.adapter.reservation_timeout)
+
     def new_bound_context(
         self, authorization: object | None, policy: RoutePolicy
     ) -> ConnectionContext:
         del authorization
         return ScriptedContext(self, policy)
+
+    def new_reservation_context(self, deadline: float) -> ConnectionContext:
+        return ScriptedContext(self, None, deadline)
 
     def close(self) -> None:
         """Close, detaching the metrics sources first, as a real runtime does.
@@ -577,6 +595,8 @@ class ScriptedAdapter:
     level, and mapped, each serves the capabilities it is mapped to.
     ``metrics`` are the pool sources the runtime this opens publishes, none by
     default because a script describes statements rather than a pool.
+    ``reservation_timeout`` is the budget its reservation source grants, and
+    ``reservation_deadlines`` records each reservation acquisition's deadline.
     ``ordered`` gives every connection ordered write transport over
     :class:`Ordered` entries.
     """
@@ -593,6 +613,7 @@ class ScriptedAdapter:
         routes: Sequence[Route] | Mapping[Route, RouteCapabilities] = ("writer",),
         metrics: Sequence[PoolMetricsSource] = (),
         ordered: bool = False,
+        reservation_timeout: float = 15.0,
     ) -> None:
         seen: dict[int, BaseException] = {}
         for failure in _failures(script):
@@ -607,6 +628,8 @@ class ScriptedAdapter:
         )
         self.metrics: tuple[PoolMetricsSource, ...] = tuple(metrics)
         self.requested_policies: list[RoutePolicy] = []
+        self.reservation_timeout = reservation_timeout
+        self.reservation_deadlines: list[float] = []
         self.ordered_write_transport: OrderedWriteTransport | None = (
             self.execute_ordered if ordered else None
         )
@@ -816,11 +839,18 @@ class RefusingAdapter:
     def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
+    def reservation_source(self) -> BoundReservationSource:
+        return BoundReservationSource(self)
+
     def new_bound_context(
         self, authorization: object | None, policy: RoutePolicy
     ) -> ConnectionContext:
         del authorization, policy
         raise AssertionError("no acquisition expected — this adapter refuses the database")
+
+    def new_reservation_context(self, deadline: float) -> ConnectionContext:
+        del deadline
+        raise AssertionError("no reservation expected — this adapter refuses the database")
 
     def close(self) -> None:
         return
