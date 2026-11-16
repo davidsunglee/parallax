@@ -53,6 +53,7 @@ from tests._support.sweep_goldens import (
     assert_wire_binds,
     assert_write_emissions_equal_goldens,
     wire_binds,
+    write_golden_pointers,
     write_golden_statements,
 )
 from tests.compatibility._float_zero_support import (
@@ -1093,9 +1094,9 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
 
 # The Wire `mutate` whole-occurrence replacement cases: a find, then edits whose
 # `expectRows` state the copy each derives. Python ships no Wire edit verb, so the
-# engine's own derivation is what this grades. Their find statement is not graded:
-# its golden omits the `marks` presence probe the other top-level `many`
-# goldens carry.
+# engine's own derivation is what this grades. Their find statement's SQL is not
+# graded: its golden omits the `marks` presence probe the other top-level `many`
+# goldens carry. Its pointer and every step's count still are.
 _EDIT_OCCURRENCE_CASES: Final[tuple[str, ...]] = ("m-edit-010", "m-edit-011")
 
 
@@ -1115,7 +1116,11 @@ def test_edit_occurrence_run_grades_each_derived_copy(
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok", envelope
     assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
+    assert [emission["casePointer"] for emission in envelope["emissions"]] == (
+        write_golden_pointers(case)
+    ), (case.case_id, envelope["emissions"])
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
+    _grade_step_database_calls(case, steps, envelope["observations"])
     _grade_step_rows(case, model, steps, envelope)
 
 
