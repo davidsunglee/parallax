@@ -37,10 +37,10 @@ contract owners; this index does not add requirements.
 | Write Group | Settled writes that execute as one sequence of Planned Steps and complete together, before any later group executes: a Write Plan's planned group, or the ready deferred writes one turn binds | [Unit of work](core/spec/m-unit-work.md) |
 | Acquisition Span | Consecutive deferred settled writes of distinct objects of one Entity that share their coverage reads, granting permission to read ahead while their Write Groups follow readiness | [Unit of work](core/spec/m-unit-work.md#shared-coverage-acquisition) |
 | Mutation Phase | The inserts, the updates, or the deletes of a flush, which run in that order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
-| Planned Step | One semantic effect of a write on stored rows, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
-| Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
-| State Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
-| Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Write plan](core/spec/m-write-plan.md) |
+| Planned Step | One semantic effect of a write on stored rows, distinct from the SQL that lowers it | [Planned steps](core/spec/m-planned-step.md) |
+| Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Planned steps](core/spec/m-planned-step.md) |
+| State Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Planned steps](core/spec/m-planned-step.md) |
+| Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Planned steps](core/spec/m-planned-step.md) |
 | Write payload | What a planned step persists, prepared once and rendered by SQL lowering | [Write payload](core/spec/m-write-payload.md) |
 | Predecessor / Successor | An existing milestone a temporal write acts on, versus a row derived from exactly one predecessor over part of its coverage | [Temporal writes](core/spec/m-temporal-write.md) |
 | Coverage Transform / Coverage Segment | What an object's composed writes do to its existing coverage, and one requested window of it | [Temporal writes](core/spec/m-temporal-write.md) |

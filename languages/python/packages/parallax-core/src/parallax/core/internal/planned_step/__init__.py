@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-from parallax.core.internal.write_plan.columns import ChunkedColumnBuilder, whole
-from parallax.core.internal.write_plan.keys import (
+from parallax.core.internal.planned_step.columns import ChunkedColumnBuilder, whole
+from parallax.core.internal.planned_step.keys import (
     ObjectKey,
     ObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.internal.write_plan.observe import (
+from parallax.core.internal.planned_step.observe import (
     EntityStateRow,
     PredecessorRow,
     StateObservation,
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.internal.write_plan.plan import WritePlan
-from parallax.core.internal.write_plan.predecessor_rows import (
+from parallax.core.internal.planned_step.predecessor_rows import (
     PredecessorRows,
     PredecessorRowsBuilder,
 )
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     SUPERSEDED,
     TERMINATED,
     PlannedClose,
@@ -40,7 +39,6 @@ __all__ = [
     "StateObservation",
     "TemporalObservation",
     "VersionObservation",
-    "WritePlan",
     "object_state_key_from_observation",
     "whole",
 ]

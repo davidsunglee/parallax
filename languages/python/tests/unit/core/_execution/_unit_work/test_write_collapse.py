@@ -24,17 +24,9 @@ from parallax.core.internal.metamodel import (
     KeySequence,
     Metamodel,
 )
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.unit_work import (
-    AdmittedWrite,
-    KeyedWriteInstruction,
-    WritePlanningRequest,
-    object_key,
-)
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import ObjectKey, StateObservation, VersionObservation
-from parallax.core.internal.write_plan.payload import AssignmentPayload, WritePayloadPreparer
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import ObjectKey, StateObservation, VersionObservation
+from parallax.core.internal.planned_step.payload import AssignmentPayload, WritePayloadPreparer
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     ExactCount,
     KeyTarget,
@@ -43,6 +35,14 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import (
+    AdmittedWrite,
+    KeyedWriteInstruction,
+    WritePlanningRequest,
+    object_key,
+)
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.descriptor import _records
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant

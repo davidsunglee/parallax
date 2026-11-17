@@ -24,8 +24,7 @@ from parallax.core.internal.base import INT64, STRING
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,
@@ -35,6 +34,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.root_ownership import own_root

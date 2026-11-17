@@ -43,6 +43,7 @@ from parallax.core.internal.object_query._resolved import (
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
+from parallax.core.internal.planned_step import PredecessorRow
 from parallax.core.internal.predicate._execution_values import (
     ExecutionValueSource,
     ExecutionValueSources,
@@ -76,7 +77,6 @@ from parallax.core.internal.temporal_read import (
     temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.internal.write_plan import PredecessorRow
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_nonempty_read as compile_read

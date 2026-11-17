@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.planned_step.managed_row import ManagedRow
 from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.managed_row import ManagedRow
 
 type _Cursor = dt.datetime | Literal[TemporalBound.INFINITY]
 

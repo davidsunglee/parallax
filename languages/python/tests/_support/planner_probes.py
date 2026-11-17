@@ -33,10 +33,14 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
     TargetWrite,
 )
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
 from parallax.core.internal import concurrency, temporal_read
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.planned_step import ObjectKey, StateObservation
+from parallax.core.internal.planned_step.keys import object_state_key_from_observation
+from parallax.core.internal.planned_step.steps import PlannedDelete, PlannedStep, PlannedUpdate
 from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
@@ -45,10 +49,6 @@ from parallax.core.internal.unit_work import (
     object_key,
     settled_evidence,
 )
-from parallax.core.internal.write_plan import ObjectKey, StateObservation, WritePlan
-from parallax.core.internal.write_plan.keys import object_state_key_from_observation
-from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
 from tests._support.write_preparation import write_preparation_of
 
 __all__ = [

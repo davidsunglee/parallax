@@ -15,6 +15,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -24,6 +25,16 @@ from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import LayoutCatalog
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.planned_step import (
+    ObjectKey,
+    PlannedInsert,
+    PredecessorRow,
+    StateObservation,
+    TemporalObservation,
+)
+from parallax.core.internal.planned_step.steps import (
+    ChangedFrom,
+)
 from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
@@ -32,17 +43,6 @@ from parallax.core.internal.unit_work import (
     admitted_write,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PlannedInsert,
-    PredecessorRow,
-    StateObservation,
-    TemporalObservation,
-    WritePlan,
-)
-from parallax.core.internal.write_plan.steps import (
-    ChangedFrom,
-)
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (

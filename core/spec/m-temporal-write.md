@@ -6,7 +6,7 @@ expansion** that realizes both — one Coverage Transform of a written object's
 existing coverage, applied by one Predecessor Expansion to each existing
 milestone it reaches. A temporal write chains milestone rows rather than
 mutating a value in place, which is what produces the audit trail. Per the
-dependency graph it depends on `m-write-plan`, whose Planned Steps and
+dependency graph it depends on `m-planned-step`, whose Planned Steps and
 Predecessor Rows it settles into; on `m-temporal-read`, whose intervals and axes
 it shares with as-of reads; on `m-inheritance`, `m-core`, and `m-metamodel` for
 the family-effective state it carries; and on `m-document-codec` for effective
@@ -571,7 +571,7 @@ with the complete stated state, never a successor of anything.
 
 A **Predecessor Expansion** applies one write's transform to one existing milestone
 — its **predecessor**, carried as the complete Predecessor Row its observation or
-the flush's read produced (`m-write-plan`). It decides, from the write's settled
+the flush's read produced (`m-planned-step`). It decides, from the write's settled
 facts and the attempt's ownership as it stands then:
 
 - whether the transform reaches the predecessor at all; one it does not reach is
@@ -696,7 +696,7 @@ start keeps that milestone alone, and still changes a later one it reaches or a
 gap a replacement opens. It is by declared value: a replacement whose complete
 stated state a milestone already holds keeps that milestone whole, stored
 content no member declares included, although executing the same replacement on
-a changed milestone replaces that content where it assigns (`m-write-plan`
+a changed milestone replaces that content where it assigns (`m-planned-step`
 *Write Rows*). A kept milestone is not a successor the write produced.
 
 ### Ownership disposal
@@ -719,7 +719,7 @@ matched against any predecessor but its own. A milestone that existed before the
 attempt is never revised in place or removed, so its history stays immutable,
 and a revised or reopened row keeps the attempt's Transaction Instant as its
 Transaction-Time start. A revision assigns every executed assignment of the
-successor it realizes (`m-write-plan` *Write Rows*), whatever value the row
+successor it realizes (`m-planned-step` *Write Rows*), whatever value the row
 already holds there, plus a moved Valid-Time start; it never assigns the key, an
 axis end, or the Transaction-Time start. Closing, revising, or removing a
 predecessor changes its observed state; a kept address whose successor executes
@@ -849,7 +849,7 @@ is removed. Its successors never borrow the later observation's.
 
 ## The close addresses a Milestone Target
 
-A close addresses `m-write-plan`'s **Milestone Target**: the primary key plus one
+A close addresses `m-planned-step`'s **Milestone Target**: the primary key plus one
 write-required **exclusive upper bound per As-Of Axis**. For Transaction-Time-Only
 data that is the single `out_z = infinity` bound; for Bitemporal data it adds the
 observed Valid-Time end (*Address and gate are separate*, below). The target carries no axis

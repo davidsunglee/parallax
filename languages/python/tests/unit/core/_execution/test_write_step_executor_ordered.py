@@ -35,6 +35,7 @@ from parallax.core import (
 )
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._write_lowering import GroupedInsert, LoweringCursor, lowered
 from parallax.core._execution._write_step_executor import OrderedInvocation
 from parallax.core.execution_lifecycle import (
@@ -62,12 +63,7 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, entity_by_name
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
-from parallax.core.internal.write_plan import WritePlan
-from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,
@@ -78,6 +74,9 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT, STALE_WRITE
 from tests._support.bindings import bound_model
 from tests._support.db_port import (
     Ordered,

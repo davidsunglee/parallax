@@ -8,7 +8,7 @@ import datetime as dt
 from parallax.core._execution._unit_work.write_settlement import require_observed_version
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,

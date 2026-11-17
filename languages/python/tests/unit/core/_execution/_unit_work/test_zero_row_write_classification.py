@@ -44,17 +44,8 @@ from parallax.core.internal.auto_retry import (
     run_with_retry,
 )
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.internal.unit_work import (
-    OPTIMISTIC_LOCK_CONFLICT,
-    KeyedWriteInstruction,
-    WritePlanningRequest,
-    enforce_affected_rows,
-    object_key,
-)
-from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
-from parallax.core.internal.write_plan import VersionObservation
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import VersionObservation
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     STALE_WRITE,
     AffectedRows,
@@ -64,6 +55,15 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.internal.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
+    KeyedWriteInstruction,
+    WritePlanningRequest,
+    enforce_affected_rows,
+    object_key,
+)
+from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant
 from tests._support.errors import raises_code

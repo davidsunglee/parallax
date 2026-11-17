@@ -13,7 +13,7 @@ from parallax.core.internal.metamodel import (
     ScalarDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.internal.write_plan.observe import (
+from parallax.core.internal.planned_step.observe import (
     PredecessorRow,
     occurrence_value,
     viewed_document,

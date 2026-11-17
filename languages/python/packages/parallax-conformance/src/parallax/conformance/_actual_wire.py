@@ -25,6 +25,7 @@ from parallax.core.internal.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.storage_layout import RelationalDocument, TableLayout
 from parallax.core.internal.temporal_read import Pin
 from parallax.core.internal.wire import (
@@ -32,7 +33,6 @@ from parallax.core.internal.wire import (
     decode_canonical_wire,
     encode_wire,
 )
-from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = ["ActualWireProjection"]
 

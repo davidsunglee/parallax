@@ -5,16 +5,16 @@ from collections.abc import Callable, Iterable
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.write_plan.payload import DocumentPatches, WritePayloadPreparer
-from parallax.core.internal.write_plan.plan import EffectSpan
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import DocumentPatches, WritePayloadPreparer
+from parallax.core.internal.planned_step.steps import (
     PlannedDelete,
     PlannedStep,
     PlannedTemporalRevision,
     PlannedUpdate,
     WriteRow,
 )
+from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["SimulatedWriteSteps"]
 

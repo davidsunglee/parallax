@@ -50,6 +50,11 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.metamodel._states import ambiguous_entity_spellings
+from parallax.core.internal.planned_step.columns import freeze_retained_value
+from parallax.core.internal.planned_step.managed_row import ManagedRow, empty_row, managed_row
+from parallax.core.internal.planned_step.steps import (
+    ResolvedMutationSelection,
+)
 from parallax.core.internal.predicate import (
     REFERENCE_AMBIGUOUS_ENTITY_NAME,
     PredicateInterpretation,
@@ -62,11 +67,6 @@ from parallax.core.internal.wire import (
     encode_wire,
     is_decoding_refusal,
     located_refusal,
-)
-from parallax.core.internal.write_plan.columns import freeze_retained_value
-from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row, managed_row
-from parallax.core.internal.write_plan.steps import (
-    ResolvedMutationSelection,
 )
 
 __all__ = [

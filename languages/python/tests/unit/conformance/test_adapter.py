@@ -40,6 +40,7 @@ from parallax.core.internal.db_port import DatabaseConnection, Row, TransactionO
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import AsOf, object_query, validate_object_query
+from parallax.core.internal.planned_step.managed_row import named_members
 from parallax.core.internal.predicate import (
     And,
     Comparison,
@@ -50,7 +51,6 @@ from parallax.core.internal.predicate import (
 )
 from parallax.core.internal.predicate import serialize as serialize_predicate
 from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.errors import raises_code
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope

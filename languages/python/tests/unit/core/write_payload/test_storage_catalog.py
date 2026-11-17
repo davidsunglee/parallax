@@ -16,14 +16,8 @@ from parallax.core.internal.base import INT32, INT64, JSON, STRING, FrozenMap, I
 from parallax.core.internal.entity import Document
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.internal.storage_layout import RelationalDocument
-from parallax.core.internal.write_payload._storage import (
-    ROW_SLOTS_PER_ENTITY,
-    EffectShape,
-    StorageCatalog,
-)
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -39,6 +33,12 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     WriteRow,
+)
+from parallax.core.internal.storage_layout import RelationalDocument
+from parallax.core.internal.write_payload._storage import (
+    ROW_SLOTS_PER_ENTITY,
+    EffectShape,
+    StorageCatalog,
 )
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code

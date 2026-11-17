@@ -28,6 +28,7 @@ from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
 from parallax.core.internal.object_query import ObjectQueryNode, deserialize, validate_object_query
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery import InvalidData, InvalidDataError, StoredDataIssue
 from parallax.core.internal.read_delivery._page import Page, PageBuilder, ViewSchema
 from parallax.core.internal.read_delivery._page_reader import (
@@ -41,7 +42,6 @@ from parallax.core.internal.read_delivery._publication import RootsOf
 from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
 from parallax.core.internal.read_delivery._stream import StreamDelivery
 from parallax.core.internal.temporal_read import Pin, TemporalShape
-from parallax.core.internal.write_plan import ObjectKey
 from tests._support.bindings import TEST_BINDING
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of

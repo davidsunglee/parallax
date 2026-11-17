@@ -38,8 +38,8 @@ from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.wire import decode_wire
-from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,

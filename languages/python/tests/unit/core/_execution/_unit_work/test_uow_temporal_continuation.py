@@ -46,6 +46,8 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import entity_by_name
+from parallax.core.internal.planned_step import ObjectKey, PredecessorRow, TemporalObservation
+from parallax.core.internal.planned_step.write_effects import BoundRange
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
@@ -56,8 +58,6 @@ from parallax.core.internal.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.internal.write_plan import ObjectKey, PredecessorRow, TemporalObservation
-from parallax.core.internal.write_plan.plan import BoundRange
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (

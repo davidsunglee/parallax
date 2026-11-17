@@ -25,8 +25,8 @@ from parallax.core._execution._unit_work.instructions import PreparedKeyedInstru
 from parallax.core.internal.base import INFINITY, SQL_NULL, UsageError
 from parallax.core.internal.db_port import MappingRow
 from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.planned_step.managed_row import named_members
 from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.managed_row import named_members
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire_writes import (
     WireKeyedInsertSource,

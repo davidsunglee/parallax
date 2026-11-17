@@ -123,6 +123,7 @@ from parallax.core import (
 from parallax.core._execution._planning import build_write_preparation
 from parallax.core._execution._unit_work.preparation import TYPED_LANE
 from parallax.core._execution._unit_work.ranges import RangeBindings
+from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.execution_lifecycle._activity import FlushActivity
@@ -144,12 +145,12 @@ from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.entity._instance_state import declared_values
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.entity._model import model_of
+from parallax.core.internal.planned_step.managed_row import managed_row, named_members
+from parallax.core.internal.planned_step.payload import DocumentPatches
+from parallax.core.internal.planned_step.steps import PlannedStep, PlannedTemporalRevision, WriteRow
+from parallax.core.internal.planned_step.write_effects import EffectSpan
 from parallax.core.internal.storage_layout import storage_layout_facet_of as storage_layout_view
 from parallax.core.internal.unit_work import KeyedMutation, TargetMutation
-from parallax.core.internal.write_plan.managed_row import managed_row, named_members
-from parallax.core.internal.write_plan.payload import DocumentPatches
-from parallax.core.internal.write_plan.plan import EffectSpan, WriteGroup, WritePlan
-from parallax.core.internal.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 from parallax.postgres._connection import adapt_binds, initialize_connection, to_driver_sql
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.bindings import TEST_BINDING

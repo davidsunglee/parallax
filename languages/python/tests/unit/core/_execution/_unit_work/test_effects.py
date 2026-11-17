@@ -25,17 +25,8 @@ import pytest
 from parallax.core import ConflictError, InternalError, ParallaxError
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core.internal.metamodel import AttributeIdentity
-from parallax.core.internal.predicate import TrueNode, validate_predicate
-from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.internal.unit_work import (
-    OPTIMISTIC_LOCK_CONFLICT,
-    WRITE_PRECONDITION_FAILED,
-    WritePreconditionError,
-    enforce_affected_rows,
-)
-from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
-from parallax.core.internal.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import SUPERSEDED, PlannedClose, PlannedInsert
+from parallax.core.internal.planned_step.steps import (
     ANY_COUNT,
     FAILED_PRECONDITION,
     INFINITY,
@@ -65,6 +56,15 @@ from parallax.core.internal.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
+from parallax.core.internal.predicate import TrueNode, validate_predicate
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.internal.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
+    WRITE_PRECONDITION_FAILED,
+    WritePreconditionError,
+    enforce_affected_rows,
+)
+from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model

@@ -1,4 +1,4 @@
-"""Construction invariants of the finalized Planned Step algebra (m-write-plan).
+"""Construction invariants of the finalized Planned Step algebra (m-planned-step).
 
 A Planned Step is what SQL lowering receives with every semantic question
 already settled, so the shapes that would leave one unsettled must be
@@ -31,14 +31,13 @@ import pytest
 
 from parallax.core.internal.base import FrozenMap
 from parallax.core.internal.metamodel import AttributeIdentity, ValueObjectIdentity
-from parallax.core.internal.predicate import TrueNode, validate_predicate
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     SUPERSEDED,
     PlannedClose,
     PlannedInsert,
 )
-from parallax.core.internal.write_plan.managed_row import ManagedRow, empty_row
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.managed_row import ManagedRow, empty_row
+from parallax.core.internal.planned_step.steps import (
     ANY_COUNT,
     INFINITY,
     MISSING_TARGET,
@@ -70,6 +69,7 @@ from parallax.core.internal.write_plan.steps import (
     adopt_planned_assignments,
     shortfall_for,
 )
+from parallax.core.internal.predicate import TrueNode, validate_predicate
 from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of

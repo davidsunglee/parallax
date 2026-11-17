@@ -45,6 +45,13 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.planned_step import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     AdmittedWrite,
@@ -55,13 +62,6 @@ from parallax.core.internal.unit_work import (
     UnitOfWork,
     admitted_write,
 )
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PredecessorRow,
-    TemporalObservation,
-    VersionObservation,
-)
-from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import (

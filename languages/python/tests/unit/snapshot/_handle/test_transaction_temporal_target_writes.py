@@ -33,16 +33,16 @@ from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
+from parallax.core.internal.planned_step import PredecessorRows
+from parallax.core.internal.planned_step.payload import AssignmentPayload
+from parallax.core.internal.planned_step.steps import PlannedAssignments
+from parallax.core.internal.planned_step.write_effects import BoundRange
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     WritePreconditionError,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import PredecessorRows
-from parallax.core.internal.write_plan.payload import AssignmentPayload
-from parallax.core.internal.write_plan.plan import BoundRange
-from parallax.core.internal.write_plan.steps import PlannedAssignments
 from parallax.snapshot import ScopedDatabase, TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

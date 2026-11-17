@@ -24,6 +24,7 @@ from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
 )
 from parallax.core._execution._unit_work.write_items import target_write
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
 )
@@ -41,9 +42,6 @@ from parallax.core.internal.unit_work import (
     WritePlanningRequest,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import (
-    WritePlan,
-)
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.fake_metadata import facets_of

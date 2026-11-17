@@ -14,12 +14,20 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import ComposedWrite
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.planned_step import (
+    ObjectKey,
+    PredecessorRow,
+    StateObservation,
+    TemporalObservation,
+    VersionObservation,
+)
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.unit_work import (
     AdmittedWrite,
@@ -33,14 +41,6 @@ from parallax.core.internal.unit_work import (
     object_key,
 )
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PredecessorRow,
-    StateObservation,
-    TemporalObservation,
-    VersionObservation,
-    WritePlan,
-)
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.lowering_probes import lowered_steps

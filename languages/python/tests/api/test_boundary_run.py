@@ -41,8 +41,8 @@ from parallax.core.internal.execution import (
     prepare_model,
 )
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.unit_work import OPTIMISTIC_LOCK_CONFLICT
-from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.bindings import TEST_BINDING
 from tests._support.corpus import case_document, case_fixtures

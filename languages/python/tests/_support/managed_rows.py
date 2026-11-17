@@ -10,7 +10,7 @@ from parallax.core.internal.metamodel import (
     OccurrenceDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.internal.write_plan.managed_row import (
+from parallax.core.internal.planned_step.managed_row import (
     ManagedRow,
     RowSelection,
     adopted_row,

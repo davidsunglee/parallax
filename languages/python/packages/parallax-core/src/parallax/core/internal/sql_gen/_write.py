@@ -23,21 +23,14 @@ from parallax.core.internal.metamodel import (
     Metamodel,
 )
 from parallax.core.internal.navigate import NoRootSelections, resolve_temporal_visibility
-from parallax.core.internal.sql_gen._compile import compile_write_predicate
-from parallax.core.internal.sql_gen._context import (
-    SQL_GENERATION_FAILED,
-    LoweredStatement,
-    StatementBuilder,
-)
-from parallax.core.internal.storage_layout import EntityLayoutView
-from parallax.core.internal.write_plan.payload import (
+from parallax.core.internal.planned_step.payload import (
     AssignmentPayload,
     DocumentPatches,
     EffectSlots,
     InsertPayload,
     RowSlots,
 )
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     Finite,
     Infinity,
     KeyTarget,
@@ -58,6 +51,13 @@ from parallax.core.internal.write_plan.steps import (
     VersionGate,
     WriteTarget,
 )
+from parallax.core.internal.sql_gen._compile import compile_write_predicate
+from parallax.core.internal.sql_gen._context import (
+    SQL_GENERATION_FAILED,
+    LoweredStatement,
+    StatementBuilder,
+)
+from parallax.core.internal.storage_layout import EntityLayoutView
 
 __all__ = [
     "GroupedEffectBuilder",

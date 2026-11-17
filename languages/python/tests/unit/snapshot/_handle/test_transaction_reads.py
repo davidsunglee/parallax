@@ -50,6 +50,7 @@ from parallax.core.internal.base import (
 )
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import MappingRow
+from parallax.core.internal.planned_step import TemporalObservation
 from parallax.core.internal.read_delivery._page_reader import (
     EagerPageResult,
     PageReadContext,
@@ -61,7 +62,6 @@ from parallax.core.internal.unit_work import (
     STALE_WRITE,
     ReadEvidence,
 )
-from parallax.core.internal.write_plan import TemporalObservation
 from parallax.snapshot import Database, ReadOnlyTxnContext, TxnContext, WireEntity
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication._wire import read_evidence_of

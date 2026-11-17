@@ -322,7 +322,7 @@ class ReadResultContract:
     ordinals locate the row identity's cell, the shared Structured Column, and
     one Continuation Order coordinate per ordering term, in term order — none
     for a read that pages through nothing. A caller that needs the stored
-    document — a temporal observation retains it (`m-write-plan`'s Predecessor
+    document — a temporal observation retains it (`m-planned-step`'s Predecessor
     Row) — reads it from the shared document's cell.
     """
 
@@ -537,7 +537,7 @@ def plan_document_reads(
     Column needed, projected **once**, raw, whatever their number, and the
     scalar collections and occurrences holding a Column of their own are the
     direct mappings. A read observing the stored document itself — a
-    Predecessor Row retains the raw document (`m-write-plan`) — needs every
+    Predecessor Row retains the raw document (`m-planned-step`) — needs every
     Structured Column there is, whatever resides in it.
 
     The shared mapping is present exactly when some concrete needs its

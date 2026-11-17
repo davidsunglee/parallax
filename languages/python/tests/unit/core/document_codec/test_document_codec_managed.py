@@ -43,7 +43,7 @@ from parallax.core.internal.document_codec import (
 from parallax.core.internal.document_codec import _managed as managed
 from parallax.core.internal.document_codec._managed import EffectiveChangeSet
 from parallax.core.internal.metamodel import MemberDefinition, Multiplicity
-from parallax.core.internal.write_plan import EntityStateRow
+from parallax.core.internal.planned_step import EntityStateRow
 from tests.unit._positional_row_support import positional_row
 
 _GEO = MemberShape(members=(ScalarDefinition("lat", STRING, True),))

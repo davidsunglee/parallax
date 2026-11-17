@@ -42,7 +42,7 @@ from parallax.core.internal.metamodel import (
     Metamodel,
     entity_by_name,
 )
-from parallax.core.internal.write_plan import ObjectKey
+from parallax.core.internal.planned_step import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of

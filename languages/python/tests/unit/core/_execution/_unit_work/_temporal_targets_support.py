@@ -18,6 +18,12 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.planned_step import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+)
+from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
 from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
@@ -25,12 +31,6 @@ from parallax.core.internal.unit_work import (
     TargetWriteInstruction,
     admitted_write,
 )
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PredecessorRow,
-    TemporalObservation,
-)
-from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 

@@ -470,7 +470,7 @@ between them.
 A temporal successor is built by patching the retained raw predecessor document
 at its executed assignments' paths alone rather than by re-encoding decoded
 members, so keys the running application does not declare survive the
-close-and-insert outside every occurrence the mutation assigned (`m-write-plan`).
+close-and-insert outside every occurrence the mutation assigned (`m-planned-step`).
 
 ## Authored managed document preparation
 

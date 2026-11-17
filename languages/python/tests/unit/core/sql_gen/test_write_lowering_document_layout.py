@@ -44,17 +44,12 @@ from parallax.core.internal.metamodel import (
     Metamodel,
     ValueObjectIdentity,
 )
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.sql_gen._write import InsertStatementBuilder
-from parallax.core.internal.unit_work import KeyedWriteInstruction
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import PredecessorRow, StateObservation, VersionObservation
-from parallax.core.internal.write_plan.managed_row import predecessor_state
-from parallax.core.internal.write_plan.observe import (
+from parallax.core.internal.planned_step import PredecessorRow, StateObservation, VersionObservation
+from parallax.core.internal.planned_step.managed_row import predecessor_state
+from parallax.core.internal.planned_step.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
 )
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
@@ -63,6 +58,11 @@ from parallax.core.internal.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import InsertStatementBuilder
+from parallax.core.internal.unit_work import KeyedWriteInstruction
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from tests._support.bindings import bound_model
 from tests._support.corpus import wire_value_deep
 from tests._support.errors import raises_code

@@ -62,6 +62,8 @@ from parallax.core.internal.execution import (
     TxnOptions,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.planned_step.managed_row import named_members
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.unit_work import (
     MISSING_TARGET,
@@ -73,8 +75,6 @@ from parallax.core.internal.unit_work import (
     UnitOfWork,
     WriteEffectCode,
 )
-from parallax.core.internal.write_plan.managed_row import named_members
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code

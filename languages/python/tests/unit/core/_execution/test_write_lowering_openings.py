@@ -43,15 +43,11 @@ from parallax.core.internal.metamodel import (
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.unit_work import KeyedWriteInstruction
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import PredecessorRow, TemporalObservation
-from parallax.core.internal.write_plan.managed_row import ManagedRow
-from parallax.core.internal.write_plan.payload import RowPayload, RowSlots
-from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import PredecessorRow, TemporalObservation
+from parallax.core.internal.planned_step.managed_row import ManagedRow
+from parallax.core.internal.planned_step.payload import RowPayload, RowSlots
+from parallax.core.internal.planned_step.steps import INFINITY as OPEN_END
+from parallax.core.internal.planned_step.steps import (
     NEW_LINEAGE,
     STALE_WRITE,
     SUPERSEDED,
@@ -67,6 +63,10 @@ from parallax.core.internal.write_plan.steps import (
     RowOrigin,
     WriteRow,
 )
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.unit_work import KeyedWriteInstruction
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps

@@ -41,6 +41,7 @@ from parallax.core.internal.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery import (
     MISSING_STORED_VALUE,
     InvalidData,
@@ -58,7 +59,6 @@ from parallax.core.internal.temporal_read import (
     temporal_facet_of,
     valid_time_coverage,
 )
-from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot import connect
 from parallax.snapshot._publication._classify import (
     CONFORMING_ROOT,

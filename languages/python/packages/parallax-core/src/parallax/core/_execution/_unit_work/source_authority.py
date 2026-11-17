@@ -36,21 +36,21 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.internal import concurrency
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
-from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.temporal_write.coverage import CoverageTransform
-from parallax.core.internal.write_plan.keys import (
+from parallax.core.internal.planned_step.keys import (
     ObjectKey,
     ObjectStateKey,
     TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.internal.write_plan.observe import PredecessorRow
-from parallax.core.internal.write_plan.plan import (
+from parallax.core.internal.planned_step.observe import PredecessorRow
+from parallax.core.internal.planned_step.write_effects import (
     CurrentRowOutput,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
     WriteEffects,
 )
+from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
 
 __all__ = ["SourceAuthority"]
 

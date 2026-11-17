@@ -39,6 +39,8 @@ from parallax.core.internal import concurrency
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.planned_step import ObjectKey, VersionObservation
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
@@ -46,8 +48,6 @@ from parallax.core.internal.unit_work import (
     WriteIntent,
     keyed_intent,
 )
-from parallax.core.internal.write_plan import ObjectKey, VersionObservation
-from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import object_source
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._where_position_model import (

@@ -43,6 +43,7 @@ from parallax.core import Attr, DomainModel, TxTemporal, UnsupportedError, Value
 from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
 )
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._write_lowering import (
     STORED_DOCUMENT_NOT_OBJECT,
     lowered,
@@ -81,33 +82,13 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.metamodel import Column as CoreColumn
 from parallax.core.internal.metamodel import Table as CoreTable
-from parallax.core.internal.read_delivery import InvalidDataError
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import (
-    SQL_GENERATION_FAILED,
-    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
-)
-from parallax.core.internal.sql_gen._write import (
-    InsertStatementBuilder,
-    StepPayload,
-    compile_write_step,
-)
-from parallax.core.internal.temporal_read import TransactionTimeOnly
-from parallax.core.internal.unit_work import (
-    KeyedWriteInstruction,
-    PredicateSelection,
-    PredicateWriteInstruction,
-    UnitOfWork,
-    WriteAssignment,
-)
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     ObjectKey,
     PlannedInsert,
     StateObservation,
     VersionObservation,
 )
-from parallax.core.internal.write_plan.payload import (
+from parallax.core.internal.planned_step.payload import (
     AssignmentPayload,
     DocumentPatches,
     InsertPayload,
@@ -115,9 +96,8 @@ from parallax.core.internal.write_plan.payload import (
     RowSlots,
     WritePayloadPreparer,
 )
-from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup, WritePlan
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED, key_target
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED, key_target
+from parallax.core.internal.planned_step.steps import (
     ANY_COUNT,
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -140,7 +120,27 @@ from parallax.core.internal.write_plan.steps import (
     VersionGate,
     WriteRow,
 )
-from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
+from parallax.core.internal.planned_step.steps import INFINITY as OPEN_END
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import (
+    SQL_GENERATION_FAILED,
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+)
+from parallax.core.internal.sql_gen._write import (
+    InsertStatementBuilder,
+    StepPayload,
+    compile_write_step,
+)
+from parallax.core.internal.temporal_read import TransactionTimeOnly
+from parallax.core.internal.unit_work import (
+    KeyedWriteInstruction,
+    PredicateSelection,
+    PredicateWriteInstruction,
+    UnitOfWork,
+    WriteAssignment,
+)
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.descriptor import _records
 from tests._support.bindings import bound_model
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall

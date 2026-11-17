@@ -33,11 +33,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core.internal import sql_gen
 from parallax.core.internal.navigate import TemporallyResolvedPredicate
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.planned_step.steps import PlannedStep
 from parallax.core.internal.read_planning import PlannedEntityQuery
 from parallax.core.internal.read_planning import plan as plan_deep_fetch
 from parallax.core.internal.sql_gen._compile import compile_read, compile_write_predicate
 from parallax.core.internal.sql_gen._write import compile_write_step
-from parallax.core.internal.write_plan.steps import PlannedStep
 from tests._support.repo import PY_ROOT
 from tests.unit._source_inventory_support import (
     CONFORMANCE_SRC,

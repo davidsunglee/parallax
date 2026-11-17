@@ -112,7 +112,7 @@ the write is buffered
 
 | Licence | What it is | Where it comes from |
 | -- | -- | -- |
-| Observation | the [State Observation](../../core/spec/m-write-plan.md#state-observation) a read of this attempt took: the version, or the Transaction-Time start of the milestone it read | reading a versioned or temporal Entity inside the writing transaction |
+| Observation | the [State Observation](../../core/spec/m-planned-step.md#state-observation) a read of this attempt took: the version, or the Transaction-Time start of the milestone it read | reading a versioned or temporal Entity inside the writing transaction |
 | Lock | the shared row lock a read of this attempt holds | reading an unversioned Non-Temporal Entity, which has no state to observe |
 | Insertion | this attempt's own insertion of the object | the inserted value and every value derived from it ([insertion authority](../../core/spec/m-unit-work.md#insertion-authority)) |
 | Stated target | a version or Transaction-Time start the caller states | a [target write](../../core/spec/m-unit-work.md#target-writes) |
@@ -196,7 +196,7 @@ cancels away never reads the clock
 ### Settlement
 
 Settlement turns the ordered writes into
-[Planned Steps](../../core/spec/m-write-plan.md#planned-steps): inserts,
+[Planned Steps](../../core/spec/m-planned-step.md#planned-steps): inserts,
 updates, closes, deletes, and the revisions, removals and guards temporal writes use.
 For each write it validates the observation the write carries, captures the Transaction
 Instant if the write needs one, expands a temporal write over the milestones it reaches

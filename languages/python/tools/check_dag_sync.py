@@ -116,7 +116,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-db-port": "parallax.core.internal.db_port",
     "m-db-error": "parallax.core.internal.db_error",
     "m-unit-work": "parallax.core._execution._unit_work",
-    "m-write-plan": "parallax.core.internal.write_plan",
+    "m-planned-step": "parallax.core.internal.planned_step",
     "m-write-payload": "parallax.core.internal.write_payload",
     "m-auto-retry": "parallax.core.internal.auto_retry",
     "m-execution-authority": "parallax.core.internal.execution_authority",
@@ -161,7 +161,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.internal.dialect",
         "parallax.core.internal.db_port",
         "parallax.core.internal.sql_gen",
-        "parallax.core.internal.write_plan",
+        "parallax.core.internal.planned_step",
         "parallax.core._stored_data",
         "parallax.core.internal.database_binding",
     }
@@ -221,7 +221,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.base",
             "parallax.core.internal.metamodel",
             "parallax.core.internal.temporal_read",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
         }
     ),
     "parallax.descriptor._hub": frozenset({"parallax.core.internal.entity"}),
@@ -395,7 +395,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.concurrency",
             "parallax.core.internal.document_codec",
             "parallax.core.internal.temporal_read",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
         }
     ),
     # Execution names the Entity frontend directly: model preparation reads the
@@ -484,7 +484,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.document_codec",
             "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
             "parallax.core.execution_lifecycle",
         }
     ),
@@ -520,7 +520,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.internal.metamodel",
             "parallax.core.internal.temporal_read",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
         }
     ),
     # Write-observation retention is scoped apart from its own package so the
@@ -556,7 +556,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.internal.inheritance",
             "parallax.core.internal.temporal_read",
             "parallax.core._execution._unit_work",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
         }
     ),
     # The lifecycle extension's one Python-only edge: its facades and write

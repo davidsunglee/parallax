@@ -58,6 +58,7 @@ from parallax.core.internal.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.core.internal.read_delivery._page import (
     ABSENT,
@@ -78,7 +79,6 @@ from parallax.core.internal.read_delivery._page import (
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.temporal_read import Edge, Pin
-from parallax.core.internal.write_plan import ObjectKey
 from parallax.snapshot import (
     edge_of,
     is_view_loaded,

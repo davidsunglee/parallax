@@ -20,29 +20,24 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     target_write,
 )
+from parallax.core._execution._unit_work.write_plan import (
+    AcquisitionSpan,
+    SettledWrite,
+    WriteGroup,
+    WritePlan,
+)
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.internal.unit_work import (
-    KeyedWriteInstruction,
-    TargetMutation,
-    TargetWriteInstruction,
-    TransactionInstant,
-    WritePlanningRequest,
-    admitted_write,
-    object_key,
-)
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     ObjectKey,
     PredecessorRow,
     StateObservation,
     TemporalObservation,
     VersionObservation,
-    WritePlan,
 )
-from parallax.core.internal.write_plan.plan import AcquisitionSpan, SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     FAILED_PRECONDITION,
     TERMINATED,
     KeyTarget,
@@ -52,6 +47,15 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
     TemporalGate,
+)
+from parallax.core.internal.unit_work import (
+    KeyedWriteInstruction,
+    TargetMutation,
+    TargetWriteInstruction,
+    TransactionInstant,
+    WritePlanningRequest,
+    admitted_write,
+    object_key,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.bindings import bound_model

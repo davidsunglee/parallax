@@ -39,17 +39,10 @@ from parallax.core.internal.metamodel import (
     MemberIdentity,
     Multiplicity,
 )
-from parallax.core.internal.storage_layout import (
-    ColumnTier,
-    DocumentResidentSelection,
-    EntityLayoutView,
-    InheritanceDiscriminator,
-    RelationalDocument,
-)
-from parallax.core.internal.write_plan.managed_row import occurrence_cells
-from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.managed_row import occurrence_cells
+from parallax.core.internal.planned_step.payload import AssignmentPayload, DocumentPatches
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
     ExactCount,
     Finite,
     Infinity,
@@ -71,6 +64,13 @@ from parallax.core.internal.write_plan.steps import (
     Versioned,
     VersionGate,
     WriteRow,
+)
+from parallax.core.internal.storage_layout import (
+    ColumnTier,
+    DocumentResidentSelection,
+    EntityLayoutView,
+    InheritanceDiscriminator,
+    RelationalDocument,
 )
 
 __all__ = [
@@ -543,7 +543,7 @@ class RowSlots:
         predecessor's raw document is that document patched at the members the
         row executes alone, so every key it carries outside them survives the
         close-and-insert, a key a newer application version wrote included
-        (`m-document-codec`, `m-write-plan`). An executed member is written
+        (`m-document-codec`, `m-planned-step`). An executed member is written
         whatever it assigns, so an executed occurrence replaces its stored
         subtree whole. Without a retained document the row's own complete
         member set composes the document, a member it omits absent there.

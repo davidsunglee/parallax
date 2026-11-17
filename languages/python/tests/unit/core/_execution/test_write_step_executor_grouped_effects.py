@@ -23,6 +23,7 @@ import pytest
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import ConflictError, InternalError
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
@@ -39,16 +40,7 @@ from parallax.core.internal.db_port import (
     OrderedWriteTransport,
 )
 from parallax.core.internal.dialect import POSTGRES, Dialect
-from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.internal.unit_work import (
-    OPTIMISTIC_LOCK_CONFLICT,
-    WritePreconditionError,
-)
-from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import WritePlan
-from parallax.core.internal.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     FAILED_PRECONDITION,
     STALE_WRITE,
     UNGATED,
@@ -57,6 +49,14 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     Versioned,
 )
+from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
+from parallax.core.internal.unit_work import (
+    OPTIMISTIC_LOCK_CONFLICT,
+    WritePreconditionError,
+)
+from parallax.core.internal.unit_work import STALE_WRITE as STALE_WRITE_CODE
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from tests._support.bindings import bound_model
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit.core._execution._grouped_effect_support import (

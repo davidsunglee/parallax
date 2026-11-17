@@ -7,7 +7,7 @@ from typing import Protocol
 from parallax.core.internal.base import NeutralType
 from parallax.core.internal.document_codec import PreparedPatch
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.write_plan.steps import PlannedAssignments, PlannedStep, WriteRow
+from parallax.core.internal.planned_step.steps import PlannedAssignments, PlannedStep, WriteRow
 
 __all__ = [
     "AssignmentPayload",

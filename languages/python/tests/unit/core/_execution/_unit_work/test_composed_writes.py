@@ -23,19 +23,11 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, InternalError, UsageError
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.unit_work import (
-    AdmittedWrite,
-    KeyedMutation,
-    KeyedWriteInstruction,
-    ReadAuthorizedWrite,
-    RetainedObservation,
-    WritePlanningRequest,
-    admitted_write,
-)
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     SUPERSEDED,
     TERMINATED,
     ObjectKey,
@@ -45,22 +37,28 @@ from parallax.core.internal.write_plan import (
     TemporalObservation,
     VersionObservation,
 )
-from parallax.core.internal.write_plan.keys import (
+from parallax.core.internal.planned_step.keys import (
     TemporalObjectStateKey,
     VersionedObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.internal.write_plan.plan import (
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import INFINITY as OPEN_END
+from parallax.core.internal.planned_step.steps import PlannedStep
+from parallax.core.internal.planned_step.write_effects import (
     Openings,
-    SettledWrite,
     TemporalRowCoordinates,
     WriteEffects,
-    WriteGroup,
-    WritePlan,
 )
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import INFINITY as OPEN_END
-from parallax.core.internal.write_plan.steps import PlannedStep
+from parallax.core.internal.unit_work import (
+    AdmittedWrite,
+    KeyedMutation,
+    KeyedWriteInstruction,
+    ReadAuthorizedWrite,
+    RetainedObservation,
+    WritePlanningRequest,
+    admitted_write,
+)
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code

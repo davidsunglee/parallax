@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.internal.metamodel import EntityIdentity
+from parallax.core.internal.planned_step.observe import StateObservation, TemporalObservation
 from parallax.core.internal.temporal_read import Edge, TemporalShape, milestone_edge
-from parallax.core.internal.write_plan.observe import StateObservation, TemporalObservation
 
 __all__ = [
     "ObjectKey",

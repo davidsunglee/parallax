@@ -16,7 +16,7 @@ from parallax.core.internal.metamodel import (
     ValueObjectIdentity,
     entity_by_name,
 )
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     MISSING_TARGET,
     OPTIMISTIC_CONFLICT,

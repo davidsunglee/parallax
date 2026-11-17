@@ -11,12 +11,12 @@ from parallax.core.internal.metamodel import (
     EntityIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.internal.planned_step.managed_row import ManagedRow
+from parallax.core.internal.planned_step.observe import PredecessorRow
 from parallax.core.internal.predicate._resolved import ResolvedPredicate
-from parallax.core.internal.write_plan.managed_row import ManagedRow
-from parallax.core.internal.write_plan.observe import PredecessorRow
 
 if TYPE_CHECKING:
-    from parallax.core.internal.write_plan.payload import RowPayload
+    from parallax.core.internal.planned_step.payload import RowPayload
 
 __all__ = [
     "ANY_COUNT",

@@ -18,8 +18,8 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.metamodel import AttributeMetadata, Metamodel
-from parallax.core.internal.write_plan.keys import ObjectKey
-from parallax.core.internal.write_plan.managed_row import ManagedRow
+from parallax.core.internal.planned_step.keys import ObjectKey
+from parallax.core.internal.planned_step.managed_row import ManagedRow
 
 __all__ = ["collapse_writes"]
 

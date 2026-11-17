@@ -43,6 +43,8 @@ from parallax.core._execution._unit_work.write_items import (
     WritePhase,
 )
 from parallax.core.internal.metamodel import CompiledEntity
+from parallax.core.internal.planned_step import ObjectKey, VersionObservation
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
 from parallax.core.internal.temporal_write.coverage import CoverageTransform
 from parallax.core.internal.unit_work import (
     KeyedMutation,
@@ -51,8 +53,6 @@ from parallax.core.internal.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.internal.write_plan import ObjectKey, VersionObservation
-from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import admitted_writes, write_admission
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model as corpus_model

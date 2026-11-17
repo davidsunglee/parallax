@@ -11,9 +11,9 @@ from parallax.core.internal.metamodel import (
     OccurrenceDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.internal.write_plan.managed_row import ManagedRow
-from parallax.core.internal.write_plan.observe import occurrence_value
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.managed_row import ManagedRow
+from parallax.core.internal.planned_step.observe import occurrence_value
+from parallax.core.internal.planned_step.steps import (
     KeyTarget,
     PlannedAssignments,
     PlannedValue,

@@ -1,5 +1,5 @@
 """Predecessor Rows: a row-acquisition read's aligned rows, adopted by reference
-(m-write-plan *Predecessor Row*).
+(m-planned-step *Predecessor Row*).
 
 Each judged positional row and raw document is retained as read, sealed in
 bounded chunks with documents aligned, and read positionally — axis cells by
@@ -21,14 +21,14 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import LayoutCatalog
 from parallax.core.internal.metamodel import AttributeIdentity, AttributeMetadata
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     ChunkedColumnBuilder,
     PredecessorRow,
     PredecessorRows,
     PredecessorRowsBuilder,
     whole,
 )
-from parallax.core.internal.write_plan.columns import (
+from parallax.core.internal.planned_step.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
 )
 from tests.unit import _milestone_rows_support as milestone_rows

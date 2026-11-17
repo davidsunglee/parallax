@@ -7,6 +7,7 @@ import datetime as dt
 from collections.abc import Iterator
 
 from parallax.core.internal.base import INFINITY, TemporalBound
+from parallax.core.internal.planned_step.managed_row import ManagedRow, adopted_row
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.temporal_write.coverage import (
     NO_TRANSFORM,
@@ -15,7 +16,6 @@ from parallax.core.internal.temporal_write.coverage import (
     CoverageTransform,
     Successor,
 )
-from parallax.core.internal.write_plan.managed_row import ManagedRow, adopted_row
 from tests._support.managed_rows import row_selection_of
 from tests.unit._corpus_model_support import model, target
 

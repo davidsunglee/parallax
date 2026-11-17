@@ -4,7 +4,7 @@
 where each member is placed, how each document a row or assignment stores is
 composed, and how two prepared rows compare as persisted state. It is the one
 assembler of write payloads. Per the dependency graph it depends on
-`m-write-plan`, whose Write Rows and assignments it prepares and whose payload
+`m-planned-step`, whose Write Rows and assignments it prepares and whose payload
 vocabulary it answers in; on `m-storage-layout`, which places every member; on
 `m-document-codec`, which encodes, patches, and compares documents; and on
 `m-core` and `m-metamodel` for values and identities. It chooses no authority,
@@ -37,7 +37,7 @@ from:
   codec, so presence stays the codec's classification.
 - A **carried or changed** row whose predecessor retained its raw document is
   that document patched at the row's **executed** members alone
-  (`m-write-plan` *Write Rows*), in canonical placement order. Every other key —
+  (`m-planned-step` *Write Rows*), in canonical placement order. Every other key —
   an unassigned member's stored spelling, and a key no member declares — rides
   forward as stored. An executed member is written whatever value it assigns:
   an executed occurrence replaces its stored subtree whole even where its

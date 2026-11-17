@@ -81,6 +81,7 @@ from parallax.core.internal.execution import (
 )
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.unit_work import (
     OPTIMISTIC_LOCK_CONFLICT,
     TRANSACTION_ESCAPED,
@@ -89,7 +90,6 @@ from parallax.core.internal.unit_work import (
     SubjectActor,
     WritePlanner,
 )
-from parallax.core.internal.write_plan.steps import KeyTarget
 from parallax.snapshot import WireDatabaseView
 from tests._support import mirrored_models as mm
 from tests._support.bindings import TEST_BINDING

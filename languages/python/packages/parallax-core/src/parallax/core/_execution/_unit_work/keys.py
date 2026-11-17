@@ -16,7 +16,7 @@ from parallax.core.internal.metamodel import (
     Metamodel,
     entity_by_name,
 )
-from parallax.core.internal.write_plan.keys import ObjectKey
+from parallax.core.internal.planned_step.keys import ObjectKey
 
 __all__ = [
     "object_key",

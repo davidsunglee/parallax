@@ -12,10 +12,9 @@ from parallax.core._execution._unit_work.acquisition import RowConsumer, RowRequ
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
-from parallax.core.internal.write_plan import PredecessorRow
-from parallax.core.internal.write_plan.payload import DocumentPatches
-from parallax.core.internal.write_plan.plan import EffectSpan
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import PredecessorRow
+from parallax.core.internal.planned_step.payload import DocumentPatches
+from parallax.core.internal.planned_step.steps import (
     Finite,
     MilestoneTarget,
     PlannedClose,
@@ -25,6 +24,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     WriteRow,
 )
+from parallax.core.internal.planned_step.write_effects import EffectSpan
 from tests._support.bindings import bound_model
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 

@@ -8,6 +8,7 @@ from parallax.core.internal.concurrency import ConcurrencyFacet
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import EntityLayout
 from parallax.core.internal.metamodel import AttributeIdentity
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery._page._rows import StoredDataIssueInput
 from parallax.core.internal.temporal_read import (
     Edge,
@@ -15,7 +16,6 @@ from parallax.core.internal.temporal_read import (
     TemporalFacet,
     milestone_edge_or_none,
 )
-from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = [
     "NON_HYDRATING_CODES",

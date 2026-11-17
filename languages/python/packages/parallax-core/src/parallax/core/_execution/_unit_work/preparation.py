@@ -22,8 +22,8 @@ from parallax.core.internal.metamodel import (
     PrimaryKey,
     judge_assignment,
 )
+from parallax.core.internal.planned_step.managed_row import RowSelection
 from parallax.core.internal.wire._codec import wire_converter
-from parallax.core.internal.write_plan.managed_row import RowSelection
 
 __all__ = ["TYPED_LANE", "WIRE_LANE", "EntityPreparation", "KeyAllocation", "WritePreparation"]
 

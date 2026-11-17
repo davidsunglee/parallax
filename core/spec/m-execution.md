@@ -9,7 +9,7 @@ conditions it establishes, and executes writes by running each sequence of Plann
 Steps the unit of work hands it from the Write Plan `m-unit-work` finalizes and
 acquiring the rows a write needs to read. Per the dependency graph it depends on `m-unit-work`
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
-read it executes; `m-write-plan` for the Planned Steps it runs;
+read it executes; `m-planned-step` for the Planned Steps it runs;
 `m-write-payload` for the payload preparer model preparation wires into the
 Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-read-planning` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for

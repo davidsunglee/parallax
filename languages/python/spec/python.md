@@ -274,7 +274,7 @@ execution module its grants do not cover.
 value carries from a read to a later write: Read Evidence, the participation
 token, the retained observation, and the insertion identity. The unit of work
 issues and judges it, so it is that scope's sealed child, granted only the
-accepted metadata, temporal coordinates, and write-plan keys and observations
+accepted metadata, temporal coordinates, and planned-step keys and observations
 it is stated in; every other module of the unit of work is runtime the seal
 refuses it. Snapshot's inspection and publication children carry that evidence
 on published values, so each is granted the evidence child rather than the unit
@@ -386,7 +386,7 @@ tree fails the sync check.
 | `m-value-object` | `parallax.core.internal.value_object` |
 | `m-wire` | `parallax.core.internal.wire` |
 | `m-write-payload` | `parallax.core.internal.write_payload` |
-| `m-write-plan` | `parallax.core.internal.write_plan` |
+| `m-planned-step` | `parallax.core.internal.planned_step` |
 
 The second table declares the edges no module tag carries: for a support scope,
 which has no tag and so no edge in `core/spec/modules.md`, everything it may
@@ -421,15 +421,15 @@ evolution distribution's sole Python-only edge.
 | `parallax.aws` | `m-db-port` |
 | `parallax.aws.postgres` | `m-db-port`, `parallax.postgres` |
 | `parallax.core._execution` | `parallax.core.internal.entity` |
-| `parallax.core._execution._family`, `parallax.core._execution._write_lowering` | `parallax.core._stored_data`, `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan`, `m-database-binding` |
-| `parallax.core._execution._keyed_writes` | `parallax.core.internal.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
+| `parallax.core._execution._family`, `parallax.core._execution._write_lowering` | `parallax.core._stored_data`, `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-planned-step`, `m-database-binding` |
+| `parallax.core._execution._keyed_writes` | `parallax.core.internal.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-planned-step`, `m-execution-lifecycle` |
 | `parallax.core._execution._publication` | `parallax.core.internal.entity`, `m-read-planning`, `m-unit-work`, `m-database-binding` |
 | `parallax.core._execution._read_pipeline` | `parallax.core.internal.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
 | `parallax.core._execution._read_query` | `m-metamodel`, `m-predicate`, `m-object-query` |
-| `parallax.core._execution._retention` | `parallax.core.internal.entity._construction_input`, `parallax.core.internal.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan` |
-| `parallax.core._execution._unit_work.evidence` | `m-metamodel`, `m-temporal-read`, `m-write-plan` |
+| `parallax.core._execution._retention` | `parallax.core.internal.entity._construction_input`, `parallax.core.internal.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-planned-step` |
+| `parallax.core._execution._unit_work.evidence` | `m-metamodel`, `m-temporal-read`, `m-planned-step` |
 | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-pk-gen`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-concurrency` |
-| `parallax.core._stored_data` | `m-core`, `m-metamodel`, `m-temporal-read`, `m-write-plan` |
+| `parallax.core._stored_data` | `m-core`, `m-metamodel`, `m-temporal-read`, `m-planned-step` |
 | `parallax.core.internal.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
 | `parallax.core.internal.db_port` | `parallax.core.internal.diagnostics` |
 | `parallax.core.internal.diagnostics` | (none) |
@@ -444,7 +444,7 @@ evolution distribution's sole Python-only edge.
 | `parallax.core.introspection` | `parallax.core.internal.entity`, `m-metamodel`, `m-relationship`, `m-database-binding` |
 | `parallax.core.internal.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.internal.entity` |
 | `parallax.core.internal.read_delivery` | `parallax.core.internal.continuation`, `parallax.core._stored_data`, `parallax.core.internal.entity._construction_input`, `parallax.core.internal.entity._layout` |
-| `parallax.core.internal.read_delivery._page` | `parallax.core._stored_data`, `parallax.core.internal.entity._construction_input`, `parallax.core.internal.entity._layout`, `m-core`, `m-metamodel`, `m-read-planning`, `m-concurrency`, `m-document-codec`, `m-temporal-read`, `m-write-plan` |
+| `parallax.core.internal.read_delivery._page` | `parallax.core._stored_data`, `parallax.core.internal.entity._construction_input`, `parallax.core.internal.entity._layout`, `m-core`, `m-metamodel`, `m-read-planning`, `m-concurrency`, `m-document-codec`, `m-temporal-read`, `m-planned-step` |
 | `parallax.core.internal.unit_work` | `m-unit-work` |
 | `parallax.descriptor._hub` | `parallax.core.internal.entity` |
 | `parallax.evolution._domain_models` | `parallax.core.internal.entity`, `m-model-evolution`, `m-database-binding` |

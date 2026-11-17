@@ -7,12 +7,12 @@ from typing import Final, Protocol, cast
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.inheritance import EntityMemberSelection
 from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
-from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.keys import ObjectKey, TemporalObjectStateKey
-from parallax.core.internal.write_plan.predecessor_rows import (
+from parallax.core.internal.planned_step.keys import ObjectKey, TemporalObjectStateKey
+from parallax.core.internal.planned_step.predecessor_rows import (
     PredecessorRows,
     PredecessorRowsBuilder,
 )
+from parallax.core.internal.temporal_read import TimeInterval
 
 __all__ = [
     "AcquireRows",
