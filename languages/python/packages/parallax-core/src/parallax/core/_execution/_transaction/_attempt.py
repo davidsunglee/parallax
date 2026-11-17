@@ -40,7 +40,6 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
-    refuse_keyless_target,
     resolve_target,
 )
 from parallax.core._execution._unit_work.row_acquisition import (
@@ -660,21 +659,23 @@ class TxnAttempt(_TxnAttemptBase):
         Concurrency Strategy needs participation.
 
         Re-entry is refused first, then ``adapter`` asked for its input under
-        this attempt's write projection, then a write stating no key refused
-        (`write-key-absent`) ahead of everything else about it, and only then a
-        stated start judged. The canonical instruction states that input under
-        the caller's revision and window, and the target, a null key, the
-        window, the revision, and the payload are preparation's to judge. A stated
-        ``until``, ``None`` included, selects the bounded verb, and every
-        revision keyword stated, ``None`` included, reaches preparation as
-        stated.
+        this attempt's write projection, then its target resolved, and only
+        then a stated start judged. The canonical instruction states that input
+        under the caller's revision and window, and the target's Persistence
+        Mode, its key, the window, the revision, and the payload are
+        preparation's to judge. A stated ``until``, ``None`` included, selects
+        the bounded verb, and every revision keyword stated, ``None`` included,
+        reaches preparation as stated.
         """
         refuse_reentry(self._lifecycle)
         mutation, bound = _bounded_mutation(verb, until)
         write = adapter.write_input(self._write, mutation)
-        meta = self._write.preparation.meta
-        target = write.target if write.target is not None else resolve_target(meta, write.entity)
-        refuse_keyless_target(meta, target, mutation, write.row)
+        preparation = self._write.preparation
+        target = (
+            write.target
+            if write.target is not None
+            else resolve_target(preparation.meta, write.entity)
+        )
         start = stated_valid_from(valid_from)
         revision = target_revision_arguments(version=version, tx_start=tx_start)
         instruction = TargetWriteInstruction(
@@ -687,14 +688,13 @@ class TxnAttempt(_TxnAttemptBase):
             bound,
             revision.stated,
         )
-        preparation = self._write.preparation
         self._uow.buffer_target(
             prepare_typed_write(
                 instruction,
                 preparation,
                 authored_members=write.authored_members,
                 members=write.members,
-                target=write.target,
+                target=target,
             )
             if write.representation == "typed"
             else prepare_wire_write(
@@ -702,6 +702,7 @@ class TxnAttempt(_TxnAttemptBase):
                 preparation,
                 authored_members=write.authored_members,
                 members=write.members,
+                target=target,
             )
         )
 

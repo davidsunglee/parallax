@@ -883,6 +883,7 @@ type Payload = Literal[
     "undeclared",
     "mapping_key",
     "null_key",
+    "absent_key",
     "extra_member",
     "observation_key",
     "unshaped",
@@ -897,9 +898,9 @@ declare. ``mapping_key`` addresses the object by a mapping where a Typed key is
 one scalar value, which only a Typed call can state. ``null_key`` states the
 key as null, which a Typed call spells for every verb but a replacement, whose
 instance cannot hold one. The rest are Wire documents
-no Typed call has a spelling for: a destructive key carrying a declared member
-beside the key, a reserved observation key, a document that is no mapping, and
-a replacement missing its required members.
+no Typed call has a spelling for: a document omitting the key, a destructive
+key carrying a declared member beside the key, a reserved observation key, a
+document that is no mapping, and a replacement missing its required members.
 """
 
 type Address = Literal["spelled", "published", "published_with_data", "unaddressable"]
@@ -1091,7 +1092,7 @@ class TargetWriteScenario:
 
 
 _WIRE_ONLY_PAYLOADS: Final[frozenset[Payload]] = frozenset(
-    {"extra_member", "observation_key", "unshaped", "incomplete"}
+    {"absent_key", "extra_member", "observation_key", "unshaped", "incomplete"}
 )
 
 
@@ -1920,6 +1921,8 @@ def _wire_document(scenario: TargetWriteScenario) -> object:
         base["nickname"] = "x"
     elif scenario.payload == "null_key":
         base["id"] = None
+    elif scenario.payload == "absent_key":
+        del base["id"]
     elif scenario.payload == "observation_key":
         base["observedVersion"] = 4
     return base

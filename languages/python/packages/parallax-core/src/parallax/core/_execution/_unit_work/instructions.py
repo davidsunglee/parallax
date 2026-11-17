@@ -112,7 +112,6 @@ __all__ = [
     "prepare_typed_write",
     "prepare_wire_insert",
     "prepare_wire_write",
-    "refuse_keyless_target",
     "resolve_target",
     "serialize",
 ]
@@ -555,15 +554,6 @@ def key_null_refusal(entity: EntityIdentity, key: str) -> InvalidValueError:
         WRITE_REQUIRED_ATTRIBUTE_MISSING,
         f"{entity.name}.{key}: required attribute is absent (or null)",
     )
-
-
-def refuse_keyless_target(
-    model: AcceptedMetamodel, entity: CompiledEntity, mutation: str, row: Mapping[str, object]
-) -> None:
-    """Refuse a target write of ``entity`` whose ``row`` states no key
-    (:func:`key_absent_refusal`), so it names no object to address."""
-    if _inheritance_entity_view(model, entity).primary_key.identity.name not in row:
-        raise key_absent_refusal(entity.identity, mutation)
 
 
 def derive_keyed_instruction(
@@ -1085,6 +1075,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedTargetInstruction: ...
 @overload
 def prepare_wire_write(
@@ -1093,6 +1084,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedKeyedInstruction: ...
 @overload
 def prepare_wire_write(
@@ -1101,6 +1093,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedPredicateInstruction: ...
 @overload
 def prepare_wire_write(
@@ -1109,6 +1102,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_wire_write(
     instruction: WriteInstruction,
@@ -1116,6 +1110,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
+    target: CompiledEntity | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction:
     """Decode one serialized instruction, then judge the write.
 
@@ -1124,7 +1119,8 @@ def prepare_wire_write(
     keys, judged as assignments. A neutral instruction omits it, and its row is
     judged as row content alone. A target write judges every member
     its row states beside the key as an assignment either way. ``members``
-    follows :func:`prepare_typed_write`'s rule.
+    follows :func:`prepare_typed_write`'s rule. ``target`` is the Entity the
+    instruction's spelling was already resolved to.
     """
     return _prepare_write(
         instruction,
@@ -1132,6 +1128,7 @@ def prepare_wire_write(
         lane=WIRE_LANE,
         authored_members=authored_members,
         members=members,
+        target=target,
     )
 
 
@@ -1147,7 +1144,8 @@ def _prepare_write(
     """The sole admissibility judgment of a write, each family's target first
     and then its payload, so a call whose verb or window is wrong for its
     target hears that before any complaint about what it carries — except a
-    target write's key naming no object, which is heard first.
+    target write's key naming no object, which is heard as soon as the target
+    admits the write.
 
     The target's family Persistence Mode is judged before anything else about
     the write, since no verb, window, revision, predicate, or payload could
