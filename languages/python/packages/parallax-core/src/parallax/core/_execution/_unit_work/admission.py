@@ -32,7 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,
@@ -41,7 +41,6 @@ from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedIntent,
     InsertionAuthorizedWrite,
     KeyedInsert,
-    ObjectLockedWrite,
     PostRemovalInsert,
     ReadAuthorizedWrite,
     StateObservedIntent,
@@ -50,6 +49,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalCoverageWrite,
     TemporalIntent,
+    UnversionedLocked,
     compact_observed_run,
     compose_temporal_write,
     temporal_intent,
@@ -90,7 +90,7 @@ type _TemporalArrival = StateObservedWrite | InsertionAuthorizedWrite | TargetWr
 """A write of a temporal object against its existing coverage, which composes
 by object rather than by claimed scope."""
 
-_CLAIMED: Final = (StateObservedWrite, ObjectLockedWrite, InsertionAuthorizedWrite, TargetWrite)
+_CLAIMED: Final = (StateObservedWrite, UnversionedLocked, InsertionAuthorizedWrite, TargetWrite)
 
 _TEMPORAL: Final = (
     StateObservedWrite,
@@ -112,7 +112,7 @@ class WriteAdmission:
     :meth:`admit` accepts a write under the authority it carries, and
     :meth:`admit_insert` an insert, or either refuses it, with nothing pending
     changed. The lifecycle of each insertion — whether it still stands, what
-    it left stored, and when it retires — is ``authority``'s, which this asks
+    it left stored, and when it retires — is ``registry``'s, which this asks
     through its named transitions. Composition follows authored order:
 
     * an amendment or replacement of an object whose insert is still pending
@@ -142,24 +142,24 @@ class WriteAdmission:
 
     __slots__ = (
         "_after_removal",
-        "_authority",
         "_claimed_objects",
         "_claims",
-        "_conditioned",
         "_families",
         "_first_insert_key",
         "_first_insert_position",
         "_pending_insert_positions",
+        "_registry",
         "_removals",
         "_temporal",
         "_temporal_facet",
+        "_version_conditioned",
         "_writes",
     )
 
-    def __init__(self, meta: Metamodel, *, authority: SourceAuthority) -> None:
+    def __init__(self, meta: Metamodel, *, registry: SourceRegistry) -> None:
         self._families = inheritance.inheritance_facet_of(meta)
         self._temporal_facet = temporal_read.temporal_facet_of(meta)
-        self._authority = authority
+        self._registry = registry
         self._writes: list[_PendingItem] = []
         # Every claim the buffer holds, by its scope: the position of the write
         # that holds it. A temporal object's writes against its coverage are
@@ -179,9 +179,9 @@ class WriteAdmission:
         self._first_insert_key: ObjectKey | None = None
         self._first_insert_position = 0
         self._pending_insert_positions: dict[ObjectKey, int] | None = None
-        # The scope of each object's pending caller-conditioned write,
+        # The scope of each object's pending version-conditioned write,
         # allocated by the first such write.
-        self._conditioned: dict[ObjectKey, ClaimScope] | None = None
+        self._version_conditioned: dict[ObjectKey, ClaimScope] | None = None
         # The scope each claimed object is claimed at, built by the first
         # question that needs it and kept current from then on.
         self._claimed_objects: dict[ObjectKey, Hashable] | None = None
@@ -223,7 +223,7 @@ class WriteAdmission:
         """Accept ``insert`` into the buffer, answering the identity of the
         insertion it opens — or refuse a repeat of an insertion still standing,
         with nothing pending changed
-        (:meth:`~parallax.core._execution._unit_work.source_authority.SourceAuthority.open_insertion`).
+        (:meth:`~parallax.core._execution._unit_work.source_registry.SourceRegistry.open_insertion`).
 
         ``insertion_advice`` is kept for a repeat of this insertion. Where an
         earlier insertion of the object is stored and a pending write removes
@@ -232,7 +232,7 @@ class WriteAdmission:
         writes = self._writes
         key = insert.object_key
         held = self._composition(key)
-        identity, follows_removal = self._authority.open_insertion(
+        identity, follows_removal = self._registry.open_insertion(
             insert,
             pending_removal=None if held is None else held.transform,
             removes_object=self._removals is not None and key in self._removals,
@@ -282,7 +282,7 @@ class WriteAdmission:
 
     def _admit_keyed(self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite) -> BufferOutcome:
         if isinstance(item, InsertionAuthorizedWrite):
-            item = self._authorized(item)
+            item = self._resolve_insertion(item)
         if isinstance(item, StateObservedWrite | InsertionAuthorizedWrite) and self._is_temporal(
             item.target
         ):
@@ -364,7 +364,7 @@ class WriteAdmission:
         removals = self._removals
         pending_keys = self._pending_insert_keys()
         if removals is not None or pending_keys:
-            self._authority.finish_insertion_planning(
+            self._registry.finish_insertion_planning(
                 pending_keys=pending_keys,
                 removed_objects=() if removals is None else removals,
             )
@@ -383,7 +383,7 @@ class WriteAdmission:
         target = instruction.target
         scope = item.claim_scope
         key = item.object_key
-        if self._authority.has_admitted_insertion(key):
+        if self._registry.has_admitted_insertion(key):
             raise write_evidence_refusal(
                 WRITE_EVIDENCE_INSERTED,
                 key,
@@ -410,15 +410,16 @@ class WriteAdmission:
         self._note_removal(instruction, key)
         self._combine_claimed(item, key, verdict)
 
-    def _authorized(self, item: InsertionAuthorizedWrite) -> InsertionAuthorizedWrite:
+    def _resolve_insertion(self, item: InsertionAuthorizedWrite) -> InsertionAuthorizedWrite:
         """``item`` checked against the authority it carries, given the claim
         scope its stored Non-Temporal row takes, and checked against the
         still-pending opening it folds into — or refused.
 
-        The authority is asked again here, after preparation, because
-        preparation runs caller-owned code that can retire or supersede it.
+        The registry is asked again here, after preparation, because
+        preparation runs caller-owned code that can retire or supersede the
+        insertion.
         """
-        item = self._authority.resolve_insertion_authorized_write(item)
+        item = self._registry.resolve_insertion_authorized_write(item)
         position = self._pending_insert_position(item.object_key)
         if position is not None and not self._opening_admits(position, item.instruction):
             raise _already_claimed(item.object_key)
@@ -436,7 +437,9 @@ class WriteAdmission:
         intent = keyed_intent(item.instruction)
         assert intent is not None  # a claimed write is no insert
         claimed = claimed_object(scope)
-        conditioned = None if self._conditioned is None else self._conditioned.get(claimed)
+        conditioned = (
+            None if self._version_conditioned is None else self._version_conditioned.get(claimed)
+        )
         verdict = admits(self._held_intent(scope), intent)
         if conditioned in (None, scope) and verdict != "incompatible":
             return verdict
@@ -506,7 +509,7 @@ class WriteAdmission:
             base = ComposedBitemporalOpening(insert=base, transform=NO_TRANSFORM, intents=())
         instruction = write.instruction
         opening = base.followed_by(instruction, self._key_name(instruction.target))
-        composition = self._authority.apply_insertion_composition(
+        composition = self._registry.apply_insertion_composition(
             key, arriving=write, proposed_opening=opening
         )
         if composition is InsertionComposition.CANCELLED:
@@ -521,7 +524,7 @@ class WriteAdmission:
         Transaction-Time-Only insert at ``position``, which takes an
         amendment's values in place and is cancelled by any destruction, which
         removes all of it."""
-        composition = self._authority.apply_insertion_composition(
+        composition = self._registry.apply_insertion_composition(
             key, arriving=item, proposed_opening=None
         )
         if composition is InsertionComposition.CANCELLED:
@@ -576,9 +579,9 @@ class WriteAdmission:
         scope = item.claim_scope
         assert scope is not None  # admission gave every claimed write its scope
         if isinstance(item, TargetWrite):
-            if self._conditioned is None:
-                self._conditioned = {}
-            self._conditioned[key] = scope
+            if self._version_conditioned is None:
+                self._version_conditioned = {}
+            self._version_conditioned[key] = scope
         index = self._claims.get(scope)
         if verdict == "coalesce":
             assert index is not None  # an unclaimed scope admits
@@ -777,7 +780,7 @@ class WriteAdmission:
         """The current row of ``key`` holding Valid-Time ``instant`` — its one
         current row without Valid Time — among those the attempt's completed
         writes produced and hold, if any."""
-        for row in self._authority.planning_ownership(concluding=False).current_rows(key, None):
+        for row in self._registry.planning_ownership(concluding=False).current_rows(key, None):
             coverage = valid_time_coverage(shape, row, None)
             if instant is None or coverage is None or coverage.contains(instant):
                 return row
@@ -824,7 +827,7 @@ class WriteAdmission:
         self._after_removal = None
         self._first_insert_key = None
         self._pending_insert_positions = None
-        self._conditioned = None
+        self._version_conditioned = None
         self._claimed_objects = None
 
 

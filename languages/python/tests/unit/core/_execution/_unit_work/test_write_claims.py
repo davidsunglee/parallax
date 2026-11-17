@@ -6,7 +6,7 @@ function, beside the admitted writes a write travels as; the choreography a call
 performs through the real handles over a fake port is
 ``test_transaction_write_claims.py``'s subject.
 
-The evidence a source carries and how long it lives is `test_source_authority.py`'s
+The evidence a source carries and how long it lives is `test_source_registry.py`'s
 subject; what lives here is what a SECOND intent against the same evidence may do.
 """
 
@@ -30,9 +30,9 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import (
-    ObjectLockedWrite,
     StateObservedWrite,
     TargetWrite,
+    UnversionedLocked,
     admitted_write,
 )
 from parallax.core.internal import concurrency
@@ -274,7 +274,7 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
 
 
 # --------------------------------------------------------------------------- #
-# The claim-scope derivation and the object-locked case.                       #
+# The claim-scope derivation and the unversioned case.                         #
 # --------------------------------------------------------------------------- #
 _MODELS = models.load_models()
 
@@ -336,7 +336,7 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
 
 
 def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:
-    # The object-locked write's own structural half, which needs no model: an opening row has
+    # The unversioned write's own structural half, which needs no model: an opening row has
     # no prior row to claim, and a claim is about the object ONE row addresses.
     with pytest.raises(ValueError, match="an insert claims no object"):
         insertion = instructions.deserialize(
@@ -344,24 +344,26 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
         )
         prepared = instructions.prepare_wire_write(insertion, write_preparation_of(_PERSON_META))
         assert isinstance(prepared, PreparedKeyedInstruction)
-        ObjectLockedWrite(prepared, _PERSON_ONE, (object_source(_PERSON_ONE),))
+        UnversionedLocked(prepared, _PERSON_ONE, (object_source(_PERSON_ONE),))
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectLockedWrite(_prepared_person_delete(1, 2), _PERSON_ONE, (object_source(_PERSON_ONE),))
+        UnversionedLocked(_prepared_person_delete(1, 2), _PERSON_ONE, (object_source(_PERSON_ONE),))
 
 
-def test_an_object_locked_write_requires_the_source_it_was_admitted_through() -> None:
+def test_an_unversioned_write_requires_the_source_it_was_admitted_through() -> None:
     # The object key is the claim; the source evidence beside it is what keeps
     # that source's demand alive, so neither the factory nor the write admits
     # a write without one.
     prepared = _prepared_person_delete(1)
-    message = "An object-locked write requires the source evidence it was admitted through"
+    message = (
+        "A write of an unversioned object requires the source evidence it was admitted through"
+    )
     with pytest.raises(ValueError, match=message):
         admitted_write(prepared, _PERSON_ONE, _PERSON_ONE)
     with pytest.raises(ValueError, match=message):
-        ObjectLockedWrite(prepared, _PERSON_ONE, ())
+        UnversionedLocked(prepared, _PERSON_ONE, ())
     source = object_source(_PERSON_ONE)
     claimed = admitted_write(prepared, _PERSON_ONE, _PERSON_ONE, source=source)
-    assert isinstance(claimed, ObjectLockedWrite)
+    assert isinstance(claimed, UnversionedLocked)
     assert claimed.source_evidence == (source,) and claimed.source_evidence[0] is source
 
 

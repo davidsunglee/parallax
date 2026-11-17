@@ -52,7 +52,7 @@ from parallax.core.internal.planned_step.write_effects import (
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.temporal_write.coverage import CoverageTransform
 
-__all__ = ["SourceAuthority"]
+__all__ = ["SourceRegistry"]
 
 
 class _SourceRefusal(Enum):
@@ -113,13 +113,13 @@ class _ReadRegistration(weakref.ref[ReadEvidence]):
 
 
 class _ReleaseRegistration:
-    """The one callback every read registration of an authority shares,
+    """The one callback every read registration of a registry shares,
     holding its owner weakly, so neither a registration nor its evidence keeps
-    the authority alive."""
+    the registry alive."""
 
     __slots__ = ("_owner",)
 
-    def __init__(self, owner: SourceAuthority) -> None:
+    def __init__(self, owner: SourceRegistry) -> None:
         self._owner = weakref.ref(owner)
 
     def __call__(self, registration: _ReadRegistration) -> None:
@@ -128,7 +128,7 @@ class _ReleaseRegistration:
             owner._release_read_evidence(registration)  # pyright: ignore[reportPrivateUsage] - the registration's own owner
 
 
-class SourceAuthority:
+class SourceRegistry:
     """Whether a source this attempt read, or an insertion it admitted, still
     authorizes a write, judged from this attempt's own completed writes
     (`m-unit-work` "Observation lifetime", "Insertion authority").
@@ -440,7 +440,7 @@ class SourceAuthority:
         changed = log.get(state) if log else None
         return changed is None or changed <= read_at
 
-    def insertion_authority(
+    def insertion_anchor(
         self, identity: InsertionIdentity
     ) -> TimeInterval | NoInsertionAuthority | None:
         """The Valid-Time window the insertion ``identity`` names was admitted
@@ -452,7 +452,7 @@ class SourceAuthority:
         removal of what it opened, or superseded by a later insertion of the
         same object."""
         self._lifetime.ensure_open()
-        return self._ownership.insertion_authority(identity)
+        return self._ownership.insertion_anchor(identity)
 
     def resolve_insertion_authorized_write(
         self, write: InsertionAuthorizedWrite

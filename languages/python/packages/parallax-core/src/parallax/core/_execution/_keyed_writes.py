@@ -114,7 +114,7 @@ def validate_provenance(
     so that interface's spelling is its repair.
 
     On the amendment and replacement side this overlaps
-    :meth:`~parallax.core._execution._unit_work.source_authority.SourceAuthority.resolve_read_evidence`:
+    :meth:`~parallax.core._execution._unit_work.source_registry.SourceRegistry.resolve_read_evidence`:
     a value no managed source published, and a value another source published,
     both carry no hint and so no usable evidence either. Provenance is asked first because it
     is the more specific diagnosis — it names the verb that DOES accept the
@@ -190,7 +190,7 @@ class ResolvedKeyedWriteSource:
     here for the one thing a refusal cannot state without it: the verb that
     DOES accept the value, in the spelling the caller would type.
 
-    ``authoring`` is the insertion authority the source privately carries — the
+    ``insertion`` is the insertion authority the source privately carries — the
     instance an insertion was admitted through, a value derived from it since,
     or the node a Wire insert answered — which licenses the write only while
     the unit of work still answers it as standing. A source no read published
@@ -202,16 +202,16 @@ class ResolvedKeyedWriteSource:
     read_evidence: ReadEvidence | None
     provenance: Provenance
     advice: KeyedWriteRefusalAdvice
-    authoring: InsertionIdentity | None = None
+    insertion: InsertionIdentity | None = None
 
     @property
     def object_key(self) -> ObjectKey | None:
-        """The object the Read Evidence or the insertion's authoring names, or
+        """The object the Read Evidence or the insertion names, or
         ``None`` for a source carrying neither, whose object only its prepared
         row names."""
         if self.read_evidence is not None:
             return self.read_evidence.object_key
-        return None if self.authoring is None else self.authoring.object_key
+        return None if self.insertion is None else self.insertion.object_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +243,7 @@ class ResolvedKeyedInsert:
 class OpenedKeyedWrite:
     """The row an insert opened, and the authority its admission granted.
 
-    A Typed caller that supplied its key has ``authority`` bound to the
+    A Typed caller that supplied its key has ``insertion`` bound to the
     instance it passed; one whose key was allocated, and a Wire caller, have
     nothing else to hold, so their interface renders a fresh immutable value
     from the buffered ROW rather than the payload, carrying that authority.
@@ -256,7 +256,7 @@ class OpenedKeyedWrite:
     identity: EntityIdentity
     row: ManagedRow
     object_key: ObjectKey
-    authority: InsertionIdentity
+    insertion: InsertionIdentity
     allocated_key: int | None = None
 
 
@@ -460,7 +460,7 @@ def keyed_write(
     between its answers belongs here.
 
     A source no read published is licensed by the insertion authority it
-    carries, while the attempt's source authority answers it as standing: that
+    carries, while the attempt's source registry answers it as standing: that
     lifts the provenance refusal, supplies the write's start, and replaces the
     evidence question, because the insertion — not a read — is what authorized
     writes of the object it opened. A key equal to an inserted object's lends a
@@ -488,11 +488,11 @@ def keyed_write(
     source.capture(mutation)
     meta = preparation.meta
     resolved = source.resolve(meta, mutation)
-    authoring = resolved.authoring
+    insertion = resolved.insertion
     anchor = (
         NO_INSERTION_AUTHORITY
-        if authoring is None or resolved.read_evidence is not None
-        else uow.source_authority.insertion_authority(authoring)
+        if insertion is None or resolved.read_evidence is not None
+        else uow.source_registry.insertion_anchor(insertion)
     )
     authorized = anchor is not NO_INSERTION_AUTHORITY
     validate_provenance(
@@ -506,14 +506,14 @@ def keyed_write(
     valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(preparation, mutation, resolved, valid_from=valid_from, until=until)
     if authorized:
-        assert authoring is not None  # only an insertion's identity authorizes
-        item = admitted_write(prepared, None, authoring.object_key, authority=authoring)
+        assert insertion is not None  # only an insertion's identity authorizes
+        item = admitted_write(prepared, None, insertion.object_key, insertion=insertion)
     else:
         read = resolved.read_evidence
         addressed = object_key(prepared, meta) if read is None else read.object_key
         # An identity row always states its object's key.
         assert addressed is not None
-        evidence = uow.source_authority.resolve_read_evidence(
+        evidence = uow.source_registry.resolve_read_evidence(
             resolved.entity,
             read,
             mutation=mutation,
@@ -645,11 +645,11 @@ def keyed_insert(
     # A Create Payload is a complete document once its key is supplied or
     # allocated, so the row it buffers always names its own object here.
     assert opened is not None
-    authority = uow.buffer_insert(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
+    insertion = uow.buffer_insert(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
     return OpenedKeyedWrite(
         identity=resolved.entity.identity,
         row=prepared.rows[0],
         object_key=opened,
-        authority=authority,
+        insertion=insertion,
         allocated_key=allocated,
     )

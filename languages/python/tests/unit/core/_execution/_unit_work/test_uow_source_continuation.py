@@ -1,8 +1,8 @@
 """A Non-Temporal source's authority across this attempt's own completed writes,
-at the source-authority seam (`m-unit-work` *Observation ownership and lifetime*).
+at the source-registry seam (`m-unit-work` *Observation ownership and lifetime*).
 
 Each case publishes Read Evidence as a read's retention does — registered with
-the attempt's source authority at the freshness its read captured — resolves
+the attempt's source registry at the freshness its read captured — resolves
 it as a keyed verb does, and buffers the write it licenses, over simulated
 step execution. What it grades is which state each source reaches after a
 flush, which sources a completed write leaves stale or ends, and how long the
@@ -118,19 +118,19 @@ def _published(
 ) -> ReadEvidence:
     """Evidence of ``key`` as a read capturing ``read_at`` publishes it: at its
     observed ``version``, or observation-free."""
-    stamp = uow.source_authority.freshness if read_at is None else read_at
+    stamp = uow.source_registry.freshness if read_at is None else read_at
     observation = None
     if version is not None:
-        observation = uow.source_authority.retain(
+        observation = uow.source_registry.retain(
             RetainedObservation(
                 VersionedObjectStateKey(key, version),
                 VersionObservation(observed_version=version),
-                uow.source_authority.participation,
+                uow.source_registry.participation,
             ),
             read_at=stamp,
         )
-    evidence = ReadEvidence(key.entity, key, uow.source_authority.participation, observation)
-    uow.source_authority.register_read_evidence(evidence, read_at=stamp)
+    evidence = ReadEvidence(key.entity, key, uow.source_registry.participation, observation)
+    uow.source_registry.register_read_evidence(evidence, read_at=stamp)
     return evidence
 
 
@@ -150,7 +150,7 @@ def _write(
         write_preparation_of(meta),
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
-    settled = uow.source_authority.resolve_read_evidence(
+    settled = uow.source_registry.resolve_read_evidence(
         entity, source, mutation=mutation, object_key=key
     )
     assert settled is not None  # a write of existing state settles against something
@@ -170,7 +170,7 @@ def _resolved(uow: UnitOfWork, meta: Metamodel, source: ReadEvidence) -> object:
     the refusal resolving it raises."""
     entity = _entity(meta, source.entity.name)
     try:
-        return uow.source_authority.resolve_read_evidence(
+        return uow.source_registry.resolve_read_evidence(
             entity, source, mutation="amend", object_key=source.object_key
         )
     except UsageError as refused:
@@ -222,11 +222,11 @@ def test_a_locking_versioned_source_carrying_no_observation_settles_against_noth
     # nothing a write could settle against.
     uow, _simulated = _uow(_ACCOUNT, settings=TransactionSettings(preference="locking"))
     evidence = ReadEvidence(
-        _account(1).entity, _account(1), uow.source_authority.participation, None
+        _account(1).entity, _account(1), uow.source_registry.participation, None
     )
     account = _entity(_ACCOUNT, "Account")
     assert (
-        uow.source_authority.resolve_read_evidence(
+        uow.source_registry.resolve_read_evidence(
             account, evidence, mutation="amend", object_key=_account(1)
         )
         is None
@@ -249,7 +249,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
             write_preparation_of(_PERSON),
         )
         assert isinstance(amendment, PreparedKeyedInstruction)
-        uow.buffer(admitted_write(amendment, None, _person(5), authority=identity))
+        uow.buffer(admitted_write(amendment, None, _person(5), insertion=identity))
     uow.flush(trigger="pre_commit")
     assert [statement.binds for statement in simulated.statements][1:] == [("Second", 5)]
 
@@ -259,7 +259,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
 # --------------------------------------------------------------------------- #
 def test_an_unversioned_source_published_from_rows_read_before_a_keyed_update_is_stale() -> None:
     uow, simulated = _uow(_PERSON)
-    read_at = uow.source_authority.freshness
+    read_at = uow.source_registry.freshness
     earlier = _published(uow, _person(1))
     _write(uow, _PERSON, earlier, "amend", name="Ada")
     _flush(uow)
@@ -276,7 +276,7 @@ def test_an_unversioned_source_published_from_rows_read_before_a_keyed_update_is
 
 def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinsertion() -> None:
     uow, _simulated = _uow(_PERSON)
-    read_at = uow.source_authority.freshness
+    read_at = uow.source_registry.freshness
     deleted = _published(uow, _person(1))
     _write(uow, _PERSON, deleted, "delete")
     _flush(uow)
@@ -300,7 +300,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
 
 def test_every_key_a_collapsed_deletion_batch_removes_ends_its_sources() -> None:
     uow, simulated = _uow(_PERSON)
-    read_at = uow.source_authority.freshness
+    read_at = uow.source_registry.freshness
     sources = [_published(uow, _person(key)) for key in (1, 2)]
     for source in sources:
         _write(uow, _PERSON, source, "delete")
@@ -320,7 +320,7 @@ def test_a_subtypes_completed_write_changes_its_concrete_entitys_object() -> Non
     uow, _simulated = _uow(_PAYMENT)
     card = corpus_object_key("CardPayment", ("id", 1))
     root = corpus_object_key("Payment", ("id", 1))
-    read_at = uow.source_authority.freshness
+    read_at = uow.source_registry.freshness
     _write(uow, _PAYMENT, _published(uow, card), "amend", amount=Decimal("2.00"))
     _flush(uow)
     assert _resolved(uow, _PAYMENT, _published(uow, card, read_at=read_at)) == (
@@ -332,7 +332,7 @@ def test_a_subtypes_completed_write_changes_its_concrete_entitys_object() -> Non
 
 def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
     uow, _simulated = _uow(_PERSON)
-    read_at = uow.source_authority.freshness
+    read_at = uow.source_registry.freshness
     source = _published(uow, _person(1))
     predicate = prepare_typed_write(
         PredicateWriteInstruction(
@@ -358,7 +358,7 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
 def _reinserted(uow: UnitOfWork, key: int) -> int:
     """Delete person ``key`` through a source and insert it again, both
     completed, answering the freshness a read captured before the deletion."""
-    before = uow.source_authority.freshness
+    before = uow.source_registry.freshness
     _write(uow, _PERSON, _published(uow, _person(key)), "delete")
     _flush(uow)
     insertion = prepare_typed_write(
@@ -377,7 +377,7 @@ def test_equal_evidence_keeps_its_own_judgment_and_lifetime() -> None:
     fresh = _published(uow, _person(1))
     stale = ReadEvidence(fresh.entity, fresh.object_key, fresh.participation, None)
     assert stale == fresh
-    uow.source_authority.register_read_evidence(stale, read_at=before)
+    uow.source_registry.register_read_evidence(stale, read_at=before)
     # Each judges the read that published it, whatever value it equals.
     assert _resolved(uow, _PERSON, fresh) == _person(1)
     assert _resolved(uow, _PERSON, stale) == "write-evidence-consumed"
@@ -444,7 +444,7 @@ def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_ho
         _flush(uow)
     # Nothing was published for the failed group: no change of what the
     # source observed completed.
-    assert uow.source_authority.is_unchanged_since(VersionedObjectStateKey(_account(1), 1), 0)
+    assert uow.source_registry.is_unchanged_since(VersionedObjectStateKey(_account(1), 1), 0)
     with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
         _flush(uow)
     del source
@@ -529,15 +529,15 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         write_preparation_of(_POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    observation = uow.source_authority.retain(
+    observation = uow.source_registry.retain(
         retained_observation(
             prepared, _POSITION, TemporalObservation(predecessor=PredecessorRow(members=rows[0]))
         )
     )
     key = observation.key.object
-    source = ReadEvidence(entity.identity, key, uow.source_authority.participation, observation)
+    source = ReadEvidence(entity.identity, key, uow.source_registry.participation, observation)
     held.append(weakref.ref(source))
-    resolved = uow.source_authority.resolve_read_evidence(
+    resolved = uow.source_registry.resolve_read_evidence(
         entity, source, mutation="amend", object_key=key
     )
     assert resolved is not None  # a write of existing state settles against something
@@ -571,4 +571,4 @@ def test_discarding_the_attempt_forgets_what_an_escaped_source_was_judged_by() -
     # Nothing this attempt completed survives it, its deletion included.
     assert _resolved(uow, _PERSON, escaped) == _person(1)
     reached = reachable_objects(escaped)
-    assert not any(held is uow or held is uow.source_authority for held in reached)
+    assert not any(held is uow or held is uow.source_registry for held in reached)

@@ -68,7 +68,7 @@ __all__ = [
     "InstanceReader",
     "NodeReader",
     "WireEntity",
-    "authoring_of",
+    "insertion_of",
     "opened_wire_entity",
     "projection_entity",
     "read_evidence_of",
@@ -266,7 +266,7 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     _provenance: NodeProvenance
 
 
-class _WireAuthoringNode(_WireEntityNode):
+class _WireInsertionNode(_WireEntityNode):
     """The node a Wire insert answers: no read published it, so its provenance
     states no pin, Read Evidence, or conformance, and the authority the
     insertion's admission granted rides a slot of its own.
@@ -277,9 +277,9 @@ class _WireAuthoringNode(_WireEntityNode):
     slot it could never fill.
     """
 
-    __slots__ = ("_authoring",)
+    __slots__ = ("_insertion",)
 
-    _authoring: InsertionIdentity
+    _insertion: InsertionIdentity
 
 
 def _frozen_mapping[T: _FrozenMapping](
@@ -304,10 +304,10 @@ def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
     return value
 
 
-def authoring_of(entity: WireEntity) -> InsertionIdentity | None:
+def insertion_of(entity: WireEntity) -> InsertionIdentity | None:
     """The insertion authority ``entity`` carries, or ``None`` for any node but
     one a Wire insert answered."""
-    return getattr(entity, "_authoring", None)
+    return getattr(entity, "_insertion", None)
 
 
 def read_evidence_of(entity: WireEntity) -> ReadEvidence | None:
@@ -386,7 +386,7 @@ def _wire_node_required(node: object, operation: str) -> UsageError:
     entity = None if provenance is None else provenance.entity
     held = (
         f"{type(node).__name__} carries no read publication"
-        if entity is None or getattr(node, "_authoring", None) is None
+        if entity is None or getattr(node, "_insertion", None) is None
         else f"no read published the {entity.canonical} node an insert answered"
     )
     return inspection_refusal(
@@ -731,14 +731,14 @@ def opened_wire_entity(
     entity: EntityIdentity,
     stated: Iterable[tuple[int, object]],
     absent: object,
-    authority: InsertionIdentity,
+    insertion: InsertionIdentity,
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
 
     A Wire insert's caller holds no carrier of its own afterwards — the Typed
     peer answers the instance it was passed — so the verb answers the row it
     buffered, in the one representation that can be handed straight back to a
-    keyed verb. The node carries the insertion's ``authority``, which is what
+    keyed verb. The node carries the ``insertion``'s authority, which is what
     makes it a keyed source at all, and no Read Evidence, since no read published
     it; the values are the payload's own, rendered through the SAME canonical
     encoding a read publishes.
@@ -780,7 +780,7 @@ def opened_wire_entity(
         _put(rendered, name, _stated_occurrence(value, binding, occurrences))
     if layout.wire_type is not None:
         _put(rendered, WIRE_TYPE_KEY, layout.wire_type)
-    node = _frozen_mapping(_WireAuthoringNode, rendered)
+    node = _frozen_mapping(_WireInsertionNode, rendered)
     object.__setattr__(node, "_provenance", NodeProvenance(entity, None))
-    object.__setattr__(node, "_authoring", authority)
+    object.__setattr__(node, "_insertion", insertion)
     return node

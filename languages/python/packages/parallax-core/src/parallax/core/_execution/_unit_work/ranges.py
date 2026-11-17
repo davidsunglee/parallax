@@ -17,7 +17,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadKey,
     CoverageTerm,
-    RetainedTargetState,
+    RetainedStartingRow,
 )
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
@@ -564,8 +564,8 @@ class DeferredRange:
     It holds what settlement decided and nothing that could decide again: no
     ownership, audit, clock, or model. ``predecessors`` are the current rows
     planning knew — observed ones, and those the attempt's completed writes
-    produced and hold for a source continuing through them. ``retained`` are
-    the starting rows its callers' Locking admissions read whole, each reused
+    produced and hold for a source continuing through them. ``starting_rows``
+    are the starting rows its callers' Locking admissions read whole, each reused
     only if it is still current when the range binds; the coverage none of
     them holds is read then, and the rows read join the known predecessors at
     every coordinates those do not already hold. Binding then proceeds exactly
@@ -579,7 +579,7 @@ class DeferredRange:
     meaning: _RangeMeaning
     predecessors: tuple[_RangePredecessor, ...]
     validations: tuple[_RangePredecessor, ...]
-    retained: tuple[RetainedTargetState, ...] = ()
+    starting_rows: tuple[RetainedStartingRow, ...] = ()
     source_evidence: tuple[ReadEvidence, ...] = ()
 
     @property
@@ -592,7 +592,7 @@ class DeferredRange:
         """The value its object's key holds."""
         return self.meaning.key_value
 
-    def take_retained_completion(
+    def take_starting_row_completion(
         self, current: Callable[[ObjectStateKey, int], bool]
     ) -> CompletionRequest | None:
         """The completion of every starting row the range retained that is
@@ -600,19 +600,19 @@ class DeferredRange:
         replaced it — and that no other predecessor of the range already is,
         or ``None`` where none is reusable.
 
-        Each retained row is taken from its state here, reused or not, so a
+        Each starting row is taken from its retention here, reused or not, so a
         stale one is discarded without being judged. A range gated by
         Optimistic proofs reuses none: a row's freshness within the attempt
         says nothing of changes outside it.
         """
-        retained = self.retained
-        if not retained:
+        starting_rows = self.starting_rows
+        if not starting_rows:
             return None
         meaning = self.meaning
         held = {predecessor.state for predecessor in (*self.predecessors, *self.validations)}
         rows: list[tuple[object, ...]] = []
         documents: list[object | None] = []
-        for state in retained:
+        for state in starting_rows:
             taken = state.take()
             if (
                 taken is None
@@ -750,7 +750,7 @@ def settle_range(
         conditions=_conditions(intents),
         guards=guards,
     )
-    retained = _retained(intents)
+    starting_rows = _starting_rows(intents)
     if not predecessors and _binds_from_stated_start(meaning):
         predecessors = (_stated_predecessor(meaning),)
     if window is not None:
@@ -762,10 +762,10 @@ def settle_range(
             meaning=meaning,
             predecessors=predecessors,
             validations=validations,
-            retained=retained,
+            starting_rows=starting_rows,
             source_evidence=item.source_evidence,
         )
-    for state in retained:
+    for state in starting_rows:
         state.take()
     return _binding(meaning, ownership, audit, payloads).bind(predecessors, validations)
 
@@ -844,13 +844,13 @@ def _with_opening(
     return sorted((seed.window, *coverage), key=_START)
 
 
-def _retained(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedTargetState, ...]:
+def _starting_rows(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedStartingRow, ...]:
     """The starting row every target intent's Locking admission read whole,
     whichever condition it states, in authored order."""
     return tuple(
-        intent.retained
+        intent.starting_row
         for intent in intents
-        if isinstance(intent, TargetIntent) and intent.retained is not None
+        if isinstance(intent, TargetIntent) and intent.starting_row is not None
     )
 
 

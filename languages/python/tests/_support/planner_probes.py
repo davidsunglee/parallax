@@ -25,7 +25,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import AcquireRows, RowConsumer, RowRequest
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
@@ -66,7 +66,7 @@ __all__ = [
     "plan_steps",
     "retained_observation",
     "settled_writes",
-    "source_authority",
+    "source_registry",
     "unobserved_write",
     "write_admission",
 ]
@@ -106,8 +106,8 @@ def object_source(
     target: ObjectKey, participation: ParticipationToken | None = None
 ) -> ReadEvidence:
     """Observation-free Read Evidence of ``target``, stamped with
-    ``participation``, by default one no unit of work issued: what an
-    object-locked write keeps where a suite admits it directly rather than
+    ``participation``, by default one no unit of work issued: what a write of
+    an unversioned object keeps where a suite admits it directly rather than
     through a verb."""
     return ReadEvidence(
         target.entity,
@@ -138,8 +138,8 @@ def observed_buffer(
     write through the inserted value is, and is otherwise admitted as
     :func:`unobserved_write` admits it.
     """
-    authority = source_authority(model)
-    admission = WriteAdmission(model, authority=authority)
+    registry = source_registry(model)
+    admission = WriteAdmission(model, registry=registry)
     retained: dict[ObjectKey, RetainedObservation] = {}
     handles: dict[ObjectKey, InsertionIdentity] = {}
     for item in buffer:
@@ -153,7 +153,7 @@ def observed_buffer(
                     held = retained[key] = retained_observation(prepared, model, observation)
                 item = admitted_write(prepared, held, key)
             else:
-                item = _authorized(authority, handles, prepared, key, model)
+                item = _authorized(registry, handles, prepared, key, model)
         identity = admit(admission, item)
         if identity is not None:
             handles[identity.object_key] = identity
@@ -161,7 +161,7 @@ def observed_buffer(
 
 
 def _authorized(
-    authority: SourceAuthority,
+    registry: SourceRegistry,
     handles: Mapping[ObjectKey, InsertionIdentity],
     instruction: PreparedKeyedInstruction,
     key: ObjectKey | None,
@@ -171,9 +171,9 @@ def _authorized(
     issued while that insertion still stands, else as :func:`unobserved_write`
     admits it."""
     handle = None if key is None or instruction.mutation in INSERT_MUTATIONS else handles.get(key)
-    if handle is None or isinstance(authority.insertion_authority(handle), NoInsertionAuthority):
+    if handle is None or isinstance(registry.insertion_anchor(handle), NoInsertionAuthority):
         return unobserved_write(instruction, model)
-    return admitted_write(instruction, None, key, authority=handle)
+    return admitted_write(instruction, None, key, insertion=handle)
 
 
 def observed_write(
@@ -196,8 +196,8 @@ def observed_write(
 
 def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) -> AdmittedWrite:
     """``instruction`` as the admitted write a verb builds where its source
-    observed nothing: an insert, or an object-locked write of an unversioned
-    row admitted through :func:`object_source` evidence. Any other write needs
+    observed nothing: an insert, or a write of an unversioned row admitted
+    through :func:`object_source` evidence. Any other write needs
     an observation, so a suite admitting one without it is refused."""
     key = object_key(instruction, model)
     evidence = settled_evidence(
@@ -234,11 +234,11 @@ def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity |
     return None
 
 
-def source_authority(
+def source_registry(
     model: Metamodel, *, concurrency: ConcurrencyPreference = "optimistic"
-) -> SourceAuthority:
-    """A source authority over ``model`` for an attempt that stays open."""
-    return SourceAuthority(
+) -> SourceRegistry:
+    """A source registry over ``model`` for an attempt that stays open."""
+    return SourceRegistry(
         model,
         lifetime=TxnAttemptLifetime(),
         preference=concurrency,
@@ -246,8 +246,8 @@ def source_authority(
 
 
 def write_admission(model: Metamodel) -> WriteAdmission:
-    """An empty buffer over its own :func:`source_authority`."""
-    return WriteAdmission(model, authority=source_authority(model))
+    """An empty buffer over its own :func:`source_registry`."""
+    return WriteAdmission(model, registry=source_registry(model))
 
 
 def _optimistic(item: TargetWrite) -> TargetWrite:

@@ -34,13 +34,13 @@ from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,
     MutationPhase,
-    ObjectLockedBatch,
-    ObjectLockedWrite,
     OrderedWrite,
     StateObservedIntent,
     StateObservedWrite,
     TargetWrite,
     TemporalCoverageWrite,
+    UnversionedLocked,
+    UnversionedWriteBatch,
 )
 from parallax.core._execution._unit_work.write_plan import (
     SettledWrite,
@@ -317,8 +317,8 @@ class WritePlanCompiler:
             KeyedInsert
             | InsertBatch
             | StateObservedWrite
-            | ObjectLockedWrite
-            | ObjectLockedBatch
+            | UnversionedLocked
+            | UnversionedWriteBatch
             | InsertionAuthorizedWrite
             | TargetWrite
         ),
@@ -340,7 +340,7 @@ class WritePlanCompiler:
         # Every temporal write of existing state settles as a range, and only
         # an unversioned Non-Temporal row is locked by its object.
         assert not isinstance(shape, TransactionTimeOnly | Bitemporal)
-        if isinstance(item, ObjectLockedBatch):
+        if isinstance(item, UnversionedWriteBatch):
             return self._settle(instruction, item.object_keys, None, preference, audit)
         scope = item.claim_scope
         return self._settle(
@@ -669,7 +669,7 @@ def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupK
     """The objects ``item`` writes, by its family's key."""
     objects = (
         item.object_keys
-        if isinstance(item, InsertBatch | ObjectLockedBatch)
+        if isinstance(item, InsertBatch | UnversionedWriteBatch)
         else (item.object_key,)
     )
     attribute = entity_view(families, item.target).primary_key.identity

@@ -20,7 +20,7 @@ __all__ = [
     "CoverageReadKey",
     "CoverageReadRequest",
     "CoverageTerm",
-    "RetainedTargetState",
+    "RetainedStartingRow",
     "RowConsumer",
     "RowReadRequest",
     "RowRequest",
@@ -50,7 +50,7 @@ class TargetReadRequest:
     retains: bool = False
 
 
-class RetainedTargetState:
+class RetainedStartingRow:
     """The stored row a Locking temporal target write's acquisition
     read whole, kept for the range that write settles as pending data rather
     than evidence: its Attributes judged, its Value Object occurrences still

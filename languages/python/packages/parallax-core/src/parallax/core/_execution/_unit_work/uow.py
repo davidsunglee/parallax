@@ -25,11 +25,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
-    RetainedTargetState,
+    RetainedStartingRow,
     TargetReadRequest,
     consume_target,
 )
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.strategy import ActorIdentity, AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
@@ -164,10 +164,10 @@ class UnitOfWork:
     lifetime, and hands this the lifetime to consult and doom rather than a
     state of its own. The attempt drives it with :meth:`buffer`,
     :meth:`buffer_insert`, :meth:`buffer_target`, :meth:`execute_predicate`,
-    and :meth:`read`, asking its :attr:`source_authority` what a keyed write's
+    and :meth:`read`, asking its :attr:`source_registry` what a keyed write's
     source licenses here, flushes it once more before commit, and has it
     :meth:`discard` its state when the attempt does not commit. Its reads
-    file their evidence into that same authority.
+    file their evidence into that same registry.
 
     Every row a write reads — a target's starting state, a
     deferred range's coverage — is read through ``acquire_rows`` and consumed
@@ -188,7 +188,7 @@ class UnitOfWork:
         "flush_opening",
         "meta",
         "settings",
-        "source_authority",
+        "source_registry",
     )
 
     def __init__(
@@ -225,10 +225,10 @@ class UnitOfWork:
         # receives its own new `UnitOfWork` and therefore its own copy.
         self._actor_identity = actor_identity
         self._versioning = concurrency.concurrency_facet_of(meta)
-        # The attempt's one authority over what its sources and insertions
+        # The attempt's one registry of what its sources and insertions
         # still authorize, which its reads, keyed ingress, buffering, and
         # completion all consult. It holds nothing of this shell.
-        self.source_authority = SourceAuthority(
+        self.source_registry = SourceRegistry(
             meta,
             lifetime=lifetime,
             preference=settings.preference,
@@ -237,7 +237,7 @@ class UnitOfWork:
         # claims its verbs resolved for it and the evidence of the sources it
         # was admitted through — the strong reference that keeps that evidence
         # alive after its source value is released.
-        self._admission = WriteAdmission(meta, authority=self.source_authority)
+        self._admission = WriteAdmission(meta, registry=self.source_registry)
         # One attempt, one lazy instant: constructing it reads no clock, and
         # every flush this scope plans carries the SAME holder, so all
         # timestamp-requiring work in the attempt shares one captured value
@@ -254,8 +254,8 @@ class UnitOfWork:
 
         The claim is read off the admitted write itself
         (:func:`~parallax.core._execution._unit_work.write_items.admitted_write`): a
-        retained observation claims the state it observed, and an
-        object-locked write claims the object it writes (`m-unit-work`
+        retained observation claims the state it observed, and a write of an
+        unversioned object claims the object it writes (`m-unit-work`
         "Observed-State Coalescing"). An arriving
         keyed intent the held claim cannot absorb is refused with
         ``write-evidence-already-claimed``, and
@@ -374,7 +374,7 @@ class UnitOfWork:
         count decides first: more than one stored row is Cardinality
         Corruption, whatever those rows hold, and none means no row stands.
         A temporal object's row is read whole and kept with the write, for its
-        range to reuse while it is still current (:class:`RetainedTargetState`).
+        range to reuse while it is still current (:class:`RetainedStartingRow`).
         The Optimistic strategy reads nothing: the caller's revision becomes
         the write's gate.
         A temporal target names its state by its stated Transaction-Time start
@@ -406,7 +406,7 @@ class UnitOfWork:
         key = item.object_key
         if isinstance(expectation, ExpectedTxStart):
             return self._confirm_temporal_target(item, key, expectation)
-        if isinstance(scope, ObjectKey) or not self.source_authority.has_live_observation(scope):
+        if isinstance(scope, ObjectKey) or not self.source_registry.has_live_observation(scope):
             stored, _row, _document = self._stored_target(target, key, None)
             if stored is None or stored.version != expectation.version:
                 raise WritePreconditionError(
@@ -427,13 +427,13 @@ class UnitOfWork:
         """
         window = item.instruction.valid_time_window
         valid_from = None if window is None else window.start
-        authority = self.source_authority
-        if authority.has_live_observation(
+        registry = self.source_registry
+        if registry.has_live_observation(
             TemporalObjectStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
             return item
         target = item.instruction.target
-        read_at = authority.freshness
+        read_at = registry.freshness
         stored, row, document = self._stored_target(target, key, valid_from, retains=True)
         if stored is None or stored.tx_start != expectation.instant:
             raise WritePreconditionError(
@@ -446,7 +446,7 @@ class UnitOfWork:
         state = TemporalObjectStateKey(
             key, milestone_edge(shape, PredecessorRow.over_row(selection, row, None, None), None)
         )
-        return replace(item, retained=RetainedTargetState(state, read_at, row, document))
+        return replace(item, starting_row=RetainedStartingRow(state, read_at, row, document))
 
     def _stored_target(
         self,
@@ -556,7 +556,7 @@ class UnitOfWork:
         # buffer drains, what a plan's deferred range took over is released as
         # it executes rather than held until the flush ends.
         concluding = trigger == "pre_commit"
-        ownership = self.source_authority.planning_ownership(concluding=concluding)
+        ownership = self.source_registry.planning_ownership(concluding=concluding)
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
@@ -604,7 +604,7 @@ class UnitOfWork:
                     with write_groups(
                         turn,
                         acquire_rows=self.acquire_rows,
-                        current=self.source_authority.is_unchanged_since,
+                        current=self.source_registry.is_unchanged_since,
                         ownership=ownership,
                         audit=audit,
                         payloads=self._planner.payloads,
@@ -640,7 +640,7 @@ class UnitOfWork:
             for write in writes:
                 if capture is not None:
                     captured = capture.take_rows(write.current_outputs)
-                self.source_authority.complete_write(write, captured=captured)
+                self.source_registry.complete_write(write, captured=captured)
                 captured = ()
         finally:
             if capture is not None:
@@ -660,4 +660,4 @@ class UnitOfWork:
         stored state.
         """
         self._admission.discard()
-        self.source_authority.clear()
+        self.source_registry.clear()

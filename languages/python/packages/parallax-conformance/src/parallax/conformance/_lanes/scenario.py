@@ -568,7 +568,7 @@ class _SimulatedUnit:
         return self._uow.read(read_fn)
 
     def _retained(self, key: ObjectStateKey, evidence: StateObservation) -> RetainedObservation:
-        return self._uow.source_authority.retain(RetainedObservation(key, evidence, None))
+        return self._uow.source_registry.retain(RetainedObservation(key, evidence, None))
 
     def _insert(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         identity = self._uow.buffer_insert(
@@ -578,11 +578,11 @@ class _SimulatedUnit:
 
     def _authorized(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         handle = None if key is None else self._handles.get(key)
-        if handle is None or not _stands(self._uow.source_authority.insertion_authority(handle)):
+        if handle is None or not _stands(self._uow.source_registry.insertion_anchor(handle)):
             self._admit_with_evidence(instruction, key, None)
             return
         with _composition_refusal():
-            self._uow.buffer(admitted_write(instruction, None, key, authority=handle))
+            self._uow.buffer(admitted_write(instruction, None, key, insertion=handle))
 
     def _admit_with_evidence(
         self,

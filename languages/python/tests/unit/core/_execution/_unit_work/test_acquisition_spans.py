@@ -46,7 +46,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadKey,
     CoverageReadRequest,
-    RetainedTargetState,
+    RetainedStartingRow,
     RowConsumer,
     RowRequest,
 )
@@ -747,7 +747,7 @@ def _log_target(key: int, *, covered: bool = False) -> TargetWrite:
         ObjectKey(ShareLog.identity, (("id", key),)), milestone_edge(shape, stored, None)
     )
     row = positional_row(view.member_selection.shape, stored.members, absent=ABSENT)
-    return replace(write, retained=RetainedTargetState(state, 0, row, None))
+    return replace(write, starting_row=RetainedStartingRow(state, 0, row, None))
 
 
 def _log_plan(

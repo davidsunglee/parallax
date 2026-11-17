@@ -24,7 +24,7 @@ import pytest
 from parallax.core import Attr, DomainModel, Entity, InternalError, UsageError, attr
 from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
+from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core.internal.base import DocumentValue
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import MappingRow, StructuredDocument
@@ -471,7 +471,7 @@ def test_a_target_after_a_predicate_write_acquires_the_row_an_earlier_write_revi
 
 def _retained_alive() -> int:
     gc.collect()
-    return sum(1 for held in tracked_objects() if type(held) is RetainedTargetState)
+    return sum(1 for held in tracked_objects() if type(held) is RetainedStartingRow)
 
 
 class _Abandoned(Exception):

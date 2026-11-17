@@ -1361,8 +1361,8 @@ and asserting the resulting table state (`m-case-format`).
 The planner decides eligibility, statement identity, member-presence shape,
 and whole-run value uniformity together, using the admitted writes and their
 prepared rows. It removes known no-op writes first. Only adjacent compatible
-single-row inserts and object-locked writes may collapse; observed-state writes,
-insertion-authorized writes, caller-conditioned writes, and inserts dependent
+single-row inserts and writes of unversioned objects may collapse; observed-state
+writes, insertion-authorized writes, caller-conditioned writes, and inserts dependent
 on a prior removal are barriers. A same-shape update run with differing values
 stays decomposed as a whole, without smaller uniform sub-batches. A collapsed
 write retains row order, each addressed object, and every distinct source

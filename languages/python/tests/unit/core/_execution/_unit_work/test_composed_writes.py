@@ -17,7 +17,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     StateObservedIntent,
@@ -70,7 +70,7 @@ from tests._support.planner_probes import (
     deferred_ranges,
     plan_steps,
     settled_writes,
-    source_authority,
+    source_registry,
 )
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
@@ -370,8 +370,8 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     # pending, corrected March to May through the read and August to September
     # through the insertion. The opening opens its own two pieces; the
     # correction closes the stored rectangle it observed and keeps its source.
-    authority = source_authority(POSITION)
-    admission = WriteAdmission(POSITION, authority=authority)
+    registry = source_registry(POSITION)
+    admission = WriteAdmission(POSITION, registry=registry)
     confirm = _unconditioned
     identity = admission.admit_insert(
         admitted_write(
@@ -392,7 +392,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
             _position_write("amendUntil", AUG, SEP, value="350.00"),
             None,
             OBJECT,
-            authority=identity,
+            insertion=identity,
         ),
         confirm_target=confirm,
     )
@@ -402,7 +402,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             preference="optimistic",
             composed_writes=admission.composed_writes(),
-            ownership=authority.planning_ownership(concluding=False),
+            ownership=registry.planning_ownership(concluding=False),
         )
     )
     opening, correction = settled_writes(plan)
@@ -487,26 +487,26 @@ def _unconfirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
-def _admission() -> tuple[WriteAdmission, SourceAuthority]:
-    authority = source_authority(_BALANCE)
-    return WriteAdmission(_BALANCE, authority=authority), authority
+def _admission() -> tuple[WriteAdmission, SourceRegistry]:
+    registry = source_registry(_BALANCE)
+    return WriteAdmission(_BALANCE, registry=registry), registry
 
 
-def _admitted_plan(admission: WriteAdmission, authority: SourceAuthority) -> WritePlan:
+def _admitted_plan(admission: WriteAdmission, registry: SourceRegistry) -> WritePlan:
     return build_write_planner(bound_model(_BALANCE)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             preference="optimistic",
             composed_writes=admission.composed_writes(),
-            ownership=authority.planning_ownership(concluding=False),
+            ownership=registry.planning_ownership(concluding=False),
         )
     )
 
 
 def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_before_it() -> None:
     first, other = _balance_observation(1), _balance_observation(3)
-    admission, authority = _admission()
+    admission, registry = _admission()
     for write in (
         _observed_balance("amend", first, value="150.00"),
         _observed_balance("terminate", other),
@@ -515,18 +515,18 @@ def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_befo
         admission.admit(write, confirm_target=_unconfirmed)
     # Ordering keeps authored order among same-rank deletions, and the run's
     # destruction was authored last.
-    assert _closed(_admitted_plan(admission, authority)) == [(3,), (1,)]
+    assert _closed(_admitted_plan(admission, registry)) == [(3,), (1,)]
 
 
 def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reinsertion() -> None:
-    admission, authority = _admission()
+    admission, registry = _admission()
     stored = _balance_key(2)
     identity = admission.admit_insert(
         admitted_write(_balance("insert", 2, acctNum="A", value="1.00"), None, stored),
         insertion_advice=None,
     )
     admission.drain_planned()
-    authority.complete_write(
+    registry.complete_write(
         WriteEffects(
             opened=Openings(continued=(TemporalRowCoordinates(_ENTITY, (2,), (OPEN_END,)),))
         ),
@@ -535,12 +535,12 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
     observed = _balance_observation(1)
     for write in (
         _observed_balance("amend", observed, value="150.00"),
-        admitted_write(_balance("terminate", 2), None, stored, authority=identity),
+        admitted_write(_balance("terminate", 2), None, stored, insertion=identity),
         admitted_write(_balance("insert", 2, acctNum="B", value="2.00"), None, stored),
         _observed_balance("terminate", observed),
     ):
         admit(admission, write)
-    removal, reinsertion, termination = _admitted_plan(admission, authority).turns
+    removal, reinsertion, termination = _admitted_plan(admission, registry).turns
     assert isinstance(removal, AcquisitionSpan)
     assert isinstance(reinsertion, WriteGroup)
     assert [type(step) for step in reinsertion.steps] == [PlannedInsert]

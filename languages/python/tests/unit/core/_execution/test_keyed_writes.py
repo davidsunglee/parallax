@@ -185,7 +185,7 @@ def test_an_insert_opens_the_object_its_prepared_row_keys() -> None:
     opened = scope(ScriptedAdapter(Transact(Write()))).transact(fn, itself)
 
     assert opened.object_key == _key(_ACCOUNT, 7)
-    assert opened.authority.object_key == opened.object_key
+    assert opened.insertion.object_key == opened.object_key
 
 
 def test_a_repeated_insert_is_refused_with_its_openers_advice_before_anything_buffers() -> None:
@@ -199,7 +199,7 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_before_anything_bu
             tx.keyed_insert(_OpeningAccountSeven(repeat))
         assert refusal.value.args[1].endswith("repeated")
         assert refusal.value.args[1].startswith(f"{_ACCOUNT.canonical}: ")
-        assert tx.uow.source_authority.insertion_authority(opened.authority) is None
+        assert tx.uow.source_registry.insertion_anchor(opened.insertion) is None
 
     # Only the opening insert executes.
     scope(ScriptedAdapter(Transact(Write()))).transact(fn, itself)
@@ -214,8 +214,8 @@ class _RevisingInsertedAccountSeven:
     preparation runs caller-owned code that ``interferes`` with that insertion
     before the row is derived."""
 
-    def __init__(self, authoring: InsertionIdentity, interferes: Callable[[], object]) -> None:
-        self._authoring = authoring
+    def __init__(self, insertion: InsertionIdentity, interferes: Callable[[], object]) -> None:
+        self._insertion = insertion
         self._interferes = interferes
 
     def capture(self, mutation: KeyedMutation, /) -> None:
@@ -223,7 +223,7 @@ class _RevisingInsertedAccountSeven:
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
         return ResolvedKeyedWriteSource(
-            _account(model), None, None, "none", _ADVICE, self._authoring
+            _account(model), None, None, "none", _ADVICE, self._insertion
         )
 
     def prepare(
@@ -255,17 +255,17 @@ def test_an_insertion_its_writes_preparation_ended_is_refused_when_the_write_is_
     )
 
     def fn(tx: TxnAttempt) -> None:
-        authority = tx.uow.buffer_insert(KeyedInsert(opening, key), insertion_advice=None)
-        assert authority is not None
+        insertion = tx.uow.buffer_insert(KeyedInsert(opening, key), insertion_advice=None)
+        assert insertion is not None
 
         def interfere() -> object:
             if interference == "superseded":
                 return tx.uow.buffer_insert(KeyedInsert(opening, key), insertion_advice=None)
             deletion = _prepared(model, "delete", entity, {"id": 7})
-            return tx.uow.buffer(InsertionAuthorizedWrite(deletion, key, authority))
+            return tx.uow.buffer(InsertionAuthorizedWrite(deletion, key, insertion))
 
         with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
-            tx.keyed_write(_RevisingInsertedAccountSeven(authority, interfere), "amend")
+            tx.keyed_write(_RevisingInsertedAccountSeven(insertion, interfere), "amend")
         raise _Abandoned
 
     with pytest.raises(_Abandoned):

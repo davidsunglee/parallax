@@ -196,7 +196,7 @@ class TypedKeyedWriteSource:
         resolved = resolve_keyed_write_source(entity, value)
         if (
             resolved.provenance == "none"
-            and resolved.authoring is None
+            and resolved.insertion is None
             and not states_key(model, entity, value)
         ):
             raise instructions.key_absent_refusal(entity.identity, mutation)
@@ -308,7 +308,7 @@ class TypedKeyedInsertSource[E: EntityBase]:
         instance it was stated through is left as it was and carries none.
         """
         if opened.allocated_key is None:
-            bind_insertion(self._instance, opened.authority)
+            bind_insertion(self._instance, opened.insertion)
             return self._instance
         # Preparation refused an allocating row the selection cannot publish.
         assert self._construction is not None
@@ -318,7 +318,7 @@ class TypedKeyedInsertSource[E: EntityBase]:
                 self._construction,
                 attempt.model.layouts.entity(opened.identity),
                 opened.row,
-                opened.authority,
+                opened.insertion,
             ),
         )
 

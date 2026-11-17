@@ -5,7 +5,7 @@ A declarative scenario captures rows as a read acquires them, publishes each
 capture's Read Evidence later, writes through published sources, and
 flushes, declaring what each flush's completed writes change, advance, and
 delete. Production runs it through the real lazy publication seam into the
-attempt's source authority, which registers only some publications. A
+attempt's source registry, which registers only some publications. A
 test-only reference records every publication and judges it from the
 scenario's declarations alone. After every step each live source must resolve
 alike in both, and each scenario's last step states its outcomes outright.
@@ -128,7 +128,7 @@ type _Step = _Capture | _Publish | _Write | _Insert | _Flush | _Release | _Expec
 
 class _Production:
     """One attempt running a scenario through the lazy publication seam and
-    its source authority."""
+    its source registry."""
 
     def __init__(self, meta: Metamodel) -> None:
         self.meta = meta
@@ -158,7 +158,7 @@ class _Production:
                     self.meta,
                     key.entity,
                     _row(key, version),
-                    evidence_context=self.uow.source_authority,
+                    evidence_context=self.uow.source_registry,
                 )
             case _Publish(label):
                 self.published[label] = self.captured.pop(label)[0]
@@ -192,7 +192,7 @@ class _Production:
 
     def _resolved(self, source: ReadEvidence) -> _Outcome:
         try:
-            settled = self.uow.source_authority.resolve_read_evidence(
+            settled = self.uow.source_registry.resolve_read_evidence(
                 self._entity(source), source, mutation="amend", object_key=source.object_key
             )
         except UsageError as refused:
@@ -213,7 +213,7 @@ class _Production:
             write_preparation_of(self.meta),
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
-        settled = self.uow.source_authority.resolve_read_evidence(
+        settled = self.uow.source_registry.resolve_read_evidence(
             entity, source, mutation=mutation, object_key=key
         )
         assert settled is not None  # a write of existing state settles against something

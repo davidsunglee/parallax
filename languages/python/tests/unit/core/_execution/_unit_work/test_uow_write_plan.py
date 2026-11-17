@@ -55,7 +55,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
     RowRequest,
     TargetReadRequest,
 )
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import StateObservedWrite
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
@@ -186,7 +186,7 @@ class _Executions:
         del position
         uow = self.uow
         assert uow is not None
-        self.seen.append((steps, uow.source_authority.freshness))
+        self.seen.append((steps, uow.source_registry.freshness))
 
     def run(self, plan: WritePlan) -> None:
         self.uow = _uow(POSITION_META, self.steps)
@@ -194,7 +194,7 @@ class _Executions:
 
 
 def _run(uow: UnitOfWork, plan: WritePlan) -> None:
-    ownership = uow.source_authority.planning_ownership(concluding=False)
+    ownership = uow.source_registry.planning_ownership(concluding=False)
     uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
 
 
@@ -234,7 +234,7 @@ def test_each_group_executes_its_own_steps_once_every_earlier_group_completed() 
         for (steps, _completed), group in zip(executions.seen, _groups(plan), strict=True)
     )
     assert [completed for _steps, completed in executions.seen] == [0, 1, 2]
-    assert executions.uow is not None and executions.uow.source_authority.freshness == 3
+    assert executions.uow is not None and executions.uow.source_registry.freshness == 3
     assert statement_kinds(simulated.statements) == ["close", "close", "close"]
 
 
@@ -266,7 +266,7 @@ def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes(
     assert raised.value is failure
     # The earlier group stays published; the failed one publishes nothing.
     assert executions.steps.executions == 2
-    assert executions.uow is not None and executions.uow.source_authority.freshness == 1
+    assert executions.uow is not None and executions.uow.source_registry.freshness == 1
     assert statement_kinds(simulated.statements) == ["close"]
 
 
@@ -294,7 +294,7 @@ def test_an_acquisition_spans_turn_runs_between_the_groups_around_it() -> None:
     # execute and complete as one group ahead of the group after it.
     assert [kind for kind, _held in events] == ["execute", "read", "execute", "execute"]
     assert events[1] == ("read", (1, 2))
-    assert uow.source_authority.freshness == 2
+    assert uow.source_registry.freshness == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -375,7 +375,7 @@ def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> Non
 
     def watch(request: RowRequest) -> None:
         assert uow is not None
-        reads.append((type(request), uow.source_authority.freshness, len(simulated.statements)))
+        reads.append((type(request), uow.source_registry.freshness, len(simulated.statements)))
 
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=_Watched(held, watch))
@@ -400,12 +400,12 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     def watch(request: RowRequest) -> None:
         assert uow is not None and isinstance(request, CoverageReadRequest)
         keys = tuple(term.key_value for term in request.terms)
-        reads.append((uow.source_authority.freshness, len(simulated.statements), keys))
+        reads.append((uow.source_registry.freshness, len(simulated.statements), keys))
 
     def bound(group: WriteGroup) -> None:
         assert uow is not None
         yielded.append(
-            (uow.source_authority.freshness, len(simulated.statements), len(group.writes))
+            (uow.source_registry.freshness, len(simulated.statements), len(group.writes))
         )
 
     _yielded(monkeypatch, bound)
@@ -419,7 +419,7 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     # executes anything or completes either.
     assert reads == [(0, 0, (1, 2))]
     assert yielded == [(0, 0, 2)]
-    assert uow.source_authority.freshness == 2
+    assert uow.source_registry.freshness == 2
     assert statement_kinds(simulated.statements) == ["grouped close", "insert"]
 
 
@@ -513,8 +513,8 @@ def test_planning_and_deferred_binding_borrow_the_one_ownership_view_of_their_fl
     uow = _uow(TARGET_POSITION, simulated, rows=held)
     uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
-    authority = uow.source_authority
-    live = authority.planning_ownership(concluding=False)
+    registry = uow.source_registry
+    live = registry.planning_ownership(concluding=False)
     uow.flush(trigger=trigger)
     (view,) = planned
     ((ownership, published),) = bound
@@ -522,7 +522,7 @@ def test_planning_and_deferred_binding_borrow_the_one_ownership_view_of_their_fl
     assert published
     assert (view is live) is (trigger == "read_dependency")
     # The concluding view is one reusable wrapper of that live ownership.
-    assert authority.planning_ownership(concluding=trigger == "pre_commit") is view
+    assert registry.planning_ownership(concluding=trigger == "pre_commit") is view
 
 
 def test_a_retained_row_still_current_at_its_writes_turn_is_completed_without_a_read() -> None:
@@ -634,9 +634,7 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         write_preparation_of(_PREDICATED),
     )
     assert isinstance(later, PreparedKeyedInstruction)
-    observed = uow.source_authority.retain(
-        retained_observation(amendment, _PREDICATED, observation)
-    )
+    observed = uow.source_registry.retain(retained_observation(amendment, _PREDICATED, observation))
     uow.buffer(admitted_write(amendment, observed, observed.key.object))
     # The predicate write executes the earlier amendment in its own flush.
     uow.execute_predicate(_tag_predicate_write())
@@ -692,7 +690,7 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
     # waiting write executed.
     assert set().union(*map(_written_keys, simulated.statements)) == {1}
     assert _completed_changes(uow, writes) == [True] + [False] * (len(writes) - 1)
-    ownership = uow.source_authority.planning_ownership(concluding=False)
+    ownership = uow.source_registry.planning_ownership(concluding=False)
     for ends in ((Finite(instant=day(2)), PLANNED_INFINITY), (PLANNED_INFINITY, PLANNED_INFINITY)):
         assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), ends))
     with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY):
@@ -736,7 +734,7 @@ def _completed_changes(uow: UnitOfWork, writes: Sequence[ReadAuthorizedWrite]) -
     for write in writes:
         assert isinstance(write, StateObservedWrite)
         state = write.retained_observation.key
-        changed.append(not uow.source_authority.is_unchanged_since(state, 0))
+        changed.append(not uow.source_registry.is_unchanged_since(state, 0))
     return changed
 
 
@@ -750,7 +748,7 @@ def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> No
 
     def watch(request: RowRequest) -> None:
         assert uow is not None and simulated is not None
-        seen.append((uow.source_authority.freshness, len(simulated.statements)))
+        seen.append((uow.source_registry.freshness, len(simulated.statements)))
 
     uow, simulated = _span_uow(parts, _Watched(held, watch))
     uow.flush(trigger="pre_commit")
@@ -763,7 +761,7 @@ def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> No
         {1}
     ] * 3
     assert set().union(*map(_written_keys, simulated.statements[second[1] :])) == {2, 3}
-    assert uow.source_authority.freshness == 3
+    assert uow.source_registry.freshness == 3
 
 
 class _Refused(Exception):
@@ -774,16 +772,16 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refused = _Refused()
-    complete = SourceAuthority.complete_write
+    complete = SourceRegistry.complete_write
     completed: list[int] = []
 
-    def completing(authority: SourceAuthority, *arguments: Any, **keywords: Any) -> None:
+    def completing(registry: SourceRegistry, *arguments: Any, **keywords: Any) -> None:
         completed.append(1)
         if len(completed) == 2:
             raise refused
-        complete(authority, *arguments, **keywords)
+        complete(registry, *arguments, **keywords)
 
-    monkeypatch.setattr(SourceAuthority, "complete_write", completing)
+    monkeypatch.setattr(SourceRegistry, "complete_write", completing)
     uow, simulated = _span_uow(((1, 1), (2, 1), (3, 1)))
     with pytest.raises(_Refused) as raised:
         uow.flush(trigger="pre_commit")
@@ -793,7 +791,7 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
     assert len(completed) == 2
     writes = [write for key in (1, 2, 3) for write in frag(ShareCols, key, 1)]
     assert _completed_changes(uow, writes) == [True, False, False]
-    ownership = uow.source_authority.planning_ownership(concluding=False)
+    ownership = uow.source_registry.planning_ownership(concluding=False)
     tail = (PLANNED_INFINITY, PLANNED_INFINITY)
     assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), tail))
     assert not ownership.owns(TemporalRowCoordinates(ShareCols.identity, (2,), tail))

@@ -26,7 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     keyed_instruction_from_target,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
-from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
+from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY, TemporalBound
 from parallax.core.internal.metamodel import CompiledEntity
@@ -54,8 +54,6 @@ __all__ = [
     "InsertionAuthorizedWrite",
     "KeyedInsert",
     "MutationPhase",
-    "ObjectLockedBatch",
-    "ObjectLockedWrite",
     "OrderedWrite",
     "PostRemovalInsert",
     "ReadAuthorizedWrite",
@@ -65,6 +63,8 @@ __all__ = [
     "TargetWrite",
     "TemporalCoverageWrite",
     "TemporalIntent",
+    "UnversionedLocked",
+    "UnversionedWriteBatch",
     "WritePhase",
     "admitted_write",
     "compact_observed_run",
@@ -79,7 +79,7 @@ _REQUIRES_RETAINED_OBSERVATION: Final = (
 )
 
 _REQUIRES_SOURCE: Final = (
-    "An object-locked write requires the source evidence it was admitted through."
+    "A write of an unversioned object requires the source evidence it was admitted through."
 )
 
 type WritePhase = Literal["insert", "update", "delete"]
@@ -241,7 +241,7 @@ class StateObservedWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectLockedWrite:
+class UnversionedLocked:
     """Coalesces by object identity, then settles as its own instruction.
 
     ``source_evidence`` holds, by identity, the observation-free Read Evidence
@@ -286,12 +286,12 @@ class ObjectLockedWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectLockedBatch:
-    """Object-locked writes batching joined into one multi-row instruction.
+class UnversionedWriteBatch:
+    """Writes of unversioned objects batching joined into one multi-row instruction.
 
     ``object_keys`` names the object each of its rows writes, in row order.
     ``source_evidence`` holds, by identity, the Read Evidence every joined
-    object-locked write retained, which nothing reads.
+    write retained, which nothing reads.
     """
 
     instruction: PreparedKeyedInstruction
@@ -382,7 +382,7 @@ class TargetWrite:
     source-backed writes composed into a Non-Temporal one, kept even where a
     destruction superseded their assignments, which nothing reads; the
     caller's condition stays whatever values survive, and a destruction
-    superseding the write keeps it too. ``retained`` is the starting row a
+    superseding the write keeps it too. ``starting_row`` is the starting row a
     Locking temporal write's admission read whole, which its range may reuse.
     """
 
@@ -391,7 +391,7 @@ class TargetWrite:
     expectation: TargetExpectation
     claim_scope: VersionedObjectStateKey | ObjectKey
     source_evidence: tuple[ReadEvidence, ...] = ()
-    retained: RetainedTargetState | None = field(default=None, compare=False)
+    starting_row: RetainedStartingRow | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
@@ -448,7 +448,7 @@ def target_write(
     )
 
 
-type ReadAuthorizedWrite = StateObservedWrite | ObjectLockedWrite
+type ReadAuthorizedWrite = StateObservedWrite | UnversionedLocked
 """One keyed write travelling with the claim its verb took for it, at either
 scope. The two share what coalescing manipulates — an instruction —
 and differ only in the grain their claims are taken at."""
@@ -460,8 +460,7 @@ def admitted_write(
     evidence: None,
     object_key: ObjectKey | None,
     *,
-    source: ReadEvidence | None = None,
-    authority: None = None,
+    insertion: None = None,
 ) -> KeyedInsert: ...
 
 
@@ -471,8 +470,7 @@ def admitted_write(
     evidence: None,
     object_key: ObjectKey | None,
     *,
-    source: ReadEvidence | None = None,
-    authority: InsertionIdentity,
+    insertion: InsertionIdentity,
 ) -> InsertionAuthorizedWrite: ...
 
 
@@ -483,7 +481,6 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
-    authority: InsertionIdentity | None = None,
 ) -> ReadAuthorizedWrite: ...
 
 
@@ -494,8 +491,7 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
-    authority: InsertionIdentity | None = None,
-) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite: ...
+) -> KeyedInsert | ReadAuthorizedWrite: ...
 
 
 def admitted_write(
@@ -504,7 +500,7 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
-    authority: InsertionIdentity | None = None,
+    insertion: InsertionIdentity | None = None,
 ) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite:
     """``instruction`` as the admitted write of ``object_key`` that settles
     against ``evidence``, retaining ``source``, the Read Evidence it was
@@ -513,10 +509,16 @@ def admitted_write(
     A retained observation travels with the write; so does a versioned state,
     with its ``source``'s observation. An object key requires ``source`` in
     place of an observation. With no evidence, the instruction carries the
-    insertion ``authority`` that licenses it, or is an insert, which needs no
-    licence. Every write names the object it writes, an insert the one it opens.
+    ``insertion`` that licenses it, or is an insert, which needs no licence;
+    evidence and an insertion never license one write together. Every write
+    names the object it writes, an insert the one it opens.
     """
-    if evidence is None and authority is None:
+    if evidence is not None and insertion is not None:
+        raise ValueError(
+            f"`{instruction.mutation}` on {instruction.target.identity.canonical!r} is "
+            "licensed by a read's evidence or by an insertion's authority, never by both"
+        )
+    if evidence is None and insertion is None:
         _check_unlicensed(instruction)
         if object_key is None:
             raise ValueError(
@@ -530,13 +532,13 @@ def admitted_write(
             "existing state, so it names the object it writes"
         )
     if evidence is None:
-        assert authority is not None  # only an insert carries neither
+        assert insertion is not None  # only an insert carries neither
         return InsertionAuthorizedWrite(
-            instruction=instruction, object_key=object_key, identity=authority
+            instruction=instruction, object_key=object_key, identity=insertion
         )
     retained = () if source is None else (source,)
     if isinstance(evidence, ObjectKey):
-        return ObjectLockedWrite(
+        return UnversionedLocked(
             instruction=instruction, object_key=object_key, source_evidence=retained
         )
     if isinstance(evidence, RetainedObservation):
@@ -586,12 +588,12 @@ class InsertionAuthorizedIntent:
 class TargetIntent:
     """What one target write of a temporal object keeps once composed: the
     Transaction-Time start its caller requires of the coverage at its window's
-    start. ``retained`` is the starting row the write's Locking admission read
-    whole: data its range may reuse, not part of what the write is."""
+    start. ``starting_row`` is the starting row the write's Locking admission
+    read whole: data its range may reuse, not part of what the write is."""
 
     intent: WriteIntent
     expected: ExpectedTxStart
-    retained: RetainedTargetState | None = field(default=None, compare=False)
+    starting_row: RetainedStartingRow | None = field(default=None, compare=False)
 
 
 type TemporalIntent = StateObservedIntent | InsertionAuthorizedIntent | TargetIntent
@@ -654,7 +656,7 @@ def temporal_intent(
         return InsertionAuthorizedIntent(intent)
     expected = write.expectation
     assert isinstance(expected, ExpectedTxStart)  # preparation states a temporal target's start
-    return TargetIntent(intent, expected, write.retained)
+    return TargetIntent(intent, expected, write.starting_row)
 
 
 def compose_temporal_write(
@@ -878,7 +880,7 @@ class PostRemovalInsert:
 
 
 type AdmittedWrite = (
-    KeyedInsert | StateObservedWrite | ObjectLockedWrite | InsertionAuthorizedWrite | TargetWrite
+    KeyedInsert | StateObservedWrite | UnversionedLocked | InsertionAuthorizedWrite | TargetWrite
 )
 """What admission accepts: one write of one row, under the authority it
 carries."""
@@ -895,13 +897,13 @@ type OrderedWrite = (
     | ComposedTemporalWrite
     | ComposedBitemporalOpening
     | InsertBatch
-    | ObjectLockedBatch
+    | UnversionedWriteBatch
 )
 """One element of the sequence settlement reads: a composed write once the
 planner's rewriting stages have finished with it.
 
-Batching joins inserts into an :class:`InsertBatch` and object-locked writes
-into an :class:`ObjectLockedBatch`, and ordering consumes every
+Batching joins inserts into an :class:`InsertBatch` and writes of unversioned
+objects into an :class:`UnversionedWriteBatch`, and ordering consumes every
 :class:`PostRemovalInsert`.
 """
 

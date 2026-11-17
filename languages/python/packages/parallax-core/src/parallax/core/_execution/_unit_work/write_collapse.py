@@ -11,10 +11,10 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     InsertBatch,
     KeyedInsert,
-    ObjectLockedBatch,
-    ObjectLockedWrite,
     OrderedWrite,
     PostRemovalInsert,
+    UnversionedLocked,
+    UnversionedWriteBatch,
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.metamodel import AttributeMetadata, Metamodel
@@ -34,7 +34,7 @@ def collapse_writes(
     inserts, remain barriers. Row order and distinct source evidence survive.
     """
     result: list[OrderedWrite | PostRemovalInsert] = []
-    candidates: list[KeyedInsert | ObjectLockedWrite] = []
+    candidates: list[KeyedInsert | UnversionedLocked] = []
     group: object = None
 
     def close_run() -> None:
@@ -46,7 +46,7 @@ def collapse_writes(
         candidates.clear()
 
     for item in writes:
-        if isinstance(item, KeyedInsert | ObjectLockedWrite):
+        if isinstance(item, KeyedInsert | UnversionedLocked):
             arriving = _group_key(item.instruction)
             if candidates and arriving == group:
                 candidates.append(item)
@@ -72,8 +72,8 @@ def _group_key(instruction: PreparedKeyedInstruction) -> object:
 
 
 def _collapsed(
-    model: Metamodel, run: Sequence[KeyedInsert | ObjectLockedWrite]
-) -> InsertBatch | ObjectLockedBatch | None:
+    model: Metamodel, run: Sequence[KeyedInsert | UnversionedLocked]
+) -> InsertBatch | UnversionedWriteBatch | None:
     first = run[0]
     instruction = first.instruction
     if isinstance(first, KeyedInsert):
@@ -100,7 +100,7 @@ def _collapsed(
     merged = derive_keyed_instruction(instruction, tuple(rows), assigns=assigns)
     if isinstance(first, KeyedInsert):
         return InsertBatch(instruction=merged, object_keys=tuple(insert_keys))
-    return ObjectLockedBatch(
+    return UnversionedWriteBatch(
         instruction=merged,
         object_keys=tuple(locked_keys),
         source_evidence=tuple(retained.values()),
@@ -113,7 +113,7 @@ def _primary_key(model: Metamodel, instruction: PreparedKeyedInstruction) -> Att
     return position.primary_key
 
 
-def _uniform_assignments(model: Metamodel, run: Sequence[KeyedInsert | ObjectLockedWrite]) -> bool:
+def _uniform_assignments(model: Metamodel, run: Sequence[KeyedInsert | UnversionedLocked]) -> bool:
     first = run[0].instruction
     row = first.rows[0]
     key = row.selection.members.index[_primary_key(model, first).identity]

@@ -49,7 +49,7 @@ __all__ = [
 
 @final
 class NoInsertionAuthority:
-    """The answer an insertion authority query gives where no admitted
+    """The answer an insertion anchor query gives where no admitted
     insertion's authority stands: distinct from the ``None`` window of a
     standing insertion without Valid Time."""
 
@@ -378,7 +378,7 @@ class _Release:
 
 class WriteOwnership:
     """The attempt's write-owned facts about the objects it writes, which its
-    source authority keeps behind it.
+    source registry keeps behind it.
 
     Each target's admitted insertion, which only this owner's named
     transitions open, compose, plan, store, and retire, and every current
@@ -394,7 +394,7 @@ class WriteOwnership:
     temporal states its sources reach, deriving every judgment from those
     writes rather than from the reads that published the sources. A temporal
     source's demand is the observation it shares with every other source of
-    the same state, which the authority indexes as ``observations`` while
+    the same state, which the registry indexes as ``observations`` while
     some value or pending or planned write keeps it alive. Only a completed
     write changing an observed state a live observation describes, or a row
     descending from one, records what survives of that state — the parts of
@@ -500,7 +500,7 @@ class WriteOwnership:
         whether or not any insertion of it still stands."""
         return target in self._records
 
-    def insertion_authority(
+    def insertion_anchor(
         self, identity: InsertionIdentity
     ) -> TimeInterval | NoInsertionAuthority | None:
         """The Valid-Time window the insertion ``identity`` names was admitted

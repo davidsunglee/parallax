@@ -154,7 +154,7 @@ class _Session:
         seeded with from January."""
         seeded = next(row for row in self.seeded if row["id"] == key)
         observation = TemporalObservation(predecessor=PredecessorRow(members=seeded))
-        return self.uow.source_authority.retain(
+        return self.uow.source_registry.retain(
             retained_observation(_write(_JAN, id=key), _META, observation)
         )
 
@@ -165,8 +165,8 @@ class _Session:
 
     @property
     def ownership(self) -> WriteOwnership:
-        ownership = self.uow.source_authority.planning_ownership(concluding=False)
-        assert isinstance(ownership, WriteOwnership)  # the authority's own live helper
+        ownership = self.uow.source_registry.planning_ownership(concluding=False)
+        assert isinstance(ownership, WriteOwnership)  # the registry's own live helper
         return ownership
 
     def held(self, key: ObjectKey = _KEY) -> list[_Stored]:

@@ -700,7 +700,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `parallax.core._execution._transaction._lifetime.TxnAttemptLifetime`, rather
   than a second lifetime of its own. Wire submission reads each published Wire value's Read Evidence
   through `parallax.snapshot._publication._wire.read_evidence_of`, and the
-  insertion authority a Wire insert's node carries through `authoring_of`, the
+  insertion authority a Wire insert's node carries through `insertion_of`, the
   readers the Wire write verbs use, so the claims and keys it settles are the
   ones a real write settles against; both are implementation-private, so no
   exported name reaches them. Conformance support's simulated step execution

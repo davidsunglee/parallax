@@ -454,7 +454,7 @@ are already published into Wire form in memory, with no further read.
                               and every page
 
  origins     plan.collects_evidence and current attempt's evidence context
-               → fresh ReadEvidenceCollector → attempt's SourceAuthority
+               → fresh ReadEvidenceCollector → attempt's SourceRegistry
                → origins_for(page) → Read Evidence on conforming Typed and Wire nodes
              no evidence context, or plan ineligible → EMPTY_PAGE_ORIGIN_COLLECTOR
 ```
@@ -462,17 +462,17 @@ are already published into Wire form in memory, with no further read.
 The `ReadInputs` a lane passes decide most of this. A standalone read passes its own
 connection, no Concurrency Preference and no evidence context; a read-only attempt
 passes its connection and neither of the others; a writable attempt passes its
-connection, its unit of work's preference and that unit of work's `SourceAuthority` as
+connection, its unit of work's preference and that unit of work's `SourceRegistry` as
 the evidence context. `_page_origin_collector` in `_read_pipeline` turns "no evidence
 context, or an ineligible plan" into `EMPTY_PAGE_ORIGIN_COLLECTOR`; `_page_reader.read_page`
 also applies the plan's eligibility when it receives a collector.
 
-Read Evidence is not authority. The `SourceAuthority` is the attempt's one judge of
+Read Evidence is not authority. The `SourceRegistry` is the attempt's one judge of
 what its sources and insertions still license. A source write of a value a read
-returned hands the value's evidence to `SourceAuthority.resolve_read_evidence`, which
+returned hands the value's evidence to `SourceRegistry.resolve_read_evidence`, which
 refuses it unless a read of this attempt produced it (`write-evidence-unavailable`),
 before anything is buffered; a value this attempt inserted is licensed instead by its
-insertion, while `SourceAuthority.insertion_authority` answers that insertion as
+insertion, while `SourceRegistry.insertion_anchor` answers that insertion as
 standing. The
 value's pin is checked at the same verb: a value read at a finite Transaction-Time
 instant is refused by `validate_source_pin` with `transaction-time-pin-read-only`,
@@ -526,9 +526,9 @@ exhausted, failed or stopped early.
 - `parallax.core.internal.read_delivery._page_reader:EMPTY_PAGE_ORIGIN_COLLECTOR`
 - `parallax.core._execution._unit_work.evidence:ReadEvidence`
 - `parallax.core._execution._retention:ReadEvidenceContext`
-- `parallax.core._execution._unit_work.source_authority:SourceAuthority`
-- `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
-- `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
+- `parallax.core._execution._unit_work.source_registry:SourceRegistry`
+- `parallax.core._execution._unit_work.source_registry:SourceRegistry.resolve_read_evidence`
+- `parallax.core._execution._unit_work.source_registry:SourceRegistry.insertion_anchor`
 - `parallax.core._execution._keyed_writes:validate_source_pin`
 - `parallax.core._execution._keyed_writes:TRANSACTION_TIME_PIN_READ_ONLY`
 

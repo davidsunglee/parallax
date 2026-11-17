@@ -20,8 +20,10 @@ from parallax.snapshot._inspection import (
 )
 from parallax.snapshot._publication._wire import (
     WireEntity,
-    authoring_of,
     stored_provenance_of,
+)
+from parallax.snapshot._publication._wire import (
+    insertion_of as wire_insertion_of,
 )
 
 __all__ = [
@@ -75,7 +77,7 @@ def resolve_keyed_write_source(
                 read_evidence=None,
                 provenance="none",
                 advice=WIRE_KEYED_WRITE_ADVICE,
-                authoring=authoring_of(source),
+                insertion=wire_insertion_of(source),
             )
         return ResolvedKeyedWriteSource(
             entity=entity,
@@ -92,7 +94,7 @@ def resolve_keyed_write_source(
         read_evidence=None if provenance is None else provenance.read_evidence,
         provenance=_typed_provenance(source, state),
         advice=TYPED_KEYED_WRITE_ADVICE,
-        authoring=insertion_of(source),
+        insertion=insertion_of(source),
     )
 
 
@@ -126,7 +128,7 @@ def resolve_keyed_insert(
     return ResolvedKeyedInsert(
         entity=entity,
         pin=None if stored is None else stored.pin,
-        provenance="this" if stored is not None or authoring_of(value) is not None else "none",
+        provenance="this" if stored is not None or wire_insertion_of(value) is not None else "none",
         advice=WIRE_KEYED_WRITE_ADVICE,
     )
 

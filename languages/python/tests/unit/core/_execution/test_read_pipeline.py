@@ -424,7 +424,7 @@ def test_a_participating_body_is_handed_the_attempts_connection_preference_and_a
             attempt.paged(stream.batch(), paged)
         for handed in (eager.only.inputs, paged.only.inputs):
             assert handed.preference == "locking"
-            assert handed.evidence_context is attempt.uow.source_authority
+            assert handed.evidence_context is attempt.uow.source_registry
         assert eager.only.inputs.connection is paged.only.inputs.connection
 
     _participating(run, adapter, concurrency="locking")
