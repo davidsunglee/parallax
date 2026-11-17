@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
@@ -23,7 +24,7 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, InternalError, UsageError
 from parallax.core.internal.metamodel import EntityIdentity
@@ -66,6 +67,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admit,
     admitted_writes,
+    deferred_ranges,
     plan_steps,
     settled_writes,
     source_authority,
@@ -334,8 +336,8 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         )
     )
     assert [type(step) for step in plan_steps(plan)] == [PlannedClose] * 2 + [PlannedInsert] * 3
-    (write,) = settled_writes(plan)
-    assert write.deferred is None
+    assert len(settled_writes(plan)) == 1
+    assert not deferred_ranges(plan)
 
 
 def _position_write(
@@ -404,7 +406,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         )
     )
     opening, correction = settled_writes(plan)
-    assert (opening.deferred, correction.deferred) == (None, None)
+    assert not deferred_ranges(plan)
     steps = plan_steps(plan)
     assert [type(step) for step in steps] == [
         *[PlannedInsert] * 2,
@@ -538,8 +540,8 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         _observed_balance("terminate", observed),
     ):
         admit(admission, write)
-    removal, reinsertion, termination = _admitted_plan(admission, authority).entries
-    assert isinstance(removal, SettledWrite) and removal.deferred is not None
+    removal, reinsertion, termination = _admitted_plan(admission, authority).turns
+    assert isinstance(removal, AcquisitionSpan)
     assert isinstance(reinsertion, WriteGroup)
     assert [type(step) for step in reinsertion.steps] == [PlannedInsert]
     assert isinstance(termination, WriteGroup)

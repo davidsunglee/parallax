@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.claims import WriteIntent
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
@@ -21,6 +20,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,

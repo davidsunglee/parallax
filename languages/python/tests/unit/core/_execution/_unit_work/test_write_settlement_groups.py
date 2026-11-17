@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any
 
 import pytest
 
@@ -16,20 +15,14 @@ from parallax.core._execution._unit_work import write_settlement as settlement
 from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    ComposedTemporalWrite,
     ComposedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import (
-    AcquisitionSpan,
-    SettledWrite,
-    WriteGroup,
-    WritePlan,
-)
+from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
-from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.metamodel import EntityIdentity, Metamodel
 from parallax.core.internal.planned_step import (
     ObjectKey,
     PredecessorRow,
@@ -63,6 +56,7 @@ from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
+    deferred_ranges,
     observed_buffer,
     plan_steps,
     unobserved_write,
@@ -129,16 +123,17 @@ def _plan(
 
 
 def _sizes(plan: WritePlan) -> list[int | str]:
-    """Each plan entry's write count, or ``"deferred"`` for a deferred write,
-    which is an entry of its own."""
+    """Each turn's write count: a Write Group's as a number, an acquisition
+    span's as ``"span of n"``."""
     return [
-        len(entry.writes) if isinstance(entry, WriteGroup) else "deferred" for entry in plan.entries
+        len(turn.writes) if isinstance(turn, WriteGroup) else f"span of {len(turn.ranges)}"
+        for turn in plan.turns
     ]
 
 
 def _groups(plan: WritePlan) -> list[WriteGroup]:
-    groups = [entry for entry in plan.entries if isinstance(entry, WriteGroup)]
-    assert len(groups) == len(plan.entries)
+    groups = [turn for turn in plan.turns if isinstance(turn, WriteGroup)]
+    assert len(groups) == len(plan.turns)
     return groups
 
 
@@ -381,7 +376,7 @@ def test_a_write_with_no_step_joins_its_group_and_completes_with_it() -> None:
     assert [_keys(step) for step in group.steps] == [(2,), (2,)]
 
 
-def test_a_deferred_write_is_an_entry_of_its_own_between_the_groups_around_it() -> None:
+def test_a_deferred_write_is_a_span_of_its_own_between_the_groups_around_it() -> None:
     def amend(key: int, month: int, year: int = 2024) -> KeyedWriteInstruction:
         return KeyedWriteInstruction(
             "amend",
@@ -399,10 +394,7 @@ def test_a_deferred_write_is_an_entry_of_its_own_between_the_groups_around_it() 
         _observed(_POSITION, buffer, _position_observation),
         instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
-    assert _sizes(plan) == [2, "deferred", 1]
-    deferred = plan.entries[1]
-    assert isinstance(deferred, SettledWrite)
-    assert deferred.deferred is not None
+    assert _sizes(plan) == [2, "span of 1", 1]
 
 
 def _entity(model: Metamodel, name: str) -> EntityIdentity:
@@ -410,13 +402,9 @@ def _entity(model: Metamodel, name: str) -> EntityIdentity:
 
 
 # --------------------------------------------------------------------------- #
-# Acquisition spans over consecutive groups of deferred writes                #
+# Where an unbroken run of deferred writes ends, its acquisition spans form   #
 # (`m-unit-work` *Shared coverage acquisition*).                              #
 # --------------------------------------------------------------------------- #
-def _spans(plan: WritePlan) -> list[tuple[int, int]]:
-    return [(span.start, span.stop) for span in plan.acquisition_spans]
-
-
 def _fragmented(*keys: int, entity: type[Bitemporal] = ShareCols) -> list[AdmittedWrite]:
     return [write for key in keys for write in frag(entity, key, 1)]
 
@@ -447,10 +435,10 @@ def _terminated(key: int) -> AdmittedWrite:
     return admitted_write(prepared, held, held.key.object)
 
 
-def test_a_plan_with_no_deferred_write_records_no_span() -> None:
-    assert _spans(_plan([], _WALLET)) == []
-    assert _spans(_plan([_amend_wallet(key, f"{key}.00") for key in (1, 2)], _WALLET)) == []
-    assert _spans(shared_plan([_inside(1), _inside(2)])) == []
+def test_a_plan_with_no_deferred_write_forms_no_span() -> None:
+    assert _sizes(_plan([], _WALLET)) == []
+    assert _sizes(_plan([_amend_wallet(key, f"{key}.00") for key in (1, 2)], _WALLET)) == [2]
+    assert _sizes(shared_plan([_inside(1), _inside(2)])) == [2]
 
 
 def _target(
@@ -495,32 +483,27 @@ def _transaction_time_plan(objects: int) -> WritePlan:
 @pytest.mark.parametrize(
     ("objects", "spans"),
     [
-        (1, []),
-        (2, [(0, 2)]),
-        (31, [(0, 31)]),
-        (32, [(0, 32)]),
-        (33, [(0, 32)]),
-        (65, [(0, 32), (32, 64)]),
-        (66, [(0, 32), (32, 64), (64, 66)]),
-        (67, [(0, 32), (32, 64), (64, 67)]),
+        (1, [1]),
+        (2, [2]),
+        (31, [31]),
+        (32, [32]),
+        (33, [32, 1]),
+        (65, [32, 32, 1]),
+        (66, [32, 32, 2]),
+        (67, [32, 32, 3]),
     ],
 )
 def test_consecutive_deferred_writes_share_spans_of_at_most_32(
-    planned: Callable[[int], WritePlan], objects: int, spans: list[tuple[int, int]]
+    planned: Callable[[int], WritePlan], objects: int, spans: list[int]
 ) -> None:
-    plan = planned(objects)
-    # Every deferred write keeps its own entry, whatever span it belongs to.
-    assert _sizes(plan) == ["deferred"] * objects
-    assert _spans(plan) == spans
+    assert _sizes(planned(objects)) == [f"span of {count}" for count in spans]
 
 
 def test_a_span_never_skips_a_group_of_another_entity_or_a_write_bound_at_planning() -> None:
     another = shared_plan([*_fragmented(1), *_fragmented(1, entity=ShareDoc), *_fragmented(2, 3)])
-    assert _sizes(another) == ["deferred"] * 4
-    assert _spans(another) == [(2, 4)]
+    assert _sizes(another) == ["span of 1", "span of 1", "span of 2"]
     planned = shared_plan([*_fragmented(1), _inside(4), *_fragmented(2, 3)])
-    assert _sizes(planned) == ["deferred", 1, "deferred", "deferred"]
-    assert _spans(planned) == [(2, 4)]
+    assert _sizes(planned) == ["span of 1", 1, "span of 2"]
 
 
 def test_a_transaction_time_only_span_never_skips_a_write_bound_at_planning() -> None:
@@ -530,8 +513,7 @@ def test_a_transaction_time_only_span_never_skips_a_write_bound_at_planning() ->
         observed_buffer(buffer, _BALANCE, _observed(_BALANCE, [observed], _balance_observation)),
         _BALANCE,
     )
-    assert _sizes(plan) == ["deferred", 1, "deferred", "deferred"]
-    assert _spans(plan) == [(2, 4)]
+    assert _sizes(plan) == ["span of 1", 1, "span of 2"]
 
 
 def test_deferred_writes_of_each_temporal_shape_form_spans_of_their_own() -> None:
@@ -544,8 +526,7 @@ def test_deferred_writes_of_each_temporal_shape_form_spans_of_their_own() -> Non
         _target(model, "KeptSpan", 2, valid_from=feb),
     ]
     plan = _finalize(admitted_writes(model, buffer), model)
-    assert _sizes(plan) == ["deferred"] * 4
-    assert _spans(plan) == [(0, 2), (2, 4)]
+    assert _sizes(plan) == ["span of 2", "span of 2"]
 
 
 @pytest.mark.parametrize(
@@ -569,8 +550,7 @@ def test_a_span_never_crosses_a_mutation_phase(
     concurrency: ConcurrencyPreference,
 ) -> None:
     plan = _finalize(admitted_writes(model, deferred()), model, concurrency=concurrency)
-    assert _sizes(plan) == ["deferred"] * 4
-    assert _spans(plan) == [(0, 2), (2, 4)]
+    assert _sizes(plan) == ["span of 2", "span of 2"]
 
 
 def _terminations(*keys: int) -> list[AdmittedWrite]:
@@ -580,7 +560,6 @@ def _terminations(*keys: int) -> list[AdmittedWrite]:
 def test_an_optimistic_transaction_time_only_termination_settles_at_planning() -> None:
     plan = _finalize(_terminations(1, 2, 3), _BALANCE)
     (group,) = _groups(plan)
-    assert _spans(plan) == []
     assert [type(step) for step in group.steps] == [PlannedClose] * 3
     assert [_keys(step) for step in group.steps] == [(1,), (2,), (3,)]
     for step in group.steps:
@@ -620,61 +599,28 @@ def test_a_repeated_termination_target_starts_the_next_group() -> None:
 def test_a_target_needing_its_predecessors_cells_or_lock_still_defers(
     deferred: Callable[[], WritePlan],
 ) -> None:
-    plan = deferred()
-    assert _sizes(plan) == ["deferred"] * 2
-    assert _spans(plan) == [(0, 2)]
+    assert _sizes(deferred()) == ["span of 2"]
 
 
-def _candidate(key: int, *, shared_lock: bool = False, entity: str = "ShareCols") -> Any:
-    identity = EntityIdentity("parallax.execution.shared", entity)
-    key_attribute = AttributeIdentity(identity, "id")
-    return settlement._AcquisitionCandidate(  # pyright: ignore[reportPrivateUsage] - the facts a span compares
-        identity, key_attribute, shared_lock, (key_attribute, key)
-    )
-
-
-@pytest.mark.parametrize(
-    ("later", "spans"),
-    [
-        (_candidate(2), [(0, 3)]),
-        (_candidate(1), [(1, 3)]),
-        (_candidate(2, shared_lock=True), []),
-        (_candidate(2, entity="ShareDoc"), []),
-        (None, []),
-    ],
-    ids=["compatible", "same-object", "another-lock", "another-entity", "reads-alone"],
-)
-def test_a_deferred_write_joins_the_open_span_only_where_it_reads_alike_another_object(
-    later: Any, spans: list[tuple[int, int]]
+@pytest.mark.parametrize(("concurrency", "shared_lock"), [("optimistic", False), ("locking", True)])
+def test_the_ranges_of_one_entity_and_lock_share_one_read_key_in_their_compilation(
+    concurrency: ConcurrencyPreference, shared_lock: bool
 ) -> None:
-    # Objects 1 and 3 read alike; ``later`` comes between them.
-    extend = settlement._extend_run  # pyright: ignore[reportPrivateUsage] - the span's boundary rule
-    recorded: list[AcquisitionSpan] = []
-    run = extend(recorded, None, 0, _candidate(1))
-    run = extend(recorded, run, 1, later)
-    run = extend(recorded, run, 2, _candidate(3))
-    settlement._close_run(recorded, run)  # pyright: ignore[reportPrivateUsage] - the span's boundary rule
-    assert [(span.start, span.stop) for span in recorded] == spans
-
-
-def test_only_a_deferred_write_reads_with_a_span() -> None:
-    # Two parts' writes compose into one write naming the object's key.
-    (item,) = admitted_writes(SHARED_MODEL, frag(ShareCols, 1, 2))
-    assert isinstance(item, ComposedTemporalWrite)
-    (write,) = shared_plan(frag(ShareCols, 1, 2)).entries
-    assert isinstance(write, SettledWrite)
-    candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares
-    families = inheritance.inheritance_facet_of(SHARED_MODEL)
-    assert candidate(write, item, families) is not None
-    # A settled write with no deferred range shares nothing.
-    assert candidate(SettledWrite(), item, families) is None
-
-
-def test_the_ready_writes_of_a_full_span_fit_one_write_group() -> None:
-    # A span's ready writes execute as one group, which no span can overfill.
-    ranges = settlement._WRITES_PER_SPAN  # pyright: ignore[reportPrivateUsage] - the span bound
-    writes = settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
-    assert ranges <= writes
+    # A planned write breaks the run, so the ranges fall in separate spans.
+    planned = shared_plan(
+        [*_fragmented(1), _inside(4), *_fragmented(2), *_fragmented(3, entity=ShareDoc)],
+        concurrency=concurrency,
+    )
+    first, second, other = deferred_ranges(planned)
+    assert first.read_key is second.read_key
+    assert first.read_key.entity.identity == ShareCols.identity
+    assert first.read_key.key_attribute.name == "id"
+    assert first.read_key.shared_lock is shared_lock
+    assert other.read_key.entity.identity == ShareDoc.identity
+    # Another compilation's key reads alike without being the same.
+    (again,) = deferred_ranges(shared_plan(_fragmented(5), concurrency=concurrency))
+    assert again.read_key == first.read_key
+    assert again.read_key is not first.read_key
 
 
 def test_a_group_lays_its_updates_out_shape_by_shape_and_records_their_spans() -> None:

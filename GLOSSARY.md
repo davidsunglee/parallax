@@ -35,7 +35,7 @@ contract owners; this index does not add requirements.
 | Target Write | A write addressing one existing logical object by primary key under the starting revision its caller states, independently of a source value | [Unit of work](core/spec/m-unit-work.md) |
 | Settled Write | One caller write after settlement: the completion facts it publishes and the Planned Steps it executes | [Unit of work](core/spec/m-unit-work.md) |
 | Write Group | Settled writes that execute as one sequence of Planned Steps and complete together, before any later group executes: a Write Plan's planned group, or the ready deferred writes one turn binds | [Unit of work](core/spec/m-unit-work.md) |
-| Acquisition Span | Consecutive deferred settled writes of distinct objects of one Entity that share their coverage reads, granting permission to read ahead while their Write Groups follow readiness | [Unit of work](core/spec/m-unit-work.md#shared-coverage-acquisition) |
+| Acquisition Span | One or more consecutive deferred settled writes of distinct objects of one Entity that share their coverage reads, granting permission to read ahead while their Write Groups follow readiness | [Unit of work](core/spec/m-unit-work.md#shared-coverage-acquisition) |
 | Mutation Phase | The inserts, the updates, or the deletes of a flush, which run in that order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Step | One semantic effect of a write on stored rows, distinct from the SQL that lowers it | [Planned steps](core/spec/m-planned-step.md) |
 | Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Planned steps](core/spec/m-planned-step.md) |

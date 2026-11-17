@@ -18,12 +18,11 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
 )
-from parallax.core._execution._unit_work.write_items import target_write
+from parallax.core._execution._unit_work.write_items import TargetWrite, target_write
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
@@ -48,9 +47,9 @@ from tests._support.fake_metadata import facets_of
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
+    deferred_ranges,
     observed_buffer,
     plan_steps,
-    settled_writes,
 )
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._gc_reachability import reachable_objects
@@ -150,10 +149,13 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             ownership=ownership,
         )
     )
-    (write,) = settled_writes(plan)
-    assert isinstance(write.deferred, DeferredTemporalRange)
+    (_deferred,) = deferred_ranges(plan)
     walked = _reachable_from_plan(plan)
     assert not [value for value in walked if _is_producer(value)]
+    # It keeps what its write settled to, not the write admitted or prepared.
+    assert not [
+        value for value in walked if isinstance(value, TargetWrite | PreparedTargetInstruction)
+    ]
     assert not [value for value in walked if isinstance(value, OpenedRows | AuditDecoration)]
     assert all(value is not TEST_ACTOR_IDENTITY for value in walked)
     assert not [value for value in walked if isinstance(value, MethodType | FunctionType)]

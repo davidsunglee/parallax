@@ -41,6 +41,7 @@ import pytest
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.internal.base import detach_json_container
@@ -278,8 +279,10 @@ def test_a_seeded_duplicate_plan_registry_trips_the_deferred_plan_retention_gate
         plan = finalize(planner, request)
         _REGISTRY.keep(
             [
-                {field.name: getattr(entry, field.name) for field in fields(entry)}
-                for entry in plan.entries
+                {field.name: getattr(deferred, field.name) for field in fields(deferred)}
+                for turn in plan.turns
+                if isinstance(turn, AcquisitionSpan)
+                for deferred in turn.ranges
             ]
         )
         return plan

@@ -7,12 +7,7 @@ from types import TracebackType
 from typing import Literal, Protocol, cast
 
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    RetainedTargetState,
-    TargetReadRequest,
-    consume_target,
-)
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
@@ -29,6 +24,12 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.ranges import RangeBindings
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    RetainedTargetState,
+    TargetReadRequest,
+    consume_target,
+)
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import ActorIdentity, AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
@@ -553,8 +554,8 @@ class UnitOfWork:
         admission = self._admission
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
-        # buffer drains, what a plan's deferred settled write took over is
-        # released as it executes rather than held until the flush ends.
+        # buffer drains, what a plan's deferred range took over is released as
+        # it executes rather than held until the flush ends.
         concluding = trigger == "pre_commit"
         ownership = self.source_authority.planning_ownership(concluding=concluding)
         plan = self._planner.finalize(
@@ -577,77 +578,48 @@ class UnitOfWork:
     def _run_write_plan(
         self, plan: WritePlan, *, ownership: TemporalWriteOwnership, captures: bool
     ) -> None:
-        """Execute ``plan``'s entries in order, completing each write of a
+        """Execute ``plan``'s turns in order, completing each write of a
         Write Group, in order, as soon as the group's steps succeeded and before
         any step of a later group executes.
 
-        A deferred settled write binds at its turn under ``ownership``, as
-        every earlier group's completion left it, and executes in the group of
-        the ready writes bound with it: the leading writes of its acquisition
-        span whose coverage is read, or itself alone outside any span. The
-        coverage reads of a span can run before an earlier group of it
-        completes. A write with no step still completes. A group that fails
-        completes none of its writes, and nothing after it is read, bound, or
-        executed.
+        A deferred write binds at its acquisition span's turn under
+        ``ownership``, as every earlier group's completion left it, and
+        executes in the group of the leading writes of its span whose coverage
+        is read. The coverage reads of a span can run before an earlier group
+        of it completes, and each group executes and completes before the next
+        binds or reads. A write with no step still completes. A group that
+        fails completes none of its writes, and nothing after it is read,
+        bound, or executed.
 
         Where it ``captures``, the current rows a write describes are captured
         as their payloads are demanded and published with its completion.
         """
         audit: AuditDecoration | None = None
-        entries = plan.entries
-        spans = iter(plan.acquisition_spans)
-        span = next(spans, None)
-        position = 0
-        while position < len(entries):
-            entry = entries[position]
-            if isinstance(entry, WriteGroup):
-                position += 1
-                self._execute_write_group(entry, captures=captures)
-                continue
-            stop = position + 1
-            if span is not None and span.start == position:
-                stop = span.stop
-                span = next(spans, None)
-            if audit is None:
-                audit = self._audit_decoration()
-            self._execute_deferred(
-                plan, position, stop, ownership=ownership, audit=audit, captures=captures
-            )
-            position = stop
+        for turn in plan.turns:
+            match turn:
+                case WriteGroup():
+                    self._execute_write_group(turn, captures=captures)
+                case AcquisitionSpan():
+                    if audit is None:
+                        audit = self._audit_decoration()
+                    with RangeBindings(
+                        turn,
+                        acquire_rows=self.acquire_rows,
+                        current=self.source_authority.is_unchanged_since,
+                        ownership=ownership,
+                        audit=audit,
+                        payloads=self._planner.payloads,
+                    ) as groups:
+                        while (group := next(groups, None)) is not None:
+                            try:
+                                self._execute_write_group(group, captures=captures)
+                            finally:
+                                group = None
 
     def _audit_decoration(self) -> AuditDecoration:
         return self._planner.audit_decoration(
             actor_identity=self._actor_identity, transaction_instant=self._transaction_instant
         )
-
-    def _execute_deferred(
-        self,
-        plan: WritePlan,
-        start: int,
-        stop: int,
-        *,
-        ownership: TemporalWriteOwnership,
-        audit: AuditDecoration,
-        captures: bool,
-    ) -> None:
-        """Bind ``plan``'s deferred settled writes ``[start, stop)`` group by
-        ready group, executing and completing each group before the next binds
-        or reads."""
-        with RangeBindings(
-            plan,
-            start=start,
-            stop=stop,
-            acquire_rows=self.acquire_rows,
-            current=self.source_authority.is_unchanged_since,
-            ownership=ownership,
-            audit=audit,
-            payloads=self._planner.payloads,
-        ) as bindings:
-            while (group := next(bindings, None)) is not None:
-                try:
-                    self._execute_write_group(group, captures=captures)
-                finally:
-                    group = None
 
     def _execute_write_group(self, group: WriteGroup, *, captures: bool) -> None:
         """Execute ``group``'s steps once and complete each of its writes, in

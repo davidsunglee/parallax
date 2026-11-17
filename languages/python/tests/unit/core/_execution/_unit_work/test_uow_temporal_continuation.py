@@ -29,15 +29,15 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
-from parallax.core._execution._unit_work.acquisition import (
-    CoverageReadRequest,
-    RowConsumer,
-    RowRequest,
-)
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
+)
+from parallax.core._execution._unit_work.row_acquisition import (
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
 )
 from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds

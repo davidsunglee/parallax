@@ -1,23 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from bisect import bisect_left
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence, Set
 from dataclasses import dataclass
 from operator import attrgetter
 from types import TracebackType
-from typing import Final, Self, cast
+from typing import TYPE_CHECKING, Final, Self, cast
 
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    CompletionRequest,
-    CoverageReadRequest,
-    CoverageTerm,
-    RetainedTargetState,
-    consume_coverage,
-    consume_coverage_by_key,
-)
 from parallax.core._execution._unit_work.effects import (
     MISSING_TARGET,
     WritePreconditionError,
@@ -25,6 +15,16 @@ from parallax.core._execution._unit_work.effects import (
     shortfall,
 )
 from parallax.core._execution._unit_work.evidence import ReadEvidence, RetainedObservation
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    CompletionRequest,
+    CoverageReadKey,
+    CoverageReadRequest,
+    CoverageTerm,
+    RetainedTargetState,
+    consume_coverage,
+    consume_coverage_by_key,
+)
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
@@ -34,16 +34,10 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     TemporalIntent,
 )
-from parallax.core._execution._unit_work.write_plan import (
-    AcquisitionSpan,
-    DeferredRange,
-    SettledWrite,
-    WriteGroup,
-    WritePlan,
-)
+from parallax.core._execution._unit_work.write_plan import WriteGroup
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.inheritance import InheritanceEntityView
-from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.planned_step.keys import (
     ObjectKey,
     ObjectStateKey,
@@ -70,8 +64,11 @@ from parallax.core.internal.temporal_write.expansion import (
     TemporalFacts,
 )
 
+if TYPE_CHECKING:
+    from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
+
 __all__ = [
-    "DeferredTemporalRange",
+    "DeferredRange",
     "RangeBindings",
     "settle_opening",
     "settle_range",
@@ -246,7 +243,7 @@ def _states_condition(held: TargetIntent, arriving: TargetIntent) -> bool:
 
 
 def _object_key(
-    facts: TemporalFacts, key_attribute: AttributeIdentity, key_value: object
+    facts: TemporalFacts, key_attribute: AttributeIdentity, key_value: ManagedValue
 ) -> ObjectKey:
     return ObjectKey(facts.entity.identity, ((key_attribute.name, key_value),))
 
@@ -389,16 +386,17 @@ class _RangeMeaning:
     ``facts.instant`` is the attempt's resolved instant. ``valid_time_window``
     is the final transform's enclosing window, derived once when settlement
     begins and shared by the coverage check, acquisition, and continuation;
-    ``None`` on a Transaction-Time-Only object. ``opening`` is the pending
-    insertion a replacement reaching past it settles with.
+    ``None`` on a Transaction-Time-Only object. ``read_key`` is the read its
+    coverage is read by, one instance per Entity and lock decision of the
+    compilation that settled it. ``opening`` is the pending insertion a
+    replacement reaching past it settles with.
     """
 
     facts: TemporalFacts
     transform: CoverageTransform
     valid_time_window: TimeInterval | None
-    gated: bool
-    key_attribute: AttributeIdentity
-    key_value: object
+    read_key: CoverageReadKey
+    key_value: ManagedValue
     anchor: InsertionAuthorizedIntent | None = None
     conditions: tuple[TargetIntent, ...] = ()
     guards: bool = False
@@ -409,10 +407,15 @@ class _RangeMeaning:
         return _object_key(self.facts, self.key_attribute, self.key_value)
 
     @property
-    def shared_lock(self) -> bool:
-        """Whether the range's coverage reads take the shared row lock: the
-        other half of the settled gate decision."""
-        return not self.gated
+    def key_attribute(self) -> AttributeIdentity:
+        return self.read_key.key_attribute
+
+    @property
+    def gated(self) -> bool:
+        """Whether the range's writes gate on Optimistic proofs: the other half
+        of the settled decision whether its coverage reads take the shared row
+        lock."""
+        return not self.read_key.shared_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -571,10 +574,10 @@ class _TemporalRangeBinder:
 
 
 @dataclass(frozen=True, slots=True)
-class DeferredTemporalRange(DeferredRange):
+class DeferredRange:
     """A range whose requested window reaches coverage no planning input knew,
     as the finalized data :class:`RangeBindings` binds once its unit of work
-    has read that coverage.
+    has read that coverage: a Write Plan's deferred write.
 
     It holds what settlement decided and nothing that could decide again: no
     ownership, audit, clock, or model. ``predecessors`` are the current rows
@@ -585,12 +588,27 @@ class DeferredTemporalRange(DeferredRange):
     them holds is read then, and the rows read join the known predecessors at
     every coordinates those do not already hold. Binding then proceeds exactly
     as for a range bound at planning.
+
+    ``source_evidence`` holds, by identity, the Read Evidence of every source
+    whose write it settled, so those sources stay published for as long as the
+    plan holding it is reachable. Nothing interprets it.
     """
 
     meaning: _RangeMeaning
     predecessors: tuple[_RangePredecessor, ...]
     validations: tuple[_RangePredecessor, ...]
     retained: tuple[RetainedTargetState, ...] = ()
+    source_evidence: tuple[ReadEvidence, ...] = ()
+
+    @property
+    def read_key(self) -> CoverageReadKey:
+        """The read its coverage is read by."""
+        return self.meaning.read_key
+
+    @property
+    def key_value(self) -> ManagedValue:
+        """The value its object's key holds."""
+        return self.meaning.key_value
 
 
 def settle_range(
@@ -599,13 +617,13 @@ def settle_range(
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
-    gated: bool,
+    read_key: CoverageReadKey,
     instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
     payloads: WritePayloadPreparer,
     guards: bool = False,
-) -> BoundRange | DeferredTemporalRange:
+) -> BoundRange | DeferredRange:
     """One temporal object's pending writes as a range over its current
     coverage: bound now where planning knows that coverage, or else the
     deferred description of what binding needs once it is read.
@@ -634,10 +652,10 @@ def settle_range(
     proving that start when it executes. A range bound now reuses none, and
     releases each such row here.
 
-    ``instant`` is the attempt's already-resolved Transaction Instant, which a
-    deferred range retains as a value.
+    ``read_key`` names the read its coverage is read by and decides whether
+    its writes gate. ``instant`` is the attempt's already-resolved Transaction
+    Instant, which a deferred range retains as a value.
     """
-    key_attribute = view.primary_key.identity
     target = item.object_key
     ((_, key_value),) = target.primary_key
     transform = item.transform
@@ -650,9 +668,10 @@ def settle_range(
         facts=facts,
         transform=transform,
         valid_time_window=window,
-        gated=gated,
-        key_attribute=key_attribute,
-        key_value=key_value,
+        read_key=read_key,
+        # A target write stating a null key is refused at its call; every
+        # other write's key comes from a row read or inserted.
+        key_value=cast("ManagedValue", key_value),
         anchor=_anchor(intents),
         conditions=_conditions(intents),
         guards=guards,
@@ -665,8 +684,12 @@ def settle_range(
     else:
         reached = not predecessors
     if reached:
-        return DeferredTemporalRange(
-            meaning=meaning, predecessors=predecessors, validations=validations, retained=retained
+        return DeferredRange(
+            meaning=meaning,
+            predecessors=predecessors,
+            validations=validations,
+            retained=retained,
+            source_evidence=item.source_evidence,
         )
     for state in retained:
         state.take()
@@ -678,13 +701,13 @@ def settle_opening(
     *,
     view: InheritanceEntityView,
     shape: Bitemporal,
-    gated: bool,
+    read_key: CoverageReadKey,
     instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
     payloads: WritePayloadPreparer,
     guards: bool = False,
-) -> BoundRange | DeferredTemporalRange:
+) -> BoundRange | DeferredRange:
     """A pending Bitemporal insertion and the writes its insertion authorized
     since, settled as one write: the insertion's authored state seeds every
     surviving part of its own window, with the composed assignments overlaid
@@ -696,26 +719,26 @@ def settle_opening(
     row it reaches is transformed under its own condition, and the
     replacement's gaps open. An amendment or a destruction reaches past the
     window only as far as such a replacement does, and transforms what it
-    reaches there too. ``instant`` is the attempt's already-resolved
-    Transaction Instant.
+    reaches there too. ``read_key`` names the read that coverage is read by
+    and decides whether the closes beyond the window gate. ``instant`` is the
+    attempt's already-resolved Transaction Instant.
     """
     insert = opening.insert.instruction
     entity = insert.target
     window = insert.valid_time_window
     assert window is not None  # a Bitemporal opening states its window
-    key_attribute = view.primary_key.identity
+    key_attribute = read_key.key_attribute
     (seed,) = insert.rows
     facts = TemporalFacts(
         entity=entity, view=view, shape=shape, instant=instant, selection=seed.selection
     )
-    key_value = seed.cell(key_attribute)
     transform = opening.transform
     if opening.beyond is None:
         return PredecessorExpander(
             facts,
             transform,
             key_attribute=key_attribute,
-            gated=gated,
+            gated=not read_key.shared_lock,
             ownership=ownership,
             audit=audit,
             payloads=payloads,
@@ -724,13 +747,18 @@ def settle_opening(
         facts=facts,
         transform=transform,
         valid_time_window=transform.valid_time_window,
-        gated=gated,
-        key_attribute=key_attribute,
-        key_value=key_value,
+        read_key=read_key,
+        # An insertion's key cell is never null.
+        key_value=cast("ManagedValue", seed.cell(key_attribute)),
         guards=guards,
         opening=_OpeningSeed(seed, window),
     )
-    return DeferredTemporalRange(meaning=meaning, predecessors=(), validations=())
+    return DeferredRange(
+        meaning=meaning,
+        predecessors=(),
+        validations=(),
+        source_evidence=opening.source_evidence,
+    )
 
 
 def _with_opening(
@@ -753,7 +781,7 @@ def _retained(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedTargetState,
 
 
 def _retained_completion(
-    deferred: DeferredTemporalRange, current: Callable[[ObjectStateKey, int], bool]
+    deferred: DeferredRange, current: Callable[[ObjectStateKey, int], bool]
 ) -> CompletionRequest | None:
     """The completion of every starting row ``deferred`` retained that is
     still ``current`` — no change the attempt completed since its read replaced
@@ -795,9 +823,7 @@ def _retained_completion(
     )
 
 
-def _missing_term(
-    deferred: DeferredTemporalRange, reused: PredecessorRows | None
-) -> CoverageTerm | None:
+def _missing_term(deferred: DeferredRange, reused: PredecessorRows | None) -> CoverageTerm | None:
     """The coverage ``deferred``'s window needs that nothing already holds —
     its known predecessors, among them the current rows the attempt's
     completed writes produced and hold for a continuing source, the ``reused``
@@ -810,7 +836,7 @@ def _missing_term(
     """
     meaning = deferred.meaning
     known = deferred.predecessors
-    key_value = cast("ManagedValue", meaning.key_value)
+    key_value = meaning.key_value
     window = meaning.valid_time_window
     if window is None:
         return None if known or reused is not None else CoverageTerm(key_value, None)
@@ -828,14 +854,10 @@ def _missing_term(
 
 
 def _pack_reads(
-    entity: CompiledEntity,
-    key_attribute: AttributeIdentity,
-    terms: Iterable[CoverageTerm],
-    *,
-    shared_lock: bool,
+    read_key: CoverageReadKey, terms: Iterable[CoverageTerm]
 ) -> Iterator[CoverageReadRequest]:
-    """Reads of every uncovered part ``terms`` name, in order, each naming at
-    most :data:`_PARTS_PER_READ` parts. A current-row term is one part, placed
+    """Reads by ``read_key`` of every uncovered part ``terms`` name, in order,
+    each naming at most :data:`_PARTS_PER_READ` parts. A current-row term is one part, placed
     whole; an object whose Valid-Time windows do not fit what remains of one
     read continues in the next."""
     pending: list[CoverageTerm] = []
@@ -845,7 +867,7 @@ def _pack_reads(
         first = 0
         while windows is None or first < len(windows):
             if not room:
-                yield CoverageReadRequest(entity, key_attribute, tuple(pending), shared_lock)
+                yield CoverageReadRequest(read_key, tuple(pending))
                 pending, room = [], _PARTS_PER_READ
             if windows is None:
                 pending.append(term)
@@ -858,11 +880,11 @@ def _pack_reads(
             first += len(part)
             room -= len(part)
     if pending:
-        yield CoverageReadRequest(entity, key_attribute, tuple(pending), shared_lock)
+        yield CoverageReadRequest(read_key, tuple(pending))
 
 
 def _bind_range(
-    deferred: DeferredTemporalRange,
+    deferred: DeferredRange,
     reused: PredecessorRows | None,
     acquired: Sequence[PredecessorRows],
     *,
@@ -888,7 +910,7 @@ class _PendingRange:
     — 0 where it needs none — and the nonempty rows each of its coverage reads
     returned, in read order."""
 
-    deferred: DeferredTemporalRange
+    deferred: DeferredRange
     reused: PredecessorRows | None
     missing_term: CoverageTerm | None
     ready_after_reads: int
@@ -907,24 +929,20 @@ class _Invocation:
 
 
 class RangeBindings:
-    """The deferred settled writes of a plan a flush binds from one turn, bound
-    only as the flush asks for them: a scoped, single-pass iterator of the
-    Write Groups they execute in, in order.
+    """The deferred writes of one acquisition span a flush binds from its
+    turn, bound only as the flush asks for them: a scoped, single-pass
+    iterator of the Write Groups they execute in, in order.
 
-    ``plan``'s entries ``[start, stop)`` are one deferred settled write, or an
-    acquisition span's (`m-unit-work` *Shared coverage acquisition*): ranges
-    of one Entity, each of a distinct object, read alike. Anything else is
-    refused before any row is read. The first advance takes the ranges from
-    ``plan``, keeping no reference to it, completes, through ``acquire_rows``,
-    every retained starting row each range holds that ``current`` still
-    judges current, and derives once the uncovered parts nothing each range
-    holds covers. Those parts are packed, in range order — a Bitemporal
-    range's in Valid-Time order, a Transaction-Time-Only range's one current
-    row whole — into reads naming at most :data:`_PARTS_PER_READ` each, and a
-    range is ready once every read naming its parts succeeded, whatever the
-    reads returned; a range with no uncovered part is ready at once, but never
-    binds ahead of an earlier range that is not. Each advance reads only while
-    the next range is not ready,
+    The first advance takes the ranges from ``span``, keeping no reference to
+    it, completes, through ``acquire_rows``, every retained starting row each
+    range holds that ``current`` still judges current, and derives once the
+    uncovered parts nothing each range holds covers. Those parts are packed, in
+    range order — a Bitemporal range's in Valid-Time order, a
+    Transaction-Time-Only range's one current row whole — into reads naming at
+    most :data:`_PARTS_PER_READ` each, and a range is ready once every read
+    naming its parts succeeded, whatever the reads returned; a range with no
+    uncovered part is ready at once, but never binds ahead of an earlier range
+    that is not. Each advance reads only while the next range is not ready,
     each read's rows sealed as Predecessor Rows of the object whose key each
     stored row holds while its resources are live. It then binds that range
     and every ready range following it, up to the first that is not, under
@@ -944,28 +962,23 @@ class RangeBindings:
         "_invocation",
         "_lookup",
         "_pending",
-        "_plan",
-        "_positions",
         "_reads",
         "_requests",
+        "_span",
     )
 
     def __init__(
         self,
-        plan: WritePlan,
+        span: AcquisitionSpan,
         /,
         *,
-        start: int,
-        stop: int,
         acquire_rows: AcquireRows,
         current: Callable[[ObjectStateKey, int], bool],
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
         payloads: WritePayloadPreparer,
     ) -> None:
-        _require_deferred(plan, start, stop)
-        self._plan: WritePlan | None = plan
-        self._positions = range(start, stop)
+        self._span: AcquisitionSpan | None = span
         self._invocation: _Invocation | None = _Invocation(
             acquire_rows, current, ownership, audit, payloads
         )
@@ -1000,7 +1013,7 @@ class RangeBindings:
             raise
 
     def _bind_next_group(self, invocation: _Invocation) -> WriteGroup:
-        if self._plan is not None:
+        if self._span is not None:
             self._prepare(invocation)
         pending = self._pending
         if not pending:
@@ -1034,21 +1047,17 @@ class RangeBindings:
         self._pending.popleft()
         lookup = self._lookup
         if lookup is not None:
-            del lookup[cast("ManagedValue", head.deferred.meaning.key_value)]
+            del lookup[head.deferred.key_value]
         head.reused = head.acquired = None
         return bound, bound.steps
 
     def _prepare(self, invocation: _Invocation) -> None:
-        plan = self._plan
-        assert plan is not None  # prepared once, on the first advance
-        self._plan = None
-        entries = plan.entries
+        span = self._span
+        assert span is not None  # prepared once, on the first advance
+        self._span = None
         pending = self._pending
         parts = 0
-        for position in self._positions:
-            deferred = cast(
-                "DeferredTemporalRange", cast("SettledWrite", entries[position]).deferred
-            )
+        for deferred in span.ranges:
             # Each range's completed rows are held only by its record, which a
             # failure releases, never by a local a later completion's failure
             # frame would keep.
@@ -1064,12 +1073,9 @@ class RangeBindings:
                 record.missing_term = term
                 self._reads = record.ready_after_reads
         if len(pending) > 1:
-            self._lookup = {
-                cast("ManagedValue", record.deferred.meaning.key_value): record
-                for record in pending
-            }
+            self._lookup = {record.deferred.key_value: record for record in pending}
         if self._reads:
-            self._requests = _coverage_reads(pending)
+            self._requests = _pack_reads(span.read_key, _take_missing_terms(deque(pending)))
 
     def _read(self, invocation: _Invocation) -> None:
         requests = self._requests
@@ -1090,41 +1096,8 @@ class RangeBindings:
         self._pending.clear()
         self._lookup = None
         self._requests = None
-        self._plan = None
+        self._span = None
         self._invocation = None
-
-
-def _require_deferred(plan: WritePlan, start: int, stop: int) -> None:
-    """Refuse ``plan``'s entries ``[start, stop)`` unless they are one deferred
-    settled write or one of its acquisition spans, each write's range one this
-    module finalized."""
-    entries = plan.entries
-    if not 0 <= start < stop <= len(entries):
-        raise ValueError(f"entries [{start}, {stop}) are not within a plan of {len(entries)}")
-    if stop - start > 1:
-        spans = plan.acquisition_spans
-        index = bisect_left(spans, start, key=_START)
-        if index == len(spans) or spans[index] != AcquisitionSpan(start, stop):
-            raise ValueError(f"entries [{start}, {stop}) are not an acquisition span of the plan")
-    for position in range(start, stop):
-        entry = entries[position]
-        deferred = entry.deferred if isinstance(entry, SettledWrite) else entry
-        if not isinstance(deferred, DeferredTemporalRange):
-            raise TypeError(
-                f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
-            )
-
-
-def _coverage_reads(pending: deque[_PendingRange]) -> Iterator[CoverageReadRequest]:
-    """The reads of every uncovered part ``pending`` ranges need, packed in
-    their order."""
-    meaning = pending[0].deferred.meaning
-    return _pack_reads(
-        meaning.facts.entity,
-        meaning.key_attribute,
-        _take_missing_terms(deque(pending)),
-        shared_lock=meaning.shared_lock,
-    )
 
 
 def _take_missing_terms(unpacked: deque[_PendingRange]) -> Iterator[CoverageTerm]:

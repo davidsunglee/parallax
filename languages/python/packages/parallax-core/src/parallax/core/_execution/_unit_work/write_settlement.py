@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Container, Sequence
-from dataclasses import dataclass
 from typing import Final
 
 from parallax.core._execution._unit_work._errors import VERSION_UNOBSERVED
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, form_spans
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -17,10 +17,11 @@ from parallax.core._execution._unit_work.non_temporal_settlement import (
     non_temporal_step,
 )
 from parallax.core._execution._unit_work.ranges import (
-    DeferredTemporalRange,
+    DeferredRange,
     settle_opening,
     settle_range,
 )
+from parallax.core._execution._unit_work.row_acquisition import CoverageReadKey
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -42,7 +43,6 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
 )
 from parallax.core._execution._unit_work.write_plan import (
-    AcquisitionSpan,
     SettledWrite,
     WriteGroup,
     WritePlan,
@@ -53,7 +53,7 @@ from parallax.core.internal.concurrency import (
     ConcurrencyFacet,
     ConcurrencyPreference,
 )
-from parallax.core.internal.inheritance import InheritanceFacet
+from parallax.core.internal.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.internal.metamodel import (
     AttributeIdentity,
     CompiledEntity,
@@ -124,36 +124,9 @@ type _GroupKey = tuple[AttributeIdentity, object]
 value it holds, so two Entities of one Inheritance Family sharing a key value
 name one object and two unrelated Entities never do."""
 
-_WRITES_PER_SPAN: Final = 32
-"""The most deferred settled writes one acquisition span holds (`m-unit-work`
-*Shared coverage acquisition*): how many objects' coverage can be read ahead of
-their writes' turns. It bounds objects, not the parts or rows their reads
-return. The ready writes of a span execute as one Write Group, so it is never
-more than :data:`_WRITES_PER_GROUP`."""
-
-
-@dataclass(frozen=True, slots=True)
-class _AcquisitionCandidate:
-    """What a deferred settled write shares a coverage read by: the concrete
-    Entity and key Attribute it reads, whether the read takes the shared lock,
-    and the object it writes."""
-
-    entity: EntityIdentity
-    key_attribute: AttributeIdentity
-    shared_lock: bool
-    key: _GroupKey
-
-
-@dataclass(slots=True)
-class _AcquisitionRun:
-    """The acquisition span settlement is extending: its plan entries
-    ``[start, stop)``, the read its first write shares, and every object its writes
-    write."""
-
-    start: int
-    stop: int
-    first: _AcquisitionCandidate
-    keys: set[_GroupKey]
+type _ReadKeys = dict[tuple[EntityIdentity, bool], CoverageReadKey]
+"""The read key of each Entity and lock decision one compilation settled a
+range of, so the ranges reading alike share one instance."""
 
 
 class WritePlanCompiler:
@@ -235,12 +208,11 @@ class WritePlanCompiler:
         shape where the model's payload preparer gives them shapes, and then
         every write's inserts, each write's own order kept. A write naming an
         object the open group already writes starts the next group. A deferred
-        write is a plan entry of its own, grouped only once execution binds it.
-        Consecutive deferred writes of one mutation phase sharing a coverage
-        read and writing distinct objects, at most :data:`_WRITES_PER_SPAN`
-        of them, are recorded as one acquisition span: their coverage is read
-        together, and the leading ones whose coverage is ready execute as one
-        group. ``ownership`` answers which current rows
+        write is grouped only once execution binds it: each unbroken run of
+        deferred writes within a mutation phase forms acquisition spans
+        (:func:`~parallax.core._execution._unit_work.acquisition_spans.form_spans`),
+        whose coverage is read together and whose leading writes with ready
+        coverage execute as one group. ``ownership`` answers which current rows
         this attempt already opened, so a write against one of them revises or
         removes that row instead of closing it into history.
 
@@ -256,34 +228,39 @@ class WritePlanCompiler:
         insertion settles with the writes its insertion authorized as the one
         settled write of new lineages they leave of its window.
         """
-        entries: list[WriteGroup | SettledWrite] = []
-        spans: list[AcquisitionSpan] = []
+        turns: list[WriteGroup | AcquisitionSpan] = []
+        read_keys: _ReadKeys = {}
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
         families = self._families
         shape = self._payloads.effect_shape
         for phase in phases:
             members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]] = []
             held: set[_GroupKey] = set()
-            run: _AcquisitionRun | None = None
+            deferred: list[DeferredRange] = []
             for item in phase:
-                write, steps = self._settled_write(
-                    item, preference, transaction_instant, ownership, audit, counts_unchanged_rows
+                settled = self._settled_write(
+                    item,
+                    preference,
+                    transaction_instant,
+                    ownership,
+                    audit,
+                    counts_unchanged_rows,
+                    read_keys,
                 )
-                if write.deferred is not None:
-                    _close_group(entries, members, held, shape)
-                    run = _extend_run(
-                        spans, run, len(entries), _acquisition_candidate(write, item, families)
-                    )
-                    entries.append(write)
+                if isinstance(settled, DeferredRange):
+                    _close_group(turns, members, held, shape)
+                    deferred.append(settled)
                     continue
+                _close_run(turns, deferred)
+                write, steps = settled
                 keys = _group_keys(item, families)
                 if len(members) == _WRITES_PER_GROUP or not held.isdisjoint(keys):
-                    _close_group(entries, members, held, shape)
+                    _close_group(turns, members, held, shape)
                 members.append((write, steps))
                 held.update(keys)
-            _close_group(entries, members, held, shape)
-            _close_run(spans, run)
-        return WritePlan(tuple(entries), tuple(spans))
+            _close_run(turns, deferred)
+            _close_group(turns, members, held, shape)
+        return WritePlan(tuple(turns))
 
     def _settled_write(
         self,
@@ -293,19 +270,34 @@ class WritePlanCompiler:
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
         guards: bool,
-    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
+        read_keys: _ReadKeys,
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]] | DeferredRange:
         shape = self._temporal_facet.shape(item.target.identity)
         if isinstance(item, ComposedBitemporalOpening):
             assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
             return self._opening(
-                item, shape, preference, transaction_instant, ownership, audit, guards=guards
+                item,
+                shape,
+                preference,
+                transaction_instant,
+                ownership,
+                audit,
+                read_keys,
+                guards=guards,
             )
         if isinstance(
             item,
             ComposedTemporalWrite | StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
         ) and isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._range(
-                item, shape, preference, transaction_instant, ownership, audit, guards=guards
+                item,
+                shape,
+                preference,
+                transaction_instant,
+                ownership,
+                audit,
+                read_keys,
+                guards=guards,
             )
         assert not isinstance(item, ComposedTemporalWrite)  # only temporal objects compose
         settled = self._settle_keyed(item, preference, transaction_instant, shape, audit)
@@ -436,12 +428,13 @@ class WritePlanCompiler:
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
+        read_keys: _ReadKeys,
         *,
         guards: bool,
-    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]] | DeferredRange:
         """``item`` settled as a range over its temporal object's coverage: the
-        settled write with the steps it binds now, or the settled write
-        carrying the deferred range execution binds, with no step.
+        settled write with the steps it binds now, or the deferred range
+        execution binds.
 
         A range, one write alone or a composition, observed inside the
         predecessors it holds binds them at once, and one reaching beyond them
@@ -458,12 +451,13 @@ class WritePlanCompiler:
             for intent in intents
         ):
             raise _unobserved_close(entity)
+        view = entity_view(self._families, entity)
         ranged = settle_range(
             item,
             intents,
-            view=entity_view(self._families, entity),
+            view=view,
             shape=shape,
-            gated=self._gates(entity, preference),
+            read_key=_read_key(read_keys, entity, view, gated=self._gates(entity, preference)),
             # Reaching a surviving temporal write is what makes the attempt
             # capture its instant.
             instant=tx_instant.value(),
@@ -472,11 +466,10 @@ class WritePlanCompiler:
             payloads=self._payloads,
             guards=guards,
         )
-        evidence = item.source_evidence
-        if isinstance(ranged, DeferredTemporalRange):
-            return SettledWrite(source_evidence=evidence, deferred=ranged), ()
+        if isinstance(ranged, DeferredRange):
+            return ranged
         write = SettledWrite(
-            source_evidence=evidence,
+            source_evidence=item.source_evidence,
             changed=ranged.changed,
             removed=ranged.removed,
             opened=ranged.opened,
@@ -590,22 +583,29 @@ class WritePlanCompiler:
         tx_instant: TransactionInstant,
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
+        read_keys: _ReadKeys,
         *,
         guards: bool,
-    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
+    ) -> tuple[SettledWrite, tuple[PlannedStep, ...]] | DeferredRange:
         """A pending Bitemporal insertion and the writes it authorized since,
         settled as the one settled write of new lineages they leave of its window,
         together with any stored coverage a replacement it authorized reaches
         past that window (:func:`~parallax.core._execution._unit_work.ranges.settle_opening`):
         bound now, or deferred until execution reads that coverage."""
         entity = opening.target
+        view = entity_view(self._families, entity)
         ranged = settle_opening(
             opening,
-            view=entity_view(self._families, entity),
+            view=view,
             shape=shape,
-            # Only a replacement reaching past the opening reaches stored rows,
-            # whose closes the strategy gates.
-            gated=opening.beyond is not None and self._gates(entity, preference),
+            read_key=_read_key(
+                read_keys,
+                entity,
+                view,
+                # Only a replacement reaching past the opening reaches stored
+                # rows, whose closes the strategy gates.
+                gated=opening.beyond is not None and self._gates(entity, preference),
+            ),
             # Reaching a surviving temporal insert is what makes the attempt
             # capture its instant; every part's fresh start derives from that value.
             instant=tx_instant.value(),
@@ -614,11 +614,10 @@ class WritePlanCompiler:
             payloads=self._payloads,
             guards=guards,
         )
-        evidence = opening.source_evidence
-        if isinstance(ranged, DeferredTemporalRange):
-            return SettledWrite(source_evidence=evidence, deferred=ranged), ()
+        if isinstance(ranged, DeferredRange):
+            return ranged
         write = SettledWrite(
-            source_evidence=evidence,
+            source_evidence=opening.source_evidence,
             changed=ranged.changed,
             removed=ranged.removed,
             opened=ranged.opened,
@@ -681,70 +680,37 @@ def _group_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupK
     return tuple(keys)
 
 
-def _acquisition_candidate(
-    write: SettledWrite, item: OrderedWrite, families: InheritanceFacet
-) -> _AcquisitionCandidate | None:
-    """What ``write``'s deferred range shares a coverage read by, whatever its
-    temporal shape or verb, or ``None`` where it reads alone."""
-    deferred = write.deferred
-    if not isinstance(deferred, DeferredTemporalRange):
-        return None
-    meaning = deferred.meaning
-    (key,) = _group_keys(item, families)
-    return _AcquisitionCandidate(
-        meaning.facts.entity.identity, meaning.key_attribute, meaning.shared_lock, key
-    )
+def _read_key(
+    read_keys: _ReadKeys, entity: CompiledEntity, view: InheritanceEntityView, *, gated: bool
+) -> CoverageReadKey:
+    """The read key of ``entity``'s ranges, whose writes gate where ``gated``
+    and whose coverage reads otherwise take the shared row lock: the one
+    ``read_keys`` holds, or a new one it then holds."""
+    shared_lock = not gated
+    held = read_keys.get((entity.identity, shared_lock))
+    if held is None:
+        held = read_keys[entity.identity, shared_lock] = CoverageReadKey(
+            entity, view.primary_key.identity, shared_lock
+        )
+    return held
 
 
-def _acquisition_compatible(first: _AcquisitionCandidate, later: _AcquisitionCandidate) -> bool:
-    return (
-        first.entity == later.entity
-        and first.key_attribute == later.key_attribute
-        and first.shared_lock == later.shared_lock
-    )
-
-
-def _extend_run(
-    spans: list[AcquisitionSpan],
-    run: _AcquisitionRun | None,
-    position: int,
-    candidate: _AcquisitionCandidate | None,
-) -> _AcquisitionRun | None:
-    """The acquisition span open once the deferred write at plan entry
-    ``position`` joins it, or starts another where it cannot join ``run``: an
-    entry lies between them, the run is full, the write reads differently, or it writes an
-    object the run already does. A write that reads alone ends the run."""
-    if run is not None and (
-        candidate is None
-        or position != run.stop
-        or run.stop - run.start == _WRITES_PER_SPAN
-        or not _acquisition_compatible(run.first, candidate)
-        or candidate.key in run.keys
-    ):
-        _close_run(spans, run)
-        run = None
-    if candidate is None:
-        return None
-    if run is None:
-        return _AcquisitionRun(position, position + 1, candidate, {candidate.key})
-    run.stop = position + 1
-    run.keys.add(candidate.key)
-    return run
-
-
-def _close_run(spans: list[AcquisitionSpan], run: _AcquisitionRun | None) -> None:
-    if run is not None and run.stop - run.start > 1:
-        spans.append(AcquisitionSpan(run.start, run.stop))
+def _close_run(turns: list[WriteGroup | AcquisitionSpan], deferred: list[DeferredRange]) -> None:
+    """End the unbroken run of ``deferred`` writes: its acquisition spans are
+    the plan's next turns."""
+    if deferred:
+        turns.extend(form_spans(deferred))
+        deferred.clear()
 
 
 def _close_group(
-    entries: list[WriteGroup | SettledWrite],
+    turns: list[WriteGroup | AcquisitionSpan],
     members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]],
     held: set[_GroupKey],
     effect_shape: EffectShapeOf,
 ) -> None:
     if members:
-        entries.append(WriteGroup.from_members(members, effect_shape=effect_shape))
+        turns.append(WriteGroup.from_members(members, effect_shape=effect_shape))
     members.clear()
     held.clear()
 

@@ -17,6 +17,7 @@ from parallax.core.internal.temporal_read import TimeInterval
 __all__ = [
     "AcquireRows",
     "CompletionRequest",
+    "CoverageReadKey",
     "CoverageReadRequest",
     "CoverageTerm",
     "RetainedTargetState",
@@ -114,17 +115,41 @@ class CoverageTerm:
         return 1 if windows is None else len(windows)
 
 
-@dataclass(frozen=True, slots=True)
-class CoverageReadRequest:
-    """The current coverage deferred ranges bind to: every row each of
-    ``terms`` names, read whole, in one statement, under the shared row lock
-    when ``shared_lock``. Each row is returned whole however little of it a window
-    reaches, and the rows of several objects are told apart by their keys."""
+@dataclass(frozen=True, slots=True, eq=False)
+class CoverageReadKey:
+    """Which coverage read a deferred range's coverage is read by: of the
+    concrete ``entity``, by its family's ``key_attribute``, under the shared
+    row lock when ``shared_lock``.
+
+    Keys are equal when their Entities' identities, key Attributes, and lock
+    decisions are, whether or not they are one instance."""
 
     entity: CompiledEntity
     key_attribute: AttributeIdentity
-    terms: tuple[CoverageTerm, ...]
     shared_lock: bool
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CoverageReadKey):
+            return NotImplemented
+        return self is other or (
+            self.entity.identity == other.entity.identity
+            and self.key_attribute == other.key_attribute
+            and self.shared_lock == other.shared_lock
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.entity.identity, self.key_attribute, self.shared_lock))
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageReadRequest:
+    """The current coverage deferred ranges bind to: every row each of
+    ``terms`` names, read whole, in one statement, as ``read_key`` reads it.
+    Each row is returned whole however little of it a window reaches, and the
+    rows of several objects are told apart by their keys."""
+
+    read_key: CoverageReadKey
+    terms: tuple[CoverageTerm, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +246,12 @@ def consume_coverage(
     However it leaves, it drops the builder and its borrowed row and document
     references; only the returned evidence keeps what it adopted."""
     del root_count
-    evidence = _builder(selection, selection.position(request.key_attribute), absent, documents)
+    key_attribute = (
+        request.key_attribute
+        if isinstance(request, CompletionRequest)
+        else request.read_key.key_attribute
+    )
+    evidence = _builder(selection, selection.position(key_attribute), absent, documents)
     row: tuple[object, ...] | None = None
     try:
         for position, row in enumerate(rows):
@@ -249,7 +279,7 @@ def consume_coverage_by_key(
     the builders, the evidence it sealed, and its borrowed row and document
     references; only the returned evidence keeps what it adopted."""
     del root_count
-    key_position = selection.position(request.key_attribute)
+    key_position = selection.position(request.read_key.key_attribute)
     builders: dict[object, PredecessorRowsBuilder] = {}
     evidence: dict[ManagedValue, PredecessorRows] = {}
     builder: PredecessorRowsBuilder | None = None

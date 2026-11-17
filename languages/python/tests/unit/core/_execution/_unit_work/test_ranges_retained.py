@@ -13,19 +13,19 @@ import pytest
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition import (
+from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadRequest,
     RetainedTargetState,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._construction_input import ABSENT
@@ -36,7 +36,12 @@ from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import WritePlanningRequest
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    deferred_ranges,
+    settled_writes,
+)
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
@@ -83,9 +88,9 @@ def _holding(item: TargetWrite, state: RetainedTargetState) -> TargetWrite:
     return dataclasses.replace(item, retained=state)
 
 
-def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWrite:
+def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> WritePlan:
     buffered = admitted_writes(POSITION, list(writes))
-    plan = build_write_planner(bound_model(POSITION)).finalize(
+    return build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
@@ -93,13 +98,10 @@ def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWri
             composed_writes=tuple(buffered),
         )
     )
-    (write,) = settled_writes(plan)
-    return write
 
 
-def _settled(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWrite:
-    settled = _planned(*writes, concurrency=concurrency)
-    assert isinstance(settled.deferred, DeferredTemporalRange)
+def _settled(*writes: AdmittedWrite, concurrency: str = "locking") -> DeferredRange:
+    (settled,) = deferred_ranges(_planned(*writes, concurrency=concurrency))
     return settled
 
 
@@ -109,7 +111,7 @@ def _always(state: ObjectStateKey, read_at: int) -> bool:
 
 
 def _bind(
-    settled: SettledWrite,
+    settled: DeferredRange,
     stored: Sequence[PredecessorRow],
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,
@@ -209,11 +211,12 @@ def test_a_retained_row_is_completed_as_one_original_beside_an_observed_one() ->
 def test_a_range_bound_at_planning_releases_the_row_it_retained() -> None:
     whole = rectangle(JAN, INFINITY, "100.00")
     state = _held(whole)
-    settled = _planned(
+    plan = _planned(
         observed_write("amendUntil", retained(whole), valid_from=MAR, until=APR, value="150.00"),
         _holding(addressed_write(valid_from=APR, until=MAY, value="175.00"), state),
     )
-    assert settled.deferred is None
+    assert len(settled_writes(plan)) == 1
+    assert not deferred_ranges(plan)
     assert state.take() is None
 
 
@@ -240,8 +243,6 @@ def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> N
         POSITION,
         alone(settled),
         acquire,
-        start=0,
-        stop=1,
         transaction_instant=_INSTANT,
         current=_always,
     )

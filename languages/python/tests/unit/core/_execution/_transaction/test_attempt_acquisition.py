@@ -27,19 +27,20 @@ from parallax.core import (
 )
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
-from parallax.core._execution._unit_work.acquisition import (
-    CompletionRequest,
-    CoverageReadRequest,
-    CoverageTerm,
-    RowConsumer,
-    TargetReadRequest,
-    consume_target,
-)
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
+)
+from parallax.core._execution._unit_work.row_acquisition import (
+    CompletionRequest,
+    CoverageReadKey,
+    CoverageReadRequest,
+    CoverageTerm,
+    RowConsumer,
+    TargetReadRequest,
+    consume_target,
 )
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
@@ -640,10 +641,8 @@ def test_a_completed_retained_row_is_judged_as_a_coverage_read_judges_it(
 
     def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
-            metadata,
-            key_attribute,
+            CoverageReadKey(metadata, key_attribute, shared_lock=True),
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         count, retained, document = tx.uow.acquire_rows(
@@ -674,10 +673,8 @@ def test_a_non_object_structured_column_is_refused_alike_by_a_retaining_read() -
 
     def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
-            metadata,
-            key_attribute,
+            CoverageReadKey(metadata, key_attribute, shared_lock=True),
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         seen.append(
@@ -814,10 +811,8 @@ def test_a_retaining_read_judges_a_top_level_collection_as_a_coverage_read_judge
 
     def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
-            metadata,
-            key_attribute,
+            CoverageReadKey(metadata, key_attribute, shared_lock=True),
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            shared_lock=True,
         )
         seen.append(_judged(lambda: tx.uow.acquire_rows(coverage, _member_rows)))
         seen.append(
@@ -1334,10 +1329,8 @@ def test_a_coverage_read_of_a_family_member_reads_its_complete_predecessor(
 
     def fn(tx: TxnAttempt) -> None:
         coverage = CoverageReadRequest(
-            metadata,
-            key_attribute,
+            CoverageReadKey(metadata, key_attribute, shared_lock=True),
             (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
-            shared_lock=True,
         )
         seen.append(tx.uow.acquire_rows(coverage, _rows_and_documents))
 

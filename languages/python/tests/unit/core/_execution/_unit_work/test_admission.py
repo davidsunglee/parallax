@@ -21,7 +21,6 @@ from parallax.core._execution._unit_work._write_ownership import (
     NO_INSERTION_AUTHORITY,
     KeyedWriteRefusalAdvice,
 )
-from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.claims import WriteIntent
 from parallax.core._execution._unit_work.evidence import (
@@ -34,6 +33,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,

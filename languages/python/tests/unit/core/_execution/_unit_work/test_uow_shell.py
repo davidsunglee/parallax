@@ -37,12 +37,6 @@ from parallax.core._execution._unit_work._write_ownership import (
     INSERTION_AUTHORITY_INVALID,
     NO_INSERTION_AUTHORITY,
 )
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    CoverageReadRequest,
-    RowRequest,
-    TargetReadRequest,
-)
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -51,6 +45,12 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
     prepare_typed_write,
     prepare_wire_write,
+)
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowRequest,
+    TargetReadRequest,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import OpenFlush
