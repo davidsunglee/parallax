@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, assert_never, cast
+from typing import Final, Literal, cast
 
 from parallax.core.internal.base import STRING, InternalError, ManagedValue, NeutralType
 from parallax.core.internal.dialect import ArrayBind, Dialect, ScalarResult
@@ -494,8 +494,6 @@ def _render(
             return _render_presence(predicate, plan, lexical, path, scope)
         case ResolvedNarrow():
             return _render_narrow(predicate, plan, lexical, path, scope)
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(predicate)
 
 
 def _term(
@@ -591,8 +589,6 @@ def _render_operation(
         case ResolvedNullCheck(op=tag):
             column = subject.extraction
             return f"{column} is null" if tag == "isNull" else f"not {column} is null"
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(operation)
 
 
 def _subject_reached_by(
@@ -966,7 +962,6 @@ def _affix_pattern(kind: _AffixOp, value: str) -> str:
         return f"%{escaped}"
     if kind == "contains":
         return f"%{escaped}%"
-    assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
 # --------------------------------------------------------------------------- #

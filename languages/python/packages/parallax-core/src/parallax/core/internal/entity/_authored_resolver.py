@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, assert_never, cast
+from typing import Any, cast
 
 from parallax.core.internal.base import ManagedValue, NeutralType, UsageError
 from parallax.core.internal.entity._declaration import shape_of, wire_names_of
@@ -285,8 +285,6 @@ class _Resolver:
                     frame=frame,
                     operand=None if operand is None else lambda inner: self.walk(operand, inner),
                 )
-            case _:  # pragma: no cover - exhaustiveness guard
-                assert_never(authored)
 
     def export(self, authored: AuthoredPredicate, frame: PredicateFrame) -> PredicateNode:  # noqa: C901 - exhaustive dispatcher
         """``authored``'s canonical node in ``frame``, judged as :meth:`walk`
@@ -326,8 +324,6 @@ class _Resolver:
                 exported, inner = self._exported_within(operand)
                 resolve_narrow(to, path, model=model, frame=frame, operand=inner)
                 return Narrow(to=to, operand=exported[0] if exported else TrueNode(), path=path)
-            case _:  # pragma: no cover - exhaustiveness guard
-                assert_never(authored)
 
     def _exported_within(
         self, authored: AuthoredPredicate | None

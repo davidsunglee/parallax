@@ -22,5 +22,6 @@
     "build"
   ],
   "reportMissingTypeStubs": "error",
-  "reportUnnecessaryTypeIgnoreComment": "error"
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "reportUnreachable": "error"
 }

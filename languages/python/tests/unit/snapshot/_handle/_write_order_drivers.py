@@ -45,7 +45,7 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
-from parallax.core import DomainModel, ParallaxError, Predicate
+from parallax.core import DomainModel, ParallaxError
 from parallax.core.internal import object_query
 from parallax.core.internal.base import SQL_NULL, DocumentValue, StructuredDocument
 from parallax.core.internal.db_port import MappingRow
@@ -55,6 +55,7 @@ from parallax.core.internal.entity._expressions import (
     AttributeRef,
     AuthoredMemberPath,
     UnfinishedOperation,
+    authored_predicate,
 )
 from parallax.core.internal.object_query._fluent import ObjectQuery
 from parallax.core.internal.predicate._interpretation import COMPARE
@@ -1413,10 +1414,6 @@ def _call_typed(tx: TxnContext, scenario: KeyedWriteScenario, value: EntityBase)
             tx.terminate(value)
         case "bounded_terminate":
             tx.terminate(value, until=_source_until(scenario))
-        case _:
-            # Every `Verb` is spelled above; a verb added to one lane and not the
-            # other would otherwise write nothing and read as an agreed no-op.
-            raise AssertionError(f"no {scenario.verb} in this lane")
 
 
 def _wire(tx: TxnContext, scenario: KeyedWriteScenario, prior: object | None) -> None:
@@ -1480,10 +1477,6 @@ def _call_wire(
             tx.wire.terminate(observed)
         case "bounded_terminate":
             tx.wire.terminate(observed, until=_source_until(scenario))
-        case _:
-            # Every `Verb` is spelled above; a verb added to one lane and not the
-            # other would otherwise write nothing and read as an agreed no-op.
-            raise AssertionError(f"no {scenario.verb} in this lane")
 
 
 def _wire_payload(scenario: KeyedWriteScenario, source: object) -> Mapping[str, object]:
@@ -1608,7 +1601,7 @@ def _typed_query(scenario: PredicateWriteScenario) -> ObjectQuery[EntityBase, En
         case "unbound":
             path = AuthoredMemberPath(entity.identity, ("missing",), unfinished=True)
             return entity.where(
-                Predicate(UnfinishedOperation(path, COMPARE["eq"], (_PREDICATE_KEY,)))
+                authored_predicate(UnfinishedOperation(path, COMPARE["eq"], (_PREDICATE_KEY,)))
             )
         case "unshaped":
             return entity.where(key == _PREDICATE_KEY).limit(1)

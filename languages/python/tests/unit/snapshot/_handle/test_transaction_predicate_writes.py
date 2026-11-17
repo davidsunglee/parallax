@@ -55,7 +55,11 @@ from parallax.core.internal.document_codec import (
 )
 from parallax.core.internal.entity._authored_resolver import typed_predicate_interpretation
 from parallax.core.internal.entity._construction_input import ABSENT
-from parallax.core.internal.entity._expressions import AuthoredMemberPath, UnfinishedOperation
+from parallax.core.internal.entity._expressions import (
+    AuthoredMemberPath,
+    UnfinishedOperation,
+    authored_predicate,
+)
 from parallax.core.internal.entity._layout import LayoutCatalog
 from parallax.core.internal.entity._model import DomainModel as _Fixed
 from parallax.core.internal.entity._model import class_index, model_of
@@ -255,7 +259,7 @@ def _classless(model: DomainModel) -> DomainModel:
 
 def _unfinished(entity: type[Entity], *names: str, operands: tuple[object, ...]) -> Predicate[Any]:
     path = AuthoredMemberPath(entity.identity, names, unfinished=True)
-    return Predicate(UnfinishedOperation(path, COMPARE["eq"], operands))
+    return authored_predicate(UnfinishedOperation(path, COMPARE["eq"], operands))
 
 
 def _amended(model: DomainModel | ServingModel, predicate: Predicate[Any]) -> ScriptedAdapter:

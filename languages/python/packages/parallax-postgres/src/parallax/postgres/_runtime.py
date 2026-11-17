@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_port import (
@@ -123,7 +123,7 @@ class PostgresRuntime:
 
     def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         """Bind execution under ``authorization`` without acquiring."""
-        if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the public boundary
+        if not isinstance(cast("object", authorization), PostgresRole):
             raise UsageError(
                 AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
             )

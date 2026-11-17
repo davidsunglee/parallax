@@ -89,7 +89,7 @@ def served_model(
                 "a ServingModel's selections carry their own binding; connect it without binding=",
             )
         serving = model
-    elif not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif not isinstance(cast("object", model), DomainModel):
         raise UsageError(SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED, refusal)
     else:
         placement = require_binding(binding, "connect")

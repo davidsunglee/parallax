@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Final, NoReturn
+from typing import Final, NoReturn, cast
 
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_planner import WritePlanner
@@ -53,7 +53,7 @@ def check_edition(edition: str, /) -> str:
     ordered, or read for chronology, so the one thing to check is that there is
     a token at all.
     """
-    if not isinstance(edition, str):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
+    if not isinstance(cast("object", edition), str):
         raise ValueError(f"a Model Edition is a nonempty string, not {edition!r}")
     if not edition:
         raise ValueError("a Model Edition is a nonempty string; the empty string names nothing")
@@ -267,7 +267,7 @@ class ServingModel:
     __slots__ = ("_lock", "_selection")
 
     def __init__(self, initial: ModelSelection) -> None:
-        if not isinstance(initial, ModelSelection):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
+        if not isinstance(cast("object", initial), ModelSelection):
             raise TypeError(f"a ServingModel holds a prepared ModelSelection, not {initial!r}")
         self._lock = threading.Lock()
         self._selection = initial
@@ -293,7 +293,7 @@ class ServingModel:
         :class:`PublicationConflictError` when the held selection is not
         ``expected`` by identity; the error carries what was actually held.
         """
-        if not isinstance(candidate, ModelSelection):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
+        if not isinstance(cast("object", candidate), ModelSelection):
             raise TypeError(
                 f"a ServingModel publishes a prepared ModelSelection, not {candidate!r}"
             )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol, assert_never, cast
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core.internal.base import (
     INFINITY,
@@ -551,8 +551,6 @@ def _selection_sources(
             return coordinate, coordinate
         case ResolvedRangeSelection():
             return (("temporal", dimension, "end"), ("temporal", dimension, "start"))
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(selection)
 
 
 def _sourced_selection_terms(

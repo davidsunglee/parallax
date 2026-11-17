@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Literal, assert_never, cast
+from typing import Final, Literal, cast
 
 from parallax.core.internal import inheritance, relationship
 from parallax.core.internal.base import ManagedValue, NeutralType, String, UsageError
@@ -82,6 +82,7 @@ from parallax.core.internal.predicate._resolved import (
     ScalarCollection,
     SubjectPosition,
 )
+from parallax.core.internal.predicate.serde import PREDICATE_DOCUMENT_INVALID
 from parallax.core.internal.relationship import RelationshipMetadata
 from parallax.core.internal.wire import WireValue, decode_wire, located_refusal
 
@@ -241,11 +242,13 @@ def root_frame(root: CompiledEntity, position: PositionScope) -> EntityFrame:
 
 
 def _walk(op: PredicateNode, model: Metamodel, frame: PredicateFrame) -> ResolvedPredicate:
-    match op:
+    match cast("object", op):
         case TrueNode() | FalseNode():
             return ResolvedConstant(isinstance(op, TrueNode))
-        case Comparison() | Range() | Membership() | StringMatch() | NullCheck():
-            return resolve_operation(*_operation(op), _decoded_operands, model=model, frame=frame)
+        case (Comparison() | Range() | Membership() | StringMatch() | NullCheck()) as operation:
+            return resolve_operation(
+                *_operation(operation), _decoded_operands, model=model, frame=frame
+            )
         case And(operands=operands) | Or(operands=operands):
             children = tuple(_walk(operand, model, frame) for operand in operands)
             return ResolvedAnd(children) if isinstance(op, And) else ResolvedOr(children)
@@ -280,8 +283,11 @@ def _walk(op: PredicateNode, model: Metamodel, frame: PredicateFrame) -> Resolve
                     else lambda inner: _walk(operand, model, inner)
                 ),
             )
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
+        case _:
+            raise UsageError(
+                PREDICATE_DOCUMENT_INVALID,
+                f"predicate node must be a canonical Predicate node, got {type(op).__name__}",
+            )
 
 
 def _operation(
@@ -298,8 +304,6 @@ def _operation(
             return subject, Match(tag, bool(folded)), (value,)
         case NullCheck(op=tag, subject=subject):
             return subject, NULL_TEST[tag], ()
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(op)
 
 
 def resolve_operation(
@@ -504,8 +508,6 @@ def _judged(
         case NullTest(op=tag):
             _require_nullable_null_check(subject, member.nullable)
             return ResolvedNullCheck(tag, member, cast("ObjectPosition", position))
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(operator)
 
 
 def adopted_operands(prepared_type: NeutralType) -> OperandAdmission:
@@ -667,8 +669,6 @@ def _resolve_path(path: str, frame: PredicateFrame, model: Metamodel) -> _Termin
                 f"{path!r} names a field, but a scalar-collection quantifier binds a scalar "
                 "with no fields; read the element without a path"
             )
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(frame)
 
 
 def _walk_entity(

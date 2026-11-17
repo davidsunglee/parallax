@@ -71,7 +71,7 @@ the roots of one Page."""
 
 def check_sharing_scope(sharing_scope: SharingScope) -> None:
     """Refuse anything but a :data:`SharingScope` at the call that named it."""
-    if sharing_scope not in ("root", "page"):
+    if cast("object", sharing_scope) not in ("root", "page"):
         raise ValueError(f"sharing_scope requires 'root' or 'page' (got {sharing_scope!r})")
 
 

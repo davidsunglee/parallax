@@ -5,7 +5,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Final, Literal, NamedTuple, Protocol, assert_never
+from typing import Final, Literal, NamedTuple, Protocol
 
 from parallax.core.internal import concurrency, continuation, inheritance, read_planning
 from parallax.core.internal.concurrency import ConcurrencyFacet, ConcurrencyPreference
@@ -481,8 +481,6 @@ def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exha
                 _position_key(position),
                 None if where is None else _predicate_key(where),
             )
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(predicate)
 
 
 def _position_key(position: SubjectPosition) -> object:
@@ -507,8 +505,6 @@ def _temporal_key(selection: ResolvedTemporalSelection) -> object:
             return ResolvedAsOfSelection, axis.dimension, _operand_key(coordinate)
         case ResolvedRangeSelection(axis=axis, start=start, end=end):
             return ResolvedRangeSelection, axis.dimension, _operand_key(start), _operand_key(end)
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(selection)
 
 
 def repeating_levels(

@@ -1605,14 +1605,15 @@ def _domain_parent(cls_name: str, bases: tuple[type, ...]) -> type | None:
 
 
 def _container(cls_name: str, header: EntityHeader) -> StorageContainer | None:
-    if header.table is None:
+    table = header.table
+    if table is None:
         return None
-    if not isinstance(header.table, str) or not header.table:
+    if not isinstance(table, str) or not table:
         raise UsageError(
             ENTITY_HEADER_INVALID_VALUE,
-            f"{cls_name}: table= takes a nonempty string, got {header.table!r}",
+            f"{cls_name}: table= takes a nonempty string, got {table!r}",
         )
-    return Table(header.table)
+    return Table(table)
 
 
 def _persistence(cls_name: str, header: EntityHeader) -> PersistenceMode | None:
@@ -1656,25 +1657,27 @@ def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
 
 
 def _entity_name(cls_name: str, header: EntityHeader) -> str:
-    if header.name is None:
+    name = header.name
+    if name is None:
         return cls_name
-    if not isinstance(header.name, str) or not header.name or "." in header.name:
+    if not isinstance(name, str) or not name or "." in name:
         raise UsageError(
             ENTITY_HEADER_INVALID_VALUE,
-            f"{cls_name}: name= takes a nonempty dot-free string, got {header.name!r}",
+            f"{cls_name}: name= takes a nonempty dot-free string, got {name!r}",
         )
-    return header.name
+    return name
 
 
 def _namespace(cls_name: str, header: EntityHeader) -> str | None:
-    if header.namespace is None:
+    namespace = header.namespace
+    if namespace is None:
         return None
-    if not isinstance(header.namespace, str) or not header.namespace:
+    if not isinstance(namespace, str) or not namespace:
         raise UsageError(
             ENTITY_HEADER_INVALID_VALUE,
-            f"{cls_name}: namespace= takes a nonempty string, got {header.namespace!r}",
+            f"{cls_name}: namespace= takes a nonempty string, got {namespace!r}",
         )
-    return header.namespace
+    return namespace
 
 
 def _inheritance_role(
@@ -1716,7 +1719,8 @@ def _inheritance_role(
                 f"{cls_name}: a subtype role needs a domain Entity parent; subclass the "
                 "family's root",
             )
-        if role is None and header.table is None:
+        table = header.table
+        if role is None and table is None:
             raise UsageError(
                 ENTITY_HEADER_MISSING_OPTION, f"{cls_name}: a standalone Entity declares table="
             )
@@ -2036,13 +2040,14 @@ def _entity_reference(shape: _Shape, where: str) -> EntityReference:
     relative to the declaring Entity's namespace. Resolution never consults
     module globals — the composed candidate set is the only scope.
     """
-    if shape.base is not None:
-        if not isinstance(shape.base, type) or _DECLARATION not in shape.base.__dict__:
+    base = shape.base
+    if base is not None:
+        if not isinstance(base, type) or _DECLARATION not in base.__dict__:
             raise UsageError(
                 ENTITY_ANNOTATION_INVALID,
                 f"{where}: a relationship target is an Entity Class or its name",
             )
-        return ExactEntityReference(declaration_of(shape.base).identity)
+        return ExactEntityReference(declaration_of(base).identity)
     namespace, dot, name = (shape.spelling or "").rpartition(".")
     if not name:
         raise UsageError(

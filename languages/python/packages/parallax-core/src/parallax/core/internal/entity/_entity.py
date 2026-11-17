@@ -42,6 +42,7 @@ from parallax.core.internal.entity._expressions import (
     AuthoredQuery,
     MemberValidator,
     Predicate,
+    authored_predicate,
     conjoin,
     judged_edit_violation,
     member_location,
@@ -536,7 +537,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         outside the position keeps only its preflight rejection
         (``narrow-outside-position``).
         """
-        return Predicate(
+        return authored_predicate(
             AuthoredNarrow(
                 subtype_selection(
                     tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
