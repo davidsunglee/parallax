@@ -276,7 +276,7 @@ class WireTargetWriteAdapter:
     Inert when constructed. Once :meth:`write_input` is asked, the addressing
     and the document's own shape are judged; the attempt's canonical
     instruction then refuses a reserved observation key, and preparation
-    judges the target, the window, the revision, and the payload.
+    judges the target, the key, the window, the revision, and the payload.
     """
 
     __slots__ = ("_document", "_target")

@@ -631,8 +631,8 @@ def test_what_a_representation_captures_is_judged_before_the_window(row: _Row) -
 
 
 # --------------------------------------------------------------------------- #
-# A key stated as null names no object: preparation refuses it once the       #
-# target resolves, after a stated start and ahead of the window, the          #
+# A key omitted or stated as null names no object: preparation refuses it     #
+# once the target resolves, after a stated start and ahead of the window, the #
 # revision, and the payload, and before a Locking call acquires anything.     #
 # --------------------------------------------------------------------------- #
 def _null_key(entity: str) -> _Expected:
@@ -643,7 +643,17 @@ def _null_key(entity: str) -> _Expected:
     )
 
 
-_NULL_KEY: Final[tuple[_Row, ...]] = (
+def _absent_key(entity: str, verb: str) -> _Expected:
+    return _refused(
+        UsageError,
+        f"parallax.compatibility.{entity}: `{verb}` addresses the object a value's key names, "
+        "and this value has no key; insert it to give it one, and write the value the insert "
+        "answers",
+        code="write-key-absent",
+    )
+
+
+_UNADDRESSED: Final[tuple[_Row, ...]] = (
     _Row(TargetWriteScenario(_ACCOUNT, "amend", payload="null_key"), _both(_null_key("Account"))),
     _Row(
         TargetWriteScenario(
@@ -680,11 +690,35 @@ _NULL_KEY: Final[tuple[_Row, ...]] = (
         ),
         _both(_null_key("Balance")),
     ),
+    _Row(
+        TargetWriteScenario(_ACCOUNT, "amend", payload="absent_key"),
+        _wire(_absent_key("Account", "amend")),
+    ),
+    _Row(
+        TargetWriteScenario(
+            _ACCOUNT, "amend", until="stated", revision="omitted", payload="absent_key"
+        ),
+        _wire(_absent_key("Account", "amendUntil")),
+    ),
+    _Row(
+        TargetWriteScenario(_ACCOUNT, "terminate", revision="none", payload="absent_key"),
+        _wire(_absent_key("Account", "terminate")),
+    ),
+    _Row(
+        TargetWriteScenario(_POSITION, "replace", valid_from="none", payload="absent_key"),
+        _wire(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
+    ),
+    _Row(
+        TargetWriteScenario(
+            _BALANCE, "replace", revision="misstated", payload="absent_key", concurrency="locking"
+        ),
+        _wire(_absent_key("Balance", "replace")),
+    ),
 )
 
 
-@pytest.mark.parametrize("row", _NULL_KEY, ids=str)
-def test_a_null_key_is_refused_once_the_target_resolves(row: _Row) -> None:
+@pytest.mark.parametrize("row", _UNADDRESSED, ids=str)
+def test_a_key_naming_no_object_is_refused_once_the_target_resolves(row: _Row) -> None:
     _assert_row(row)
 
 

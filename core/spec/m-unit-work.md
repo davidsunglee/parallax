@@ -296,9 +296,10 @@ developer-facing mismatch errors. The policy follows from the ingress, never fro
 the runtime carrier a value arrives in.
 
 A target instruction is judged in its own fixed order: its target,
-verb, and window first, as above, except that a key stated as null names no
-object and is refused as `write-required-attribute-missing` (`m-pk-gen`) once
-the target is admitted and before its verb is weighed; then its revision
+verb, and window first, as above, except that a key it omits or states as null
+names no object and is refused — omitted as `write-key-absent`, null as
+`write-required-attribute-missing` (`m-pk-gen`) — once the target is admitted
+and before its verb is weighed; then its revision
 arguments against the target's revision kind — an unversioned Non-Temporal
 target, which has no revision kind, is refused before any argument is weighed,
 and otherwise stating both is refused first, then a misstated kind, then a
@@ -535,11 +536,12 @@ no authority. The answered value carries the allocated key and the insertion's
 authority; the draft is left as it was and carries none, so each insert of it
 allocates afresh.
 
-Every other keyed verb, and every target write, refuses a keyless draft as
-`write-key-absent` before anything else about it is judged — its provenance, its
-verb and window, and its payload — so no refusal of it spends a key. A
-predicate-selected write states no value and names no object, so it never
-allocates.
+Every other keyed verb refuses a keyless draft as `write-key-absent` before
+anything else about it is judged — its provenance, its verb and window, and its
+payload — so no refusal of it spends a key. A target write refuses one as it
+refuses any key it omits, once its target admits the write (*Serialized write
+elaboration*). A predicate-selected write states no value and names no object,
+so it never allocates.
 
 ### Current-attempt source admission
 

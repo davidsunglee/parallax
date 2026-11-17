@@ -377,18 +377,9 @@ _KEYLESS_WRITES: dict[str, Callable[[TxnContext, ColumnsTicket], object]] = {
         _name(ColumnsTicket), {"label": "x"}, version=1
     ),
     "wire.delete_if": lambda tx, _draft: tx.wire.delete_if(_name(ColumnsTicket), {}, version=1),
-    # Absence outranks the payload and the window each call also gets wrong.
+    # Absence outranks the second author the call also states.
     "amend-two-authors": lambda tx, draft: tx.amend(
         draft.edit(label="edited"), ColumnsTicket.label.set("other")
-    ),
-    "replace_if-none-start": lambda tx, draft: tx.replace_if(
-        draft, version=1, valid_from=_NO_START
-    ),
-    "wire.replace_if-none-start": lambda tx, _draft: tx.wire.replace_if(
-        _name(ColumnsTicket), {"label": "x"}, version=1, valid_from=_NO_START
-    ),
-    "wire.amend_if-observation-key": lambda tx, _draft: tx.wire.amend_if(
-        _name(ColumnsTicket), {"label": "x", "observedVersion": 1}, version=1
     ),
 }
 
@@ -407,6 +398,44 @@ def test_every_verb_but_insert_refuses_a_keyless_draft_and_reserves_nothing(
     assert events.reservations() == 0
     assert ("acquisition", "None") not in events.take()
     assert db.transact(lambda tx: tx.insert(draft).id) == 1
+
+
+# A target write's key is judged in preparation, so what its ingress refuses
+# without the model is heard ahead of the keyless draft.
+_AHEAD_OF_A_TARGET_KEY: dict[str, tuple[Callable[[TxnContext, ColumnsTicket], object], str]] = {
+    "replace_if-none-start": (
+        lambda tx, draft: tx.replace_if(draft, version=1, valid_from=_NO_START),
+        "valid_from=None",
+    ),
+    "wire.replace_if-none-start": (
+        lambda tx, _draft: tx.wire.replace_if(
+            _name(ColumnsTicket), {"label": "x"}, version=1, valid_from=_NO_START
+        ),
+        "valid_from=None",
+    ),
+    "wire.amend_if-observation-key": (
+        lambda tx, _draft: tx.wire.amend_if(
+            _name(ColumnsTicket), {"label": "x", "observedVersion": 1}, version=1
+        ),
+        "observation control key",
+    ),
+}
+
+
+@pytest.mark.parametrize("verb", list(_AHEAD_OF_A_TARGET_KEY))
+def test_a_model_free_target_refusal_outranks_a_keyless_draft_and_reserves_nothing(
+    profile_run: Any, verb: str
+) -> None:
+    events = _Events()
+    db = _db(profile_run, events)
+    draft = ColumnsTicket(label="keyless")
+    write, match = _AHEAD_OF_A_TARGET_KEY[verb]
+
+    with raises_code(UsageError, "write-instruction-invalid", match=match):
+        db.transact(lambda tx: write(tx, draft))
+
+    assert events.reservations() == 0
+    assert ("acquisition", "None") not in events.take()
 
 
 _REFUSED_OPENINGS: dict[str, Callable[[TxnContext], object]] = {

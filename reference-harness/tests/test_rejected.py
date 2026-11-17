@@ -1263,8 +1263,11 @@ def test_a_target_instruction_to_a_read_only_family_is_refused_first(
     run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
 
 
-def test_a_null_target_key_to_a_read_only_family_is_refused_as_read_only() -> None:
-    write = {"mutation": "amend", "entity": "Magazine", "row": {"id": None}, "ifVersion": 1}
+@pytest.mark.parametrize("row", [{"id": None}, {"title": "t"}], ids=["null-key", "absent-key"])
+def test_a_target_key_naming_no_object_to_a_read_only_family_is_refused_as_read_only(
+    row: dict[str, Any],
+) -> None:
+    write = {"mutation": "amend", "entity": "Magazine", "row": row, "ifVersion": 1}
     run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
 
 
@@ -1309,6 +1312,10 @@ def test_a_read_write_target_instruction_accepted_fails_the_rejected_case() -> N
         ),
         ({"mutation": "terminate", "entity": "Car", "row": {"id": 1}, "ifVersion": 1}, "no `"),
         (
+            {"mutation": "terminate", "entity": "Car", "row": {"doors": 4}, "ifVersion": 1},
+            "states every primary-key member",
+        ),
+        (
             {"mutation": "amend", "entity": "Car", "row": {"id": 1, "bogus": 1}, "ifVersion": 1},
             "names no assignable",
         ),
@@ -1318,6 +1325,7 @@ def test_a_read_write_target_instruction_accepted_fails_the_rejected_case() -> N
     ids=[
         "misstated-revision",
         "inapplicable-verb",
+        "absent-key-before-inapplicable-verb",
         "undeclared-member",
         "non-object-row",
         "entity",
