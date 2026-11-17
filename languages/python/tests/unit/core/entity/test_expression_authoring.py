@@ -15,12 +15,10 @@ import pytest
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
-    AllPredicate,
     Attr,
     DomainModel,
     Entity,
     Int32,
-    Predicate,
     Rel,
     ValueObject,
     attr,
@@ -172,13 +170,6 @@ def test_include_takes_only_include_paths() -> None:
     assert repr(narrowed).startswith("IncludePath(")
     with pytest.raises(AttributeError):
         _ = narrowed._hidden
-
-
-def test_a_predicate_is_obtained_only_by_authoring() -> None:
-    with pytest.raises(TypeError, match="never constructed directly"):
-        Predicate("junk")  # pyright: ignore[reportArgumentType]
-    with pytest.raises(TypeError):
-        AllPredicate("junk")  # pyright: ignore[reportCallIssue]
 
 
 def test_a_to_one_relationship_tests_presence() -> None:

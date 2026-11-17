@@ -703,8 +703,7 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
 
     The cases stay flat. Exhaustiveness is proved by subtracting matched members
     from the union, and a nested subpattern subtracts nothing, so folding an
-    outcome match into a case here would turn the guards below into runtime
-    branches.
+    outcome match into a case here would leave the match unprovably exhaustive.
     """
     match event:
         case (

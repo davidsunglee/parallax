@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Literal, cast
+from typing import Final, Literal, cast, get_args
 
 from parallax.core.internal import inheritance, relationship
 from parallax.core.internal.base import ManagedValue, NeutralType, String, UsageError
@@ -56,6 +56,7 @@ from parallax.core.internal.predicate._nodes import (
     Range,
     ScalarSubject,
     StringMatch,
+    StringOp,
     TrueNode,
 )
 from parallax.core.internal.predicate._resolved import (
@@ -170,6 +171,8 @@ STRING_PREDICATE_NON_STRING_MEMBER: Final = "string-predicate-non-string-member"
 SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE: Final = "subtype-attribute-outside-narrow-scope"
 SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE: Final = "subtype-selection-duplicate-alternative"
 SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES: Final = "subtype-selection-overlapping-alternatives"
+
+_STRING_OPS: Final[frozenset[str]] = frozenset(get_args(StringOp))
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +304,8 @@ def _operation(
         case Membership(op=tag, subject=subject, values=values):
             return subject, MEMBER_OF[tag], values
         case StringMatch(op=tag, subject=subject, value=value, case_insensitive=folded):
+            if tag not in _STRING_OPS:
+                raise UsageError(PREDICATE_DOCUMENT_INVALID, f"unknown predicate node {tag!r}")
             return subject, Match(tag, bool(folded)), (value,)
         case NullCheck(op=tag, subject=subject):
             return subject, NULL_TEST[tag], ()
