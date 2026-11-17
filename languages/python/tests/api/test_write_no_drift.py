@@ -833,6 +833,14 @@ REJECTED_READ_ONLY_WRITES: dict[str, tuple[str, Callable[[TxnContext], object]]]
         "read-only-inheritance",
         lambda tx: tx.amend_if(Magazine, Magazine.title.set("Spring issue"), key=1, version=1),
     ),
+    "m-unit-work-096": (
+        "read-only-inheritance",
+        lambda tx: tx.wire.amend_if("Magazine", {"title": "Spring issue"}, version=1),
+    ),
+    "m-unit-work-097": (
+        "read-only-inheritance",
+        lambda tx: tx.amend_if(Magazine, Magazine.title.set("Spring issue"), key=None, version=1),
+    ),
     "m-unit-work-069": (
         "scalars",
         lambda tx: tx.amend_where(ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)),

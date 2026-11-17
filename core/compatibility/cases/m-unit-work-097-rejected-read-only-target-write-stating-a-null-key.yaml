@@ -1,0 +1,12 @@
+# In a ReadWrite family this amendment is refused `write-required-attribute-missing`.
+model: models/read-only-inheritance.yaml
+tags: [m-unit-work, write, rejected, read-only, target-write, inheritance, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Magazine
+    row: { id: null, title: Spring issue }
+    ifVersion: 1
+then:
+  rejectedRule: read-only-write-target
