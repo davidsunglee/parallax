@@ -348,7 +348,6 @@ def test_a_read_fetches_its_resolved_demand_whatever_its_result_form(
     assert row.document_reads == tuple(select.document_reads)
     assert _selected(row) == _fetched(shape, demand)
     assert row.projection.observe_structured_document is demand.observe
-    assert tuple(identity.name for identity in row.resolved_position) == shape.position
 
     for compiled in (row, instance):
         assert _shared_mapping(compiled) == _shared(shape, demand)
@@ -378,7 +377,6 @@ def test_an_abstract_target_narrowed_to_one_concrete_still_projects_its_discrimi
     )
     binds = ("hex", "left") if layout == "columns" else ("left",)
     assert narrowed.statement.binds == concrete.statement.binds == binds
-    assert narrowed.resolved_position == concrete.resolved_position == (left.identity,)
 
 
 # --------------------------------------------------------------------------- #

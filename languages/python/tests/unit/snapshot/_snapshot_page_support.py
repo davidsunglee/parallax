@@ -79,7 +79,6 @@ from tests.unit._root_publication_support import RootObservation, observed_roots
 __all__ = [
     "ConversionCalls",
     "PageFixture",
-    "RecordingObserver",
     "documents_of",
     "driver_row",
     "identity_of",
@@ -183,38 +182,6 @@ def recorded_conversion_dependencies() -> Generator[ConversionCalls]:
         yield calls
 
 
-class RecordingObserver:
-    """A materialization observer recording every cadence event in order."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, int]] = []
-
-    def prepared(self, levels: int) -> None:
-        self.events.append(("prepared", levels))
-
-    def statement_rendered(self, level: int) -> None:
-        self.events.append(("statement_rendered", level))
-
-    def statement_executed(self, level: int, rows: int) -> None:
-        del level
-        self.events.append(("statement_executed", rows))
-
-    def fetched_rows_reached(self, count: int) -> None:
-        self.events.append(("fetched_rows_reached", count))
-
-    def stored_values_compared(self, count: int) -> None:
-        self.events.append(("stored_values_compared", count))
-
-    def states_decoded(self) -> None:
-        self.events.append(("states_decoded", 1))
-
-    def states_reused(self) -> None:
-        self.events.append(("states_reused", 1))
-
-    def root_published(self, ordinal: int) -> None:
-        self.events.append(("root_published", ordinal))
-
-
 def rendered_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[str, object]:
     """One member row by declared member name, ``ABSENT`` positions omitted.
 
@@ -302,7 +269,7 @@ class PageFixture:
     read plan proves where no row key can recur: every row is judged as it is
     recorded and is its own logical row.
 
-    ``observer`` records the Page's cadence. ``model`` overrides the accepted
+    ``model`` overrides the accepted
     model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
@@ -321,7 +288,6 @@ class PageFixture:
         *views: str | tuple[str, str],
         references: Mapping[str, tuple[str, ...]] | None = None,
         model: Metamodel | None = None,
-        observer: object | None = None,
         proved: bool = False,
     ) -> None:
         assert class_index(domain) is not None, "the Page suites compose class-backed models"
@@ -347,7 +313,6 @@ class PageFixture:
                 ),
                 repeating_levels=frozenset() if proved else None,
             ),
-            observer,
         )
         self._reads: dict[tuple[str, tuple[str, ...]], ReadRowConverter] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None

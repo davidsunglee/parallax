@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from typing import Final, NamedTuple
@@ -10,7 +9,6 @@ from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.read_delivery._page import (
     Page,
     StoredDataIssueInput,
-    page_cadence,
     page_edges,
     page_rows,
     page_schedule,
@@ -99,32 +97,23 @@ def publish_roots[T](
     deferred.
     """
     rows = page_rows(page)
-    observer = page_cadence(page)
     schedule = page_schedule(page, model, atomic=atomic)
     root = GraphView(rows, schedule, read_evidence=read_evidence)
     resolve = root.resolve_root
     edges = page_edges(page, milestones)
     if atomic:
         prepared: list[T] = []
-        published_counts = array("I")
         for position, edge in enumerate(edges):
             resolve(position, rows.pin if edge is None else milestone_pin(edge))
             release_finished_rows(page, schedule, position, root.reached)
-            values = publish_root(root, ordinal_offset + position)
-            prepared.extend(values)
-            published_counts.append(len(values))
+            prepared.extend(publish_root(root, ordinal_offset + position))
         release_page_rows(page)
-        prepared_position = 0
-        for position, count in enumerate(published_counts):
-            yield from prepared[prepared_position : prepared_position + count]
-            prepared_position += count
-            observer.root_published(ordinal_offset + position)
+        yield from prepared
         return
     for position, edge in enumerate(edges):
         resolve(position, rows.pin if edge is None else milestone_pin(edge))
         release_finished_rows(page, schedule, position, root.reached)
         yield from publish_root(root, ordinal_offset + position)
-        observer.root_published(ordinal_offset + position)
 
 
 def publish_shared_roots[T](
@@ -210,7 +199,6 @@ def _deliver_in_result_order[T](
     Page until the last of them, so it drops the Page whole.
     """
     rows = page_rows(page)
-    observer = page_cadence(page)
     view = shared.view
     invalid = shared.invalid
 
@@ -230,4 +218,3 @@ def _deliver_in_result_order[T](
             yield from prepared[position] if atomic else published_alone(position)
         else:
             yield next(shared_roots)
-        observer.root_published(ordinal_offset + position)

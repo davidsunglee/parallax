@@ -1,11 +1,11 @@
-"""Production find-executor tests for ``find`` and ``find_history``.
+"""Production Page reader tests for planned finds and milestone-set history reads.
 
 Exercises the ONE per-level loop against a fake, canned-response `m-db-port`
 (no Docker): Database Call accounting (one statement per non-empty level), the
 empty-level short-circuit (no child statement issued, gathered from `then`'s
 own contract in `m-read-planning`), a back-reference level's zero-statement
-resolution, `_type` materialization flowing through the executor
-(`m-sql` applied to child-level rows), and the milestone-set `find_history`
+resolution, `_type` materialization flowing through the reader
+(`m-sql` applied to child-level rows), and the milestone-set history read's
 edge-grouping/ordering.
 """
 
@@ -48,6 +48,7 @@ from parallax.core import (
 )
 from parallax.core._execution._features import deferred_feature_refusal
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import (
     INFINITY,
@@ -93,7 +94,6 @@ from parallax.core.internal.read_delivery import (
     StoredDataIssue,
     _read_plan,
 )
-from parallax.core.internal.read_delivery._delivery import find, find_history
 from parallax.core.internal.read_delivery._page import (
     ABSENT,
     CONTINUATION_ORDER_NOT_TOTAL,
@@ -106,10 +106,12 @@ from parallax.core.internal.read_delivery._page import (
     page_rows,
 )
 from parallax.core.internal.read_delivery._page_reader import (
-    EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
     HistoryPageResult,
+    PageReadContext,
+    read_page,
 )
+from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanCache
 from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.temporal_read import Pin, valid_time_coverage
@@ -143,7 +145,6 @@ from tests.unit._root_publication_support import each_root, observed_roots
 from tests.unit._transact_support import ACCOUNT, NEW_ROW
 from tests.unit.snapshot._snapshot_page_support import (
     ConversionCalls,
-    RecordingObserver,
     recorded_conversion_dependencies,
 )
 
@@ -263,21 +264,29 @@ def _cataloged(model: Metamodel) -> CatalogedModel:
     return CatalogedModel(model, TEST_BINDING)
 
 
+def _planned(query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection) -> ReadPlan:
+    return ReadPlanCache(0).plan(
+        edition="",
+        model=_cataloged(model),
+        dialect=port.dialect,
+        query=resolve_read_query(query, model=model),
+        preference=None,
+    )
+
+
 def _find(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> EagerPageResult[ReadEvidence]:
-    return find(
-        resolve_read_query(query, model=model),
-        _cataloged(model),
-        port,
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-    )
+    return read_page(_planned(query, model, port), PageReadContext(port, INERT))
 
 
 def _find_history(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> HistoryPageResult:
-    return find_history(resolve_read_query(query, model=model), _cataloged(model), port)
+    plan = _planned(query, model, port)
+    assert plan.milestones is not None
+    stage = read_page(plan, PageReadContext(port, INERT))
+    return HistoryPageResult(stage.page, plan.milestones, stage.includes)
 
 
 class QueuePort(ConnectsAsItself):
@@ -330,22 +339,14 @@ def test_find_collects_claims_without_decoding_trusted_scalar_payloads() -> None
     assert calls == ConversionCalls()
 
 
-def _states_decoded(observer: RecordingObserver) -> int:
-    return sum(value for name, value in observer.events if name == "states_decoded")
-
-
 def test_a_proved_level_classifies_every_document_as_it_is_recorded() -> None:
     # A root level that records each row key at most once has nothing to compare
     # a row with, so each row is judged while it is recorded and publication
     # reads the judged state rather than judging again.
     meta = model_of(_PROFILE_OWNER_MODEL)
-    observer = RecordingObserver()
-    result = find(
-        resolve_read_query(
-            deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
-            model=meta,
-        ),
-        _cataloged(meta),
+    result = _find(
+        deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
+        meta,
         QueuePort(
             [
                 [
@@ -354,19 +355,14 @@ def test_a_proved_level_classifies_every_document_as_it_is_recorded() -> None:
                 ]
             ]
         ),
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-        observer=observer,
     )
 
-    assert _states_decoded(observer) == 2
+    assert all(state is not None for state in page_rows(result.page).judged_states.by_logical_row)
 
-    def judged_so_far(root: GraphView, _ordinal: int) -> tuple[int, list[str]]:
-        return _states_decoded(observer), [issue.code for issue in root.issues(0)]
+    def issues(root: GraphView, _ordinal: int) -> list[str]:
+        return [issue.code for issue in root.issues(0)]
 
-    assert each_root(result.page, meta, judged_so_far) == [
-        (2, []),
-        (2, ["stored-data-leaf-undecodable"]),
-    ]
+    assert each_root(result.page, meta, issues) == [[], ["stored-data-leaf-undecodable"]]
 
 
 class PipelineQueuePort(QueuePort):
@@ -554,15 +550,7 @@ def test_a_read_folding_documents_carries_read_intent_beside_its_ordinals() -> N
     meta = model_of(_PROFILE_OWNER_MODEL)
     port = QueuePort([[{"id": 1, "profile": {"label": "ready"}}]])
 
-    find(
-        resolve_read_query(
-            deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
-            model=meta,
-        ),
-        _cataloged(meta),
-        port,
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-    )
+    _find(deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}), meta, port)
 
     assert port.read_only == [True]
 
@@ -786,9 +774,9 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     # A table-per-concrete-subtype abstract root narrowed to exactly one
     # concrete compiles to an ordinary
     # single-table read (`m-sql`'s `_render_single_table_read`) — the statement
-    # projects no `family_variant`. `CompiledRead.narrow_to` is what lets the converted
-    # row still name the row's own concrete identity, rather than the abstract
-    # queried `target`.
+    # projects no `family_variant`. The read's fixed row identity is what lets the
+    # converted row still name the row's own concrete identity, rather than the
+    # abstract queried `target`.
     port = QueuePort(
         [
             [
@@ -1710,31 +1698,6 @@ def test_a_dormant_root_publishes_no_roots_and_issues_no_statement(
     assert direct.results() == []
     assert direct.edition == snapshot.edition
     assert port.calls == []
-
-
-def test_a_dormant_root_prepares_its_levels_but_renders_and_executes_nothing() -> None:
-    observer = RecordingObserver()
-    meta = model_of(dormant.DORMANT_POSITION_COLUMNS)
-    query = deserialize_query(
-        {
-            "target": "Prototype",
-            "predicate": {"true": {}},
-            "includes": [
-                {"segments": [{"rel": "Prototype.workbenches"}, {"rel": "Workbench.prototype"}]}
-            ],
-        }
-    )
-
-    result = find(
-        resolve_read_query(query, model=meta),
-        _cataloged(meta),
-        QueuePort([]),
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-        observer=observer,
-    )
-
-    assert _rows(result.page).roots == ()
-    assert observer.events == [("prepared", 3)]
 
 
 def _reads(port: ScriptedAdapter) -> list[ReadCall]:

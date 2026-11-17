@@ -1345,7 +1345,7 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
 
 
 def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> None:
-    # `find_history` returns one flat milestone-root sequence and ranks the roots
+    # An eager milestone-set read returns one flat milestone-root sequence and ranks the roots
     # Valid-Time-first; with no authored `orderBy` the Continuation Order is the
     # key then that same edge, so a single object's streamed history IS the eager
     # milestone rank — same roots, same order, same pin on each, and the same absence

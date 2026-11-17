@@ -20,6 +20,7 @@ import pytest
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import continuation, read_planning
 from parallax.core.internal.base import INFINITY, INT64, InternalError, TemporalBound
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -45,8 +46,7 @@ from parallax.core.internal.predicate._resolved import (
     ResolvedMembership,
 )
 from parallax.core.internal.read_delivery import _read_plan
-from parallax.core.internal.read_delivery._delivery import find
-from parallax.core.internal.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
+from parallax.core.internal.read_delivery._page_reader import PageReadContext, read_page
 from parallax.core.internal.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.sql_gen import _compile as _compile_module
@@ -1400,13 +1400,9 @@ def test_a_delivered_child_level_renders_its_retained_template_into_its_one_cont
         "ordered_on": None,
     }
 
-    result = find(
-        query,
-        _MODEL,
-        ScriptedAdapter(Read(rows=[order]), Read(rows=[])),
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-        edition="edition-a",
-        planner=cache,
+    result = read_page(
+        _plan(cache, query),
+        PageReadContext(ScriptedAdapter(Read(rows=[order]), Read(rows=[])), INERT),
     )
 
     assert result.page.root_count == 1
@@ -1534,14 +1530,7 @@ def test_read_plan_cache_retains_no_connection_rows_page_evidence_or_result() ->
     port = ScriptedAdapter(Read(rows=[stored_row]))
     retained = weakref.ref(port)
 
-    result = find(
-        _query(),
-        _MODEL,
-        port,
-        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
-        edition="edition-a",
-        planner=cache,
-    )
+    result = read_page(_plan(cache, _query()), PageReadContext(port, INERT))
     assert result.page.root_count == 1
     assert not _reaches(cache, port)
     assert not _reaches(cache, stored_row)
@@ -1639,8 +1628,6 @@ def test_direct_and_template_compilation_share_the_empty_read_outcome() -> None:
     template = _compile_module.compile_template(root, bound_model(_DORMANT_META), POSTGRES)
 
     assert direct is template is EMPTY_READ
-    assert direct.read_shape.variant == "empty"
-    assert direct.read_shape.roots == ()
     assert direct.result_contract.resolvable == ()
     assert not direct.result_contract.may_repeat_row_keys
 

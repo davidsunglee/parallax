@@ -262,7 +262,6 @@ class GraphView:
             issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
         ):
             reached.clear()
-            _notify(rows.observer, "fetched_rows_reached", 0)
             self._invalid_root = InvalidRootInput(position, entity_state(rows, root).findings)
             self._has_issues = True
             return
@@ -277,7 +276,6 @@ class GraphView:
             self._allocate_per_fetched_row(rows, reached, judging)
         else:
             self._allocate_per_logical_row(rows, reached, judging, self._node_row_or_conflict)
-        _notify(rows.observer, "fetched_rows_reached", len(reached))
         findings = self._findings
         if not judging:
             for node_row in self._node_rows:
@@ -597,12 +595,10 @@ class GraphView:
     def _node_row_or_conflict(self, fetched_rows: Sequence[int]) -> int:
         rows = self._rows
         if len(fetched_rows) == 2 and same_stored_values(rows, fetched_rows[0], fetched_rows[1]):
-            _notify(rows.observer, "stored_values_compared", 1)
             rows.decoders.retire(fetched_rows[1])
             return fetched_rows[0]
         first, *remaining = fetched_rows
         if all(same_stored_values(rows, first, candidate) for candidate in remaining):
-            _notify(rows.observer, "stored_values_compared", len(remaining))
             for candidate in remaining:
                 rows.decoders.retire(candidate)
             return first
@@ -615,8 +611,6 @@ class GraphView:
                 rows.source_ordinals[fetched_row],
             ),
         )
-        if candidates:
-            _notify(rows.observer, "stored_values_compared", len(candidates))
         for candidate in candidates:
             if not same_stored_values(rows, canonical, candidate):
                 raise self._conflict(canonical, candidate)
@@ -792,12 +786,6 @@ def _renumbered(row: Sequence[object], renumbered: Mapping[int, int]) -> list[ob
         else renumbered[cast("int", value)]
         for value in row
     ]
-
-
-def _notify(observer: object | None, name: str, *args: object) -> None:
-    if observer is not None:
-        callback = getattr(observer, name)
-        callback(*args)
 
 
 class _InsertedRowGraph:

@@ -6,12 +6,15 @@ from dataclasses import dataclass, field, replace
 
 import pytest
 
+from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal import read_planning
 from parallax.core.internal.base import INFINITY, INT64, InternalError, StructuredDocument
 from parallax.core.internal.db_port import ArrayBind, Bind, DocumentReadOrdinals, Row
+from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
+from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
@@ -24,8 +27,8 @@ from parallax.core.internal.read_delivery._page import (
 )
 from parallax.core.internal.read_delivery._page_reader import (
     PageReadContext,
-    PageReader,
     PageResult,
+    read_page,
 )
 from parallax.core.internal.read_delivery._paging import PagingParameters
 from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
@@ -102,6 +105,39 @@ def _root(plan: ReadPlan) -> tuple[CompiledRead, ReadRowConverter]:
     return root
 
 
+def test_an_acquisition_read_of_a_flat_root_issues_its_one_statement() -> None:
+    meta = model_of(ORDERS_MODEL)
+    query = resolve_read_query(
+        deserialize({"target": "Order", "predicate": {"true": {}}}),
+        model=meta,
+    )
+    planned = read_planning.plan(
+        query, meta, projection=read_planning.ReadProjectionRequest("all", True)
+    )
+    plan = ReadPlanCache(0).plan_acquisition(
+        edition="",
+        model=CatalogedModel(meta, TEST_BINDING),
+        dialect=POSTGRES,
+        query=planned.root,
+        preference=None,
+    )
+    order = {
+        "id": 1,
+        "name": "customer-1",
+        "sku": "A-100",
+        "qty": 5,
+        "price": 10,
+        "active": True,
+        "ordered_on": None,
+    }
+    port = ScriptedAdapter(Read(rows=[order, order]))
+
+    result = read_page(plan, PageReadContext(port, INERT))
+
+    assert [type(call) for call in port.calls] == [ReadCall]
+    assert result.page.root_count == 2
+
+
 def test_cached_single_instant_policy_uses_each_executions_pin_and_collector() -> None:
     cache = ReadPlanCache()
     plans = tuple(
@@ -120,7 +156,7 @@ def test_cached_single_instant_policy_uses_each_executions_pin_and_collector() -
                 ]
             )
         ) as port:
-            results.append(PageReader().read_page(plan, PageReadContext(port, INERT, collector)))
+            results.append(read_page(plan, PageReadContext(port, INERT, collector)))
 
     assert all(plan.kind == "single_instant" for plan in plans)
     assert all(plan.purpose == "publication" and plan.collects_evidence for plan in plans)
@@ -132,7 +168,7 @@ def test_cached_single_instant_policy_uses_each_executions_pin_and_collector() -
     assert _root(plans[0])[1] is _root(plans[1])[1]
     assert page_rows(results[0].page).schema is page_rows(results[1].page).schema
     with ScriptedAdapter(Read()) as port:
-        without_context = PageReader().read_page(plans[1], PageReadContext[str](port, INERT))
+        without_context = read_page(plans[1], PageReadContext[str](port, INERT))
     assert without_context.origins == {}
 
 
@@ -151,7 +187,7 @@ def test_an_unpaged_read_does_not_extract_per_row_coordinates(
     monkeypatch.setattr(_page_reader, "row_coordinates", refuse)
     with ScriptedAdapter(Read(rows)) as port:
         context: PageReadContext[str] = PageReadContext(port, INERT)
-        result = PageReader().read_page(plan, context)
+        result = read_page(plan, context)
 
     assert result.continuation is None
     assert result.page.root_count == 3
@@ -171,9 +207,7 @@ def test_a_paging_root_without_an_evaluated_coordinate_is_refused() -> None:
             match="returned a root carrying no evaluated coordinate",
         ),
     ):
-        PageReader().read_page(
-            plan, PageReadContext(port, INERT, collector), PagingParameters(3, True, 0)
-        )
+        read_page(plan, PageReadContext(port, INERT, collector), PagingParameters(3, True, 0))
 
     assert collector.observed == collector.sealed == []
 
@@ -198,7 +232,7 @@ def test_milestone_policy_supplies_shape_and_suppresses_a_supplied_collector(
     collector = _Collector("must stay unused")
     row = shared.physical_row(shared.ShareCols, shared.rectangle(shared.ShareCols, 1, 0, None, 3))
     with ScriptedAdapter(Read([row])) as port:
-        result = PageReader().read_page(plan, PageReadContext(port, INERT, collector))
+        result = read_page(plan, PageReadContext(port, INERT, collector))
 
     shape = temporal_facet_of(shared.MODEL).shape(shared.ShareCols.identity)
     assert shape is not None
@@ -257,7 +291,7 @@ def test_warm_milestone_plans_reuse_ordering_with_current_ranges_and_independent
         )
         with ScriptedAdapter(Read([row])) as port:
             context: PageReadContext[str] = PageReadContext(port, INERT)
-            result = PageReader().read_page(plan, context)
+            result = read_page(plan, context)
             assert port.calls == [
                 ReadCall(
                     "select t0.id, t0.amount, t0.label, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
@@ -328,7 +362,7 @@ def test_cached_write_support_keeps_page_schemas_documents_and_judgement_per_exe
     def execute(index: int) -> PageResult[str]:
         collector = _Collector("must stay unused")
         with ScriptedAdapter(Read([{"id": index + 1, "payload": documents[index]}])) as port:
-            result = PageReader().read_page(plans[index], PageReadContext(port, INERT, collector))
+            result = read_page(plans[index], PageReadContext(port, INERT, collector))
         assert collector.observed == collector.sealed == []
         return result
 
@@ -376,7 +410,7 @@ def test_shared_document_acquisition_keeps_each_roots_document_in_fetched_order(
             ]
         )
     ) as port:
-        result = PageReader().read_page(plan, PageReadContext(port, INERT, collector))
+        result = read_page(plan, PageReadContext(port, INERT, collector))
 
     rows = page_rows(result.page)
     assert result.page.root_count == len(rows.roots) == 4
@@ -528,7 +562,7 @@ def test_page_continuation_collects_only_the_retained_root_prefix(
     for row in rows[kept:]:
         row["payload"] = StructuredDocument({"amount": "invalid", "label": "invalid"})
     with ScriptedAdapter(Read(rows)) as port:
-        result = PageReader().read_page(plan, PageReadContext(port, INERT, collector), paging)
+        result = read_page(plan, PageReadContext(port, INERT, collector), paging)
 
     continuation = result.continuation
     assert continuation is not None
@@ -571,7 +605,7 @@ def test_a_malformed_discarded_root_is_refused_before_any_root_is_converted(
 
         monkeypatch.setattr(port, "execute", malformed)
         with pytest.raises(ValueError, match="does not match row arity"):
-            PageReader().read_page(plan, PageReadContext(port, INERT, collector), paging)
+            read_page(plan, PageReadContext(port, INERT, collector), paging)
 
     assert collector.observed == collector.sealed == []
 
@@ -590,7 +624,7 @@ def test_transaction_time_coverage_is_single_instant_write_support() -> None:
     )
     collector = _Collector("must stay unused")
     with ScriptedAdapter(Read()) as port:
-        result = PageReader().read_page(plan, PageReadContext(port, INERT, collector))
+        result = read_page(plan, PageReadContext(port, INERT, collector))
 
     assert (plan.kind, plan.purpose, plan.collects_evidence) == (
         "single_instant",

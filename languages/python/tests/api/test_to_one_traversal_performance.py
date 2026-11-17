@@ -58,7 +58,7 @@ from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import TablePerConcreteSubtype
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, EmptyRead
+from parallax.core.internal.read_delivery._read_plan import EmptyRead, ReadPlanCache
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.unit_work import (
     PredicateSelection,
@@ -1085,7 +1085,7 @@ def compile_statement(workload: Workload) -> LoweredStatement:
     lowers to."""
     query = workload.query()
     if workload.kind == "read":
-        plan = UNCACHED_READ_PLANNER.plan(
+        plan = ReadPlanCache(0).plan(
             edition="to-one-evidence",
             model=CatalogedModel(META, TEST_BINDING),
             dialect=POSTGRES,

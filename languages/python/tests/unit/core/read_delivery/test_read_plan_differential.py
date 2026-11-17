@@ -182,7 +182,7 @@ def test_every_corpus_read_proves_exactly_the_levels_no_row_key_can_recur_at(
         read.query,
         POSTGRES,
     )
-    schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
+    schema = page_rows(plan.page_builder().finish((), plan.pin)).schema
 
     repeating = frozenset(
         level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)
@@ -214,7 +214,7 @@ def test_corpus_reads_that_merge_rows_prove_no_level_that_shares_a_row_key(
         read.query,
         POSTGRES,
     )
-    schema = page_rows(plan.page_builder(None).finish((), plan.pin)).schema
+    schema = page_rows(plan.page_builder().finish((), plan.pin)).schema
 
     assert {
         level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)

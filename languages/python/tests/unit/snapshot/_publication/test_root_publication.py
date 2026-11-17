@@ -146,6 +146,30 @@ def test_a_failed_shared_attempt_publishes_every_root_through_the_per_root_pass(
     assert published[0].items[0] is not published[1].items[0]
 
 
+@pytest.mark.parametrize(
+    ("atomic", "prefix"), [(False, [0]), (True, [])], ids=["streamed", "atomic"]
+)
+def test_a_failure_publishing_a_later_root_keeps_the_prefix_its_delivery_promises(
+    atomic: bool, prefix: list[object]
+) -> None:
+    # An eager result is one publication boundary, so root zero, though
+    # prepared, never crosses it once root one fails; a stream has already
+    # delivered root zero.
+    fixture = PageFixture(ENCODED_ORDERS)
+    page = fixture.page(_order(fixture, 1), _order(fixture, 2))
+
+    def failing_at_root_one(_root: GraphView, ordinal: int) -> tuple[object, ...]:
+        if ordinal == 1:
+            raise RuntimeError("later root failed")
+        return (ordinal,)
+
+    received: list[object] = []
+    with pytest.raises(RuntimeError, match="later root failed"):
+        received.extend(publish_roots(page, failing_at_root_one, fixture.model, atomic=atomic))
+
+    assert received == prefix
+
+
 @pytest.mark.parametrize(("atomic", "prefix"), [(False, 3), (True, 0)], ids=["streamed", "atomic"])
 def test_a_failure_publishing_an_invalid_root_keeps_the_prefix_its_delivery_promises(
     atomic: bool, prefix: int

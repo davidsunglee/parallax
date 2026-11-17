@@ -4,13 +4,13 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-production's own read loop with no database anywhere: ``UNCACHED_READ_PLANNER``
-plans the read, ``PageReader._read_root`` executes and holds the root statement,
-and ``PageReader._build_page`` converts it, renders and executes every fetch
-template, and retains the Page's read sources. :class:`StressPort` answers each
-statement with rows composed before it.
+production's own read loop with no database anywhere: an uncached
+``ReadPlanCache`` plans the read, the Page reader's ``_read_root`` executes and
+holds the root statement, and its ``_build_page`` converts it, renders and
+executes every fetch template, and retains the Page's read sources.
+:class:`StressPort` answers each statement with rows composed before it.
 
-The two PageReader steps are private, and are reached here rather than copied:
+The two Page reader steps are private, and are reached here rather than copied:
 a measured window opens between them, so the root statement's execution stays
 outside it while every fetch the Page build runs stays inside.
 
@@ -94,15 +94,17 @@ from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     EagerPageResult,
     PageReadContext,
-    PageReader,
+    _build_page,  # pyright: ignore[reportPrivateUsage]
+    _read_root,  # pyright: ignore[reportPrivateUsage]
     _RootRead,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.internal.read_delivery._read_plan import (
-    UNCACHED_READ_PLANNER,
     EmptyRead,
     ReadPlan,
+    ReadPlanCache,
 )
 from parallax.core.internal.sql_gen._compile import CompiledRead
+from parallax.core.internal.sql_gen._inheritance import TaggedRowIdentity
 from parallax.core.internal.storage_layout import DirectColumn, TableLayout, storage_layout_facet_of
 from parallax.core.internal.unit_work import ReadEvidence
 from tests._support.db_port import ConnectsAsItself
@@ -267,7 +269,7 @@ def query(layout: Layout, model: Metamodel) -> ResolvedObjectQuery:
 def read_plan(model: CatalogedModel, validated: ResolvedObjectQuery) -> ReadPlan:
     """``validated``'s instance-form read plan for a read no unit of work owns,
     compiled afresh on every call."""
-    return UNCACHED_READ_PLANNER.plan(
+    return ReadPlanCache(0).plan(
         edition="",
         model=model,
         dialect=POSTGRES,
@@ -451,7 +453,9 @@ def _driver_row(
             else SQL_NULL
         )
     discriminator = _discriminator(meta, entity)
-    if discriminator is not None and len(compiled.resolved_position) > 1:
+    if discriminator is not None and isinstance(
+        compiled.result_contract.row_identity, TaggedRowIdentity
+    ):
         row[discriminator[0]] = discriminator[1]
     shared = compiled.result_contract.shared_document
     if shared is not None:
@@ -566,9 +570,6 @@ class StressPort(ConnectsAsItself):
         raise NotImplementedError
 
 
-_MATERIALIZER: Final = PageReader()
-
-
 def read_root(
     model: CatalogedModel, validated: ResolvedObjectQuery, plan: ReadPlan, port: StressPort
 ) -> _RootRead:
@@ -577,9 +578,7 @@ def read_root(
     root = plan.root_read()
     assert not isinstance(root, EmptyRead)
     context: PageReadContext[ReadEvidence] = PageReadContext(port, INERT)
-    return _MATERIALIZER._read_root(  # pyright: ignore[reportPrivateUsage]
-        plan, root, context
-    )
+    return _read_root(plan, root, context)
 
 
 def build_page(
@@ -590,12 +589,7 @@ def build_page(
     read sources retained. ``root`` is consumed."""
     del model
     context: PageReadContext[ReadEvidence] = PageReadContext(port, INERT)
-    return _MATERIALIZER._build_page(  # pyright: ignore[reportPrivateUsage]
-        root,
-        context,
-        EMPTY_PAGE_ORIGIN_COLLECTOR,
-        None,
-    )
+    return _build_page(root, context, EMPTY_PAGE_ORIGIN_COLLECTOR, None)
 
 
 def batch(

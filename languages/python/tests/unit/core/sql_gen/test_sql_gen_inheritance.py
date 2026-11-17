@@ -301,12 +301,6 @@ def test_a_partitioning_tph_read_renders_only_its_planned_partitions(
         target(DOCUMENT_LAYOUT, "Payment"),
     )
     concretes = _narrow(DOCUMENT_LAYOUT, "CardPayment", "CashPayment")
-    assert compiled.read_shape.variant == "tph-partitioned"
-    assert tuple(root.concrete for root in compiled.read_shape.roots) == concretes
-    assert {root.mapping_owner for root in compiled.read_shape.roots} == set(
-        _narrow(DOCUMENT_LAYOUT, "Payment")
-    )
-    assert not compiled.read_shape.is_union
     assert not compiled.result_contract.may_repeat_row_keys
     assert [(partitions, keys) for partitions, keys, _root in rendered_roots] == [
         (True, concretes)
@@ -345,7 +339,6 @@ def test_a_tph_ordering_term_alone_decides_partitioning_before_rendering(
     assert keys == (_narrow(DOCUMENT_LAYOUT, "CashPayment") if partitions else (None,))
     assert len(rendered_roots) == 1
     assert ("offset 0) p1" in compiled.statement.sql) is partitions
-    assert compiled.read_shape.variant == ("tph-partitioned" if partitions else "single-table")
 
 
 def _ticket_family() -> Metamodel:
@@ -1103,7 +1096,6 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     # consumer the Entity exists at all before a bear row proves it.
     beast = target(partial, "Beast").identity
     assert bear.entity == "Beast"
-    assert beast not in compiled.resolved_position
     assert beast in compiled.result_contract.resolvable
 
 
@@ -1185,10 +1177,6 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
         POSTGRES,
         target(meta, "Vessel"),
         result_form="instance",
-    )
-    assert compiled.resolved_position == (
-        target(meta, "Barge").identity,
-        target(meta, "Tug").identity,
     )
     (tug,) = deliver(
         meta,
@@ -1295,82 +1283,10 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
         narrow_to=_narrow(DOCUMENT, "Invoice"),
     )
     assert "family_variant" not in compiled.statement.sql
-    assert compiled.read_shape.variant == "single-table"
-    assert tuple(root.mapping_owner for root in compiled.read_shape.roots) == _narrow(
-        DOCUMENT, "Invoice"
-    )
-    assert not compiled.read_shape.may_repeat_row_keys
     assert not compiled.result_contract.may_repeat_row_keys
     # Nothing discriminates, so every row of this read names the one concrete and
     # `resolvable` collapses to it — the fixed identity is the whole set.
     assert compiled.result_contract.resolvable == (target(DOCUMENT, "Invoice").identity,)
-
-
-# --------------------------------------------------------------------------- #
-# `CompiledRead.narrow_to`: the root-level authored-narrow a converted row     #
-# resolves its own concrete identity through, where a deep-fetch child level   #
-# takes its own `QueryFetchStep.narrow_to` instead. It reports the AUTHORED   #
-# selection, not the resolved effective set — resolution belongs to            #
-# materialization, which knows the row.                                        #
-# --------------------------------------------------------------------------- #
-def test_narrow_to_is_none_for_a_bare_read() -> None:
-    assert (
-        compile_read(
-            oa.TrueNode(),
-            bound_model(DOCUMENT),
-            POSTGRES,
-            target(DOCUMENT, "Document"),
-        ).narrow_to
-        is None
-    )
-
-
-def test_narrow_to_carries_a_top_level_narrows_authored_subtypes() -> None:
-    invoice = target(DOCUMENT, "Invoice").identity
-    assert compile_read(
-        oa.TrueNode(),
-        bound_model(DOCUMENT),
-        POSTGRES,
-        target(DOCUMENT, "Document"),
-        narrow_to=(invoice,),
-    ).narrow_to == (invoice,)
-
-
-def test_narrow_to_is_independent_of_result_shape_fields() -> None:
-    narrowed = _narrow(ANIMAL, "Cat", "Dog")
-    assert (
-        compile_read(
-            oa.TrueNode(),
-            bound_model(ANIMAL),
-            POSTGRES,
-            target(ANIMAL, "Animal"),
-            narrow_to=narrowed,
-            limit=1,
-        ).narrow_to
-        == narrowed
-    )
-
-
-def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
-    # Only a TOP-LEVEL narrow sets the read's position; one nested inside
-    # and/or/not/group is a local branch guard and must not leak into `narrow_to`.
-    op = oa.Or(
-        operands=(
-            oa.Narrow(
-                to=("Dog",),
-                operand=oa.Comparison(
-                    op="greaterThan", subject=oa.FieldSubject("Dog.barkVolume"), value=5
-                ),
-            ),
-            oa.Narrow(
-                to=("Cat",),
-                operand=oa.Comparison(op="eq", subject=oa.FieldSubject("Cat.indoor"), value=True),
-            ),
-        )
-    )
-    assert (
-        compile_read(op, bound_model(ANIMAL), POSTGRES, target(ANIMAL, "Animal")).narrow_to is None
-    )
 
 
 def test_family_attribute_resolution_spans_the_roots_projection_superset() -> None:
@@ -1437,11 +1353,6 @@ def test_tpcs_union_refuses_only_a_requested_shared_lock() -> None:
         preference="optimistic",
     )
     assert " union all " in compiled.statement.sql
-    assert compiled.read_shape.variant == "tpcs-union"
-    assert compiled.read_shape.is_union
-    assert len(compiled.read_shape.roots) > 1
-    assert all(root.mapping_owner == root.concrete for root in compiled.read_shape.roots)
-    assert compiled.read_shape.may_repeat_row_keys
     assert compiled.result_contract.may_repeat_row_keys
     assert "for share" not in compiled.statement.sql
     with raises_code(UnsupportedError, INHERITANCE_LOCKING_READ_UNSUPPORTED) as refused:

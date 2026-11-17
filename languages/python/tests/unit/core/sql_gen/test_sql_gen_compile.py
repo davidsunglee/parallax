@@ -729,7 +729,6 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.result_contract is template.compiled.result_contract
         assert rendered.projection is template.compiled.projection
         assert rendered.document_reads == template.compiled.document_reads
-        assert rendered.resolved_position == template.compiled.resolved_position
         assert rendered.statement.sql.endswith("limit ?")
         if dialect.name == "postgres":
             assert all(
@@ -779,13 +778,15 @@ def test_member_sources_align_with_each_resolvable_entitys_own_member_selection(
         temporal=temporal,
     )
     contract = compiled.result_contract
+    position = inheritance.inheritance_facet_of(meta).entity(target(meta, name).identity)
+    assert position is not None
     assert contract.resolvable
     for identity in contract.resolvable:
         sources = contract.sources(identity)
         layout = cataloged.layouts.entity(identity)
         assert sources.selection is layout.member_selection
         attributes = sources.sources[: layout.attribute_count]
-        if identity in compiled.resolved_position:
+        if identity in position.concrete_subtypes:
             assert all(source is not None for source in attributes)
         for member, source in zip(layout.member_selection.bindings, sources.sources, strict=True):
             assert contract.source(identity, member.identity) is source

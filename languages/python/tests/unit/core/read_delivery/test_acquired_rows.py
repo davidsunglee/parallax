@@ -22,13 +22,13 @@ from parallax.core.internal.read_delivery import _acquired_rows, _convert
 from parallax.core.internal.read_delivery._page import ABSENT, ROOT_LEVEL, entity_state, page_rows
 from parallax.core.internal.read_delivery._page_reader import (
     PageReadContext,
-    PageReader,
     PageResult,
+    read_page,
 )
 from parallax.core.internal.read_delivery._read_plan import (
-    UNCACHED_READ_PLANNER,
     EmptyRead,
     ReadPlan,
+    ReadPlanCache,
 )
 from parallax.core.internal.temporal_read import Pin
 from tests._support.bindings import TEST_BINDING
@@ -48,7 +48,7 @@ def _order(order_id: int, badge: str) -> dict[str, object]:
 
 def _acquisition_plan(meta: Metamodel, name: str, *, complete: bool = False) -> ReadPlan:
     query = resolve_read_query(deserialize({"target": name, "predicate": {"true": {}}}), model=meta)
-    return UNCACHED_READ_PLANNER.plan_acquisition(
+    return ReadPlanCache(0).plan_acquisition(
         edition="test",
         model=CatalogedModel(meta, TEST_BINDING),
         dialect=POSTGRES,
@@ -67,7 +67,7 @@ def _acquisition_page(plan: ReadPlan, rows: Sequence[Mapping[str, object]]) -> P
         runtime = adapter.open()
         try:
             with runtime.login_source().new_context("writer_only") as connection:
-                return PageReader().read_page(plan, PageReadContext[object](connection, INERT))
+                return read_page(plan, PageReadContext[object](connection, INERT))
         finally:
             runtime.close()
 
@@ -141,7 +141,7 @@ def test_a_level_recording_each_key_once_judges_its_rows_as_it_records_them(
         deserialize({"target": "EncodedOrder", "predicate": {"true": {}}}),
         model=_ENCODED,
     )
-    plan = UNCACHED_READ_PLANNER.plan(
+    plan = ReadPlanCache(0).plan(
         edition="",
         model=CatalogedModel(_ENCODED, TEST_BINDING),
         dialect=POSTGRES,
@@ -151,7 +151,7 @@ def test_a_level_recording_each_key_once_judges_its_rows_as_it_records_them(
     root = plan.root_read()
     assert not isinstance(root, EmptyRead)
     compiled, converter = root
-    builder = plan.page_builder(None)
+    builder = plan.page_builder()
     refs = tuple(
         converter.record_row(result_row(compiled, cells), builder, source=ROOT_LEVEL)[0]
         for cells in (_order(1, "0e"), _order(2, "zz"))

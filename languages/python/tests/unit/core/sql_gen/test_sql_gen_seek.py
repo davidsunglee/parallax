@@ -377,7 +377,6 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
     assert statement.sql.count("for share") == 1
     assert statement.binds == (3, 3, 3, 1, 2, 2, 2)
     assert compiled.result_contract == unlocked.result_contract
-    assert compiled.resolved_position == (car,)
     assert compiled.result_contract.coordinate_ordinals == (4, 5)
     cells = {
         "id": 7,

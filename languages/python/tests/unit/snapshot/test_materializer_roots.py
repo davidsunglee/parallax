@@ -20,6 +20,7 @@ from parallax.core.internal.read_delivery._page import (
     PageBuilder,
     ViewSchema,
     entity_state,
+    judged_entity_state,
     page_rows,
     reach_into,
     release_finished_rows,
@@ -36,7 +37,6 @@ from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
-    RecordingObserver,
     identity_of,
     recorded_conversion_dependencies,
     rendered_members,
@@ -77,10 +77,9 @@ def _encoded_order(key: str | None, name: str = "Ada", badge: str = "0f") -> dic
 
 def _page(
     occurrences: tuple[tuple[int, dict[str, object]], ...],
-    observer: RecordingObserver | None = None,
 ) -> tuple[object, tuple[int, ...]]:
     source_count = max((source for source, _row in occurrences), default=0) + 1
-    builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))), observer)
+    builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))))
     compiled = compiled_read(_ENCODED, "EncodedOrder")
     cataloged = CatalogedModel(_ENCODED, TEST_BINDING)
     roots = tuple(
@@ -196,16 +195,14 @@ def _published_positions(page: Any) -> Iterator[object]:
 
 
 def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
-    observer = RecordingObserver()
-    page, _roots = _page(
-        ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("02"))), observer
+    page, (_first, second) = _page(
+        ((ROOT_LEVEL, _encoded_order("01")), (ROOT_LEVEL, _encoded_order("02")))
     )
+    published = _published_positions(page)
 
-    assert list(_published_positions(page)) == [0, 1]
-    relevant = [
-        name for name, _value in observer.events if name in {"states_decoded", "root_published"}
-    ]
-    assert relevant == ["states_decoded", "root_published", "states_decoded", "root_published"]
+    assert next(published) == 0
+    assert judged_entity_state(page_rows(page), second) is None
+    assert list(published) == [1]
 
 
 def _shared_keyless_animal(
