@@ -17,6 +17,7 @@ from typing import cast
 
 import pytest
 
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup
 from parallax.core._execution._write_lowering import (
     STORED_DOCUMENT_NOT_OBJECT,
     LoweringCursor,
@@ -35,16 +36,9 @@ from parallax.core.internal.base import (
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import EntityIdentity, Metamodel
-from parallax.core.internal.read_delivery import InvalidDataError
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.sql_gen._write import GroupedEffectBuilder
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
-from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
-from parallax.core.internal.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import AssignmentPayload, DocumentPatches
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,
@@ -54,6 +48,13 @@ from parallax.core.internal.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
 )
+from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.read_delivery import InvalidDataError
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import GroupedEffectBuilder
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
+from parallax.core.internal.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests.unit._corpus_model_support import model

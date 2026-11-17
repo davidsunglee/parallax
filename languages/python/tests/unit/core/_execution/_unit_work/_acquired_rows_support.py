@@ -17,20 +17,19 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.metamodel import Metamodel
-from parallax.core.internal.temporal_read import valid_time_coverage
-from parallax.core.internal.unit_work import TransactionInstant
-from parallax.core.internal.write_plan import PredecessorRow
-from parallax.core.internal.write_plan.keys import ObjectStateKey
-from parallax.core.internal.write_plan.plan import (
+from parallax.core.internal.planned_step import PredecessorRow
+from parallax.core.internal.planned_step.keys import ObjectStateKey
+from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    SettledWrite,
     TemporalWriteOwnership,
-    WritePlan,
 )
+from parallax.core.internal.temporal_read import valid_time_coverage
+from parallax.core.internal.unit_work import TransactionInstant
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row

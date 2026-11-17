@@ -117,7 +117,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-value-object",
         "m-wire",
         "m-write-payload",
-        "m-write-plan",
+        "m-planned-step",
     ),
     case_shapes=(
         "read",

@@ -85,6 +85,7 @@ from parallax.core.internal.metamodel import (
 from parallax.core.internal.object_query import ObjectQueryNode
 from parallax.core.internal.object_query import deserialize as deserialize_query
 from parallax.core.internal.object_query._fluent import ObjectQuery
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.predicate._resolved import ResolvedMembership
 from parallax.core.internal.read_delivery import (
     InvalidData,
@@ -113,7 +114,6 @@ from parallax.core.internal.read_planning import RelationshipViewKey
 from parallax.core.internal.sql_gen import _compile as sql_compile
 from parallax.core.internal.temporal_read import Pin, valid_time_coverage
 from parallax.core.internal.unit_work import ReadEvidence
-from parallax.core.internal.write_plan import ObjectKey
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import (

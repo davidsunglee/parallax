@@ -166,14 +166,14 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.acquisition:RetainedTargetState`
 - `parallax.core._execution._unit_work.evidence:InsertionIdentity`
 - `parallax.core._execution._unit_work.claims:SettledEvidence`
-- `parallax.core.internal.write_plan.plan:SettledWrite.source_evidence`
+- `parallax.core._execution._unit_work.write_plan:SettledWrite.source_evidence`
 - `parallax.core._execution._unit_work.instructions:ExpectedVersion`
 - `parallax.core._execution._unit_work.instructions:ExpectedTxStart`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
-- `parallax.core.internal.write_plan.keys:ObjectKey`
-- `parallax.core.internal.write_plan.keys:VersionedObjectStateKey`
+- `parallax.core.internal.planned_step.keys:ObjectKey`
+- `parallax.core.internal.planned_step.keys:VersionedObjectStateKey`
 - `parallax.core._execution._unit_work._errors:write_evidence_refusal`
 
 ## From verb to buffer
@@ -524,17 +524,17 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.ranges:settle_opening`
 - `parallax.core._execution._unit_work.ranges:DeferredTemporalRange`
 - `parallax.core._execution._unit_work.ranges:RangeBindings`
-- `parallax.core.internal.write_plan.plan:BoundRange`
-- `parallax.core.internal.write_plan.plan:SettledWrite`
-- `parallax.core.internal.write_plan.plan:SettledWrite.deferred`
-- `parallax.core.internal.write_plan.plan:WriteGroup`
-- `parallax.core.internal.write_plan.plan:WriteGroup.writes`
-- `parallax.core.internal.write_plan.plan:WriteGroup.steps`
-- `parallax.core.internal.write_plan.plan:AcquisitionSpan`
-- `parallax.core.internal.write_plan.plan:WritePlan`
-- `parallax.core.internal.write_plan.plan:WritePlan.entries`
-- `parallax.core.internal.write_plan.plan:WritePlan.acquisition_spans`
-- `parallax.core.internal.write_plan.steps:PlannedStep`
+- `parallax.core.internal.planned_step.write_effects:BoundRange`
+- `parallax.core._execution._unit_work.write_plan:SettledWrite`
+- `parallax.core._execution._unit_work.write_plan:SettledWrite.deferred`
+- `parallax.core._execution._unit_work.write_plan:WriteGroup`
+- `parallax.core._execution._unit_work.write_plan:WriteGroup.writes`
+- `parallax.core._execution._unit_work.write_plan:WriteGroup.steps`
+- `parallax.core._execution._unit_work.write_plan:AcquisitionSpan`
+- `parallax.core._execution._unit_work.write_plan:WritePlan`
+- `parallax.core._execution._unit_work.write_plan:WritePlan.entries`
+- `parallax.core._execution._unit_work.write_plan:WritePlan.acquisition_spans`
+- `parallax.core.internal.planned_step.steps:PlannedStep`
 - `parallax.core._execution._unit_work.clock:TransactionInstant`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor.execute`
@@ -628,7 +628,7 @@ owns it and so revises or removes it in place, and the successors it opens.
 | Coalescing and composition | [`m-unit-work`](../../../../core/spec/m-unit-work.md#same-transaction-write-coalescing), [ADR 0023](../../../../docs/adr/0023-same-transaction-writes-coalesce-in-the-unit-of-work.md) |
 | Readless predicate writes | [`m-batch-write`](../../../../core/spec/m-batch-write.md), [ADR 0075](../../../../docs/adr/0075-predicate-writes-are-readless-only.md), [ADR 0077](../../../../docs/adr/0077-predicate-writes-execute-at-the-call-and-sources-continue-across-flushes.md) |
 | Write Planner, planning order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md), [ADR 0080](../../../../docs/adr/0080-write-groups-hold-up-to-1024-settled-writes.md) |
-| Planned Steps and State Observations | [`m-write-plan`](../../../../core/spec/m-write-plan.md), [ADR 0068](../../../../docs/adr/0068-the-planned-write-algebra-is-its-own-module.md) |
+| Planned Steps and State Observations | [`m-planned-step`](../../../../core/spec/m-planned-step.md), [ADR 0068](../../../../docs/adr/0068-the-planned-write-algebra-is-its-own-module.md) |
 | Temporal expansion | [`m-temporal-write`](../../../../core/spec/m-temporal-write.md#temporal-expansion), [ADR 0042](../../../../docs/adr/0042-temporal-plans-retain-complete-predecessor-state-and-close-cause.md), [ADR 0045](../../../../docs/adr/0045-temporal-mutations-expand-in-place-after-ordering.md), [ADR 0069](../../../../docs/adr/0069-temporal-writes-settle-through-one-coverage-transform-and-predecessor-expansion.md) |
 | Audit of produced rows | [ADR 0071](../../../../docs/adr/0071-audit-finalizes-represented-rows-before-their-realization-is-chosen.md) |
 | Payloads and storage layout | [`m-write-payload`](../../../../core/spec/m-write-payload.md), [`m-storage-layout`](../../../../core/spec/m-storage-layout.md#storage-layout-transparency) |

@@ -34,9 +34,27 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     TemporalIntent,
 )
+from parallax.core._execution._unit_work.write_plan import (
+    AcquisitionSpan,
+    DeferredRange,
+    SettledWrite,
+    WriteGroup,
+    WritePlan,
+)
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core.internal.planned_step.keys import (
+    ObjectKey,
+    ObjectStateKey,
+    TemporalObjectStateKey,
+)
+from parallax.core.internal.planned_step.managed_row import ManagedRow
+from parallax.core.internal.planned_step.observe import PredecessorRow, TemporalObservation
+from parallax.core.internal.planned_step.payload import WritePayloadPreparer
+from parallax.core.internal.planned_step.predecessor_rows import PredecessorRows
+from parallax.core.internal.planned_step.steps import KeyTarget, PlannedStep
+from parallax.core.internal.planned_step.write_effects import BoundRange, TemporalWriteOwnership
 from parallax.core.internal.temporal_read import (
     Bitemporal,
     Edge,
@@ -51,21 +69,6 @@ from parallax.core.internal.temporal_write.expansion import (
     PredecessorExpander,
     TemporalFacts,
 )
-from parallax.core.internal.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
-from parallax.core.internal.write_plan.managed_row import ManagedRow
-from parallax.core.internal.write_plan.observe import PredecessorRow, TemporalObservation
-from parallax.core.internal.write_plan.payload import WritePayloadPreparer
-from parallax.core.internal.write_plan.plan import (
-    AcquisitionSpan,
-    BoundRange,
-    DeferredRange,
-    SettledWrite,
-    TemporalWriteOwnership,
-    WriteGroup,
-    WritePlan,
-)
-from parallax.core.internal.write_plan.predecessor_rows import PredecessorRows
-from parallax.core.internal.write_plan.steps import KeyTarget, PlannedStep
 
 __all__ = [
     "DeferredTemporalRange",

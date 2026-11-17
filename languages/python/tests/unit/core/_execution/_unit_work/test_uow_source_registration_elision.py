@@ -36,6 +36,8 @@ from parallax.core.internal.base import UsageError
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
+from parallax.core.internal.planned_step import ObjectKey
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadEvidence,
@@ -44,8 +46,6 @@ from parallax.core.internal.unit_work import (
     admitted_write,
     object_key,
 )
-from parallax.core.internal.write_plan import ObjectKey
-from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of

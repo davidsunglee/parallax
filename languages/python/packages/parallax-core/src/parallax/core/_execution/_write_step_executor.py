@@ -28,10 +28,8 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.diagnostics import qualified_type
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.write_plan.payload import DocumentPatches, WritePayloadPreparer
-from parallax.core.internal.write_plan.plan import EffectSpan
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import DocumentPatches, WritePayloadPreparer
+from parallax.core.internal.planned_step.steps import (
     PlannedDelete,
     PlannedInsert,
     PlannedStep,
@@ -39,6 +37,8 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     WriteRow,
 )
+from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["WriteStepExecutor"]
 

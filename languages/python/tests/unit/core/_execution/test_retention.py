@@ -42,6 +42,13 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.planned_step import (
+    ObjectStateKey,
+    TemporalObservation,
+    VersionObservation,
+    object_state_key_from_observation,
+)
+from parallax.core.internal.planned_step.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.internal.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
@@ -59,13 +66,6 @@ from parallax.core.internal.unit_work import (
     UnitOfWork,
     admitted_write,
 )
-from parallax.core.internal.write_plan import (
-    ObjectStateKey,
-    TemporalObservation,
-    VersionObservation,
-    object_state_key_from_observation,
-)
-from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
@@ -399,7 +399,7 @@ def test_a_temporal_row_retains_its_judged_state_by_declared_name() -> None:
 def test_a_retained_predecessor_document_is_the_one_the_read_transferred() -> None:
     # The dialect transfers the decoded document to the read, so retention keeps
     # that document itself, host containers and all, rather than a frozen copy
-    # of it (`m-write-plan` "Predecessor Row").
+    # of it (`m-planned-step` "Predecessor Row").
     document: dict[str, object] = {
         "title": "Northbound",
         "manifest": {"cargo": "grain", "sealNumber": "S-4021"},

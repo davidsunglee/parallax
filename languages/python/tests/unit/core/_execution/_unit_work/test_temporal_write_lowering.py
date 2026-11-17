@@ -34,17 +34,7 @@ from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.temporal_read import Edge
-from parallax.core.internal.unit_work import (
-    TEMPORAL_CONFLICT,
-    KeyedMutation,
-    KeyedWriteInstruction,
-    TransactionSettings,
-    UnitOfWork,
-)
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     SUPERSEDED,
     TERMINATED,
     ObjectKey,
@@ -54,10 +44,9 @@ from parallax.core.internal.write_plan import (
     StateObservation,
     TemporalObservation,
 )
-from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
-from parallax.core.internal.write_plan.plan import TemporalRowCoordinates
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     OPTIMISTIC_CONFLICT,
     STALE_WRITE,
@@ -72,6 +61,17 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     TemporalGate,
 )
+from parallax.core.internal.planned_step.write_effects import TemporalRowCoordinates
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.temporal_read import Edge
+from parallax.core.internal.unit_work import (
+    TEMPORAL_CONFLICT,
+    KeyedMutation,
+    KeyedWriteInstruction,
+    TransactionSettings,
+    UnitOfWork,
+)
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.descriptor._records import Metamodel
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at

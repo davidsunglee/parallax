@@ -41,6 +41,7 @@ from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.inheritance import EntityMemberSelection
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.internal.planned_step import ObjectKey, PredecessorRow
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import (
     FlushTrigger,
@@ -48,7 +49,6 @@ from parallax.core.internal.unit_work import (
     TransactionSettings,
     UnitOfWork,
 )
-from parallax.core.internal.write_plan import ObjectKey, PredecessorRow
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY

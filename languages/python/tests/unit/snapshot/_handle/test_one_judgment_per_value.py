@@ -37,10 +37,10 @@ from parallax.core.internal.base import (
 )
 from parallax.core.internal.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
 from parallax.core.internal.entity import Document
+from parallax.core.internal.planned_step import PredecessorRow
 from parallax.core.internal.unit_work import UnitOfWork
 from parallax.core.internal.wire import decode_wire, encode_wire
 from parallax.core.internal.wire._codec import wire_converter
-from parallax.core.internal.write_plan import PredecessorRow
 from parallax.snapshot import TxnContext, WireEntity
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for

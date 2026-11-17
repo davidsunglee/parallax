@@ -1,6 +1,6 @@
-# m-write-plan — Planned Steps and State Observations
+# m-planned-step — Planned Steps and State Observations
 
-`m-write-plan` specifies what a finalized write means — its Planned Steps and the
+`m-planned-step` specifies what a finalized write means — its Planned Steps and the
 Write Target, Write Gate, and Affected Rows Policy they are stated in — the State
 Observation a write against existing state retains, including a temporal write's
 Predecessor Row, and the neutral vocabulary of the payload a write persists. Per

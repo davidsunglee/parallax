@@ -6,8 +6,8 @@ from typing import ClassVar, Final, Literal, Self, cast
 
 from parallax.core.internal.base import ParallaxError
 from parallax.core.internal.metamodel import EntityIdentity, MemberIdentity
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.temporal_read import Edge
-from parallax.core.internal.write_plan import ObjectKey
 
 __all__ = [
     "CONTINUATION_ORDER_NOT_TOTAL",

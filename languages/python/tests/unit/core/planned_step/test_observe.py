@@ -1,4 +1,4 @@
-"""Entity State row views and Predecessor Rows (`parallax.core.internal.write_plan.observe`).
+"""Entity State row views and Predecessor Rows (`parallax.core.internal.planned_step.observe`).
 
 The Mapping contract of the positional view over one decoded Entity State, keyed
 by declared member name, and of the nested Value Object views it exposes, driven
@@ -22,10 +22,10 @@ from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.internal.planned_step import EntityStateRow, PredecessorRow
+from parallax.core.internal.planned_step.managed_row import RowSelection, predecessor_state
+from parallax.core.internal.planned_step.observe import AssignedComparison
 from parallax.core.internal.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
-from parallax.core.internal.write_plan import EntityStateRow, PredecessorRow
-from parallax.core.internal.write_plan.managed_row import RowSelection, predecessor_state
-from parallax.core.internal.write_plan.observe import AssignedComparison
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model

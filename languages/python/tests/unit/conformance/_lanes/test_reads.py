@@ -36,9 +36,9 @@ from parallax.core.internal.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery import InvalidData, StoredDataIssue
 from parallax.core.internal.temporal_read import Pin
-from parallax.core.internal.write_plan import ObjectKey
 from tests._support.case_corpus import case as corpus_case
 from tests._support.case_corpus import cases as corpus_cases
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort

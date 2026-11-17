@@ -43,6 +43,7 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.object_query import AsOf, AsOfRange, ObjectQueryNode, TemporalSelection
+from parallax.core.internal.planned_step.columns import freeze_retained_value
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
@@ -51,7 +52,6 @@ from parallax.core.internal.unit_work import (
     WriteAssignment,
 )
 from parallax.core.internal.wire import WireValue, decode_wire, is_decoding_refusal, located_refusal
-from parallax.core.internal.write_plan.columns import freeze_retained_value
 
 __all__ = [
     "WirePreparer",

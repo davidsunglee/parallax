@@ -5,7 +5,7 @@ from typing import Final, Literal
 
 from parallax.core.internal.base import ConflictError, InternalError
 from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     AnyCount,
     FailedPrecondition,
     KeyTarget,

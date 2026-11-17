@@ -39,6 +39,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-navigate",
         "m-object-query",
         "m-pk-gen",
+        "m-planned-step",
         "m-predicate",
         "m-read-delivery",
         "m-read-planning",
@@ -53,7 +54,6 @@ _EXPECTED_MODULE_UNIONS = {
         "m-value-object",
         "m-wire",
         "m-write-payload",
-        "m-write-plan",
     ],
 }
 

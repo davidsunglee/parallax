@@ -1632,7 +1632,7 @@
           "additionalProperties": { "$ref": "#/$defs/unitFate" }
         },
         "affectedRows": {
-          "description": "conflict cases, single-attempt form. The number of rows the golden keyed UPDATE or DELETE must affect after any `given.apply` is applied: exactly its key count (the AGGREGATE, for the multi-key `when.write` array form). Meeting it is success; a shortfall under the optimistic gate is the retriable optimistic-lock conflict. Every other shortfall or excess classification is m-write-plan's (*Affected Rows Policy*), which no conflict case authors (m-case-format *Conflict cases*). A case whose write is REFUSED commits no write effect, so it always asserts this count and its golden statement; an optional `then.tableState` observes the state that remains.",
+          "description": "conflict cases, single-attempt form. The number of rows the golden keyed UPDATE or DELETE must affect after any `given.apply` is applied: exactly its key count (the AGGREGATE, for the multi-key `when.write` array form). Meeting it is success; a shortfall under the optimistic gate is the retriable optimistic-lock conflict. Every other shortfall or excess classification is m-planned-step's (*Affected Rows Policy*), which no conflict case authors (m-case-format *Conflict cases*). A case whose write is REFUSED commits no write effect, so it always asserts this count and its golden statement; an optional `then.tableState` observes the state that remains.",
           "type": "integer",
           "minimum": 0
         },
@@ -3125,7 +3125,7 @@
       ]
     },
     "unitFate": {
-      "description": "One `uow` group's fate (m-case-format *Unit fates*). `flushFailure` names the failure a flush raised: `at` is the step whose read flushed, or `commit`, and `entity` / `key` are the object it reports, beside exactly one of `shortfall`, its Shortfall (m-write-plan *Affected Rows Policy*), or `error`, a flush failure that is no Shortfall (`temporalConflict`, m-unit-work *Closes the instant cannot follow*), matching the error's own payload. A failed flush ends the unit of work, so a group stating one rolls back.",
+      "description": "One `uow` group's fate (m-case-format *Unit fates*). `flushFailure` names the failure a flush raised: `at` is the step whose read flushed, or `commit`, and `entity` / `key` are the object it reports, beside exactly one of `shortfall`, its Shortfall (m-planned-step *Affected Rows Policy*), or `error`, a flush failure that is no Shortfall (`temporalConflict`, m-unit-work *Closes the instant cannot follow*), matching the error's own payload. A failed flush ends the unit of work, so a group stating one rolls back.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],

@@ -18,6 +18,7 @@ from parallax.core.internal.metamodel import (
     TemporalDimension,
 )
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.planned_step import ObjectKey, VersionObservation
 from parallax.core.internal.unit_work import (
     INSERT_MUTATIONS,
     KeyedWriteInstruction,
@@ -25,7 +26,6 @@ from parallax.core.internal.unit_work import (
     TargetWriteInstruction,
 )
 from parallax.core.internal.wire import WireValue, decode_wire
-from parallax.core.internal.write_plan import ObjectKey, VersionObservation
 from parallax.snapshot import Snapshot, TxnContext, WireEntity
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 

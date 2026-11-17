@@ -28,7 +28,7 @@ from parallax.core._execution._unit_work import instructions as wi
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import Int32, InvalidValueError, UsageError
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.write_plan.managed_row import ManagedRow, named_members
+from parallax.core.internal.planned_step.managed_row import ManagedRow, named_members
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 

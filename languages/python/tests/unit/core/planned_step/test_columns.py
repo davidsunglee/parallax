@@ -1,4 +1,4 @@
-"""Compact private column storage beneath write-plan evidence (m-write-plan).
+"""Compact private column storage beneath planned-step evidence (m-planned-step).
 
 Bounded chunk construction, Column Slice sharing, and the recursive ownership a
 retained value takes once.
@@ -11,8 +11,8 @@ from typing import cast
 import pytest
 
 from parallax.core.internal.base import FrozenMap
-from parallax.core.internal.write_plan import ChunkedColumnBuilder, whole
-from parallax.core.internal.write_plan.columns import (
+from parallax.core.internal.planned_step import ChunkedColumnBuilder, whole
+from parallax.core.internal.planned_step.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
     ChunkedColumn,
     ColumnSlice,

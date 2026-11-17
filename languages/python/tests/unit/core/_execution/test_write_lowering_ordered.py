@@ -37,21 +37,8 @@ from parallax.core.internal.base import InternalError
 from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import POSTGRES, Dialect
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.sql_gen._write import (
-    StepPayload,
-    compile_write_step,
-    non_insert_parameter_ceiling,
-)
-from parallax.core.internal.unit_work import (
-    KeyedWriteInstruction,
-    PredicateSelection,
-    PredicateWriteInstruction,
-    WritePlanningRequest,
-)
-from parallax.core.internal.write_plan import SUPERSEDED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import SUPERSEDED
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -75,6 +62,19 @@ from parallax.core.internal.write_plan.steps import (
     Versioned,
     VersionGate,
     WriteRow,
+)
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import (
+    StepPayload,
+    compile_write_step,
+    non_insert_parameter_ceiling,
+)
+from parallax.core.internal.unit_work import (
+    KeyedWriteInstruction,
+    PredicateSelection,
+    PredicateWriteInstruction,
+    WritePlanningRequest,
 )
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant

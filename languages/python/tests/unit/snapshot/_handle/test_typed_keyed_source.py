@@ -38,9 +38,9 @@ from parallax.core.internal.db_port import MappingRow
 from parallax.core.internal.entity import Entity as EntityBase
 from parallax.core.internal.entity import _entity as entity_module
 from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.planned_step.managed_row import named_members
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.managed_row import named_members
 from parallax.snapshot._handle._typed_writes import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,

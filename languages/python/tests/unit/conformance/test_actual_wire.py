@@ -17,7 +17,7 @@ from parallax.core.internal.base import INFINITY, UsageError
 from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.internal.write_plan import ObjectKey
+from parallax.core.internal.planned_step import ObjectKey
 from tests._support.errors import raises_code
 
 

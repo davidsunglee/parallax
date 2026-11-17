@@ -50,7 +50,7 @@ from parallax.core.internal.db_port import (
     StructuredDocument,
 )
 from parallax.core.internal.dialect import POSTGRES
-from parallax.core.internal.write_plan.steps import PlannedInsert
+from parallax.core.internal.planned_step.steps import PlannedInsert
 from production_origins import ORIGINS_FIELD
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _scalar_type_support as scalar_support

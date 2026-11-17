@@ -22,7 +22,7 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import LayoutCatalog
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.write_plan import PredecessorRows, PredecessorRowsBuilder
+from parallax.core.internal.planned_step import PredecessorRows, PredecessorRowsBuilder
 from tests.unit._positional_row_support import positional_row
 
 __all__ = [

@@ -9,9 +9,9 @@ settles against, and the version arithmetic that runs under both strategies.
 These are facts of the accepted model. The module holds no transaction state and
 applies nothing: `m-read-delivery` decides each find level's lock from them;
 `m-unit-work` applies the strategy to an attempt's acquisition reads, admission,
-claims, and settlement; `m-write-plan`, `m-temporal-write`, and `m-sql` state and
+claims, and settlement; `m-planned-step`, `m-temporal-write`, and `m-sql` state and
 render the gates; `m-auto-retry` replays a recoverable conflict. `m-concurrency` depends on `m-metamodel`, `m-model-formation`,
-`m-inheritance`, and `m-temporal-read`, and names no attempt, write-plan, or SQL
+`m-inheritance`, and `m-temporal-read`, and names no attempt, Planned Step, or SQL
 construct.
 
 ## Model-formation contribution
@@ -123,8 +123,8 @@ An implementation **MUST NOT** make gate presence depend on the verb. A keyed
 `DELETE` that retained its observed-version predicate under Locking would give
 the gate two meanings under one strategy and let a Locking shortfall surface as
 an optimistic conflict. The uniform goldens are `m-sql`'s (*Versioned UPDATE and
-DELETE*); the gate shapes are `m-write-plan`'s
-([Write Gate](m-write-plan.md#write-gate-and-the-concurrency-decision)).
+DELETE*); the gate shapes are `m-planned-step`'s
+([Write Gate](m-planned-step.md#write-gate-and-the-concurrency-decision)).
 
 ## What a write settles against
 

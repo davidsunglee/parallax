@@ -122,7 +122,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
 | `m-batch-write` | Readless predicate writes | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
-| `m-write-plan` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
+| `m-planned-step` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
 | `m-execution` | Database Roots, execution scopes, option resolution, Model Edition serving, and transaction attempts | active | cases |
@@ -193,7 +193,7 @@ m-sql --> m-storage-layout
 m-sql --> m-relationship
 m-sql --> m-document-codec
 m-sql --> m-wire
-m-sql --> m-write-plan
+m-sql --> m-planned-step
 m-sql --> m-read-planning
 m-sql --> m-database-binding
 m-dialect --> m-core
@@ -212,7 +212,7 @@ m-unit-work --> m-temporal-read
 m-unit-work --> m-edit
 m-unit-work --> m-document-codec
 m-unit-work --> m-relationship
-m-unit-work --> m-write-plan
+m-unit-work --> m-planned-step
 m-unit-work --> m-temporal-write
 m-unit-work --> m-concurrency
 m-temporal-write --> m-core
@@ -220,18 +220,18 @@ m-temporal-write --> m-metamodel
 m-temporal-write --> m-inheritance
 m-temporal-write --> m-document-codec
 m-temporal-write --> m-temporal-read
-m-temporal-write --> m-write-plan
-m-write-plan --> m-core
-m-write-plan --> m-metamodel
-m-write-plan --> m-predicate
-m-write-plan --> m-inheritance
-m-write-plan --> m-document-codec
-m-write-plan --> m-temporal-read
+m-temporal-write --> m-planned-step
+m-planned-step --> m-core
+m-planned-step --> m-metamodel
+m-planned-step --> m-predicate
+m-planned-step --> m-inheritance
+m-planned-step --> m-document-codec
+m-planned-step --> m-temporal-read
 m-write-payload --> m-core
 m-write-payload --> m-metamodel
 m-write-payload --> m-storage-layout
 m-write-payload --> m-document-codec
-m-write-payload --> m-write-plan
+m-write-payload --> m-planned-step
 m-write-payload --> m-database-binding
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
@@ -277,7 +277,7 @@ m-read-delivery --> m-execution-lifecycle
 m-read-delivery --> m-concurrency
 m-execution --> m-unit-work
 m-execution --> m-read-delivery
-m-execution --> m-write-plan
+m-execution --> m-planned-step
 m-execution --> m-write-payload
 m-execution --> m-sql
 m-execution --> m-read-planning
@@ -441,7 +441,7 @@ construction it may reference any behavioral module it harnesses.
   driver — so any layer may still hold a port without acquiring a database
   dependency. The direction is one-way: nothing selects a port from a dialect,
   and two ports may report the same one.
-- **`m-write-plan --> m-temporal-read`; `m-unit-work --> m-temporal-read`.** A
+- **`m-planned-step --> m-temporal-read`; `m-unit-work --> m-temporal-read`.** A
   write-planning module depending on a read module is the surprise, and it is
   load-bearing: a temporal Object State Key addresses the object it observed
   **plus the observed milestone's own coordinate**, and that coordinate is
@@ -451,8 +451,8 @@ construction it may reference any behavioral module it harnesses.
   model's vocabulary rather than inventing an opaque parallel one, and the unit
   of work judges coverage in that same vocabulary. The edges are to the read
   *model* only: nothing here reaches as-of lowering, and the direction stays
-  one-way, since `m-temporal-read` names no write-plan or unit-of-work construct.
-- **`m-write-plan --> m-core`, `--> m-metamodel`, `--> m-predicate`, `-->
+  one-way, since `m-temporal-read` names no Planned Step or unit-of-work construct.
+- **`m-planned-step --> m-core`, `--> m-metamodel`, `--> m-predicate`, `-->
   m-inheritance`, `--> m-document-codec`.** The Planned Step algebra and the
   evidence it retains are stated in resolved model terms: managed values and
   retained documents (`m-core`), member and Entity Identities (`m-metamodel`),
@@ -464,19 +464,19 @@ construction it may reference any behavioral module it harnesses.
   strategy, or SQL construct, so both `m-unit-work`, which produces the
   algebra, and `m-sql`, which lowers it, depend on it rather than on each
   other.
-- **`m-write-payload --> m-write-plan`, `--> m-storage-layout`, `-->
+- **`m-write-payload --> m-planned-step`, `--> m-storage-layout`, `-->
   m-document-codec`; `m-execution --> m-write-payload`.** What a planned step
   stores — each member at its slot, each document composed, patched, or compared
   as persisted state — has one assembler beside the algebra rather than inside
   it or inside SQL lowering. The plan stays independent of storage layout, so
-  neither `m-write-plan`, `m-unit-work`, nor `m-temporal-write` depends on this
+  neither `m-planned-step`, `m-unit-work`, nor `m-temporal-write` depends on this
   module. `m-sql` renders and binds prepared values
   and never assembles a payload, so it depends on the vocabulary in
-  `m-write-plan` and not on this module. Placement facts stay `m-storage-layout`'s
+  `m-planned-step` and not on this module. Placement facts stay `m-storage-layout`'s
   and encoding, patching, and exact document equality `m-document-codec`'s; this
   module coordinates them and names no instruction, buffer, transaction,
   strategy, or SQL construct.
-- **`m-unit-work --> m-temporal-write --> m-write-plan`.** Temporal geometry and
+- **`m-unit-work --> m-temporal-write --> m-planned-step`.** Temporal geometry and
   the per-predecessor rules — reach, preservation, close and gate, ownership
   disposal, successors, and new-lineage openings — have one owner beneath the
   unit of work, which drives them from its buffering, binding, and completion
@@ -515,7 +515,7 @@ construction it may reference any behavioral module it harnesses.
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Developer-value conversion remains governed
   by `m-core`.
-- **`m-sql --> m-read-planning`, `--> m-write-plan`, `--> m-wire`.** SQL lowering
+- **`m-sql --> m-read-planning`, `--> m-planned-step`, `--> m-wire`.** SQL lowering
   consumes resolved flat reads and planned steps. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
   decode an authored literal; resolution and conversion have already happened.
@@ -579,7 +579,7 @@ construction it may reference any behavioral module it harnesses.
   preparation, not its caller, decides it. Page judgement also reads which
   explicit version a root publishes and whether its family's writes settle
   against what it observed.
-- **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-write-plan`,
+- **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-planned-step`,
   `--> m-sql`, `--> m-read-planning`, `--> m-execution-authority`, `--> m-auto-retry`,
   `--> m-execution-lifecycle`, `--> m-db-port`.** The
   execution runtime is the behavioral module the unit of work's ports are
@@ -599,7 +599,7 @@ construction it may reference any behavioral module it harnesses.
   evidence kind of each Entity are facts of the accepted model, so Unit of Work
   reads them from the model's Concurrency Facet beside the Temporal Facet and
   applies them to its own attempt state. `m-concurrency` holds no transaction
-  state and names no attempt, write-plan, or SQL construct, so the edge runs one
+  state and names no attempt, Planned Step, or SQL construct, so the edge runs one
   way.
 - **`m-concurrency --> m-temporal-read`.** For a Transaction-Time Entity the
   version is derived from `txStart` / physical `in_z`, so the Concurrency Facet

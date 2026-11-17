@@ -42,6 +42,7 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
     StateObservedWrite,
 )
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY, InternalError, UsageError
@@ -58,6 +59,30 @@ from parallax.core.internal.metamodel import (
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
 )
+from parallax.core.internal.planned_step import (
+    ObjectKey,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    StateObservation,
+    TemporalObservation,
+    VersionObservation,
+)
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
+from parallax.core.internal.planned_step.managed_row import ManagedRow, projected_row
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
+    ANY_COUNT,
+    MISSING_TARGET,
+    UNVERSIONED,
+    ChangedFrom,
+    ExactCount,
+    KeyTarget,
+    PlannedDelete,
+    PlannedStep,
+    PlannedUpdate,
+    ResolvedMutationSelection,
+)
 from parallax.core.internal.relationship import _compile as relationship_compile
 from parallax.core.internal.unit_work import (
     AdmittedWrite,
@@ -70,31 +95,6 @@ from parallax.core.internal.unit_work import (
     WritePlanningRequest,
     admitted_write,
     object_key,
-)
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PlannedClose,
-    PlannedInsert,
-    PredecessorRow,
-    StateObservation,
-    TemporalObservation,
-    VersionObservation,
-    WritePlan,
-)
-from parallax.core.internal.write_plan.keys import VersionedObjectStateKey
-from parallax.core.internal.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
-    ANY_COUNT,
-    MISSING_TARGET,
-    UNVERSIONED,
-    ChangedFrom,
-    ExactCount,
-    KeyTarget,
-    PlannedDelete,
-    PlannedStep,
-    PlannedUpdate,
-    ResolvedMutationSelection,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.bindings import bound_model

@@ -1,9 +1,7 @@
-"""The Write Plan's own contract (m-write-plan values, `m-unit-work` *Write Plan
-and Planned Steps*).
+"""The Write Plan's own contract (`m-unit-work` *Write Plan and Planned Steps*).
 
 A Write Group holds at least one write. A group laid out from its members runs
-every non-insert step before any insert. An attempt that opened nothing owns
-nothing, and holds nothing for any source to continue from.
+every non-insert step before any insert.
 """
 
 from __future__ import annotations
@@ -12,20 +10,10 @@ from collections.abc import Callable, Hashable, Iterator, Mapping
 
 import pytest
 
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup
 from parallax.core.internal.metamodel import AttributeIdentity
-from parallax.core.internal.write_plan import PlannedInsert
-from parallax.core.internal.write_plan.keys import ObjectKey, VersionedObjectStateKey
-from parallax.core.internal.write_plan.plan import (
-    NO_TEMPORAL_WRITE_OWNERSHIP,
-    OPEN_BITEMPORAL_ENDS,
-    BoundRange,
-    EffectSpan,
-    SettledWrite,
-    TemporalRowCoordinates,
-    WriteEffects,
-    WriteGroup,
-)
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step import PlannedInsert
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     NEW_LINEAGE,
     UNVERSIONED,
@@ -34,6 +22,11 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
     WriteRow,
+)
+from parallax.core.internal.planned_step.write_effects import (
+    BoundRange,
+    EffectSpan,
+    WriteEffects,
 )
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
@@ -61,22 +54,6 @@ def test_a_write_group_holds_at_least_one_settled_write() -> None:
         WriteGroup((), (_insert(1),))
     with pytest.raises(ValueError, match="at least one write"):
         WriteGroup.from_members((), effect_shape=_unshaped)
-
-
-def test_an_attempt_that_opened_nothing_owns_nothing_an_insertion_opened() -> None:
-    coordinates = TemporalRowCoordinates(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    assert not NO_TEMPORAL_WRITE_OWNERSHIP.owns(coordinates)
-    assert not NO_TEMPORAL_WRITE_OWNERSHIP.continues_insertion(coordinates)
-    assert NO_TEMPORAL_WRITE_OWNERSHIP.insertion_coverage(coordinates, None) == ()
-
-
-def test_an_attempt_that_opened_nothing_holds_nothing_for_a_source_to_continue() -> None:
-    coordinates = TemporalRowCoordinates(_ACCOUNT, (1,), OPEN_BITEMPORAL_ENDS)
-    target = ObjectKey(_ACCOUNT, (("id", 1),))
-    state = VersionedObjectStateKey(target, 1)
-    assert not NO_TEMPORAL_WRITE_OWNERSHIP.demanded(state, coordinates)
-    assert NO_TEMPORAL_WRITE_OWNERSHIP.continues(object(), None) is None
-    assert tuple(NO_TEMPORAL_WRITE_OWNERSHIP.current_rows(target, None)) == ()
 
 
 def _delete(key: int) -> PlannedDelete:

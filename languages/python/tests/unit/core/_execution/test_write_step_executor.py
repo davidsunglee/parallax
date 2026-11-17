@@ -25,6 +25,7 @@ from parallax.core import (
     ParallaxError,
 )
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseCallStarted,
@@ -35,10 +36,7 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import ArrayBind
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
-from parallax.core.internal.write_plan import WritePlan
-from parallax.core.internal.write_plan.plan import SettledWrite, WriteGroup
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     UNVERSIONED,
     ExactCount,
@@ -46,6 +44,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
 )
+from parallax.core.internal.unit_work import MISSING_TARGET as MISSING_TARGET_CODE
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.errors import raises_code
 from tests.unit.core._execution._execution_support import ACCOUNT

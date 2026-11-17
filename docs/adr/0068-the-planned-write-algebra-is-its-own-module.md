@@ -15,4 +15,4 @@ Alternatives rejected:
 - Naming only the edges the transitive closure requires would leave the module's real vocabulary implicit; the enforced closure is identical either way.
 - Re-exporting the moved names from the unit-of-work package would keep two import paths for one owner.
 
-The contract lives in [`m-write-plan`](../../core/spec/m-write-plan.md); write finalization remains in [`m-unit-work`](../../core/spec/m-unit-work.md).
+The contract lives in [`m-planned-step`](../../core/spec/m-planned-step.md); write finalization remains in [`m-unit-work`](../../core/spec/m-unit-work.md).

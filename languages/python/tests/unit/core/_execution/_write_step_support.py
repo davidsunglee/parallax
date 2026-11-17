@@ -18,6 +18,7 @@ from parallax.core import ExecutionLifecycleProvider
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.execution_lifecycle._activity import (
@@ -36,17 +37,13 @@ from parallax.core.internal.metamodel import (
     Metamodel,
     entity_by_name,
 )
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.unit_work import TransactionSettings, UnitOfWork
-from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import SUPERSEDED, WritePlan
-from parallax.core.internal.write_plan.payload import (
+from parallax.core.internal.planned_step import SUPERSEDED
+from parallax.core.internal.planned_step.payload import (
     AssignmentPayload,
     RowSlots,
     WritePayloadPreparer,
 )
-from parallax.core.internal.write_plan.plan import CurrentRowOutput, WriteEffects
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
@@ -65,6 +62,10 @@ from parallax.core.internal.write_plan.steps import (
     TemporalGate,
     WriteRow,
 )
+from parallax.core.internal.planned_step.write_effects import CurrentRowOutput, WriteEffects
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.unit_work import TransactionSettings, UnitOfWork
+from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from tests._support.bindings import bound_model
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
 from tests._support.managed_rows import managed_row_of

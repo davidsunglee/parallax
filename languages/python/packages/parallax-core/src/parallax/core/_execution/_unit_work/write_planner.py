@@ -27,24 +27,24 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
     TargetWrite,
 )
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.internal import concurrency, inheritance, relationship, temporal_read
 from parallax.core.internal.concurrency import ConcurrencyFacet, ConcurrencyPreference
 from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity, Metamodel
-from parallax.core.internal.temporal_write.coverage import CoverageTransform
-from parallax.core.internal.write_plan.payload import WritePayloadPreparer
-from parallax.core.internal.write_plan.plan import (
-    NO_TEMPORAL_WRITE_OWNERSHIP,
-    TemporalWriteOwnership,
-    WritePlan,
-)
-from parallax.core.internal.write_plan.planned_rows import planned_assignments
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import WritePayloadPreparer
+from parallax.core.internal.planned_step.planned_rows import planned_assignments
+from parallax.core.internal.planned_step.steps import (
     ANY_COUNT,
     UNVERSIONED,
     PlannedDelete,
     PlannedUpdate,
 )
+from parallax.core.internal.planned_step.write_effects import (
+    NO_TEMPORAL_WRITE_OWNERSHIP,
+    TemporalWriteOwnership,
+)
+from parallax.core.internal.temporal_write.coverage import CoverageTransform
 
 __all__ = [
     "WritePlanner",

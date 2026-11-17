@@ -24,7 +24,7 @@ from parallax.core.internal.db_port import (
     StatementNotExecuted,
 )
 from parallax.core.internal.dialect import POSTGRES
-from parallax.core.internal.write_plan.steps import PlannedStep
+from parallax.core.internal.planned_step.steps import PlannedStep
 from tests._support.bindings import bound_model
 from tests._support.db_port import Ordered, ScriptedAdapter, Write
 from tests.unit.core._execution._write_step_support import (

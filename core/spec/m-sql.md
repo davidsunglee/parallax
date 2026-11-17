@@ -3,7 +3,7 @@
 `m-sql` is the contract that turns resolved read and planned-step products
 into per-dialect SQL, and the rules that make "equivalent SQL per database"
 **testable**. `m-sql` depends on `m-object-query` and `m-read-planning` (resolved
-flat reads), `m-predicate` (elaborated selections), `m-write-plan` (Planned
+flat reads), `m-predicate` (elaborated selections), `m-planned-step` (Planned
 Steps), `m-document-codec` and `m-wire` (canonical document values), and
 `m-dialect` (the dialect that decides concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
@@ -14,7 +14,7 @@ discriminator semantics from `m-inheritance`, physical Tables and slots from
 
 Model-aware rejection is complete before SQL generation begins (`m-object-query`), so
 generation adds no portable rejection beyond the refusals this module and `m-dialect`
-name. What a write stores is assembled by `m-write-payload` (`m-write-plan` *Write
+name. What a write stores is assembled by `m-write-payload` (`m-planned-step` *Write
 payloads*); SQL generation places, renders, and binds it and assembles nothing. No
 public surface offers a raw-SQL escape hatch around SQL generation.
 
@@ -207,7 +207,7 @@ For each physical branch, SQL selects from the layout values as follows:
    instance-form read, and a row acquisition whose observation is a Predecessor
    Row, needs it whenever the branch's Table carries one at all, because the
    stored document is itself part of what such a read observes: a Predecessor Row
-   retains the raw document (`m-write-plan`), and an owner declaring no
+   retains the raw document (`m-planned-step`), and an owner declaring no
    document-resident member still holds whatever keys a newer application version
    wrote. The
    Structured Column is never a result field: a row's requested logical members —
@@ -267,7 +267,7 @@ level projects its entity's own instance-form list: its scalars plus its declare
 value-object document columns.
 
 A write's row acquisition constructs no instance. Where it retains a Predecessor
-Row (`m-write-plan`) it reads every declared Document slot — the **predecessor
+Row (`m-planned-step`) it reads every declared Document slot — the **predecessor
 projection**.
 
 What a case asserts of a read is `m-case-format`'s (*Read result

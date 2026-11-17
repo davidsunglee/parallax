@@ -11,7 +11,7 @@ import pytest
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import FrozenMap
 from parallax.core.internal.metamodel import AttributeIdentity, ValueObjectIdentity
-from parallax.core.internal.write_plan.managed_row import (
+from parallax.core.internal.planned_step.managed_row import (
     ManagedRow,
     RowSelection,
     empty_row,

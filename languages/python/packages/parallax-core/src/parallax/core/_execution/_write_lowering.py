@@ -10,16 +10,7 @@ from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.internal.sql_gen import LoweredStatement
-from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
-from parallax.core.internal.sql_gen._write import (
-    GroupedEffectBuilder,
-    InsertStatementBuilder,
-    StepPayload,
-    compile_write_step,
-    non_insert_parameter_ceiling,
-)
-from parallax.core.internal.write_plan.payload import (
+from parallax.core.internal.planned_step.payload import (
     AssignmentPayload,
     DocumentPatches,
     EffectSlots,
@@ -27,8 +18,7 @@ from parallax.core.internal.write_plan.payload import (
     RowSlots,
     WritePayloadPreparer,
 )
-from parallax.core.internal.write_plan.plan import EffectSpan
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.steps import (
     ExactCount,
     KeyTarget,
     PlannedClose,
@@ -40,6 +30,16 @@ from parallax.core.internal.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedUpdate,
     WriteRow,
+)
+from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.sql_gen import LoweredStatement
+from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
+from parallax.core.internal.sql_gen._write import (
+    GroupedEffectBuilder,
+    InsertStatementBuilder,
+    StepPayload,
+    compile_write_step,
+    non_insert_parameter_ceiling,
 )
 
 __all__ = [

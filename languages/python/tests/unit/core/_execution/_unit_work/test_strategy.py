@@ -15,9 +15,8 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core.internal.base import InternalError
 from parallax.core.internal.metamodel import AttributeIdentity
-from parallax.core.internal.unit_work import NO_AUDIT, TransactionInstant
-from parallax.core.internal.write_plan.planned_rows import WRITE_PLANNING_FAILED
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.planned_rows import WRITE_PLANNING_FAILED
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -35,6 +34,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedUpdate,
     WriteRow,
 )
+from parallax.core.internal.unit_work import NO_AUDIT, TransactionInstant
 from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of

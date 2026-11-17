@@ -32,9 +32,8 @@ from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.document_codec import apply_prepared_patches, persisted_document_equal
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.internal.sql_gen._write import compile_write_step
-from parallax.core.internal.write_plan.payload import AssignmentPayload, DocumentPatches
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import AssignmentPayload, DocumentPatches
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     STALE_WRITE,
     UNGATED,
@@ -43,6 +42,7 @@ from parallax.core.internal.write_plan.steps import (
     PlannedAssignments,
     PlannedTemporalRevision,
 )
+from parallax.core.internal.sql_gen._write import compile_write_step
 from tests._support.bindings import TEST_BINDING, bound_model
 
 _NAMESPACE = "provider.document_patch"

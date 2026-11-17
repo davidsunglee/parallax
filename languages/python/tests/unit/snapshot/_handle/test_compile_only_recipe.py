@@ -18,11 +18,11 @@ import pytest
 
 import parallax.snapshot
 from parallax.conformance import case_format, engine
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.unit_work import WritePlanner, WritePlanningRequest
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
-from parallax.core.internal.write_plan import WritePlan
 from parallax.snapshot import Database, TxnContext
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import plan_steps

@@ -29,12 +29,15 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.inheritance import inheritance_facet_of
+from parallax.core.internal.planned_step import ObjectKey, PredecessorRow, TemporalObservation
+from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     ReadAuthorizedWrite,
@@ -44,14 +47,6 @@ from parallax.core.internal.unit_work import (
     WritePlanningRequest,
     admitted_write,
 )
-from parallax.core.internal.write_plan import (
-    ObjectKey,
-    PredecessorRow,
-    TemporalObservation,
-    WritePlan,
-)
-from parallax.core.internal.write_plan.keys import TemporalObjectStateKey
-from parallax.core.internal.write_plan.plan import SettledWrite
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes

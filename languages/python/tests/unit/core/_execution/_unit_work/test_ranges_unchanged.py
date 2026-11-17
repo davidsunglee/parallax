@@ -12,21 +12,21 @@ from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
-from parallax.core.internal.unit_work import (
-    TargetWriteInstruction,
-)
-from parallax.core.internal.write_plan.observe import AssignedComparison
-from parallax.core.internal.write_plan.plan import (
-    TRANSACTION_TIME_ENDS,
-    TemporalRowCoordinates,
-)
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.observe import AssignedComparison
+from parallax.core.internal.planned_step.steps import (
     FAILED_PRECONDITION,
     OPTIMISTIC_CONFLICT,
     ExactCount,
     PlannedTemporalGuard,
     PlannedTemporalRevision,
     TemporalGate,
+)
+from parallax.core.internal.planned_step.write_effects import (
+    TRANSACTION_TIME_ENDS,
+    TemporalRowCoordinates,
+)
+from parallax.core.internal.unit_work import (
+    TargetWriteInstruction,
 )
 from tests._support.planner_probes import plan_steps, settled_writes
 from tests._support.write_preparation import write_preparation_of

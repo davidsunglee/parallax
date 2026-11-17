@@ -78,6 +78,15 @@ from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
+from parallax.core.internal.planned_step.payload import DocumentPatches
+from parallax.core.internal.planned_step.steps import (
+    PlannedDelete,
+    PlannedStep,
+    PlannedTemporalRevision,
+    PlannedUpdate,
+    WriteRow,
+)
+from parallax.core.internal.planned_step.write_effects import EffectSpan
 from parallax.core.internal.read_delivery._acquired_rows import (
     admitted_member_rows,
     completed_member_rows,
@@ -93,15 +102,6 @@ from parallax.core.internal.read_delivery._paging import At, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
 from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
 from parallax.core.internal.read_delivery._stream import StreamDelivery, check_batch_size
-from parallax.core.internal.write_plan.payload import DocumentPatches
-from parallax.core.internal.write_plan.plan import EffectSpan
-from parallax.core.internal.write_plan.steps import (
-    PlannedDelete,
-    PlannedStep,
-    PlannedTemporalRevision,
-    PlannedUpdate,
-    WriteRow,
-)
 
 __all__ = [
     "PredicateWriteAdapter",

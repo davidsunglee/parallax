@@ -22,7 +22,7 @@ from parallax.core.internal.metamodel import (
     TablePerHierarchy,
     TemporalDimension,
 )
-from parallax.core.internal.write_plan.managed_row import named_members
+from parallax.core.internal.planned_step.managed_row import named_members
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source

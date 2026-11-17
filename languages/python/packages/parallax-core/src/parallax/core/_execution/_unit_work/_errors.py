@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Final, Literal
 
 from parallax.core.internal.base import UsageError
-from parallax.core.internal.write_plan.keys import ObjectKey
+from parallax.core.internal.planned_step.keys import ObjectKey
 
 __all__ = [
     "VERSION_UNOBSERVED",

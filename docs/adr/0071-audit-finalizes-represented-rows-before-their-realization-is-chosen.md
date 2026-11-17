@@ -37,4 +37,4 @@ manufacturing provisional insert steps to decorate before choosing a revision,
 which builds and repairs physical plans. Both were rejected.
 
 The contract lives in `core/spec/m-unit-work.md` (*The planning pipeline*) and
-`core/spec/m-write-plan.md` (*Write Rows, Row Origin, and Close Cause*).
+`core/spec/m-planned-step.md` (*Write Rows, Row Origin, and Close Cause*).

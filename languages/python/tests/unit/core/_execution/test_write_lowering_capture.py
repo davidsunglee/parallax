@@ -23,8 +23,8 @@ from parallax.core.internal.base import INFINITY as OPEN
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel, entity_by_name
-from parallax.core.internal.write_plan.payload import DocumentPatches
-from parallax.core.internal.write_plan.steps import (
+from parallax.core.internal.planned_step.payload import DocumentPatches
+from parallax.core.internal.planned_step.steps import (
     INFINITY,
     NEW_LINEAGE,
     STALE_WRITE,

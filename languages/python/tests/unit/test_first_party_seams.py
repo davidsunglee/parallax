@@ -32,11 +32,11 @@ from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import EntityIdentity, entity_by_name
 from parallax.core.internal.object_query import ObjectQueryNode
 from parallax.core.internal.object_query import deserialize as deserialize_query
+from parallax.core.internal.planned_step import ObjectKey, ObjectStateKey, VersionObservation
+from parallax.core.internal.planned_step.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.internal.unit_work import (
     RetainedObservation,
 )
-from parallax.core.internal.write_plan import ObjectKey, ObjectStateKey, VersionObservation
-from parallax.core.internal.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (

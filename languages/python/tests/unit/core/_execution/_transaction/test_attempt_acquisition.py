@@ -64,6 +64,7 @@ from parallax.core.internal.metamodel import (
     AttributeIdentity,
     entity_by_name,
 )
+from parallax.core.internal.planned_step import ObjectKey
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.core.internal.read_delivery._row_converter import ReadRowConverter
 from parallax.core.internal.temporal_read import TimeInterval
@@ -74,7 +75,6 @@ from parallax.core.internal.unit_work import (
     TargetWriteInstruction,
     WriteAssignment,
 )
-from parallax.core.internal.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
 from tests._support.db_port import (
     BeginCall,

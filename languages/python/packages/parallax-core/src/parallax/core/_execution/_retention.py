@@ -14,14 +14,7 @@ from parallax.core.internal.concurrency import ExplicitVersion, TransactionTimeV
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._layout import EntityLayout
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.internal.temporal_read import (
-    NON_TEMPORAL,
-    Bitemporal,
-    Pin,
-    TemporalFacet,
-    TransactionTimeOnly,
-)
-from parallax.core.internal.write_plan import (
+from parallax.core.internal.planned_step import (
     EntityStateRow,
     ObjectKey,
     ObjectStateKey,
@@ -30,6 +23,13 @@ from parallax.core.internal.write_plan import (
     TemporalObservation,
     VersionObservation,
     object_state_key_from_observation,
+)
+from parallax.core.internal.temporal_read import (
+    NON_TEMPORAL,
+    Bitemporal,
+    Pin,
+    TemporalFacet,
+    TransactionTimeOnly,
 )
 
 __all__ = [
@@ -315,10 +315,10 @@ def defer_read_evidence(
     only once that state is reachable and valid.
 
     Evidence is addressed by the exact state it is about
-    (:func:`~parallax.core.internal.write_plan.object_state_key_from_observation`), so a
+    (:func:`~parallax.core.internal.planned_step.object_state_key_from_observation`), so a
     second read of one primary key that resolves to a different version or milestone
     is evidence about the row it saw rather than an overwrite of the first read's.
-    The identity half is the :class:`~parallax.core.internal.write_plan.ObjectKey` a later
+    The identity half is the :class:`~parallax.core.internal.planned_step.ObjectKey` a later
     keyed write computes, over the row's own resolved concrete Entity (never
     family-normalized to the root), which is what ``tx.amend(copy)`` resolves
     its instance's class to.

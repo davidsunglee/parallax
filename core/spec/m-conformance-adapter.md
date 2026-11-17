@@ -596,7 +596,7 @@ observed it, keyed by its label: `{ outcome, flushFailure? }`, `outcome` being
 `committed` or `rolledBack`, and `flushFailure` — for a group a flush failure ended —
 `{ at, entity, key, shortfall | error }`: where that flush ran (the step whose read or
 predicate write flushed, or `commit`), the canonical Entity spelling and primary key the failure reported,
-and its Shortfall (`m-write-plan` *Affected Rows Policy*) or, for a Temporal Conflict
+and its Shortfall (`m-planned-step` *Affected Rows Policy*) or, for a Temporal Conflict
 (`m-unit-work` *Closes the instant cannot follow*), the error `temporalConflict`. It is compared against the
 case's `then.units` (`m-case-format` *Unit fates*), where a group the case states
 no fate for commits. What is reported is what the failure itself carries, never a

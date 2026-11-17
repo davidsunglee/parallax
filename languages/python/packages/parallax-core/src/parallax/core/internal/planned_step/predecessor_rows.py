@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from parallax.core.internal.metamodel import AttributeIdentity
-from parallax.core.internal.write_plan.columns import ChunkedColumnBuilder, ColumnSlice, whole
+from parallax.core.internal.planned_step.columns import ChunkedColumnBuilder, ColumnSlice, whole
 
 if TYPE_CHECKING:
     from parallax.core.internal.inheritance import EntityMemberSelection

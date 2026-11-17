@@ -1537,7 +1537,7 @@ _EVIDENCE_VOCABULARY = frozenset(
     {
         "parallax.core.internal.metamodel",
         "parallax.core.internal.temporal_read",
-        "parallax.core.internal.write_plan",
+        "parallax.core.internal.planned_step",
     }
 )
 
@@ -1600,7 +1600,7 @@ def test_published_values_carry_evidence_without_a_unit_of_work_grant() -> None:
 _CONCURRENCY = "parallax.core.internal.concurrency"
 
 
-def test_the_concurrency_policy_reaches_no_attempt_write_plan_or_sql_scope() -> None:
+def test_the_concurrency_policy_reaches_no_attempt_planned_step_or_sql_scope() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     assert adjacency[_CONCURRENCY] == frozenset(
         {
@@ -1616,7 +1616,7 @@ def test_the_concurrency_policy_reaches_no_attempt_write_plan_or_sql_scope() -> 
             _UNIT_WORK,
             "parallax.core._execution",
             "parallax.core.internal.db_port",
-            "parallax.core.internal.write_plan",
+            "parallax.core.internal.planned_step",
             "parallax.core.internal.dialect",
             "parallax.core.internal.sql_gen",
         }

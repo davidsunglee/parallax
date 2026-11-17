@@ -44,8 +44,8 @@ from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.internal.planned_step.managed_row import named_members
 from parallax.core.internal.temporal_read import TimeInterval
-from parallax.core.internal.write_plan.managed_row import named_members
 from tests._support.errors import raises_code
 from tests._support.repo import REPO_ROOT
 from tests._support.write_preparation import write_preparation_of

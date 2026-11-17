@@ -5,7 +5,7 @@ attempt that **buffers, finalizes, and flushes** writes, and the automatic
 read-correctness rules that make that attempt's reads safe. It is expressed entirely in terms of **operations
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
-`m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
+`m-temporal-read` for the coverage it judges, on `m-planned-step` for the Planned
 Steps it produces and the State Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, on `m-concurrency` for
 each Entity's Effective Concurrency Strategy, version source, and what its writes
@@ -18,7 +18,7 @@ ports this module declares, so `m-unit-work` takes no direct edge to SQL generat
 Bounded automatic retry (`m-auto-retry`) coordinates replay of attempts.
 
 `m-unit-work` also owns **write finalization**: the Write Planner and its planning
-order, which settle buffered writes into `m-write-plan`'s Planned Steps;
+order, which settle buffered writes into `m-planned-step`'s Planned Steps;
 the authoritative affected-row enforcer; and the Write Effect Error family that
 enforcer raises (ADR 0041, ADR 0048). Its planner owns collapse batching over
 admitted writes and prepared rows, without an injected batching strategy.
@@ -594,7 +594,7 @@ ungated write is licensed by the **shared read lock** the observing read took,
 and it holds that lock on exactly the row it closes, because the two derive from
 one value: the write's address is the milestone its own written value came
 from, and the observation the address comes from is the record of the read that
-locked that milestone (`m-write-plan` *State Observation*). There is no separate
+locked that milestone (`m-planned-step` *State Observation*). There is no separate
 license to check. A write whose value names a milestone this attempt never
 observed is already refused under both strategies (*Current-attempt source
 admission*), and a write over a view pinned at a finite Transaction-Time instant
@@ -630,7 +630,7 @@ does **not** lock the milestone chain's edge, the Provenance Lineage behind it,
 every row sharing that primary key, or every Valid-Time rectangle current at the
 same Transaction Time. Exactly one physical row per selected milestone is locked.
 
-Two consequences follow, and `m-write-plan`'s State Observation vocabulary depends
+Two consequences follow, and `m-planned-step`'s State Observation vocabulary depends
 on both:
 
 - A mutation that can change **several** current rectangles of one key must
@@ -913,7 +913,7 @@ each write's observation as it settles that write. These orderings are normative
   **finalized once**, before
   settlement chooses whether it is inserted or revises a row the attempt owns,
   and every value finalization adds is an executed assignment of the row
-  (`m-write-plan` *Write Rows*). Each Non-Temporal update, keyed or readless, and
+  (`m-planned-step` *Write Rows*). Each Non-Temporal update, keyed or readless, and
   each emitted close is **decorated once**; neither needs a complete row. A
   guard, a removal, a delete, and a milestone kept unchanged store no
   represented value and are not audited. The audit-neutral default answers each
@@ -1156,7 +1156,7 @@ it (`m-execution-lifecycle`).
 
 ## Planned Steps and State Observations
 
-`m-write-plan` owns what a Planned Step means — Row Origin and Close Cause,
+`m-planned-step` owns what a Planned Step means — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
 concurrency decision, and the Affected Rows Policy — and the State Observation
 vocabulary: the Object Key and Object State Key that address evidence, and
