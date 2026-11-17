@@ -1838,9 +1838,9 @@ def test_a_narrowed_read_resolves_its_effective_position_once(
     pair = (_identity(strategy, "Left"), _identity(strategy, "Right"))
 
     query = read_planning.plan_root(narrowed, _MATRIX, projection=_ALL)
-    compiled = compile_read(query, bound_model(_MATRIX), POSTGRES, result_form="instance")
+    compile_read(query, bound_model(_MATRIX), POSTGRES, result_form="instance")
     assert requests == [pair]
-    assert tuple(query.position.concrete_subtypes) == pair == compiled.resolved_position
+    assert tuple(query.position.concrete_subtypes) == pair
     assert _selected(query) == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
 
     requests.clear()

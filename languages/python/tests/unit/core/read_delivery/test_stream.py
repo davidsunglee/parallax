@@ -39,7 +39,7 @@ from parallax.core.internal.read_delivery._page_reader import (
 )
 from parallax.core.internal.read_delivery._paging import At, PagingParameters, PagingPlan
 from parallax.core.internal.read_delivery._publication import RootsOf
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlan
+from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanCache
 from parallax.core.internal.read_delivery._stream import StreamDelivery
 from parallax.core.internal.temporal_read import Pin, TemporalShape
 from tests._support.bindings import TEST_BINDING
@@ -126,7 +126,7 @@ class _Scope:
         return validate_object_query(entity_of(ORDERS, "Order"), node, ORDERS)
 
     def planned(self, read: _Read, query: ResolvedObjectQuery, batch_size: int, /) -> ReadPlan:
-        return UNCACHED_READ_PLANNER.plan(
+        return ReadPlanCache(0).plan(
             edition=read.edition,
             model=CatalogedModel(read.meta, TEST_BINDING),
             dialect=POSTGRES,

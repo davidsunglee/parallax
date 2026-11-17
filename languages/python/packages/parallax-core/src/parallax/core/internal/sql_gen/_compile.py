@@ -52,13 +52,11 @@ from parallax.core.internal.sql_gen._inheritance import EmptyReadShape as _Empty
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
 from parallax.core.internal.sql_gen._inheritance import ReadResultContract as _ReadResultContract
-from parallax.core.internal.sql_gen._inheritance import ReadShapeFacts as _ReadShapeFacts
 from parallax.core.internal.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.internal.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.internal.sql_gen._inheritance import TpcsUnionReadPlan as _TpcsUnionReadPlan
 from parallax.core.internal.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.internal.sql_gen._inheritance import plan_read_shape as _plan_read_shape
-from parallax.core.internal.sql_gen._inheritance import read_shape_facts as _read_shape_facts
 from parallax.core.internal.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.internal.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -144,20 +142,14 @@ class CompiledPredicate:
 
 @dataclass(frozen=True, slots=True)
 class CompiledRead:
-    """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
-    under, and the result contract that names and locates what its driver rows carry.
+    """One compiled read: its :class:`LoweredStatement` and the result contract that
+    names and locates what its driver rows carry.
 
     Self-contained by design: everything a caller needs to turn driver rows into
     observed rows travels WITH the compiled statement. Every materializing
     consumer — the typed and wire snapshot lanes and the write lanes alike — uses
     raw ordinal access and deferred conversion through the Page its lane owns.
     None re-derives what the statement projected.
-
-    ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
-    table-per-concrete-subtype position resolving to exactly one concrete emits
-    no `family_variant` column at all, so this is what still names the row's own
-    concrete identity. A deep-fetch CHILD level's narrow is its own planned child
-    query's.
 
     ``projection`` is the planned query's own resolved demand, which the
     statement selected; binding judges exactly its occurrences, so an
@@ -166,13 +158,10 @@ class CompiledRead:
     """
 
     statement: LoweredStatement
-    narrow_to: tuple[EntityIdentity, ...] | None
     target: EntityIdentity
-    resolved_position: tuple[EntityIdentity, ...]
     projection: ResolvedReadProjection
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_contract: _ReadResultContract
-    read_shape: _ReadShapeFacts
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,7 +415,6 @@ def _compile_read(
     )
     read_shape = statement_plan.read_shape
     assert isinstance(read_shape, (_SingleTableReadPlan, _TpcsUnionReadPlan))
-    position = tuple(read_shape.concrete_types)
     statement, select_list = _render_read_branch(
         query,
         read_shape,
@@ -471,15 +459,12 @@ def _compile_read(
         )
     return CompiledRead(
         statement,
-        query.narrow_to,
         query.entity.identity,
-        position,
         query.projection,
         select_list.document_reads,
         select_list.result_contract(
             read_shape, facet, query.projection, terms if query.paging is not None else ()
         ),
-        _read_shape_facts(read_shape),
     )
 
 

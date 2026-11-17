@@ -94,9 +94,9 @@ from parallax.core.internal.read_delivery._acquired_rows import (
 from parallax.core.internal.read_delivery._page import ABSENT, release_page_rows
 from parallax.core.internal.read_delivery._page_reader import (
     PageReadContext,
-    PageReader,
     PageResult,
 )
+from parallax.core.internal.read_delivery._page_reader import read_page as read_planned_page
 from parallax.core.internal.read_delivery._paging import At, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
 from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
@@ -785,7 +785,7 @@ class TxnAttempt(_TxnAttemptBase):
         layout = entity_layout(model.meta, entity)
         if layout is None:  # pragma: no cover - a write target always owns rows
             raise ValueError(f"{entity.identity.canonical}: write target has no Table")
-        stage = PageReader().read_page(plan, PageReadContext(self._connection, calls))
+        stage = read_planned_page(plan, PageReadContext(self._connection, calls))
         page = stage.page
         rows = (
             admitted_member_rows(page)

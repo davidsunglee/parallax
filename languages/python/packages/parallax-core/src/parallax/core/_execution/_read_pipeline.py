@@ -36,9 +36,9 @@ from parallax.core.internal.read_delivery._page_reader import (
     EMPTY_PAGE_ORIGIN_COLLECTOR,
     PageOriginCollector,
     PageReadContext,
-    PageReader,
     PageResult,
 )
+from parallax.core.internal.read_delivery._page_reader import read_page as read_planned_page
 from parallax.core.internal.read_delivery._paging import At, PagingParameters, PagingPlan
 from parallax.core.internal.read_delivery._publication import Publication
 from parallax.core.internal.read_delivery._read_plan import ReadPlan, ReadPlanner
@@ -223,7 +223,7 @@ def read_page(
                 preference=inputs.preference,
                 policy=first_plan,
             )
-        return PageReader().read_page(
+        return read_planned_page(
             plan,
             PageReadContext(
                 inputs.connection,

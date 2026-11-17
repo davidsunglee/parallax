@@ -58,7 +58,7 @@ from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.object_query import deserialize
 from parallax.core.internal.read_delivery._page import Page
 from parallax.core.internal.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
-from parallax.core.internal.read_delivery._read_plan import UNCACHED_READ_PLANNER
+from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
 from parallax.core.internal.unit_work import (
     ParticipationToken,
     ReadEvidence,
@@ -612,7 +612,7 @@ class _EvidenceContext:
 def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None:
     context = _EvidenceContext()
     selected = read_projection(_SERVING.current())
-    plan = UNCACHED_READ_PLANNER.plan(
+    plan = ReadPlanCache(0).plan(
         edition=selected.edition,
         model=selected.model,
         dialect=POSTGRES,

@@ -54,7 +54,7 @@ from parallax.core.internal.planned_step import TemporalObservation
 from parallax.core.internal.read_delivery._page_reader import (
     EagerPageResult,
     PageReadContext,
-    PageReader,
+    read_page,
 )
 from parallax.core.internal.read_delivery._publication import Publication
 from parallax.core.internal.read_delivery._read_plan import ReadPlan
@@ -133,7 +133,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., object]:
         evidence_context: ReadEvidenceContext | None = getattr(
             context.origin_collector, "_evidence_context", None
         )
-        result = PageReader().read_page(plan, context)
+        result = read_page(plan, context)
         recorded.append(
             _RecordedFind(
                 None if evidence_context is None else evidence_context.participation, result

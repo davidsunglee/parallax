@@ -1,43 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, cast
 
 from parallax.core import ObjectQuery
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity import lifecycle_state_of
 from parallax.core.internal.entity._authored_resolver import object_query_node
 from parallax.core.internal.execution import ModelSelection
-from parallax.core.internal.metamodel import EntityIdentity
-from parallax.core.internal.read_delivery._delivery import find as execute_read
 from parallax.core.internal.read_delivery._page import Page
+from parallax.core.internal.read_delivery._page_reader import PageReadContext, read_page
+from parallax.core.internal.read_delivery._read_plan import ReadPlanCache
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, require_publishable
 
 __all__ = ["ForeignLifecycleSource"]
-
-
-class _NoOrigins:
-    """Observes nothing and answers no origin: this source publishes no write
-    evidence, so the Pages it reads need none."""
-
-    __slots__ = ()
-
-    def observe_fetched_row(
-        self, node: int, entity: EntityIdentity, document: object | None
-    ) -> None:
-        del node, entity, document
-
-    def origins_for(self, page: Page, /) -> Mapping[int, object]:
-        del page
-        return MappingProxyType({})
-
-
-_NO_ORIGINS = _NoOrigins()
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +61,10 @@ class ForeignLifecycleSource:
     def find[S](self, query: ObjectQuery[Any, S]) -> tuple[S, ...]:
         """Every root ``query`` matches, materialized by THIS source.
 
-        A real read: the canonical Object Query runs through the same find
-        executor the developer surface runs, so what comes back is rows this
-        source read and instances this source built from them.
+        A real read: the canonical Object Query is planned and read through the
+        same Page reader the developer surface runs, so what comes back is rows
+        this source read and instances this source built from them. It
+        publishes no write evidence, so the Page retains no origin.
 
         An eager fetch is refused here, before any I/O: this source populates no
         relationship view, so reading a query's levels and then dropping them
@@ -95,7 +77,14 @@ class ForeignLifecycleSource:
                 "a relationship level"
             )
         validated = resolve_read_query(node, model=self._model.meta)
-        result = execute_read(validated, self._model, self._port, origin_collector=_NO_ORIGINS)
+        plan = ReadPlanCache(0).plan(
+            edition="",
+            model=self._model,
+            dialect=self._port.dialect,
+            query=validated,
+            preference=None,
+        )
+        result = read_page(plan, PageReadContext(self._port, INERT))
         return cast("tuple[S, ...]", self._materialize(result.page))
 
     def materialized(self, value: object) -> bool:

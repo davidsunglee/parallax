@@ -675,35 +675,6 @@ class ReadRoot:
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalReadRoot:
-    mapping_owner: EntityIdentity
-    concrete: EntityIdentity | None
-
-
-@dataclass(frozen=True, slots=True)
-class ReadShapeFacts:
-    """The finalized physical facts a compiled read retains after rendering."""
-
-    roots: tuple[PhysicalReadRoot, ...]
-    variant: Literal["single-table", "tph-partitioned", "tpcs-union"]
-
-    @property
-    def is_union(self) -> bool:
-        return self.variant == "tpcs-union"
-
-    @property
-    def may_repeat_row_keys(self) -> bool:
-        return self.is_union
-
-
-def read_shape_facts(shape: SingleTableReadPlan | TpcsUnionReadPlan) -> ReadShapeFacts:
-    return ReadShapeFacts(
-        tuple(PhysicalReadRoot(root.table.mapping_owner, root.concrete) for root in shape.roots),
-        shape.variant,
-    )
-
-
-@dataclass(frozen=True, slots=True)
 class EmptyReadShape:
     concrete_types: tuple[EntityIdentity, ...] = ()
     roots: tuple[ReadRoot, ...] = ()
@@ -723,7 +694,6 @@ class EmptyRead:
     """A read position no stored row can occupy, with no statement or rows to bind."""
 
     result_contract: EmptyReadResultContract = field(default_factory=EmptyReadResultContract)
-    read_shape: EmptyReadShape = field(default_factory=EmptyReadShape)
 
 
 EMPTY_READ: Final = EmptyRead()

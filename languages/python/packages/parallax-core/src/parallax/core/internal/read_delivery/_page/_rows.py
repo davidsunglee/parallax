@@ -407,7 +407,6 @@ class PageRows:
     pin: Pin
     judged_states: JudgedStates
     decoders: DecoderRows
-    observer: object | None = None
     stored_values: Sequence[object] = ()
     source_ordinals: Sequence[int] = ()
     fetched_rows_by_logical_row: Sequence[int | tuple[int, ...]] = ()
@@ -459,10 +458,6 @@ class Page:
     def root_count(self) -> int:
         """The number of result positions this Page carries."""
         return len(self._rows.roots)
-
-    @property
-    def observer(self) -> object | None:
-        return self._rows.observer
 
 
 def page_rows(page: object) -> PageRows:
@@ -524,7 +519,6 @@ def entity_state(rows: PageRows, fetched_row: int) -> EntityState:
         return _judge_entity_state(rows, fetched_row)
     held = judged_entity_state(rows, fetched_row)
     if held is not None:
-        _notify(rows.observer, "states_reused")
         return held
     state = _judge_entity_state(rows, fetched_row)
     logical = rows.logical_rows[fetched_row]
@@ -551,7 +545,6 @@ def _judge_entity_state(rows: PageRows, fetched_row: int) -> EntityState:
     member_row, findings = rows.decoders.decode(fetched_row)
     if rows.keys[fetched_row] is not None:
         rows.decoders.retire(fetched_row)
-    _notify(rows.observer, "states_decoded")
     return EntityState(member_row, _with_identity_findings(rows, fetched_row, findings))
 
 
@@ -572,11 +565,6 @@ def with_identity_findings(
     if identity_findings:
         return dedupe_issues((*payload_findings, *identity_findings))
     return payload_findings
-
-
-def _notify(observer: object | None, name: str) -> None:
-    if observer is not None:
-        getattr(observer, name)()
 
 
 def release_page_rows(page: Page) -> None:
@@ -866,7 +854,6 @@ class PageBuilder:
         "_layouts",
         "_logical_rows",
         "_member_rows",
-        "_observer",
         "_overwritten_edges",
         "_schema",
         "_sealed",
@@ -878,9 +865,8 @@ class PageBuilder:
         "_views",
     )
 
-    def __init__(self, schema: ViewSchema, observer: object | None = None) -> None:
+    def __init__(self, schema: ViewSchema) -> None:
         self._schema = schema
-        self._observer = observer
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
         self._issues: dict[int, tuple[StoredDataIssueInput, ...]] = {}
@@ -907,9 +893,7 @@ class PageBuilder:
         self._stored_values: list[object] = []
         self._sealed = False
 
-    # Runs once per fetched row, so its branches stay inline rather than behind
-    # per-row calls.
-    def add_fetched_row(  # noqa: C901
+    def add_fetched_row(
         self,
         source: SourceLevel,
         layout: EntityLayout,
@@ -969,8 +953,6 @@ class PageBuilder:
                         "it is judged"
                     )
                 self._states[logical] = judgment
-                if self._observer is not None:
-                    _notify(self._observer, "states_decoded")
             else:
                 self._decoders[fetched_row] = cast("PayloadDecoder", judgment)
         self._layouts.append(layout)
@@ -1133,7 +1115,6 @@ class PageBuilder:
             roots=roots,
             pin=pin,
             judged_states=JudgedStates(fetched_rows_by_logical_row, self._states),
-            observer=self._observer,
             stored_values=self._stored_values,
             source_ordinals=source_ordinals,
             fetched_rows_by_logical_row=fetched_rows_by_logical_row,

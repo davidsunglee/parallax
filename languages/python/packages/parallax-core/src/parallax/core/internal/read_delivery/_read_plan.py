@@ -77,7 +77,6 @@ from parallax.core.internal.temporal_read import (
 __all__ = [
     "DEFAULT_READ_PLAN_CACHE_CAPACITY",
     "EMPTY_READ",
-    "UNCACHED_READ_PLANNER",
     "EmptyRead",
     "ReadKind",
     "ReadPlan",
@@ -173,12 +172,12 @@ class ReadPlan:
         assert prepared.root_rows is not None
         return prepared.root, prepared.root_rows
 
-    def page_builder(self, observer: object | None) -> PageBuilder:
+    def page_builder(self) -> PageBuilder:
         prepared = self._preparation()
         schema = prepared.schema
         if schema is None:
             schema = ViewSchema.of(repeating_levels=prepared.repeating)
-        return PageBuilder(schema, observer)
+        return PageBuilder(schema)
 
     def ready_fetches(self, completed: set[int]) -> tuple[int, ...]:
         return tuple(
@@ -984,6 +983,3 @@ class ReadPlanCache:
                 self._misses,
                 self._evictions,
             )
-
-
-UNCACHED_READ_PLANNER: ReadPlanner = ReadPlanCache(0)

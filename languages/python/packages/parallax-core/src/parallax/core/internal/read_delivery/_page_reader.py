@@ -29,9 +29,7 @@ from parallax.core.internal.read_delivery._fetch import (
     parent_refs,
 )
 from parallax.core.internal.read_delivery._page import (
-    INERT_OBSERVER,
     ROOT_LEVEL,
-    MaterializationObserver,
     Page,
     PageBuilder,
     SourceLevel,
@@ -59,8 +57,8 @@ __all__ = [
     "PageContinuation",
     "PageOriginCollector",
     "PageReadContext",
-    "PageReader",
     "PageResult",
+    "read_page",
 ]
 
 
@@ -136,7 +134,6 @@ class _RootRead:
     plan: ReadPlan
     converter: ReadRowConverter
     rows: list[Row]
-    observer: MaterializationObserver = INERT_OBSERVER
 
     def take_rows(self) -> list[Row]:
         rows = self.rows
@@ -190,10 +187,6 @@ def _pipelined_rows(
     return batches
 
 
-def _page_observer(observer: MaterializationObserver) -> MaterializationObserver | None:
-    return None if observer is INERT_OBSERVER else observer
-
-
 def _recorded_rows(
     builder: PageBuilder,
     source: SourceLevel,
@@ -218,171 +211,151 @@ def _recorded_rows(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class PageReader:
+def read_page[Origin](
+    plan: ReadPlan,
+    context: PageReadContext[Origin],
+    paging: PagingParameters | None = None,
+) -> PageResult[Origin]:
     """Execute, record, and seal one plan-driven Page."""
-
-    observer: MaterializationObserver = INERT_OBSERVER
-
-    def read_page[Origin](
-        self,
-        plan: ReadPlan,
-        context: PageReadContext[Origin],
-        paging: PagingParameters | None = None,
-    ) -> PageResult[Origin]:
-        self.observer.prepared(plan.fetch_count + 1)
-        collector = (
-            context.origin_collector if plan.collects_evidence else EMPTY_PAGE_ORIGIN_COLLECTOR
-        )
-        root = plan.root_read()
-        if isinstance(root, EmptyRead):
-            page = plan.page_builder(_page_observer(self.observer)).finish((), plan.pin)
-            return PageResult(
-                page,
-                plan.include_tree(),
-                collector.origins_for(page),
-                None,
-                PageContinuation(0, None, True, None) if paging is not None else None,
-            )
-        root_read = self._read_root(plan, root, context)
-        continuation_result = None
-        if paging is not None:
-            captured = row_coordinates(root[0].result_contract, root_read.rows)
-            if any(coordinate is None for coordinate in captured):
-                raise InternalError(
-                    SQL_GENERATION_FAILED,
-                    "a paging read returned a root carrying no evaluated coordinate",
-                )
-            coordinates = cast("tuple[ContinuationCoordinate, ...]", captured)
-            assert isinstance(plan.query, ResolvedObjectQuery)
-            terms = tuple(term.member.identity for term in plan.query.order_by)
-            verdict = page_decision(paging, terms, coordinates)
-            root_read.rows = root_read.rows[: verdict.keep]
-            continuation_result = PageContinuation(
-                verdict.keep,
-                coordinates[verdict.keep - 1] if verdict.keep else None,
-                verdict.exhausted,
-                verdict.tie,
-            )
-        return self._build_page(root_read, context, collector, continuation_result)
-
-    def _read_root[Origin](
-        self,
-        plan: ReadPlan,
-        root: tuple[CompiledRead, ReadRowConverter],
-        context: PageReadContext[Origin],
-    ) -> _RootRead:
-        compiled, converter = root
-        self.observer.statement_rendered(ROOT_LEVEL)
-        driver_rows = execute_read(context.port, compiled, context.calls)
-        self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
-        return _RootRead(
-            plan,
-            converter,
-            list(driver_rows),
-            self.observer,
-        )
-
-    @staticmethod
-    def _record_roots[Origin](
-        root_read: _RootRead,
-        builder: PageBuilder,
-        rows: list[Row],
-        origin_collector: PageOriginCollector[Origin],
-    ) -> tuple[tuple[int, ...], tuple[object | None, ...] | None]:
-        plan = root_read.plan
-        if plan.purpose != "write_support":
-            return _recorded_rows(
-                builder, ROOT_LEVEL, root_read.converter, _drain_rows(rows), origin_collector
-            ), None
-        root = plan.root_read()
-        assert not isinstance(root, EmptyRead)
-        if root[0].result_contract.shared_document is None:
-            return root_read.converter.record_rows(
-                _drain_rows(rows), builder, ROOT_LEVEL, None
-            ), None
-        references: list[int] = []
-        documents: list[object | None] = []
-        for row in _drain_rows(rows):
-            reference, _, document = root_read.converter.record_row(row, builder, source=ROOT_LEVEL)
-            references.append(reference)
-            documents.append(document)
-        return tuple(references), tuple(documents)
-
-    def _build_page[Origin](
-        self,
-        root_read: _RootRead,
-        context: PageReadContext[Origin],
-        origin_collector: PageOriginCollector[Origin],
-        continuation_result: PageContinuation | None,
-    ) -> PageResult[Origin]:
-        plan = root_read.plan
-        meta = plan.model.meta
-        port, calls = context.port, context.calls
-        includes = plan.include_tree()
-        builder = plan.page_builder(_page_observer(root_read.observer))
-        root_rows = root_read.take_rows()
-        root_refs, documents = self._record_roots(root_read, builder, root_rows, origin_collector)
-        del root_rows
-
-        fetch_refs: list[tuple[int, ...]] = [()] * plan.fetch_count
-        completed: set[int] = set()
-        while len(completed) < plan.fetch_count:
-            ready = plan.ready_fetches(completed)
-            pending: list[_PendingFetch] = []
-            for index in ready:
-                step = plan.fetch_step(index)
-                parents = guarded_parents(
-                    builder,
-                    includes,
-                    step,
-                    parent_refs(step.parent, root_refs, fetch_refs),
-                )
-                completed.add(index)
-                if not parents:
-                    continue
-                prepared = plan.prepared_fetch(index)
-                if isinstance(prepared, EmptyRead):
-                    attach_empty(builder, includes, step, parents)
-                    continue
-                if prepared is None:
-                    assert isinstance(step, read_planning.BackReferenceFetchStep)
-                    attach_back_reference(builder, meta, includes, step, parents)
-                    continue
-                assert isinstance(step, read_planning.QueryFetchStep)
-                keys = gather_keys(
-                    builder,
-                    parents,
-                    correlation_member(meta, step.owner.identity),
-                )
-                if not keys:
-                    attach_empty(builder, includes, step, parents)
-                    continue
-                template, converter = prepared
-                root_read.observer.statement_rendered(index + 1)
-                pending.append(
-                    _PendingFetch(
-                        index,
-                        step,
-                        parents,
-                        template.render(keys, query=plan.query),
-                        converter,
-                    )
-                )
-
-            if len(pending) == 1:
-                batches = [execute_read(port, pending[0].compiled, calls)]
-            else:
-                batches = _pipelined_rows(pending, port, calls)
-            for fetch, rows in zip(pending, batches, strict=True):
-                root_read.observer.statement_executed(fetch.index + 1, len(rows))
-                child_refs = _recorded_rows(
-                    builder, fetch.index + 1, fetch.converter, rows, origin_collector
-                )
-                attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
-                fetch_refs[fetch.index] = child_refs
-
-        page = builder.finish(root_refs, plan.pin)
+    collector = context.origin_collector if plan.collects_evidence else EMPTY_PAGE_ORIGIN_COLLECTOR
+    root = plan.root_read()
+    if isinstance(root, EmptyRead):
+        page = plan.page_builder().finish((), plan.pin)
         return PageResult(
-            page, includes, origin_collector.origins_for(page), documents, continuation_result
+            page,
+            plan.include_tree(),
+            collector.origins_for(page),
+            None,
+            PageContinuation(0, None, True, None) if paging is not None else None,
         )
+    root_read = _read_root(plan, root, context)
+    continuation_result = None
+    if paging is not None:
+        captured = row_coordinates(root[0].result_contract, root_read.rows)
+        if any(coordinate is None for coordinate in captured):
+            raise InternalError(
+                SQL_GENERATION_FAILED,
+                "a paging read returned a root carrying no evaluated coordinate",
+            )
+        coordinates = cast("tuple[ContinuationCoordinate, ...]", captured)
+        assert isinstance(plan.query, ResolvedObjectQuery)
+        terms = tuple(term.member.identity for term in plan.query.order_by)
+        verdict = page_decision(paging, terms, coordinates)
+        root_read.rows = root_read.rows[: verdict.keep]
+        continuation_result = PageContinuation(
+            verdict.keep,
+            coordinates[verdict.keep - 1] if verdict.keep else None,
+            verdict.exhausted,
+            verdict.tie,
+        )
+    return _build_page(root_read, context, collector, continuation_result)
+
+
+def _read_root[Origin](
+    plan: ReadPlan,
+    root: tuple[CompiledRead, ReadRowConverter],
+    context: PageReadContext[Origin],
+) -> _RootRead:
+    compiled, converter = root
+    driver_rows = execute_read(context.port, compiled, context.calls)
+    return _RootRead(plan, converter, list(driver_rows))
+
+
+def _record_roots[Origin](
+    root_read: _RootRead,
+    builder: PageBuilder,
+    rows: list[Row],
+    origin_collector: PageOriginCollector[Origin],
+) -> tuple[tuple[int, ...], tuple[object | None, ...] | None]:
+    plan = root_read.plan
+    if plan.purpose != "write_support":
+        return _recorded_rows(
+            builder, ROOT_LEVEL, root_read.converter, _drain_rows(rows), origin_collector
+        ), None
+    root = plan.root_read()
+    assert not isinstance(root, EmptyRead)
+    if root[0].result_contract.shared_document is None:
+        return root_read.converter.record_rows(_drain_rows(rows), builder, ROOT_LEVEL, None), None
+    references: list[int] = []
+    documents: list[object | None] = []
+    for row in _drain_rows(rows):
+        reference, _, document = root_read.converter.record_row(row, builder, source=ROOT_LEVEL)
+        references.append(reference)
+        documents.append(document)
+    return tuple(references), tuple(documents)
+
+
+def _build_page[Origin](
+    root_read: _RootRead,
+    context: PageReadContext[Origin],
+    origin_collector: PageOriginCollector[Origin],
+    continuation_result: PageContinuation | None,
+) -> PageResult[Origin]:
+    plan = root_read.plan
+    meta = plan.model.meta
+    port, calls = context.port, context.calls
+    includes = plan.include_tree()
+    builder = plan.page_builder()
+    root_rows = root_read.take_rows()
+    root_refs, documents = _record_roots(root_read, builder, root_rows, origin_collector)
+    del root_rows
+
+    fetch_refs: list[tuple[int, ...]] = [()] * plan.fetch_count
+    completed: set[int] = set()
+    while len(completed) < plan.fetch_count:
+        ready = plan.ready_fetches(completed)
+        pending: list[_PendingFetch] = []
+        for index in ready:
+            step = plan.fetch_step(index)
+            parents = guarded_parents(
+                builder,
+                includes,
+                step,
+                parent_refs(step.parent, root_refs, fetch_refs),
+            )
+            completed.add(index)
+            if not parents:
+                continue
+            prepared = plan.prepared_fetch(index)
+            if isinstance(prepared, EmptyRead):
+                attach_empty(builder, includes, step, parents)
+                continue
+            if prepared is None:
+                assert isinstance(step, read_planning.BackReferenceFetchStep)
+                attach_back_reference(builder, meta, includes, step, parents)
+                continue
+            assert isinstance(step, read_planning.QueryFetchStep)
+            keys = gather_keys(
+                builder,
+                parents,
+                correlation_member(meta, step.owner.identity),
+            )
+            if not keys:
+                attach_empty(builder, includes, step, parents)
+                continue
+            template, converter = prepared
+            pending.append(
+                _PendingFetch(
+                    index,
+                    step,
+                    parents,
+                    template.render(keys, query=plan.query),
+                    converter,
+                )
+            )
+
+        if len(pending) == 1:
+            batches = [execute_read(port, pending[0].compiled, calls)]
+        else:
+            batches = _pipelined_rows(pending, port, calls)
+        for fetch, rows in zip(pending, batches, strict=True):
+            child_refs = _recorded_rows(
+                builder, fetch.index + 1, fetch.converter, rows, origin_collector
+            )
+            attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
+            fetch_refs[fetch.index] = child_refs
+
+    page = builder.finish(root_refs, plan.pin)
+    return PageResult(
+        page, includes, origin_collector.origins_for(page), documents, continuation_result
+    )
