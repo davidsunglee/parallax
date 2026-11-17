@@ -50,9 +50,11 @@ def owned_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     check at: a canary planted into it leaves the real tree alone, so a test
     auditing that tree from another worker cannot find it."""
     packages = tmp_path / "packages"
-    ignore_bytecode = shutil.ignore_patterns("__pycache__")
-    for src in sorted(PY_ROOT.glob("packages/*/src")):
-        shutil.copytree(src, packages / src.parent.name / "src", ignore=ignore_bytecode)
+    source_packages = PY_ROOT / "packages"
+    for source in sorted(source_packages.glob("*/src/**/*.py")):
+        target = packages / source.relative_to(source_packages)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
     monkeypatch.setattr(own, "PACKAGES", packages)
     return packages
 
