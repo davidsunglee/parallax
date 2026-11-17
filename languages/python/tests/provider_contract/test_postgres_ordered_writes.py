@@ -570,9 +570,22 @@ def test_prepared_cache_maintenance_inside_an_ordered_write_answers_no_statement
 
 
 @pytest.mark.adapter_smoke
+@pytest.mark.parametrize("early_results", [False, True])
 def test_failed_prepared_cache_maintenance_interrupts_without_blaming_a_statement(
     profile_run: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    early_results: bool,
 ) -> None:
+    if early_results:
+        cursor_type = connection_module._CountCursor  # pyright: ignore[reportPrivateUsage] - controlling when real server results arrive
+        execute = cursor_type.execute
+
+        def draining_execute(cursor: Any, *args: Any, **kwargs: Any) -> Any:
+            result = execute(cursor, *args, **kwargs)
+            cursor.connection.wait(cursor.connection._pipeline._fetch_gen(flush=True))
+            return result
+
+        monkeypatch.setattr(cursor_type, "execute", draining_execute)
     _seeded(profile_run)
     statements = (_COLLIDING, _close("policy", 1), _guard("claim", 1000))
     runtime = _runtime(profile_run, prepare_threshold=0)
@@ -590,8 +603,12 @@ def test_failed_prepared_cache_maintenance_interrupts_without_blaming_a_statemen
             assert cast("PostgresConnection", facade).suspect
         (result,) = results
         assert isinstance(result, OrderedWriteResultInterrupted)
-        assert result.unsent_count == 0
-        assert len(result.confirmed) + result.unconfirmed_count == len(statements)
+        assert result.unsent_count in (0, 1)
+        assert len(result.confirmed) + result.unconfirmed_count + result.unsent_count == len(
+            statements
+        )
+        if early_results:
+            assert result.unsent_count == 1
         assert isinstance(result.error, DatabaseError)
         assert isinstance(result.error.__cause__, psycopg.errors.PipelineAborted)
         assert not any(
