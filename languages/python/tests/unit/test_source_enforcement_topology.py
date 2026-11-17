@@ -220,7 +220,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"AuthoredPredicate", "AuthoredQuery", "IncludePath", "SortKey", "authored_include_path"}
     ),
     ("parallax.core.internal.read_delivery._convert", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.core.internal.read_delivery._delivery", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core.internal.read_delivery._page._judgement", "_construction_input"): frozenset(
         {"ABSENT"}
     ),
@@ -439,7 +438,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
                 f"parallax.core.internal.read_delivery.{module}",
                 "parallax.core.execution_lifecycle._activity",
             )
-            for module in ("_delivery", "_fetch", "_page_reader", "_stream")
+            for module in ("_fetch", "_page_reader", "_stream")
         ),
         *(
             (f"parallax.core.{module}", "parallax.core.execution_lifecycle._events")
@@ -530,7 +529,7 @@ def test_the_lifecycle_reach_inventory_names_a_new_reach_and_passes_the_public_d
 # would put the same contract in two places.
 #
 # `read_projection` is one of the second-frontend fixture's two additions: it
-# drives the production find executor, which converts every row against the
+# drives the production Page reader, which converts every row against the
 # prepared model's own layouts, so it takes the prepared selection's read
 # projection — the accepted model, the layout catalog paired with it, and the
 # graph construction derived over both — exactly as the source under test holds
@@ -555,13 +554,22 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"dump_document"}
     ),
     **_carrier_neutral_private_sql_reaches_from(conformance=True),
-    # The second-frontend fixture drives production's eager delivery over a Page
-    # it publishes itself, through the Root View and refusal Snapshot publication
-    # uses, so the stored-data judgement it grades is the production one.
+    # The second-frontend fixture plans and reads a Page through production's
+    # read plan and Page reader, outside any Database Call scope, and publishes it
+    # itself through the Root View and refusal Snapshot publication uses, so the
+    # stored-data judgement it grades is the production one.
     (
         "parallax.conformance.foreign_lifecycle_source",
-        "parallax.core.internal.read_delivery._delivery",
-    ): frozenset({"find"}),
+        "parallax.core.internal.read_delivery._read_plan",
+    ): frozenset({"ReadPlanCache"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core.internal.read_delivery._page_reader",
+    ): frozenset({"PageReadContext", "read_page"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core.execution_lifecycle._activity",
+    ): frozenset({"INERT"}),
     (
         "parallax.conformance.foreign_lifecycle_source",
         "parallax.core.internal.read_delivery._page",
