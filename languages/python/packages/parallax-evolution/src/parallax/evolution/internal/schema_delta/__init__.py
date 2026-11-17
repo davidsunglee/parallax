@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, cast
 
 from parallax.core.internal.base import InternalError
 from parallax.core.internal.database_binding import PhysicalSequence, PhysicalTable
@@ -72,7 +72,7 @@ def schema_delta(evolution: UnilateralEvolution) -> SchemaDelta:
     raises :class:`TypeError` before anything is planned:
     :func:`coordinated_migration` generates its steps.
     """
-    if not isinstance(evolution, UnilateralEvolution):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so a coordinated evolution is refused rather than rendered
+    if not isinstance(cast("object", evolution), UnilateralEvolution):
         raise TypeError(
             f"schema_delta takes a UnilateralEvolution, not a {type(evolution).__name__}; "
             "use coordinated_migration for a coordinated evolution"
@@ -125,7 +125,7 @@ def coordinated_migration(evolution: CoordinatedEvolution) -> CoordinatedMigrati
     A :class:`~parallax.evolution.internal.model_evolution.UnilateralEvolution`
     raises :class:`TypeError`: :func:`schema_delta` generates its statements.
     """
-    if not isinstance(evolution, CoordinatedEvolution):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so a unilateral evolution is refused rather than migrated
+    if not isinstance(cast("object", evolution), CoordinatedEvolution):
         raise TypeError(
             f"coordinated_migration takes a CoordinatedEvolution, not a "
             f"{type(evolution).__name__}; use schema_delta for a unilateral evolution"

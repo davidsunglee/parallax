@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import (
     LATEST,
     MANY_TO_ONE,
@@ -32,12 +33,16 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import TablePerConcreteSubtype
+from parallax.core.internal.object_query import ObjectQueryNode
+from parallax.core.internal.predicate import And, TrueNode
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import ScopedDatabase, TxnContext, connect, is_view_loaded
 from tests._support.bindings import TEST_BINDING
+from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
 
 _NS = "predicate.algebra"
@@ -455,6 +460,20 @@ def test_typed_and_wire_matches_select_the_same_roots(profile_run: Any) -> None:
     }
     wire = {cast("Any", node)["id"] for node in db.wire.find(document).results()}
     assert wire == _ids(db, Basket, Basket.owner.not_exists(Owner.active.is_(True))) == {2, 3}
+
+
+def test_a_wire_node_holding_a_non_node_is_refused_before_the_read_begins(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    recorder = RecordingLifecycleProvider()
+    db = own_root(
+        connect(profile_run.port, _MODEL, binding=TEST_BINDING, lifecycle_provider=recorder)
+    ).using_database_login()
+    query = ObjectQueryNode(Basket.identity, And((TrueNode(), cast("Any", "junk"))))
+    with raises_code(UsageError, "predicate-document-invalid", match="got str"):
+        db.wire.find(query).results()
+    assert recorder.roots == ()
 
 
 def test_a_relationship_match_is_existential_over_every_candidate(profile_run: Any) -> None:

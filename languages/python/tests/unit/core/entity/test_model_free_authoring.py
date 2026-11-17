@@ -61,6 +61,7 @@ from parallax.core.internal.entity._expressions import (
     PreparedOperation,
     UnfinishedOperation,
     authored_include_path,
+    authored_predicate,
 )
 from parallax.core.internal.entity._model import ClassIndex, model_of
 from parallax.core.internal.entity._model import DomainModel as _Fixed
@@ -685,7 +686,7 @@ def _unfinished(
     operator: ScalarOperator = COMPARE["eq"],
 ) -> Predicate[Any]:
     path = AuthoredMemberPath(entity.identity, names, unfinished=True)
-    return Predicate(UnfinishedOperation(path, operator, operands))
+    return authored_predicate(UnfinishedOperation(path, operator, operands))
 
 
 @pytest.mark.parametrize(

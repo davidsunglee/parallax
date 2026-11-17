@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Collection, Generator, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, assert_never
+from typing import Final, Literal
 
 from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.case_format import (
@@ -648,8 +648,6 @@ def _started(event: _ActivityStarted, indexer: _StatementIndexer) -> dict[str, o
             }
         case ReleaseStarted():
             return {"releaseStarted": {}}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _stated(key: str, value: object | None) -> dict[str, object]:
@@ -676,8 +674,6 @@ def _finished(event: _ActivityFinished) -> dict[str, object]:
             return {"acquisitionFinished": _acquisition_outcome(outcome)}
         case ReleaseFinished(cleanup_result=cleanup_result):
             return {"releaseFinished": _cleanup(cleanup_result)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _activity_failure(failure: DirectFailure | CausedFailure) -> dict[str, object]:
@@ -698,8 +694,6 @@ def _activity_failure(failure: DirectFailure | CausedFailure) -> dict[str, objec
         case CausedFailure(cause_activity_id=cause):
             fields["attribution"] = "caused"
             fields["cause"] = cause
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
     code = _portable_code(failure.diagnostic)
     if code is not None:
         fields["code"] = code
@@ -738,8 +732,6 @@ def _read_outcome(outcome: ReadCompleted | ReadFailed) -> dict[str, object]:
             return {"outcome": "completed"}
         case ReadFailed(failure):
             return {"outcome": "failed", **_activity_failure(failure)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _flush_outcome(outcome: FlushCompleted | FlushFailed) -> dict[str, object]:
@@ -748,8 +740,6 @@ def _flush_outcome(outcome: FlushCompleted | FlushFailed) -> dict[str, object]:
             return {"outcome": "completed"}
         case FlushFailed(failure):
             return {"outcome": "failed", **_activity_failure(failure)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _database_call_outcome(outcome: _DatabaseCallOutcome) -> dict[str, object]:
@@ -774,8 +764,6 @@ def _database_call_outcome(outcome: _DatabaseCallOutcome) -> dict[str, object]:
             return {"outcome": "notExecuted"}
         case DatabaseCallUnconfirmed(diagnostic):
             return _diagnosed("unconfirmed", diagnostic)
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _diagnosed(outcome: str, diagnostic: DatabaseFailureDiagnostic) -> dict[str, object]:
@@ -811,8 +799,6 @@ def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, obj
             return observed
         case JoinedInvocation():
             return {"invocation": "joined"}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _invocation_outcome(
@@ -830,8 +816,6 @@ def _invocation_outcome(
             return {"outcome": "returned"}
         case JoinedInvocationRaised(failure):
             return {"outcome": "raised", **_activity_failure(failure)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _attempt_failure(failure: AttemptFailure) -> dict[str, object]:
@@ -870,8 +854,6 @@ def _attempt_outcome(
             if rollback_code is not None:
                 rolled["rollbackCode"] = rollback_code
             return rolled
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _stream_outcome(
@@ -884,8 +866,6 @@ def _stream_outcome(
             return {"outcome": "closedEarly"}
         case StreamFailed(failure):
             return {"outcome": "failed", **_activity_failure(failure)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _acquisition_outcome(
@@ -919,8 +899,6 @@ def _acquisition_outcome(
             if cleanup_result is not None:
                 failed.update(_cleanup(cleanup_result))
             return failed
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _routed(route: Route | None, fallback: FallbackReason | None) -> dict[str, object]:
@@ -952,8 +930,6 @@ def _cleanup(result: CleanupResult | None) -> dict[str, object]:
             disposition = "invalidated"
         case ReleaseUnconfirmed(issues):
             disposition = "release-unconfirmed"
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
     observed: dict[str, object] = {"cleanup": disposition}
     if issues:
         observed["issues"] = [_cleanup_issue(issue) for issue in issues]
@@ -972,5 +948,3 @@ def _stream_batch_outcome(
             return {"outcome": "completed"}
         case StreamBatchFailed(failure):
             return {"outcome": "failed", **_activity_failure(failure)}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)

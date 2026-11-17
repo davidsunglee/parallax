@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence as _Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, overload
+from typing import TYPE_CHECKING, Any, Final, cast, overload
 
 from parallax.core.internal.base import FLOAT32, INT32, Float32, Int32, NeutralType, UsageError
 from parallax.core.internal.entity._construction_input import UNLOADED
@@ -412,11 +412,11 @@ def rel(
         )
     if cardinality is None or join is None:
         raise _context("rel(...) declares either cardinality= with join=, or reverse_of=")
-    if not isinstance(cardinality, Cardinality):  # pyright: ignore[reportUnnecessaryIsInstance] - build-time guard against a mistyped developer value the annotation cannot enforce
+    if not isinstance(cast("object", cardinality), Cardinality):
         raise _invalid(
             f"cardinality= takes ONE_TO_ONE, MANY_TO_ONE, or ONE_TO_MANY, got {cardinality!r}"
         )
-    if not isinstance(join, tuple) or len(join) != 2:  # pyright: ignore[reportUnnecessaryIsInstance] - build-time guard against a mistyped developer value the annotation cannot enforce
+    if not isinstance(cast("object", join), tuple) or len(join) != 2:
         raise _invalid(f"join= takes a (source_member, target_member) pair, got {join!r}")
     return DefiningRelSpec(
         cardinality=cardinality,

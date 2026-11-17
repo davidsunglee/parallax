@@ -51,9 +51,11 @@ def test_absorbing_rollback_ends_a_rollback_step_quietly() -> None:
     # exactly the abort a `rollback: true` step asked for.
     inner = FakeWritePort()
     port = write_connection(inner, rollback=True)
+    ended_early = True
     with absorbing_rollback():
         committed(port.transaction(lambda conn: conn.execute_write("delete from px.account", [])))
-        raise AssertionError("the abort ends the step before this line")
+        ended_early = False
+    assert ended_early
     assert inner.writes == [("delete from px.account", [])]
 
 

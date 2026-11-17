@@ -341,7 +341,6 @@ def profile_run(profile: Profile) -> Iterator[Any]:
         reason = f"Testcontainers Postgres unavailable: {type(exc).__name__}: {exc}"
         record_db_skip(reason)
         pytest.skip(reason)
-        return
     try:
         if selected is not None:
             from tests._support.postgres_versions import record_version

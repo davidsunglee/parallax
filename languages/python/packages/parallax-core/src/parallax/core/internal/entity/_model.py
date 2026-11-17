@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import UsageError
@@ -176,7 +177,7 @@ def model_of(model: DomainModel) -> Metamodel:
     refuses any other argument, an accepted Metamodel included, with the same
     :class:`TypeError`.
     """
-    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the plain argument check every model door shares
+    if not isinstance(cast("object", model), DomainModel):
         raise TypeError(
             f"this call takes a Domain Model — one composed from Entity Classes, or one a "
             f"descriptor produced — not {model!r}"

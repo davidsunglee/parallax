@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Final, assert_never, cast
+from typing import Any, Final, cast
 
 from parallax.core.internal.base import (
     Boolean,
@@ -573,8 +573,6 @@ def _metamodel_fact(
             | ReverseRelationshipDeclaration()
         ):
             return _relationship_fact(value)
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _relationship_fact(
@@ -603,8 +601,6 @@ def _relationship_fact(
                 "reverseOf": _relationship(value.reverse_of),
                 "orderBy": _fact(value.order_by),
             }
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _impact_fact(
@@ -645,8 +641,6 @@ def _impact_fact(
             return {"writes": "Disabled"}
         case WritesEnabled():
             return {"writes": "Enabled", "shape": _WRITE_SHAPES[value.shape]}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _concurrency_control_fact(value: ConcurrencyControl) -> Any:
@@ -660,8 +654,6 @@ def _concurrency_control_fact(value: ConcurrencyControl) -> Any:
                 "gate": "TransactionTimeGated",
                 "startAttribute": _attribute(value.start_attribute),
             }
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _enumerated(value: object) -> Any:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Literal, assert_never, cast
+from typing import Literal, cast
 
 from parallax.core.internal.base import (
     Bytes,
@@ -859,8 +859,6 @@ def _render_read_branch(
                 null_tail,
                 deferred=deferred,
             )
-        case _:  # pragma: no cover - exhaustiveness guard
-            assert_never(plan)
 
 
 def _agreed(first: _SelectListBuilder | None, branch: _SelectListBuilder) -> _SelectListBuilder:

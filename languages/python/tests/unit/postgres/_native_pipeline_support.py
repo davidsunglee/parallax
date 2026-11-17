@@ -212,8 +212,7 @@ def _fetch_many(pgconn: Server) -> Generator[Wait, Ready, list[Result]]:
 
 def _send(pgconn: Server) -> Generator[None]:
     del pgconn
-    return
-    yield
+    yield from ()
 
 
 def script(*groups: list[Result]) -> Callable[[bytes], list[Result]]:

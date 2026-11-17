@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any, Final, Literal, NamedTuple, assert_never, cast
+from typing import Any, Final, Literal, NamedTuple, cast
 
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleHandler
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -220,8 +220,6 @@ def _failure_fields(failure: ActivityFailure, detail: LifecycleLogDetail) -> dic
             fields = _diagnostic_fields(diagnostic, detail)
             fields["cause_activity"] = cause_activity_id
             return fields
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _database_failure_fields(
@@ -312,8 +310,6 @@ def _invocation_started_fields(
             return fields
         case JoinedInvocation():
             return {"invocation": "joined"}
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _attempt_started_fields(
@@ -440,8 +436,6 @@ def _cleanup_fields(result: CleanupResult | None) -> dict[str, object]:
             disposition = "invalidated"
         case ReleaseUnconfirmed(issues):
             disposition = "release-unconfirmed"
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
     return {
         "cleanup": disposition,
         "cleanup_issues": tuple(f"{issue.phase}/{issue.code}" for issue in issues),
@@ -529,8 +523,6 @@ def _read_projection(event: ReadFinished, transition: str) -> _Projected[Any]:
                 _finished_level(event, True), transition, True, outcome, _failed_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _flush_projection(event: FlushFinished, transition: str) -> _Projected[Any]:
@@ -545,8 +537,6 @@ def _flush_projection(event: FlushFinished, transition: str) -> _Projected[Any]:
                 _finished_level(event, True), transition, True, outcome, _failed_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _database_call_projection(event: DatabaseCallFinished, transition: str) -> _Projected[Any]:
@@ -595,8 +585,6 @@ def _database_call_projection(event: DatabaseCallFinished, transition: str) -> _
                 _database_call_unconfirmed_fields,
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _invocation_projection(
@@ -623,8 +611,6 @@ def _invocation_projection(
                 _finished_level(event, True), transition, True, outcome, _raised_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _attempt_projection(event: TransactionAttemptFinished, transition: str) -> _Projected[Any]:
@@ -653,8 +639,6 @@ def _attempt_projection(event: TransactionAttemptFinished, transition: str) -> _
         case AttemptBeginFailed() as outcome:
             projected = _Projected(logging.DEBUG, transition, True, outcome, _begin_failed_fields)
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _stream_projection(event: StreamFinished, transition: str) -> _Projected[Any]:
@@ -674,8 +658,6 @@ def _stream_projection(event: StreamFinished, transition: str) -> _Projected[Any
                 _finished_level(event, True), transition, True, outcome, _failed_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _acquisition_projection(event: AcquisitionFinished, transition: str) -> _Projected[Any]:
@@ -692,8 +674,6 @@ def _acquisition_projection(event: AcquisitionFinished, transition: str) -> _Pro
                 _finished_level(event, True), transition, True, event, _acquisition_failed_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _stream_batch_projection(event: StreamBatchFinished, transition: str) -> _Projected[Any]:
@@ -708,8 +688,6 @@ def _stream_batch_projection(event: StreamBatchFinished, transition: str) -> _Pr
                 _finished_level(event, True), transition, True, outcome, _failed_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _projected(event: ExecutionEvent) -> _Projected[Any]:
@@ -790,8 +768,6 @@ def _started_projection(event: ActivityStarted) -> _Projected[Any]:
         case ReleaseStarted():
             projected = _Projected(logging.DEBUG, "releaseStarted", False, event, _no_fields)
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 def _finished_projection(event: ActivityFinished) -> _Projected[Any]:
@@ -817,8 +793,6 @@ def _finished_projection(event: ActivityFinished) -> _Projected[Any]:
                 _finished_level(event, False), "releaseFinished", True, event, _release_fields
             )
             return projected
-        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
-            assert_never(unreachable)
 
 
 class _LoggingHandler:

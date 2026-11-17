@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Literal, NoReturn, TypeIs, assert_never, cast
+from typing import Any, Final, Literal, NoReturn, TypeIs, cast
 
 from parallax.core.internal.base import (
     BOOLEAN,
@@ -269,8 +269,6 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
                 return _normalize_json(managed, top_level=True)
             except _JsonFailure as exc:
                 raise UsageError(WIRE_ENCODING_FAILED, str(exc)) from exc
-        case _ as unreachable:
-            assert_never(unreachable)
 
 
 # One case per Neutral Type variant, dispatched once per value on Wire decode (all of
@@ -308,8 +306,6 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             except _JsonFailure as exc:
                 _fail(exc.reason, value, neutral_type)
             return _DecodedWireLiteral(cast("ManagedValue", managed))
-        case _ as unreachable:
-            assert_never(unreachable)
 
 
 def _decode_boolean(value: object, neutral_type: Boolean) -> _DecodedWireLiteral:
@@ -572,8 +568,6 @@ def _is_canonical_output(
             return True
         case Numeric() | Bytes() | Date() | Uuid():
             return True
-        case _ as unreachable:
-            assert_never(unreachable)
 
 
 def _spelled_number(value: object) -> decimal.Decimal | None:

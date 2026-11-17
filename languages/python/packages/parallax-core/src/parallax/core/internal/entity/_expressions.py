@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, Never, NoReturn, cast
 
 from parallax.core.internal.base import (
     InvalidValueError,
@@ -101,6 +101,7 @@ __all__ = [
     "ValueObjectExpr",
     "ValueObjectReceiver",
     "authored_include_path",
+    "authored_predicate",
     "conjoin",
     "judged_edit_violation",
     "managed_literal",
@@ -478,7 +479,7 @@ class AllPredicate[E]:
     query written against a position the query is not at.
     """
 
-    authored: AuthoredPredicate = _UNFILTERED
+    authored: AuthoredPredicate = field(default=_UNFILTERED, init=False)
 
     if TYPE_CHECKING:
 
@@ -490,7 +491,7 @@ class AllPredicate[E]:
         raise TypeError(_BOOL_HINT)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class Predicate[E]:
     """A filter over an Entity; combine predicates with `&`, `|` and `~`.
 
@@ -504,6 +505,12 @@ class Predicate[E]:
     """
 
     authored: AuthoredPredicate
+
+    def __init__(self, _unconstructible: Never) -> None:
+        raise TypeError(
+            "a Predicate is authored from an Entity's attributes and relationships, "
+            "never constructed directly"
+        )
 
     if TYPE_CHECKING:
 
@@ -541,16 +548,23 @@ class Predicate[E]:
     # only where `F` is a subtype of `X`, and the only `F` both operands satisfy
     # is the narrower position.
     def __and__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
-        return Predicate(AuthoredAnd((*and_terms(self), *and_terms(other))))
+        return authored_predicate(AuthoredAnd((*and_terms(self), *and_terms(other))))
 
     def __or__[F](self: Predicate[F], other: Predicate[F], /) -> Predicate[F]:
-        return Predicate(AuthoredOr((*_or_terms(self), *_or_terms(other))))
+        return authored_predicate(AuthoredOr((*_or_terms(self), *_or_terms(other))))
 
     def __invert__(self) -> Predicate[E]:
-        return Predicate(AuthoredNot(self.authored))
+        return authored_predicate(AuthoredNot(self.authored))
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
+
+
+def authored_predicate(authored: AuthoredPredicate) -> Predicate[Any]:
+    """``authored`` as the :class:`Predicate` the authoring surface hands out."""
+    predicate = cast("Predicate[Any]", object.__new__(Predicate))
+    object.__setattr__(predicate, "authored", authored)
+    return predicate
 
 
 def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[AuthoredPredicate, ...]:
@@ -616,10 +630,12 @@ class _ScalarAuthoring[P]:
     def _operation(self, operator: ScalarOperator, values: tuple[object, ...]) -> Predicate[P]:
         neutral_type = self._operand_type()
         if neutral_type is None:
-            return Predicate(UnfinishedOperation(self._subject(), operator, values))
+            return authored_predicate(UnfinishedOperation(self._subject(), operator, values))
         described = self._described()
         operands = tuple(managed_literal(described, neutral_type, value) for value in values)
-        return Predicate(PreparedOperation(self._subject(), operator, operands, neutral_type))
+        return authored_predicate(
+            PreparedOperation(self._subject(), operator, operands, neutral_type)
+        )
 
     def __eq__(self, other: object) -> Predicate[P]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
         return self._operation(COMPARE["eq"], (other,))
@@ -666,9 +682,11 @@ class _ScalarAuthoring[P]:
                 "None is not a Predicate literal; use .is_null() or .is_not_null()",
             )
         if neutral_type is None:
-            return Predicate(UnfinishedOperation(self._subject(), operator, (value,)))
+            return authored_predicate(UnfinishedOperation(self._subject(), operator, (value,)))
         pattern = managed_literal(self._described(), neutral_type, value)
-        return Predicate(PreparedOperation(self._subject(), operator, (pattern,), neutral_type))
+        return authored_predicate(
+            PreparedOperation(self._subject(), operator, (pattern,), neutral_type)
+        )
 
     def like(self, value: str, *, case_insensitive: bool = False) -> Predicate[P]:
         return self._string("like", value, case_insensitive)
@@ -688,8 +706,10 @@ class _ScalarAuthoring[P]:
     def _null_test(self, op: Literal["isNull", "isNotNull"]) -> Predicate[P]:
         neutral_type = self._operand_type()
         if neutral_type is None:
-            return Predicate(UnfinishedOperation(self._subject(), NULL_TEST[op], ()))
-        return Predicate(PreparedOperation(self._subject(), NULL_TEST[op], (), neutral_type))
+            return authored_predicate(UnfinishedOperation(self._subject(), NULL_TEST[op], ()))
+        return authored_predicate(
+            PreparedOperation(self._subject(), NULL_TEST[op], (), neutral_type)
+        )
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
@@ -828,7 +848,7 @@ def _quantified(
                     f"{_subject_described(element)} is not an element of "
                     f"{collection.described()}, which this quantifier binds",
                 )
-    return Predicate(AuthoredQuantifier(kind, collection, where, binds))
+    return authored_predicate(AuthoredQuantifier(kind, collection, where, binds))
 
 
 def _presence(
@@ -846,7 +866,7 @@ def _presence(
                 f"a quantifier over {element.collection.described()}, not inside a match "
                 f"of {target.described()}",
             )
-    return Predicate(AuthoredPresence(negated, target, where))
+    return authored_predicate(AuthoredPresence(negated, target, where))
 
 
 class _NotOneValue:
@@ -964,11 +984,11 @@ class ValueObjectExpr[E, V](_NotOneValue):
 
     def exists(self) -> Predicate[E]:
         """Whether this Value Object is present."""
-        return Predicate(AuthoredPresence(False, self._path))
+        return authored_predicate(AuthoredPresence(False, self._path))
 
     def not_exists(self) -> Predicate[E]:
         """Whether this Value Object is absent."""
-        return Predicate(AuthoredPresence(True, self._path))
+        return authored_predicate(AuthoredPresence(True, self._path))
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
@@ -1219,7 +1239,7 @@ def root_segment(
 def authored_include_path(path: IncludePath[Any, Any]) -> AuthoredIncludePath:
     """The authored path ``path`` carries, refusing anything but an Include path —
     a Value Object or scalar member is no relationship to fetch through."""
-    if not isinstance(path, IncludePath):  # pyright: ignore[reportUnnecessaryIsInstance] - untyped callers
+    if not isinstance(cast("object", path), IncludePath):
         raise TypeError(
             f"{type(path).__name__} is not an Include path; include takes relationships"
         )
@@ -1337,7 +1357,7 @@ def _narrowed(
     subtypes: tuple[type, ...],
     where: Predicate[Any] | None,
 ) -> Predicate[Any]:
-    return Predicate(
+    return authored_predicate(
         AuthoredNarrow(
             subtype_selection(tuple(subtype_spelling(subtype) for subtype in subtypes)),
             None if where is None else where.authored,
