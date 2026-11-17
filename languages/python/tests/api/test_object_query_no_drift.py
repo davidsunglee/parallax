@@ -56,7 +56,7 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     Supplier,
 )
-from parallax.core import DomainModel, Entity, ObjectQuery, Predicate
+from parallax.core import AllPredicate, DomainModel, Entity, ObjectQuery, Predicate
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.internal.base import InvalidValueError, UsageError
 from parallax.core.internal.entity._authored_resolver import object_query_node
@@ -330,6 +330,13 @@ def test_expression_rejects_bool_misuse() -> None:
         bool(Order.id == 1)  # a Predicate has no truth value
     with pytest.raises(TypeError, match="no truth value"):
         bool(Order.sku)  # a bare scalar expression has no truth value
+
+
+def test_a_predicate_is_obtained_only_by_authoring() -> None:
+    with pytest.raises(TypeError, match="never constructed directly"):
+        Predicate("junk")  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError):
+        AllPredicate("junk")  # pyright: ignore[reportCallIssue]
 
 
 # --------------------------------------------------------------------------- #
