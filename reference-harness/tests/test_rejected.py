@@ -1263,6 +1263,25 @@ def test_a_target_instruction_to_a_read_only_family_is_refused_first(
     run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
 
 
+def test_a_null_target_key_to_a_read_only_family_is_refused_as_read_only() -> None:
+    write = {"mutation": "amend", "entity": "Magazine", "row": {"id": None}, "ifVersion": 1}
+    run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {"mutation": "terminate", "entity": "Car", "row": {"id": None}, "ifVersion": 1},
+        {"mutation": "amend", "entity": "Car", "row": {"id": None, "bogus": 1}, "ifTxStart": "x"},
+    ],
+    ids=["inapplicable-verb", "undeclared-member-and-misstated-revision"],
+)
+def test_a_null_target_key_is_graded_ahead_of_every_unclassified_defect(
+    write: dict[str, Any],
+) -> None:
+    run_case(_rejected_write_case(_vehicle(), write, WRITE_REQUIRED_ATTRIBUTE_MISSING), None)
+
+
 def test_a_predicate_replacement_carrying_a_row_stays_predicate_selected() -> None:
     write = {
         "mutation": "replace",

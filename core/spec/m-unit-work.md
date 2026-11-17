@@ -296,12 +296,14 @@ developer-facing mismatch errors. The policy follows from the ingress, never fro
 the runtime carrier a value arrives in.
 
 A target instruction is judged in its own fixed order: its target,
-verb, and window first, as above; then its revision arguments against the
-target's revision kind — an unversioned Non-Temporal target, which has no
-revision kind, is refused before any argument is weighed, and otherwise
-stating both is refused first, then a misstated kind, then a missing one, then
-a value of the wrong type; and only then its payload, whose key names the
-object. An amendment's every other member is judged as an assignment, and a
+verb, and window first, as above, except that a key stated as null names no
+object and is refused as `write-required-attribute-missing` (`m-pk-gen`) once
+the target is admitted and before its verb is weighed; then its revision
+arguments against the target's revision kind — an unversioned Non-Temporal
+target, which has no revision kind, is refused before any argument is weighed,
+and otherwise stating both is refused first, then a misstated kind, then a
+missing one, then a value of the wrong type; and only then its payload, whose
+key names the object. An amendment's every other member is judged as an assignment, and a
 replacement additionally states every writable member: an omitted required one
 is refused, an omitted nullable one is written empty, and an omitted `many` the
 empty collection. A deletion or termination names the key alone, and any other

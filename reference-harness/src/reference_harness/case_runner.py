@@ -1044,10 +1044,10 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
     """Run the target-instruction judgements against the entity the instruction names.
 
     Persistence admission precedes them (`m-unit-work` "Writes to a ReadOnly
-    family"). The verb, row, revision, and window are then judged by the one
-    :func:`~reference_harness.write_validate.target_write_violation` static case
-    validation also asks. A null key is the one judgement raising a rule of the
-    closed vocabulary; every other one carries none, so its detail is a
+    family"). The key, verb, row, revision, and window are then judged by the
+    one :func:`~reference_harness.write_validate.target_write_violation` static
+    case validation also asks. A null key is the one judgement raising a rule of
+    the closed vocabulary; every other one carries none, so its detail is a
     case-authoring failure, never a graded refusal.
     """
     entity_name = write.get("entity")

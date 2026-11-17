@@ -112,7 +112,7 @@ __all__ = [
     "prepare_typed_write",
     "prepare_wire_insert",
     "prepare_wire_write",
-    "refuse_unaddressed_target",
+    "refuse_keyless_target",
     "resolve_target",
     "serialize",
 ]
@@ -557,17 +557,13 @@ def key_null_refusal(entity: EntityIdentity, key: str) -> InvalidValueError:
     )
 
 
-def refuse_unaddressed_target(
+def refuse_keyless_target(
     model: AcceptedMetamodel, entity: CompiledEntity, mutation: str, row: Mapping[str, object]
 ) -> None:
-    """Refuse a target write of ``entity`` whose ``row`` names no object to
-    address: one stating no key (:func:`key_absent_refusal`) or a null one
-    (:func:`key_null_refusal`)."""
-    key = _inheritance_entity_view(model, entity).primary_key.identity.name
-    if key not in row:
+    """Refuse a target write of ``entity`` whose ``row`` states no key
+    (:func:`key_absent_refusal`), so it names no object to address."""
+    if _inheritance_entity_view(model, entity).primary_key.identity.name not in row:
         raise key_absent_refusal(entity.identity, mutation)
-    if row[key] is None:
-        raise key_null_refusal(entity.identity, key)
 
 
 def derive_keyed_instruction(
@@ -1150,7 +1146,8 @@ def _prepare_write(
 ) -> PreparedInstruction | PreparedTargetInstruction:
     """The sole admissibility judgment of a write, each family's target first
     and then its payload, so a call whose verb or window is wrong for its
-    target hears that before any complaint about what it carries.
+    target hears that before any complaint about what it carries — except a
+    target write's key naming no object, which is heard first.
 
     The target's family Persistence Mode is judged before anything else about
     the write, since no verb, window, revision, predicate, or payload could
@@ -1889,14 +1886,20 @@ def _prepare_target_write(
     """Judge a target write: whether it names its object at all, its verb and
     window, then its revision arguments, then its payload.
 
-    The verb's applicability follows the keyed rule
+    A row stating no key, or a null one, names no object, so it is refused
+    before its verb is weighed; ``_prepare_write`` has already admitted the
+    family's Persistence Mode. The verb's applicability follows the keyed rule
     (:func:`_judge_applicability`). The revision arguments are judged ahead of
     the payload because they decide what the write may be at all — a target
     with no revision, one whose revision kind the caller misstated, or one
     whose required revision is missing is refused before any member it names
     is weighed.
     """
-    refuse_unaddressed_target(model, entity, instruction.mutation, instruction.row)
+    key = position.primary_key.identity.name
+    if key not in instruction.row:
+        raise key_absent_refusal(entity.identity, instruction.mutation)
+    if instruction.row[key] is None:
+        raise key_null_refusal(entity.identity, key)
     shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,

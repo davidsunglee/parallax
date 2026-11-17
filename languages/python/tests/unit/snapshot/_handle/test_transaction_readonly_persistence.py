@@ -295,6 +295,28 @@ _TARGET: Final[tuple[_Refusal, ...]] = (
     ),
 )
 
+_NULL_KEY_TARGET: Final[tuple[_Refusal, ...]] = (
+    _unsourced(
+        "typed-amend-if-a-null-key",
+        lambda tx: tx.amend_if(Archive, Archive.title.set("changed"), key=None, version=1),
+    ),
+    _unsourced(
+        "wire-amend-if-a-null-key",
+        lambda tx: tx.wire.amend_if("Archive", {"id": None, "title": "changed"}, version=1),
+    ),
+    _unsourced(
+        "wire-empty-amend-if-a-null-key",
+        lambda tx: tx.wire.amend_if("Archive", {"id": None}, version=1),
+    ),
+    _unsourced("typed-delete-if-a-null-key", lambda tx: tx.delete_if(Archive, key=None, version=1)),
+    _unsourced(
+        "wire-terminate-if-a-null-key",
+        lambda tx: tx.wire.terminate_if(
+            "Ledger", {"id": None}, tx_start=_RECORDED, valid_from=_VALID_FROM
+        ),
+    ),
+)
+
 _BOUNDED_TARGET: Final[tuple[_Refusal, ...]] = (
     _unsourced(
         "typed-amend-if-within-a-window",
@@ -419,6 +441,7 @@ _REFUSALS: Final[tuple[_Refusal, ...]] = (
     *_KEYED,
     *_BOUNDED_KEYED,
     *_TARGET,
+    *_NULL_KEY_TARGET,
     *_BOUNDED_TARGET,
     *_PREDICATE,
     *_LAYOUT_AND_FAMILY,

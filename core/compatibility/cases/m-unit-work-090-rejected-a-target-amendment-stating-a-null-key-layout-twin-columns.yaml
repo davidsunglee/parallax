@@ -1,6 +1,3 @@
-# A target write names its object by its primary key, and the key's own non-null
-# type refuses an explicit null, so a target amendment stating a null key is
-# refused when it is prepared, before any statement (m-unit-work, m-pk-gen).
 model: models/buffered-sequence-layout-twin-columns.yaml
 tags: [m-unit-work, m-pk-gen, write, rejected, target-write, layout-twin, columns, slice-snapshot-1]
 shape: rejected

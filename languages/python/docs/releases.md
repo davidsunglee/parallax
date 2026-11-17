@@ -125,7 +125,9 @@ yourself, or rename it outside the `pxi_` prefix to keep it as one of your own.
 A target write that states its key as `None`, Typed `key=None` or a Wire document such as
 `{"id": None}`, is now refused at the call with `InvalidValueError` code
 `write-required-attribute-missing`, the code a Wire `insert` raises for one, and buffers
-nothing. It used to be accepted and fail only at flush, with a plain `ValueError`.
+nothing. It used to be accepted and fail later, once Parallax read or wrote the object,
+with a plain `ValueError`; an amendment stating nothing beside such a key was dropped
+without an error.
 [Target writes](guide/04-writing.md#target-writes) describes it.
 
 ## 0.2.0
