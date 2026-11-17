@@ -3,7 +3,8 @@
 The method names a write's authority: ``amend`` and ``replace`` take a source,
 while ``amend_if``, ``replace_if``, ``delete_if``, and ``terminate_if`` take
 exactly one revision their caller states. These tests grade the revision rules
-in their fixed order, the refusal of a target with no revision, the Typed
+in their fixed order, the refusal of a target with no revision, the call-time
+refusal of a key stated as null, the Typed
 target verbs' class-and-key addressing and assignment judgment, the Typed
 source amendment's two exclusive authoring forms, the stated-``None`` refusals
 of every start, and the retired spellings — each against what the call puts on
@@ -17,11 +18,12 @@ import datetime as dt
 import inspect
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.read_models import Balance
 from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, Int32, attr
 from parallax.core._execution._unit_work.instructions import (
@@ -51,11 +53,14 @@ from tests._support.db_port import (
 from tests._support.errors import raises_code
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import (
+    ACCOUNT,
+    BALANCE,
     FIND_SQL_UNLOCKED,
     FIXED,
     account_db,
     db_for,
 )
+from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
 from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry, Tug, Vessel
 
 _GATED_BALANCE = "update px.account set balance = ?, version = ? where id = ? and version = ?"
@@ -204,6 +209,105 @@ def test_a_target_deletion_states_its_key_alone(
     document: dict[str, object], match: str, code: str
 ) -> None:
     _refused(lambda tx: tx.wire.delete_if("Account", document, version=3), match, code)
+
+
+# --------------------------------------------------------------------------- #
+# A key stated as null names no object: every target verb refuses it at the   #
+# call, under either strategy, before anything is read or written.             #
+# --------------------------------------------------------------------------- #
+_MAR = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_SEP = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+_SPAN: dict[str, Any] = {"tx_start": FIXED, "valid_from": _MAR}
+_BOUNDED: dict[str, Any] = {**_SPAN, "until": _SEP}
+
+_NULL_KEYED: dict[str, tuple[DomainModel, Callable[[TxnContext], object]]] = {
+    "typed-amend": (
+        ACCOUNT,
+        lambda tx: tx.amend_if(mm.Account, mm.Account.owner.set("Bo"), key=None, version=3),
+    ),
+    "wire-amend": (
+        ACCOUNT,
+        lambda tx: tx.wire.amend_if("Account", {"id": None, "owner": "Bo"}, version=3),
+    ),
+    "wire-empty-amend": (
+        ACCOUNT,
+        lambda tx: tx.wire.amend_if("Account", {"id": None}, version=3),
+    ),
+    "wire-replace": (
+        ACCOUNT,
+        lambda tx: tx.wire.replace_if(
+            "Account", {"id": None, "owner": "Bo", "balance": "1"}, version=3
+        ),
+    ),
+    "typed-delete": (ACCOUNT, lambda tx: tx.delete_if(mm.Account, key=None, version=3)),
+    "wire-delete": (ACCOUNT, lambda tx: tx.wire.delete_if("Account", {"id": None}, version=3)),
+    "typed-bitemporal-amend": (
+        WHERE_POSITION_META,
+        lambda tx: tx.amend_if(WherePosition, WherePosition.acct_num.set("Z"), key=None, **_SPAN),
+    ),
+    "typed-bitemporal-bounded-amend": (
+        WHERE_POSITION_META,
+        lambda tx: tx.amend_if(
+            WherePosition, WherePosition.acct_num.set("Z"), key=None, **_BOUNDED
+        ),
+    ),
+    "wire-bitemporal-bounded-amend": (
+        WHERE_POSITION_META,
+        lambda tx: tx.wire.amend_if("WherePosition", {"id": None, "acctNum": "Z"}, **_BOUNDED),
+    ),
+    "wire-bitemporal-empty-amend": (
+        WHERE_POSITION_META,
+        lambda tx: tx.wire.amend_if("WherePosition", {"id": None}, **_SPAN),
+    ),
+    "wire-bitemporal-bounded-replace": (
+        WHERE_POSITION_META,
+        lambda tx: tx.wire.replace_if(
+            "WherePosition", {"id": None, "acctNum": "Z", "value": "1.00"}, **_BOUNDED
+        ),
+    ),
+    "typed-bitemporal-bounded-terminate": (
+        WHERE_POSITION_META,
+        lambda tx: tx.terminate_if(WherePosition, key=None, **_BOUNDED),
+    ),
+    "wire-bitemporal-terminate": (
+        WHERE_POSITION_META,
+        lambda tx: tx.wire.terminate_if("WherePosition", {"id": None}, **_SPAN),
+    ),
+    "typed-transaction-time-amend": (
+        BALANCE,
+        lambda tx: tx.amend_if(Balance, Balance.acct_num.set("Z"), key=None, tx_start=FIXED),
+    ),
+    "wire-transaction-time-replace": (
+        BALANCE,
+        lambda tx: tx.wire.replace_if(
+            "Balance", {"id": None, "acctNum": "Z", "value": "1.00"}, tx_start=FIXED
+        ),
+    ),
+    "typed-transaction-time-terminate": (
+        BALANCE,
+        lambda tx: tx.terminate_if(Balance, key=None, tx_start=FIXED),
+    ),
+}
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+@pytest.mark.parametrize("verb", list(_NULL_KEYED))
+def test_a_target_write_stating_a_null_key_is_refused_at_the_call(
+    verb: str, concurrency: Literal["optimistic", "locking"]
+) -> None:
+    model, write = _NULL_KEYED[verb]
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with raises_code(
+            InvalidValueError,
+            "write-required-attribute-missing",
+            match=r"\.id: required attribute is absent \(or null\)",
+        ):
+            write(tx)
+
+    db_for(model, port).transact(fn, concurrency=concurrency)
+    assert _calls(port) == []
 
 
 # --------------------------------------------------------------------------- #

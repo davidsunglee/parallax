@@ -171,7 +171,10 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
     (`m-unit-work` *Target writes*).
 
     The row names its object by every primary-key member, each stating a value
-    that member admits, never null. Every other member it states is judged as
+    that member admits. A null one is refused by the key's own non-null type,
+    so it raises its classified ``write-required-attribute-missing``
+    :class:`RejectionError`, the observable a `rejected` case grades, rather
+    than answering a detail. Every other member it states is judged as
     an assignment (:func:`assignment_violation`). A replacement states the
     object's whole writable state, so it also omits no required member a caller
     may assign; an omitted nullable member is written empty, and an omitted
@@ -183,7 +186,7 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
         if attribute["name"] not in row:
             return f"{path}: a target write states every primary-key member"
         judge = partial(_validate_attribute, row, attribute, path=path)
-        detail = _violation_detail(judge)
+        detail = _violation_detail(judge, keep=frozenset({WRITE_REQUIRED_ATTRIBUTE_MISSING}))
         if detail is not None:
             return detail
     key_names = {attribute["name"] for attribute in keys}

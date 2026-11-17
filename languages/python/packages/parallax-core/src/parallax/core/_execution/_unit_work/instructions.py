@@ -112,7 +112,7 @@ __all__ = [
     "prepare_typed_write",
     "prepare_wire_insert",
     "prepare_wire_write",
-    "refuse_keyless_target",
+    "refuse_unaddressed_target",
     "resolve_target",
     "serialize",
 ]
@@ -548,13 +548,26 @@ def key_absent_refusal(entity: EntityIdentity, mutation: str) -> UsageError:
     )
 
 
-def refuse_keyless_target(
+def key_null_refusal(entity: EntityIdentity, key: str) -> InvalidValueError:
+    """The refusal of a write stating ``entity``'s ``key`` as null, which the
+    key's own non-null type refuses (:data:`WRITE_REQUIRED_ATTRIBUTE_MISSING`)."""
+    return InvalidValueError(
+        WRITE_REQUIRED_ATTRIBUTE_MISSING,
+        f"{entity.name}.{key}: required attribute is absent (or null)",
+    )
+
+
+def refuse_unaddressed_target(
     model: AcceptedMetamodel, entity: CompiledEntity, mutation: str, row: Mapping[str, object]
 ) -> None:
-    """Refuse a target write of ``entity`` whose ``row`` states no key
-    (:func:`key_absent_refusal`), so it names no object to address."""
-    if _inheritance_entity_view(model, entity).primary_key.identity.name not in row:
+    """Refuse a target write of ``entity`` whose ``row`` names no object to
+    address: one stating no key (:func:`key_absent_refusal`) or a null one
+    (:func:`key_null_refusal`)."""
+    key = _inheritance_entity_view(model, entity).primary_key.identity.name
+    if key not in row:
         raise key_absent_refusal(entity.identity, mutation)
+    if row[key] is None:
+        raise key_null_refusal(entity.identity, key)
 
 
 def derive_keyed_instruction(
@@ -1883,7 +1896,7 @@ def _prepare_target_write(
     whose required revision is missing is refused before any member it names
     is weighed.
     """
-    refuse_keyless_target(model, entity, instruction.mutation, instruction.row)
+    refuse_unaddressed_target(model, entity, instruction.mutation, instruction.row)
     shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,

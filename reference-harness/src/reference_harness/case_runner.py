@@ -1046,8 +1046,9 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
     Persistence admission precedes them (`m-unit-work` "Writes to a ReadOnly
     family"). The verb, row, revision, and window are then judged by the one
     :func:`~reference_harness.write_validate.target_write_violation` static case
-    validation also asks; those judgements carry no rule of the closed vocabulary,
-    so a detail is a case-authoring failure, never a graded refusal.
+    validation also asks. A null key is the one judgement raising a rule of the
+    closed vocabulary; every other one carries none, so its detail is a
+    case-authoring failure, never a graded refusal.
     """
     entity_name = write.get("entity")
     try:

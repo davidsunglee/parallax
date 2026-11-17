@@ -396,7 +396,10 @@ def _valid_keyed_entry_entity(
             f"attributes or value objects of {entity_name}"
         )
         return None
-    condition = target_write_violation(entity, instruction) if isinstance(row, dict) else None
+    try:
+        condition = target_write_violation(entity, instruction) if isinstance(row, dict) else None
+    except RejectionError as exc:
+        condition = f"a target write of {entity.name} — {exc}"
     if condition is not None:
         errors.append(f"{entry_label}: {condition}")
         return None

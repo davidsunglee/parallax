@@ -785,7 +785,9 @@ can read again and retry. [Transactions](05-transactions.md#retries) explains wh
 retried.
 
 `key=` takes the object's primary-key value; an entity's primary key is always one
-attribute. `Customer` has no version, so a target write can't name a revision for it,
+attribute. `key=None`, or a Wire document stating its key as `None`, names no object:
+the call raises `InvalidValueError` with code `write-required-attribute-missing` before
+anything is buffered. `Customer` has no version, so a target write can't name a revision for it,
 and Parallax refuses one with a `UsageError`. Read a customer inside the transaction instead; its shared
 lock protects the write. `replace_if` takes a whole instance, which can be an edited copy
 of the reviewed value, and states that instance's writable state.
