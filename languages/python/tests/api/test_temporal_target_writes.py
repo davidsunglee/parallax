@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, Literal, cast
 
 import pytest
@@ -622,6 +623,103 @@ def test_a_transaction_time_termination_closes_its_callers_milestone_and_chains_
     # Transaction-Time instant; Optimistic refuses it at the flush, after.
     closed = _TA if concurrency == "locking" else _TB
     assert _log_rows(profile_run, entity) == [(_T0, closed, "seed", _S1, [])]
+
+
+# --------------------------------------------------------------------------- #
+# A key stated as null names no object: refused at the call, whatever the     #
+# target's shape or window, leaving the attempt's later work to commit.        #
+# --------------------------------------------------------------------------- #
+type _Write = Callable[[TxnContext], object]
+
+_NULL_KEY = r"\.id: required attribute is absent \(or null\)"
+
+
+def _null_keyed_spans(entity: type[Any], representation: _Representation) -> tuple[_Write, ...]:
+    name = _name(entity)
+    window: dict[str, Any] = {"valid_from": _MAR, "tx_start": _T0}
+    bounded: dict[str, Any] = {**window, "until": _JUL}
+    if representation == "typed":
+        return (
+            lambda tx: tx.amend_if(entity, entity.amount.set(150), key=None, **window),
+            lambda tx: tx.amend_if(entity, entity.amount.set(150), key=None, **bounded),
+            lambda tx: tx.terminate_if(entity, key=None, **window),
+            lambda tx: tx.terminate_if(entity, key=None, **bounded),
+        )
+    return (
+        lambda tx: tx.wire.amend_if(name, {"id": None, "amount": 150}, **window),
+        lambda tx: tx.wire.amend_if(name, {"id": None, "amount": 150}, **bounded),
+        lambda tx: tx.wire.amend_if(name, {"id": None}, **window),
+        lambda tx: tx.wire.replace_if(name, {"id": None, "amount": 300, "label": "r"}, **bounded),
+        lambda tx: tx.wire.terminate_if(name, {"id": None}, **window),
+        lambda tx: tx.wire.terminate_if(name, {"id": None}, **bounded),
+    )
+
+
+@_SPAN_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_bitemporal_target_write_stating_a_null_key_is_refused_at_the_call(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    db = _seeded_spans(profile_run, entity, _TA)
+
+    def fn(tx: TxnContext) -> None:
+        for write in _null_keyed_spans(entity, representation):
+            with raises_code(UsageError, "write-required-attribute-missing", match=_NULL_KEY):
+                write(tx)
+        _span_patch(tx, entity, amount=150)
+
+    db.transact(fn, concurrency=concurrency)
+    assert _span_rows(profile_run, entity) == [
+        *_SEED_HISTORY,
+        (_TA, None, _JAN, _MAR, 100, "a", _S1, _M),
+        (_TA, None, _MAR, _APR, 150, "a", _S1, _M),
+        (_TA, None, _JUN, _AUG, 150, "b", _S2, []),
+    ]
+
+
+def _null_keyed_logs(entity: type[Any], representation: _Representation) -> tuple[_Write, ...]:
+    name = _name(entity)
+    if representation == "typed":
+        return (
+            lambda tx: tx.amend_if(entity, entity.label.set("null"), key=None, tx_start=_T0),
+            lambda tx: tx.terminate_if(entity, key=None, tx_start=_T0),
+        )
+    return (
+        lambda tx: tx.wire.amend_if(name, {"id": None, "label": "null"}, tx_start=_T0),
+        lambda tx: tx.wire.amend_if(name, {"id": None}, tx_start=_T0),
+        lambda tx: tx.wire.replace_if(name, {"id": None, "label": "null"}, tx_start=_T0),
+        lambda tx: tx.wire.terminate_if(name, {"id": None}, tx_start=_T0),
+    )
+
+
+@_LOG_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_transaction_time_target_write_stating_a_null_key_is_refused_at_the_call(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    profile_run.reset(model_of(_MODEL), {}, TEST_BINDING)
+    db = _db(profile_run, _T0, _T1)
+    db.transact(lambda tx: tx.insert(entity(id=1, label="seed", spec=Spec(title="s1"))))
+
+    def fn(tx: TxnContext) -> None:
+        for write in _null_keyed_logs(entity, representation):
+            with raises_code(UsageError, "write-required-attribute-missing", match=_NULL_KEY):
+                write(tx)
+        tx.wire.amend_if(_name(entity), {"id": 1, "label": "patched"}, tx_start=_T0)
+
+    db.transact(fn, concurrency=concurrency)
+    assert _log_rows(profile_run, entity) == [
+        (_T0, _T1, "seed", _S1, []),
+        (_T1, None, "patched", _S1, []),
+    ]
 
 
 # --------------------------------------------------------------------------- #

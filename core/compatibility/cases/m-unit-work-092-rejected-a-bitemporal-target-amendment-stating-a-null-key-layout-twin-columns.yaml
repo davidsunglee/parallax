@@ -1,0 +1,17 @@
+# A temporal target write names its object by its primary key as a Non-Temporal
+# one does, so a bounded Bitemporal target amendment stating a null key is refused
+# when it is prepared, before any coverage of its window is read (m-unit-work,
+# m-pk-gen).
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-unit-work, m-pk-gen, m-temporal-write, write, rejected, target-write, bitemporal, temporal, layout-twin, columns, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    mutation: amendUntil
+    entity: parallax.compatibility.SequenceSpan
+    row: { id: null, amount: 150 }
+    ifTxStart: "2023-12-01T00:00:00.000000Z"
+    validFrom: "2024-03-01T00:00:00.000000Z"
+    until: "2024-05-01T00:00:00.000000Z"
+then:
+  rejectedRule: write-required-attribute-missing

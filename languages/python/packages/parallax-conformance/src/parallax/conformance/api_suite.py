@@ -2550,6 +2550,14 @@ _INDEPENDENT_OPENING_REASON: Final[str] = (
     "here would add no developer surface"
 )
 
+_NULL_TARGET_KEY_REASON: Final[str] = (
+    "a layout-twin target write stating its key as null, refused when the rejected lane "
+    "prepares it through Wire write ingress; its developer spellings — every Typed and Wire "
+    "target verb refused at the call, temporal and Non-Temporal, under both Storage "
+    "Layouts — are the real-database witnesses of the target-write suites, so a story here "
+    "would add no developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -2616,6 +2624,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     ),
     **dict.fromkeys(
         (f"m-unit-work-{number:03d}" for number in range(84, 90)), _TARGET_TERMINATION_REASON
+    ),
+    **dict.fromkeys(
+        (f"m-unit-work-{number:03d}" for number in range(90, 96)), _NULL_TARGET_KEY_REASON
     ),
     # -- buffered sequences, state-graded ------------------------------------ #
     **dict.fromkeys(

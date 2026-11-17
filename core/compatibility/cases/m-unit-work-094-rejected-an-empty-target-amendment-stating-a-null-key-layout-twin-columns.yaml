@@ -1,0 +1,14 @@
+# An amendment naming nothing beside its key is the empty write, dropped once it is
+# validated; a null key fails that validation, so the empty amendment is refused
+# rather than dropped (m-unit-work, m-pk-gen).
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-unit-work, m-pk-gen, write, rejected, target-write, layout-twin, columns, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.SequenceAccount
+    row: { id: null }
+    ifVersion: 1
+then:
+  rejectedRule: write-required-attribute-missing

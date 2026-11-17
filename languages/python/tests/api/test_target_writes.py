@@ -17,6 +17,7 @@ developer choreography rather than a case's authored observation.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from typing import Any, Literal
 
 import pytest
@@ -278,6 +279,44 @@ def test_a_revision_that_no_longer_holds_fails_without_retry_and_changes_nothing
     assert failed.value.expected == 1
     assert attempts == 1
     assert _accounts(profile_run, entity) == before
+
+
+@_ACCOUNT_AXES
+@_STRATEGIES
+@_REPRESENTATIONS
+def test_a_target_write_stating_a_null_key_is_refused_at_the_call_and_writes_nothing(
+    profile_run: Any,
+    entity: type[Any],
+    concurrency: _Concurrency,
+    representation: _Representation,
+) -> None:
+    db = _seeded(profile_run, entity)
+    name = _name(entity)
+    null_keyed: dict[_Representation, tuple[Callable[[TxnContext], object], ...]] = {
+        "typed": (
+            lambda tx: tx.amend_if(entity, entity.label.set("null"), key=None, version=1),
+            lambda tx: tx.delete_if(entity, key=None, version=1),
+        ),
+        "wire": (
+            lambda tx: tx.wire.amend_if(name, {"id": None, "label": "null"}, version=1),
+            lambda tx: tx.wire.amend_if(name, {"id": None}, version=1),
+            lambda tx: tx.wire.replace_if(name, {"id": None, "label": "null"}, version=1),
+            lambda tx: tx.wire.delete_if(name, {"id": None}, version=1),
+        ),
+    }
+
+    def fn(tx: TxnContext) -> None:
+        for write in null_keyed[representation]:
+            with raises_code(
+                UsageError,
+                "write-required-attribute-missing",
+                match=rf"{entity.__name__}\.id: required attribute is absent \(or null\)",
+            ):
+                write(tx)
+        _patch(tx, entity, label="patched")
+
+    db.transact(fn, concurrency=concurrency)
+    assert _accounts(profile_run, entity) == [(1, "patched", "kept", _SPEC, [{"code": "a"}], 2)]
 
 
 @_WALLET_AXES

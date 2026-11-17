@@ -882,6 +882,7 @@ type Payload = Literal[
     "empty",
     "undeclared",
     "mapping_key",
+    "null_key",
     "extra_member",
     "observation_key",
     "unshaped",
@@ -893,7 +894,9 @@ type Payload = Literal[
 complete state, and nothing for a destructive or close verb. ``empty`` is an
 amendment of nothing. ``undeclared`` names a member the target does not
 declare. ``mapping_key`` addresses the object by a mapping where a Typed key is
-one scalar value, which only a Typed call can state. The rest are Wire documents
+one scalar value, which only a Typed call can state. ``null_key`` states the
+key as null, which a Typed call spells for every verb but a replacement, whose
+instance cannot hold one. The rest are Wire documents
 no Typed call has a spelling for: a destructive key carrying a declared member
 beside the key, a reserved observation key, a document that is no mapping, and
 a replacement missing its required members.
@@ -1706,7 +1709,10 @@ def _target_reachable(scenario: TargetWriteScenario, representation: Representat
     if scenario.payload in _WIRE_ONLY_PAYLOADS or scenario.address == "published_with_data":
         return False
     if scenario.verb == "replace":
-        return scenario.address != "unaddressable" and scenario.payload != "undeclared"
+        return scenario.address != "unaddressable" and scenario.payload not in {
+            "undeclared",
+            "null_key",
+        }
     if scenario.address == "published":
         return False
     return scenario.payload != "undeclared" or scenario.verb == "amend"
@@ -1860,7 +1866,7 @@ def _call_typed_target(
         if scenario.address == "unaddressable"
         else target.entity_class
     )
-    key: object = {"id": 1} if scenario.payload == "mapping_key" else 1
+    key: object = {"mapping_key": {"id": 1}, "null_key": None}.get(scenario.payload, 1)
     match scenario.verb:
         case "amend":
             assignments = _typed_target_assignments(scenario)
@@ -1883,7 +1889,7 @@ def _typed_target_assignments(
 ) -> tuple[AttributeAssignment[Any], ...]:
     target = scenario.target
     match scenario.payload:
-        case "ordinary" | "mapping_key":
+        case "ordinary" | "mapping_key" | "null_key":
             return (target.typed_change,)
         case "empty":
             return ()
@@ -1912,6 +1918,8 @@ def _wire_document(scenario: TargetWriteScenario) -> object:
         base = {"id": 1}
     if scenario.payload == "undeclared":
         base["nickname"] = "x"
+    elif scenario.payload == "null_key":
+        base["id"] = None
     elif scenario.payload == "observation_key":
         base["observedVersion"] = 4
     return base

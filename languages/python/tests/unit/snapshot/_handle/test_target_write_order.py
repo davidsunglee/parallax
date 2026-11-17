@@ -1,15 +1,15 @@
 """The target-write order, stated once and asserted of both representations.
 
 Every ``_if`` verb, Typed or Wire, enters one ingress: lifecycle re-entry, then
-the representation's own capture of what it addresses, then the stated start,
-then the one preparation that judges the target, the verb, the window, the
-revision, and only then the payload, and finally the buffering that drops an
-amendment of nothing, refuses an object this attempt inserted, and under Locking
-acquires the stored row at the call. What a row fixes is the ANSWER that order
-gives — the refusal's class, code, message, the point it landed at, and the DML
-emitted — beside the whole port chronology, so a refusal that read or flushed
-anything, and an Optimistic write that read at the call, are different answers
-rather than agreeing ones.
+the representation's own capture of what it addresses and the refusal of a key
+naming no object, then the stated start, then the one preparation that judges
+the target, the verb, the window, the revision, and only then the payload, and
+finally the buffering that drops an amendment of nothing, refuses an object this
+attempt inserted, and under Locking acquires the stored row at the call. What a
+row fixes is the ANSWER that order gives — the refusal's class, code, message,
+the point it landed at, and the DML emitted — beside the whole port chronology,
+so a refusal that read or flushed anything, and an Optimistic write that read at
+the call, are different answers rather than agreeing ones.
 
 Each row states one expectation per representation that can express it and
 asserts it of each in turn; nothing here compares one representation to the
@@ -627,6 +627,64 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
 
 @pytest.mark.parametrize("row", _REPRESENTATION_SHAPE, ids=str)
 def test_what_a_representation_captures_is_judged_before_the_window(row: _Row) -> None:
+    _assert_row(row)
+
+
+# --------------------------------------------------------------------------- #
+# A key stated as null names no object: it is refused once the address is     #
+# captured, ahead of a stated start, the window, the revision, and the        #
+# payload, and before a Locking call acquires anything.                        #
+# --------------------------------------------------------------------------- #
+def _null_key(entity: str) -> _Expected:
+    return _refused(
+        InvalidValueError,
+        f"{entity}.id: required attribute is absent (or null)",
+        code="write-required-attribute-missing",
+    )
+
+
+_NULL_KEY: Final[tuple[_Row, ...]] = (
+    _Row(TargetWriteScenario(_ACCOUNT, "amend", payload="null_key"), _both(_null_key("Account"))),
+    _Row(
+        TargetWriteScenario(
+            _ACCOUNT, "amend", until="stated", revision="omitted", payload="null_key"
+        ),
+        _both(_null_key("Account")),
+    ),
+    _Row(
+        TargetWriteScenario(_ACCOUNT, "delete", revision="none", payload="null_key"),
+        _both(_null_key("Account")),
+    ),
+    _Row(
+        TargetWriteScenario(_ACCOUNT, "replace", revision="misstated", payload="null_key"),
+        _wire(_null_key("Account")),
+    ),
+    _Row(
+        TargetWriteScenario(_POSITION, "amend", valid_from="none", payload="null_key"),
+        _both(_null_key("WherePosition")),
+    ),
+    _Row(
+        TargetWriteScenario(
+            _POSITION,
+            "terminate",
+            valid_from="stated",
+            until="reversed",
+            payload="null_key",
+            concurrency="locking",
+        ),
+        _both(_null_key("WherePosition")),
+    ),
+    _Row(
+        TargetWriteScenario(
+            _BALANCE, "terminate", revision="ill_typed", payload="null_key", concurrency="locking"
+        ),
+        _both(_null_key("Balance")),
+    ),
+)
+
+
+@pytest.mark.parametrize("row", _NULL_KEY, ids=str)
+def test_a_null_key_is_refused_once_the_address_is_captured(row: _Row) -> None:
     _assert_row(row)
 
 
