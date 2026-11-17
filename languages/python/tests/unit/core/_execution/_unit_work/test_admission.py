@@ -31,6 +31,7 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
+    TargetMutation,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
@@ -39,16 +40,20 @@ from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
+    InsertionAuthorized,
     InsertionAuthorizedIntent,
-    InsertionAuthorizedWrite,
     KeyedInsert,
+    LicensedWrite,
     PostRemovalInsert,
+    StateObserved,
     StateObservedIntent,
-    StateObservedWrite,
     TargetIntent,
-    TargetWrite,
     TemporalCoverageWrite,
+    TxStartConditioned,
     UnversionedLocked,
+    VersionConditioned,
+    WriteAuthority,
+    is_licensed_by,
     target_write,
 )
 from parallax.core.internal import inheritance, temporal_read
@@ -78,13 +83,12 @@ from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
-    ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
     admitted_write,
 )
 from tests._support.errors import raises_code
-from tests._support.planner_probes import admit, object_source, source_registry
+from tests._support.planner_probes import admit, admit_licensed, object_source, source_registry
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -123,10 +127,6 @@ _BALANCE_OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"),
 _INSERTED_AT = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
 
 
-def _confirmed(item: TargetWrite) -> TargetWrite:
-    return item
-
-
 def _admitted(
     *writes: AdmittedWrite, meta: Metamodel = POSITION, registry: SourceRegistry | None = None
 ) -> WriteAdmission:
@@ -143,18 +143,18 @@ def _admit(admission: WriteAdmission, *writes: AdmittedWrite) -> None:
         admit(admission, write)
 
 
-def _refused(
-    admission: WriteAdmission, write: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
-) -> None:
+def _refused(admission: WriteAdmission, write: LicensedWrite[WriteAuthority]) -> None:
     with raises_code(UsageError, "write-evidence-already-claimed"):
-        admission.admit(write, confirm_target=_confirmed)
+        admit_licensed(admission, write)
 
 
 def _account(account_id: int) -> ObjectKey:
     return ObjectKey(_ACCOUNT_ENTITY, (("id", account_id),))
 
 
-def _account_observed(account_id: int, version: int) -> ReadAuthorizedWrite:
+def _account_observed(
+    account_id: int, version: int
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)),
         write_preparation_of(_ACCOUNT),
@@ -166,14 +166,19 @@ def _account_observed(account_id: int, version: int) -> ReadAuthorizedWrite:
     )
 
 
-def _account_target(account_id: int, version: int) -> TargetWrite:
+def _account_target(
+    account_id: int, version: int, mutation: TargetMutation = "amend"
+) -> LicensedWrite[VersionConditioned]:
+    members: dict[str, object] = {"balance": "1.00"} if mutation == "amend" else {}
     prepared = prepare_wire_write(
         TargetWriteInstruction(
-            "amend", "Account", {"id": account_id, "balance": "1.00"}, if_version=version
+            mutation, "Account", {"id": account_id, **members}, if_version=version
         ),
         write_preparation_of(_ACCOUNT),
     )
-    return target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT))
+    item = target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT))
+    assert is_licensed_by(item, VersionConditioned)
+    return item
 
 
 def _account_insert(account_id: int) -> KeyedInsert:
@@ -201,31 +206,62 @@ def _account_amend(account_id: int) -> PreparedKeyedInstruction:
 # --------------------------------------------------------------------------- #
 class _Confirmations:
     def __init__(self) -> None:
-        self.asked: list[TargetWrite] = []
+        self.versions: list[LicensedWrite[VersionConditioned]] = []
+        self.starts: list[LicensedWrite[TxStartConditioned]] = []
 
-    def __call__(self, item: TargetWrite) -> TargetWrite:
-        self.asked.append(item)
+    def version(self, item: LicensedWrite[VersionConditioned]) -> None:
+        self.versions.append(item)
+
+    def tx_start(
+        self, item: LicensedWrite[TxStartConditioned]
+    ) -> LicensedWrite[TxStartConditioned]:
+        self.starts.append(item)
         return item
+
+    def admit(self, admission: WriteAdmission, item: LicensedWrite[WriteAuthority]) -> None:
+        admission.admit(item, confirm_version=self.version, confirm_tx_start=self.tx_start)
 
 
 def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_asked() -> None:
     confirm = _Confirmations()
     admission = _admitted()
     first = addressed_write(value="150.00")
-    admission.admit(first, confirm_target=confirm)
+    confirm.admit(admission, first)
     # A second write over exactly that window starts from the state the first
     # does; one refused for another stated start is never confirmed.
-    admission.admit(addressed_write(value="175.00"), confirm_target=confirm)
+    confirm.admit(admission, addressed_write(value="175.00"))
     with pytest.raises(UsageError):
-        admission.admit(addressed_write(tx_start=T1, value="1.00"), confirm_target=confirm)
-    assert confirm.asked == [first]
+        confirm.admit(admission, addressed_write(tx_start=T1, value="1.00"))
+    assert (confirm.starts, confirm.versions) == ([first], [])
 
     versioned = _admitted(meta=_ACCOUNT)
-    versioned.admit(_account_observed(1, 3), confirm_target=confirm)
-    versioned.admit(_account_target(1, 3), confirm_target=confirm)
+    confirm.admit(versioned, _account_observed(1, 3))
+    confirm.admit(versioned, _account_target(1, 3))
     alone = _account_target(2, 3)
-    versioned.admit(alone, confirm_target=confirm)
-    assert confirm.asked == [first, alone]
+    confirm.admit(versioned, alone)
+    assert (confirm.starts, confirm.versions) == ([first], [alone])
+
+
+class _Refused(Exception):
+    pass
+
+
+def _refuse_version(item: LicensedWrite[VersionConditioned]) -> None:
+    raise _Refused(item)
+
+
+def _refuse_tx_start(item: LicensedWrite[TxStartConditioned]) -> LicensedWrite[TxStartConditioned]:
+    raise _Refused(item)
+
+
+@pytest.mark.parametrize("condition", ["version", "tx-start"])
+def test_a_refused_confirmation_buffers_nothing_of_its_write(condition: str) -> None:
+    admission = _admitted(meta=_ACCOUNT if condition == "version" else POSITION)
+    write = _account_target(1, 3) if condition == "version" else addressed_write(value="1.00")
+    with pytest.raises(_Refused):
+        admission.admit(write, confirm_version=_refuse_version, confirm_tx_start=_refuse_tx_start)
+    assert admission.composed_writes() == ()
+    assert not admission
 
 
 def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmation() -> None:
@@ -234,10 +270,10 @@ def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmat
     admission.admit_insert(_account_insert(1), insertion_advice=None)
     admission.drain_planned()
     # A pending write of another state of the object would also refuse it.
-    admission.admit(_account_observed(1, 1), confirm_target=confirm)
+    confirm.admit(admission, _account_observed(1, 1))
     with raises_code(UsageError, "write-evidence-inserted"):
-        admission.admit(_account_target(1, 7), confirm_target=confirm)
-    assert confirm.asked == []
+        confirm.admit(admission, _account_target(1, 7))
+    assert (confirm.starts, confirm.versions) == ([], [])
 
 
 # --------------------------------------------------------------------------- #
@@ -252,8 +288,8 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     )
     assert isinstance(deletion, PreparedKeyedInstruction)
     assert identity is not None
-    outcome = admission.admit(
-        admitted_write(deletion, None, _account(9), insertion=identity), confirm_target=_confirmed
+    outcome = admit_licensed(
+        admission, admitted_write(deletion, None, _account(9), insertion=identity)
     )
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission
@@ -266,7 +302,9 @@ def _person(person_id: int) -> ObjectKey:
     return ObjectKey(_PERSON_ENTITY, (("id", person_id),))
 
 
-def _person_write(person_id: int, source: ReadEvidence) -> ReadAuthorizedWrite:
+def _person_write(
+    person_id: int, source: ReadEvidence
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)),
         write_preparation_of(_PERSON),
@@ -289,7 +327,7 @@ def test_coalesced_unversioned_writes_keep_every_distinct_source_evidence() -> N
         meta=_PERSON,
     )
     one, two = admission.composed_writes()
-    assert isinstance(one, UnversionedLocked) and isinstance(two, UnversionedLocked)
+    assert is_licensed_by(one, UnversionedLocked) and is_licensed_by(two, UnversionedLocked)
     assert [tuple(map(id, write.source_evidence)) for write in (one, two)] == [
         (id(first), id(coalesced)),
         (id(other),),
@@ -404,21 +442,21 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothin
 
 def _account_delete_through(
     identity: InsertionIdentity, account_id: int = 9
-) -> InsertionAuthorizedWrite:
+) -> LicensedWrite[InsertionAuthorized]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
         write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return InsertionAuthorizedWrite(prepared, _account(account_id), identity)
+    return admitted_write(prepared, None, _account(account_id), insertion=identity)
 
 
-def _balance_terminate_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
+def _balance_terminate_through(identity: InsertionIdentity) -> LicensedWrite[InsertionAuthorized]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)), write_preparation_of(_BALANCE)
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return InsertionAuthorizedWrite(prepared, _BALANCE_OBJECT, identity)
+    return admitted_write(prepared, None, _BALANCE_OBJECT, insertion=identity)
 
 
 @pytest.mark.parametrize(
@@ -432,7 +470,7 @@ def _balance_terminate_through(identity: InsertionIdentity) -> InsertionAuthoriz
 def test_an_insert_after_a_pending_whole_removal_follows_it_as_a_first_opening(
     meta: Metamodel,
     insert: Callable[[], KeyedInsert],
-    removal: Callable[[InsertionIdentity], InsertionAuthorizedWrite],
+    removal: Callable[[InsertionIdentity], LicensedWrite[InsertionAuthorized]],
 ) -> None:
     registry = source_registry(meta)
     admission = _admitted(meta=meta, registry=registry)
@@ -463,12 +501,12 @@ def test_a_pending_reinsertion_claims_from_the_version_an_insert_stores() -> Non
     again = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert again is not None
     (deletion, _reinsertion) = admission.composed_writes()
-    assert isinstance(deletion, InsertionAuthorizedWrite)
+    assert is_licensed_by(deletion, InsertionAuthorized)
     assert deletion.claim_scope == VersionedObjectStateKey(_account(9), 2)
     admission.drain_planned()
-    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), again))
+    _admit(admission, admitted_write(_account_amend(9), None, _account(9), insertion=again))
     (amendment,) = admission.composed_writes()
-    assert isinstance(amendment, InsertionAuthorizedWrite)
+    assert is_licensed_by(amendment, InsertionAuthorized)
     assert amendment.claim_scope == VersionedObjectStateKey(_account(9), 1)
 
 
@@ -486,7 +524,7 @@ def test_an_inserted_objects_target_stays_refused_once_its_insertion_retires(
     admission.drain_planned()
     assert registry.insertion_anchor(identity) is NO_INSERTION_AUTHORITY
     with raises_code(UsageError, "write-evidence-inserted"):
-        admission.admit(_account_target(9, 1), confirm_target=_confirmed)
+        admit_licensed(admission, _account_target(9, 1))
 
 
 # --------------------------------------------------------------------------- #
@@ -501,8 +539,12 @@ def _inserted_accounts(admission: WriteAdmission, *account_ids: int) -> list[Ins
     return identities
 
 
-def _amended_through(identity: InsertionIdentity, account_id: int) -> InsertionAuthorizedWrite:
-    return InsertionAuthorizedWrite(_account_amend(account_id), _account(account_id), identity)
+def _amended_through(
+    identity: InsertionIdentity, account_id: int
+) -> LicensedWrite[InsertionAuthorized]:
+    return admitted_write(
+        _account_amend(account_id), None, _account(account_id), insertion=identity
+    )
 
 
 def _pending_owners(admission: WriteAdmission) -> list[tuple[object, object]]:
@@ -527,9 +569,7 @@ def test_each_pending_insert_folds_and_cancels_only_its_own_objects_writes(
     identities = dict(zip(inserted, _inserted_accounts(admission, *inserted), strict=True))
     for account_id, identity in identities.items():
         _admit(admission, _amended_through(identity, account_id))
-    outcome = admission.admit(
-        _account_delete_through(identities[cancelled], cancelled), confirm_target=_confirmed
-    )
+    outcome = admit_licensed(admission, _account_delete_through(identities[cancelled], cancelled))
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert _pending_owners(admission) == [(id_, "Cy") for id_ in inserted if id_ != cancelled]
     admission.drain_planned()
@@ -542,12 +582,12 @@ def test_an_object_inserted_again_after_its_cancellation_takes_only_the_later_wr
     registry = source_registry(_ACCOUNT)
     admission = _admitted(meta=_ACCOUNT, registry=registry)
     (cancelled,) = _inserted_accounts(admission, 9)
-    outcome = admission.admit(_account_delete_through(cancelled), confirm_target=_confirmed)
+    outcome = admit_licensed(admission, _account_delete_through(cancelled))
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     (other, again) = _inserted_accounts(admission, 1, 9)
     _admit(admission, _amended_through(again, 9))
     assert _pending_owners(admission) == [(1, "N"), (9, "Cy")]
-    outcome = admission.admit(_account_delete_through(again), confirm_target=_confirmed)
+    outcome = admit_licensed(admission, _account_delete_through(again))
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert _pending_owners(admission) == [(1, "N")]
     admission.drain_planned()
@@ -562,9 +602,9 @@ def test_a_cancelled_pending_insert_takes_no_later_write_of_its_object(
 ) -> None:
     admission = _admitted(meta=_ACCOUNT)
     *_, cancelled = _inserted_accounts(admission, *beside, 9)
-    admission.admit(_account_delete_through(cancelled), confirm_target=_confirmed)
+    admit_licensed(admission, _account_delete_through(cancelled))
     observed = _account_observed(9, 3)
-    assert admission.admit(observed, confirm_target=_confirmed) is BufferOutcome.BUFFERED
+    assert admit_licensed(admission, observed) is BufferOutcome.BUFFERED
     assert admission.composed_writes()[len(beside) :] == (observed,)
 
 
@@ -579,7 +619,7 @@ def test_an_unadvised_repeat_of_a_pending_insert_takes_the_writes_after_it(
     _admit(admission, _amended_through(repeat, 9))
     assert _pending_owners(admission) == [*((id_, "N") for id_ in beside), (9, "N"), (9, "Cy")]
     with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
-        admission.admit(_amended_through(opener, 9), confirm_target=_confirmed)
+        admit_licensed(admission, _amended_through(opener, 9))
     admission.drain_planned()
     assert registry.insertion_anchor(repeat) is None
 
@@ -682,7 +722,7 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
         admitted_write(insertion, None, OBJECT), insertion_advice=None
     )
     assert identity is not None
-    _refused(admission, InsertionAuthorizedWrite(amendment, OBJECT, identity))
+    _refused(admission, admitted_write(amendment, None, OBJECT, insertion=identity))
 
 
 # --------------------------------------------------------------------------- #
@@ -715,7 +755,9 @@ def _pending_august_opening() -> tuple[
     return admission, registry, insert, identity
 
 
-def _read_authorized(mutation: KeyedMutation, source: ReadEvidence) -> ReadAuthorizedWrite:
+def _read_authorized(
+    mutation: KeyedMutation, source: ReadEvidence
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     members: dict[str, object] = {"value": "150.00"} if mutation == "amendUntil" else {}
     return admitted_write(_position(mutation, MAR, MAY, **members), START, OBJECT, source=source)
 
@@ -726,7 +768,7 @@ def test_a_read_authorized_bitemporal_write_stays_apart_from_a_pending_opening(
 ) -> None:
     admission, _registry, insert, _identity = _pending_august_opening()
     source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
-    outcome = admission.admit(_read_authorized(mutation, source), confirm_target=_confirmed)
+    outcome = admit_licensed(admission, _read_authorized(mutation, source))
     assert outcome is BufferOutcome.BUFFERED
     opening, stored = admission.composed_writes()
     # The insertion's own coverage is untouched, and the read's change keeps
@@ -750,7 +792,7 @@ def _through_the_insertion(
     write = admitted_write(
         _position(mutation, AUG, until, **members), None, OBJECT, insertion=identity
     )
-    return admission.admit(write, confirm_target=_confirmed)
+    return admit_licensed(admission, write)
 
 
 def test_a_write_through_the_insertion_still_composes_with_its_opening_beside_a_read() -> None:
@@ -786,7 +828,7 @@ def _balance_insert() -> KeyedInsert:
     return admitted_write(prepared, None, _BALANCE_OBJECT)
 
 
-def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
+def _balance_observed(mutation: KeyedMutation) -> LicensedWrite[StateObserved | UnversionedLocked]:
     members: dict[str, object] = {"value": "7.00"} if mutation == "amend" else {}
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
@@ -816,7 +858,9 @@ def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
     )
 
 
-def _account_observed_delete(account_id: int, version: int) -> ReadAuthorizedWrite:
+def _account_observed_delete(
+    account_id: int, version: int
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
         write_preparation_of(_ACCOUNT),
@@ -845,7 +889,7 @@ def _account_observed_delete(account_id: int, version: int) -> ReadAuthorizedWri
 def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert(
     meta: Metamodel,
     insert: Callable[[], KeyedInsert],
-    amendment: Callable[[], ReadAuthorizedWrite],
+    amendment: Callable[[], LicensedWrite[StateObserved | UnversionedLocked]],
     member: str,
     value: object,
 ) -> None:
@@ -867,10 +911,10 @@ def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert
 def test_a_read_authorized_destruction_still_cancels_an_ordinary_pending_insert(
     meta: Metamodel,
     insert: Callable[[], KeyedInsert],
-    destruction: Callable[[], ReadAuthorizedWrite],
+    destruction: Callable[[], LicensedWrite[StateObserved | UnversionedLocked]],
 ) -> None:
     admission = _admitted(insert(), meta=meta)
-    outcome = admission.admit(destruction(), confirm_target=_confirmed)
+    outcome = admit_licensed(admission, destruction())
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission.composed_writes() == ()
 
@@ -881,6 +925,79 @@ def test_a_target_beside_writes_of_other_states_of_its_object_is_refused() -> No
     other = _admitted(_account_target(1, 3), meta=_ACCOUNT)
     _refused(other, _account_observed(1, 4))
     _refused(other, _account_target(1, 4))
+
+
+def _account_read(
+    account_id: int, version: int, mutation: KeyedMutation = "amend"
+) -> tuple[LicensedWrite[StateObserved | UnversionedLocked], ReadEvidence]:
+    members: dict[str, object] = {"owner": "Bo"} if mutation == "amend" else {}
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(mutation, "Account", ({"id": account_id, **members},)),
+        write_preparation_of(_ACCOUNT),
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    state = VersionedObjectStateKey(_account(account_id), version)
+    observed = RetainedObservation(state, VersionObservation(version), None)
+    source = ReadEvidence(_ACCOUNT_ENTITY, state.object, ParticipationToken(), observed)
+    return admitted_write(prepared, observed, state.object, source=source), source
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "survivor", "mutation"),
+    [
+        ("read", "condition", VersionConditioned, "amend"),
+        ("condition", "read", VersionConditioned, "amend"),
+        ("read", "conditioned-destruction", VersionConditioned, "delete"),
+        ("condition", "read-destruction", VersionConditioned, "delete"),
+        ("insertion", "read", StateObserved, "amend"),
+        ("read", "insertion", StateObserved, "amend"),
+    ],
+)
+def test_one_scopes_writes_merge_into_the_highest_ranked_licence_keeping_the_reads_source(
+    first: str, second: str, survivor: type[WriteAuthority], mutation: str
+) -> None:
+    # A caller's condition outranks a read, and a read outranks an insertion,
+    # whichever arrives first and even where a destruction supersedes it; the
+    # survivor keeps the read's evidence by identity.
+    admission = _admitted(meta=_ACCOUNT)
+    # Only a stored insertion's write claims the state a read observed; a
+    # caller's condition never describes an object this attempt inserted.
+    identity = None
+    if "insertion" in (first, second):
+        identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
+        admission.drain_planned()
+    sources: list[ReadEvidence] = []
+
+    def write(kind: str) -> LicensedWrite[WriteAuthority]:
+        if kind == "condition":
+            return _account_target(9, 1)
+        if kind == "conditioned-destruction":
+            return _account_target(9, 1, "delete")
+        if kind == "insertion":
+            assert identity is not None
+            return _amended_through(identity, 9)
+        read, source = _account_read(9, 1, "delete" if kind == "read-destruction" else "amend")
+        sources.append(source)
+        return read
+
+    _admit(admission, write(first), write(second))
+    (merged,) = admission.composed_writes()
+    assert isinstance(merged, LicensedWrite)
+    assert type(merged.authority) is survivor
+    assert merged.instruction.mutation == mutation
+    assert [id(evidence) for evidence in merged.source_evidence] == [id(held) for held in sources]
+
+
+def test_writes_of_one_insertion_at_one_scope_keep_its_licence_and_no_evidence() -> None:
+    admission = _admitted(meta=_ACCOUNT)
+    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
+    admission.drain_planned()
+    earlier, later = _amended_through(identity, 9), _amended_through(identity, 9)
+    _admit(admission, earlier, later)
+    (merged,) = admission.composed_writes()
+    assert is_licensed_by(merged, InsertionAuthorized)
+    assert merged.authority.identity is identity
+    assert merged.source_evidence == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -895,7 +1012,7 @@ def _sourced(
     valid_from: dt.datetime = MAR,
     until: dt.datetime | None = SEP,
     **members: object,
-) -> ReadAuthorizedWrite:
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     write = observed_write(mutation, evidence, valid_from=valid_from, until=until, **members)
     return admitted_write(write.instruction, evidence, write.object_key, source=source)
 
@@ -913,9 +1030,11 @@ def _composition(admission: WriteAdmission) -> TemporalCoverageWrite:
     (pending,) = (
         write
         for write in admission.composed_writes()
-        if isinstance(
-            write,
-            StateObservedWrite | InsertionAuthorizedWrite | TargetWrite | ComposedTemporalWrite,
+        if (
+            isinstance(write, ComposedTemporalWrite)
+            or is_licensed_by(write, StateObserved)
+            or is_licensed_by(write, InsertionAuthorized)
+            or is_licensed_by(write, TxStartConditioned)
         )
         and write.object_key == OBJECT
     )
@@ -946,7 +1065,7 @@ def test_a_first_observed_write_stays_alone_and_answers_its_one_intent() -> None
 
 def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> None:
     composed = _composition(_admitted(addressed_write(until=None, value="150.00")))
-    assert isinstance(composed, TargetWrite)
+    assert is_licensed_by(composed, TxStartConditioned)
     assert composed.intents == (
         TargetIntent(WriteIntent("assignment", TimeInterval(MAR, INFINITY)), ExpectedTxStart(T0)),
     )
@@ -974,7 +1093,7 @@ def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_ancho
         ),
     )
     composed = _composition(admission)
-    assert isinstance(composed, InsertionAuthorizedWrite)
+    assert is_licensed_by(composed, InsertionAuthorized)
     assert composed.intents == (
         InsertionAuthorizedIntent(WriteIntent("assignment", TimeInterval(FEB, JUN))),
     )
@@ -1015,12 +1134,21 @@ def test_a_second_write_composes_in_the_first_writes_place_keeping_its_authority
     assert isinstance(state, TemporalObjectStateKey)
     held = RetainedStartingRow(state, 0, (), None)
 
-    def retaining(item: TargetWrite) -> TargetWrite:
-        return dataclasses.replace(item, starting_row=held)
+    def retaining(item: LicensedWrite[TxStartConditioned]) -> LicensedWrite[TxStartConditioned]:
+        return dataclasses.replace(
+            item, authority=dataclasses.replace(item.authority, starting_row=held)
+        )
+
+    def unasked(item: LicensedWrite[VersionConditioned]) -> None:
+        raise AssertionError(f"no stated version is confirmed, but {item!r} was")
 
     source = _evidence(LATER)
     admission = _admitted()
-    admission.admit(addressed_write(until=JUN, value="150.00"), confirm_target=retaining)
+    admission.admit(
+        addressed_write(until=JUN, value="150.00"),
+        confirm_version=unasked,
+        confirm_tx_start=retaining,
+    )
     _admit(
         admission,
         _account_observed(7, 1),
@@ -1028,7 +1156,7 @@ def test_a_second_write_composes_in_the_first_writes_place_keeping_its_authority
     )
     composed, other = admission.composed_writes()
     assert isinstance(composed, ComposedTemporalWrite)
-    assert isinstance(other, StateObservedWrite)
+    assert is_licensed_by(other, StateObserved)
     targeted, observed = composed.intents
     assert isinstance(targeted, TargetIntent) and targeted.starting_row is held
     assert isinstance(observed, StateObservedIntent) and observed.retained_observation is LATER
@@ -1045,7 +1173,7 @@ def test_repeated_assignments_of_one_observation_and_window_keep_one_intent_in_p
     )
     composed, other = admission.composed_writes()
     assert isinstance(composed, ComposedTemporalWrite)
-    assert isinstance(other, StateObservedWrite)
+    assert is_licensed_by(other, StateObserved)
     (intent,) = _observed_intents(composed)
     assert intent.intent == WriteIntent("assignment", TimeInterval(MAR, SEP))
     assert len(intent.source_evidence) == 1 and intent.source_evidence[0] is source
@@ -1063,7 +1191,7 @@ def test_a_destruction_superseding_an_observed_run_moves_it_after_intervening_wr
         _sourced("terminateUntil", START, later),
     )
     other, composed = admission.composed_writes()
-    assert isinstance(other, StateObservedWrite)
+    assert is_licensed_by(other, StateObserved)
     assert isinstance(composed, ComposedTemporalWrite)
     assert composed.phase == "delete"
     (intent,) = _observed_intents(composed)
@@ -1083,7 +1211,7 @@ def test_a_repeated_destruction_of_an_observed_run_stays_where_it_is() -> None:
     )
     composed, other = admission.composed_writes()
     assert isinstance(composed, ComposedTemporalWrite)
-    assert isinstance(other, StateObservedWrite)
+    assert is_licensed_by(other, StateObserved)
     (intent,) = _observed_intents(composed)
     assert intent.intent.kind == "destructive"
     assert [id(evidence) for evidence in intent.source_evidence] == [id(first), id(again)]

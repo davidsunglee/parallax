@@ -8,7 +8,7 @@
 
 This page follows one write through the code, from the verb you call to the statements
 the database runs. Five diagrams cover it: which verb produces which admitted write,
-what licenses each admitted write, how a verb reaches the buffer, how a flush turns the
+what licenses each licensed write, how a verb reaches the buffer, how a flush turns the
 buffer into statements, and the temporal view that lone and composed writes share.
 
 Diagrams and prose use short names. The *Symbols* list closing each section names
@@ -25,21 +25,23 @@ of four `TxnAttempt` methods.
 
 ```text
 verb (Typed tx.* / Wire tx.wire.*)      TxnAttempt       the value handed in          admitted write
-──────────────────────────────────────  ───────────────  ───────────────────────────  ────────────────────────
+──────────────────────────────────────  ───────────────  ───────────────────────────  ───────────────────────────────────
 insert / wire.insert                    keyed_insert     a new instance or document   KeyedInsert
 
 amend / replace / delete / terminate    keyed_write      a value a read of THIS
                                                          attempt published:
-                                                           versioned or temporal      StateObservedWrite
-                                                           unversioned Non-Temporal   UnversionedLocked
-                                                         a value carrying a standing  InsertionAuthorizedWrite
+                                                           versioned or temporal      LicensedWrite[StateObserved]
+                                                           unversioned Non-Temporal   LicensedWrite[UnversionedLocked]
+                                                         a value carrying a standing  LicensedWrite[InsertionAuthorized]
                                                          insertion's authority: the
                                                          inserted instance, a value
                                                          derived from it, or the node
                                                          wire.insert answered
 
-amend_if / replace_if /                 target_write     a key and the revision the   TargetWrite
-  delete_if / terminate_if                               caller states
+amend_if / replace_if /                 target_write     a key and the revision the   versioned:
+  delete_if / terminate_if                               caller states                  LicensedWrite[VersionConditioned]
+                                                                                      temporal:
+                                                                                        LicensedWrite[TxStartConditioned]
 
 amend_where / replace_where /           predicate_write  a predicate                  none: executes at the
   delete_where                                                                        call (ADR 0077)
@@ -49,8 +51,9 @@ Representation adapters sit between the verb and the attempt: Typed and Wire key
 sources and insert sources, target adapters and predicate adapters. Everything after
 them is shared.
 
-What an `InsertionAuthorizedWrite` becomes depends on whether its insert is still
-buffered. Once the insert has flushed, the write revises the stored row. While it is
+Every admitted write but an insert is one `LicensedWrite`: the instruction, the object it
+writes, and the `authority` that licenses it. What a write licensed by
+`InsertionAuthorized` becomes depends on whether its insert is still buffered. Once the insert has flushed, the write revises the stored row. While it is
 pending, admission folds the write into it: on a Non-Temporal or Transaction-Time-Only
 object an amendment or replacement merges into the `KeyedInsert` and a destruction
 cancels the pair, and on a Bitemporal object the write composes into a
@@ -93,49 +96,62 @@ into that object's pending opening; it changes the coverage its read observed.
 - `parallax.core._execution._transaction._attempt:TxnAttempt.target_write`
 - `parallax.core._execution._transaction._attempt:TxnAttempt.predicate_write`
 - `parallax.core._execution._unit_work.write_items:KeyedInsert`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite.authority`
+- `parallax.core._execution._unit_work.write_items:StateObserved`
 - `parallax.core._execution._unit_work.write_items:UnversionedLocked`
-- `parallax.core._execution._unit_work.write_items:InsertionAuthorizedWrite`
-- `parallax.core._execution._unit_work.write_items:TargetWrite`
+- `parallax.core._execution._unit_work.write_items:InsertionAuthorized`
+- `parallax.core._execution._unit_work.write_items:VersionConditioned`
+- `parallax.core._execution._unit_work.write_items:TxStartConditioned`
 - `parallax.core._execution._unit_work.write_items:ComposedBitemporalOpening`
 
-## What licenses each admitted write
+## What licenses each licensed write
+
+A `KeyedInsert` needs no licence: it opens a row and claims nothing. Every other admitted
+write is a `LicensedWrite` whose `authority` is one of five closed values. The authority's
+fields are the stored licence; the record's `LicensedWrite.claim_scope` and
+`LicensedWrite.source_evidence` are views of it.
 
 ```text
-admitted write            licensed by                      claim scope                     carries
-────────────────────────  ───────────────────────────────  ──────────────────────────────  ──────────────────────────────
-KeyedInsert               nothing: it opens a row          none                            the instruction (one row),
-                                                                                           object_key
-StateObservedWrite        a read of this attempt: its      versioned Non-Temporal: the     instruction, object_key,
-                          RetainedObservation (a version   observed state, or `current`,   retained_observation,
-                          or Transaction-Time start);      the later state this attempt's  current, source_evidence
-                          gated on it under Optimistic,    own updates left it at;
-                          covered by the read's shared     temporal: none, composes by
-                          lock under Locking               object
-UnversionedLocked         the shared row lock a read of    the object                      instruction, object_key,
-                          this attempt holds; the row                                      source_evidence
-                          has no state to observe
-InsertionAuthorizedWrite  this attempt's own insertion     versioned: the version this     instruction, object_key,
-                          (InsertionIdentity), while it    attempt left the row at;        identity
-                          still stands                     unversioned: the object;
-                                                           temporal or still pending: none
-TargetWrite               the caller's stated revision     versioned: the stated version;  instruction, object_key,
-                          (ExpectedVersion or              temporal: the object, which     expectation, claim_scope,
-                          ExpectedTxStart)                 composes by object              source_evidence, starting_row
+authority             licensed by                      claim scope                     authority holds
+────────────────────  ───────────────────────────────  ──────────────────────────────  ──────────────────────────────
+StateObserved         a read of this attempt: its      versioned Non-Temporal: the     retained_observation, current,
+                      RetainedObservation (a version   observed state, or `current`,   source_evidence
+                      or Transaction-Time start);      the later state this attempt's
+                      gated on it under Optimistic,    own updates left it at;
+                      covered by the read's shared     temporal: composes by object
+                      lock under Locking
+UnversionedLocked     the shared row lock a read of    the object                      source_evidence (never empty)
+                      this attempt holds; the row
+                      has no state to observe
+InsertionAuthorized   this attempt's own insertion     versioned: the version this     identity, claim_scope
+                      (InsertionIdentity), while it    attempt left the row at;
+                      still stands                     unversioned: the object;
+                                                       temporal or still pending: none
+VersionConditioned    the caller's stated version      the stated version              expected, source_evidence
+                      (ExpectedVersion)
+TxStartConditioned    the caller's stated              the object, which composes by   expected, starting_row
+                      Transaction-Time start           object
+                      (ExpectedTxStart)
 ```
 
-`source_evidence` is a lifetime edge: it keeps the Read Evidence of every source whose
-write composed into this one reachable while the write is pending or planned, and
-nothing reads it for a decision. Planning carries it onto every `SettledWrite` and
+Preparation judges which condition a target write takes, and `target_write` maps that
+judgment once. `source_evidence` is a lifetime edge: it keeps the Read Evidence of every
+source whose write composed into this one reachable while the write is pending or
+planned, and nothing reads it for a decision. Neither an insertion nor a
+Transaction-Time start holds any. Planning carries it onto every `SettledWrite` and
 `DeferredRange`, so the sources stay published while the plan holding the write is
 reachable. `starting_row` is the starting row a Locking temporal target write's
-admission read whole, which its range may reuse (`RetainedStartingRow`).
+admission read whole, which its range may reuse (`RetainedStartingRow`). Neither field
+takes part in equality. Where the whole write must move on to a signature taking only
+some licences, `is_licensed_by` narrows it, one authority class at a time; a decision
+that needs only the licence matches on the authority.
 
 The unit of work's `SourceRegistry` judges every licence. Its
 `SourceRegistry.resolve_read_evidence` turns a source's `ReadEvidence` into what the
-write settles against, the `SettledEvidence`, and `admitted_write` picks the leaf from its
-shape: a `RetainedObservation` or a `VersionedObjectStateKey` makes a
-`StateObservedWrite`, and an `ObjectKey` makes an `UnversionedLocked`. Evidence from
+write settles against, the `SettledEvidence`, and `admitted_write` picks the authority from
+its shape: a `RetainedObservation` or a `VersionedObjectStateKey` makes a
+`StateObserved`, and an `ObjectKey` makes an `UnversionedLocked`. Evidence from
 another participation is refused as `write-evidence-unavailable`. A source continues
 through this attempt's own completed writes and settles against what they left of the
 state it observed; `write-evidence-consumed` refuses only evidence published from rows a
@@ -150,16 +166,20 @@ everything it opened is removed, or a later insertion of the object supersedes i
 ### Symbols
 
 - `parallax.core._execution._unit_work.write_items:KeyedInsert.object_key`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.retained_observation`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.current`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.claim_scope`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.source_evidence`
-- `parallax.core._execution._unit_work.write_items:UnversionedLocked.claim_scope`
-- `parallax.core._execution._unit_work.write_items:InsertionAuthorizedWrite.identity`
-- `parallax.core._execution._unit_work.write_items:InsertionAuthorizedWrite.claim_scope`
-- `parallax.core._execution._unit_work.write_items:TargetWrite.expectation`
-- `parallax.core._execution._unit_work.write_items:TargetWrite.claim_scope`
-- `parallax.core._execution._unit_work.write_items:TargetWrite.starting_row`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite.claim_scope`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite.source_evidence`
+- `parallax.core._execution._unit_work.write_items:StateObserved.retained_observation`
+- `parallax.core._execution._unit_work.write_items:StateObserved.current`
+- `parallax.core._execution._unit_work.write_items:StateObserved.source_evidence`
+- `parallax.core._execution._unit_work.write_items:UnversionedLocked.source_evidence`
+- `parallax.core._execution._unit_work.write_items:InsertionAuthorized.identity`
+- `parallax.core._execution._unit_work.write_items:InsertionAuthorized.claim_scope`
+- `parallax.core._execution._unit_work.write_items:VersionConditioned.expected`
+- `parallax.core._execution._unit_work.write_items:VersionConditioned.source_evidence`
+- `parallax.core._execution._unit_work.write_items:TxStartConditioned.expected`
+- `parallax.core._execution._unit_work.write_items:TxStartConditioned.starting_row`
+- `parallax.core._execution._unit_work.write_items:is_licensed_by`
+- `parallax.core._execution._unit_work.write_items:target_write`
 - `parallax.core._execution._unit_work.write_items:admitted_write`
 - `parallax.core._execution._unit_work.evidence:ReadEvidence`
 - `parallax.core._execution._unit_work.evidence:RetainedObservation`
@@ -229,8 +249,7 @@ everything it opened is removed, or a later insertion of the object supersedes i
            → UnitOfWork.execute_predicate (next section); never buffered
               │
               ▼
- ADMITTED   AdmittedWrite = KeyedInsert | StateObservedWrite | UnversionedLocked       write_items
-              | InsertionAuthorizedWrite | TargetWrite
+ ADMITTED   AdmittedWrite = KeyedInsert | LicensedWrite[WriteAuthority]                write_items
               │
               │ WriteAdmission.admit / admit_insert: compose with what is        admission
               │   pending, or refuse; an insertion moves only through
@@ -251,17 +270,22 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │                            the insertion survives, ends or is cancelled
               │   Non-Temporal write       at its claim scope, never by key alone:
               │                            coalesce, supersede or deduplicate (admits);
-              │                            the survivor stays a leaf, a TargetWrite
-              │                            over a read's, a read's over an insertion's
-              │   temporal write           by object: the first stays its leaf type;
+              │                            the survivor keeps the higher licence, a
+              │                            caller's condition over a read's, a read's
+              │                            over an insertion's, and every source's
+              │                            evidence (distinct_evidence)
+              │   temporal write           by object: the first stays alone;
               │                            the next → ComposedTemporalWrite (or, for an
               │                            observed run of one observation and window,
               │                            compact_observed_run)
               │   target write             refused for an object this attempt
-              │                            inserted (has_admitted_insertion); under
-              │                            Locking, confirm_target reads its starting
-              │                            row unless a pending write or a live read
-              │                            (has_live_observation) already proves it
+              │                            inserted (has_admitted_insertion); then,
+              │                            unless a pending write or a live read
+              │                            (has_live_observation) already proves it,
+              │                            confirmed by its condition: under Locking
+              │                            _confirm_version reads the stored version,
+              │                            and _confirm_tx_start reads the starting
+              │                            row whole and keeps it on the authority
               │   anything else            UsageError
               │                            (write-evidence-already-claimed)
               ▼
@@ -360,9 +384,12 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_insert`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_target`
-- `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_target`
+- `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_version`
+- `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_tx_start`
 - `parallax.core._execution._unit_work.write_items:target_write`
 - `parallax.core._execution._unit_work.write_items:AdmittedWrite`
+- `parallax.core._execution._unit_work.write_items:WriteAuthority`
+- `parallax.core._execution._unit_work.write_items:distinct_evidence`
 - `parallax.core._execution._unit_work.write_items:ComposedTemporalWrite`
 - `parallax.core._execution._unit_work.write_items:compact_observed_run`
 - `parallax.core._execution._unit_work.write_items:PostRemovalInsert`
@@ -394,8 +421,9 @@ removed and reinserted this way.
    WritePlanner.finalize(WritePlanningRequest(actor_identity, transaction_instant,   write_planner
                          concurrency, composed_writes, ownership, ...))
      _without_noop_rows   drop known no-op work
-     collapse_writes      KeyedInsert runs → InsertBatch, UnversionedLocked runs
-                          → UnversionedWriteBatch; a PostRemovalInsert closes any batch
+     collapse_writes      KeyedInsert runs → InsertBatch, LicensedWrite[UnversionedLocked]
+                          runs → UnversionedWriteBatch; a PostRemovalInsert closes any
+                          batch
      _order               per region: inserts by referential rank, updates in authored
                           order, deletes by reverse rank; a PostRemovalInsert starts a
                           new region and is unwrapped
@@ -552,10 +580,11 @@ member in its Column or at its path in the shared Structured Column, and
 ## The temporal view shared by lone and composed writes
 
 ```text
-StateObservedWrite        ─┐  a leaf alone: .intents and .transform derived when asked
-InsertionAuthorizedWrite  ─┤
-TargetWrite               ─┤  TemporalCoverageWrite
-ComposedTemporalWrite     ─┘  composed: .intents and .transform retained
+LicensedWrite[TemporalCoverageAuthority]  ─┐  alone: .intents and .transform derived
+  StateObserved | InsertionAuthorized      │  when asked, its intent translated from
+  | TxStartConditioned                     │  its authority by temporal_intent
+                                           ├  TemporalCoverageWrite
+ComposedTemporalWrite                     ─┘  composed: .intents and .transform retained
                                      │
                                      ▼
                        TemporalIntent =
@@ -582,9 +611,11 @@ ComposedTemporalWrite     ─┘  composed: .intents and .transform retained
                        otherwise                      → DeferredRange
 ```
 
-The three leaf types are not temporal-only: each also carries Non-Temporal writes. Only
-when the target is Transaction-Time-Only or Bitemporal does settlement route the leaf
-through `settle_range` and read its `intents` and `transform`.
+`StateObserved` and `InsertionAuthorized` also license Non-Temporal writes, and a
+`TxStartConditioned` write is always temporal. Only when the target is
+Transaction-Time-Only or Bitemporal does settlement route the write through
+`settle_range` and read its `intents` and `transform`, which only a write whose
+authority is a `TemporalCoverageAuthority` answers.
 
 The intent sequence keeps the authority and windows composition needs; it is not a
 record of every authored write. An initial run of observed writes sharing one
@@ -602,10 +633,10 @@ owns it and so revises or removes it in place, and the successors it opens.
 ### Symbols
 
 - `parallax.core._execution._unit_work.write_items:TemporalCoverageWrite`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.intents`
-- `parallax.core._execution._unit_work.write_items:StateObservedWrite.transform`
-- `parallax.core._execution._unit_work.write_items:InsertionAuthorizedWrite.intents`
-- `parallax.core._execution._unit_work.write_items:TargetWrite.intents`
+- `parallax.core._execution._unit_work.write_items:TemporalCoverageAuthority`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite.intents`
+- `parallax.core._execution._unit_work.write_items:LicensedWrite.transform`
+- `parallax.core._execution._unit_work.write_items:temporal_intent`
 - `parallax.core._execution._unit_work.write_items:ComposedTemporalWrite.intents`
 - `parallax.core._execution._unit_work.write_items:ComposedTemporalWrite.transform`
 - `parallax.core._execution._unit_work.write_items:TemporalIntent`

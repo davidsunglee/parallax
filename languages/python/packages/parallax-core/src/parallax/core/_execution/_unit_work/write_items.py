@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Final, Literal, overload
+from typing import Final, Generic, Literal, TypeIs, TypeVar, cast, overload
 
 from parallax.core._execution._unit_work.claims import (
+    ClaimScope,
     SettledEvidence,
     WriteIntent,
     keyed_intent,
@@ -22,7 +24,6 @@ from parallax.core._execution._unit_work.instructions import (
     ExpectedVersion,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
-    TargetExpectation,
     keyed_instruction_from_target,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
@@ -30,13 +31,8 @@ from parallax.core._execution._unit_work.row_acquisition import RetainedStarting
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY, TemporalBound
 from parallax.core.internal.metamodel import CompiledEntity
-from parallax.core.internal.planned_step.keys import (
-    ObjectKey,
-    ObjectStateKey,
-    VersionedObjectStateKey,
-)
+from parallax.core.internal.planned_step.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.internal.planned_step.managed_row import ManagedRow, RowSelection
-from parallax.core.internal.planned_step.observe import StateObservation
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.temporal_write.coverage import (
     NO_TRANSFORM,
@@ -46,29 +42,35 @@ from parallax.core.internal.temporal_write.coverage import (
 
 __all__ = [
     "AdmittedWrite",
+    "CallerConditioned",
     "ComposedBitemporalOpening",
     "ComposedTemporalWrite",
     "ComposedWrite",
     "InsertBatch",
+    "InsertionAuthorized",
     "InsertionAuthorizedIntent",
-    "InsertionAuthorizedWrite",
     "KeyedInsert",
+    "LicensedWrite",
     "MutationPhase",
     "OrderedWrite",
     "PostRemovalInsert",
-    "ReadAuthorizedWrite",
+    "StateObserved",
     "StateObservedIntent",
-    "StateObservedWrite",
     "TargetIntent",
-    "TargetWrite",
+    "TemporalCoverageAuthority",
     "TemporalCoverageWrite",
     "TemporalIntent",
+    "TxStartConditioned",
     "UnversionedLocked",
     "UnversionedWriteBatch",
+    "VersionConditioned",
+    "WriteAuthority",
     "WritePhase",
     "admitted_write",
     "compact_observed_run",
     "compose_temporal_write",
+    "distinct_evidence",
+    "is_licensed_by",
     "target_write",
     "temporal_intent",
 ]
@@ -159,133 +161,6 @@ class InsertBatch:
 
 
 @dataclass(frozen=True, slots=True)
-class StateObservedWrite:
-    """Carries verb-time evidence through planning without resolving it again.
-
-    ``retained_observation`` is the state the write's source observed, which
-    never changes. A source's authority may reach a later state this attempt's
-    own completed writes produced from it. For a versioned Non-Temporal source
-    ``current`` names that protected state where it is not the observed one,
-    and :attr:`claim_scope` is what the write claims and settles against either way;
-    a temporal write settles against what those writes left of its observed
-    state when its range binds.
-
-    ``source_evidence`` holds, by identity, the Read Evidence of every source
-    whose write composed into this one — it keeps their demand alive while the
-    write is pending or planned, and nothing reads it. A caller-conditioned
-    write that absorbs this one keeps it, even where that write's deletion
-    supersedes this one, and so does this write where a write an insertion
-    authorized meets it. An update's row is its literal assignment set: the
-    identity plus every member its producer expressed, each written whatever
-    value the source observed for it.
-    """
-
-    instruction: PreparedKeyedInstruction
-    object_key: ObjectKey
-    retained_observation: RetainedObservation
-    current: VersionedObjectStateKey | None = None
-    source_evidence: tuple[ReadEvidence, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.retained_observation, RetainedObservation):  # pyright: ignore[reportUnnecessaryIsInstance] - validates runtime callers
-            raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
-        if self.instruction.mutation in INSERT_MUTATIONS:
-            raise ValueError(
-                f"an insert carries no State Observation: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} is admitted as its own insert "
-                "(m-unit-work: absence is structural)"
-            )
-        if len(self.instruction.rows) != 1:
-            raise ValueError(
-                "a State Observation is evidence about one row: "
-                f"`{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} addresses "
-                f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
-                "belongs to exactly one row)"
-            )
-
-    @property
-    def observation(self) -> StateObservation:
-        return self.retained_observation.evidence
-
-    @property
-    def claim_scope(self) -> ObjectStateKey:
-        """The state the write claims and settles against."""
-        current = self.current
-        return self.retained_observation.key if current is None else current
-
-    @property
-    def phase(self) -> WritePhase:
-        return _revision_phase(self.instruction)
-
-    @property
-    def target(self) -> CompiledEntity:
-        return self.instruction.target
-
-    @property
-    def intents(self) -> tuple[TemporalIntent, ...]:
-        """This write of a temporal object alone, as the one intent a
-        composition of it keeps, built when asked."""
-        return _alone_intents(self)
-
-    @property
-    def transform(self) -> CoverageTransform:
-        """What this write of a temporal object alone does to its existing
-        coverage, built when asked."""
-        return _alone_transform(self)
-
-    @property
-    def selection(self) -> RowSelection:
-        """The row selection this write's rows are of."""
-        return self.instruction.rows[0].selection
-
-
-@dataclass(frozen=True, slots=True)
-class UnversionedLocked:
-    """Coalesces by object identity, then settles as its own instruction.
-
-    ``source_evidence`` holds, by identity, the observation-free Read Evidence
-    of every source whose write composed into this one: it keeps their demand
-    alive while the write is pending or planned, and nothing reads it.
-    """
-
-    instruction: PreparedKeyedInstruction
-    object_key: ObjectKey
-    source_evidence: tuple[ReadEvidence, ...]
-
-    def __post_init__(self) -> None:
-        if not self.source_evidence:
-            raise ValueError(_REQUIRES_SOURCE)
-        if self.instruction.mutation in INSERT_MUTATIONS:
-            raise ValueError(
-                f"an insert claims no object: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} is admitted as its own insert "
-                "(m-unit-work: an opening row has no "
-                "prior row to claim)"
-            )
-        if len(self.instruction.rows) != 1:
-            raise ValueError(
-                "an object claim addresses one object: "
-                f"`{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} addresses "
-                f"{len(self.instruction.rows)} rows (m-unit-work: a claim is about the object a "
-                "write settles against)"
-            )
-
-    @property
-    def claim_scope(self) -> ObjectKey:
-        return self.object_key
-
-    @property
-    def phase(self) -> WritePhase:
-        return _revision_phase(self.instruction)
-
-    @property
-    def target(self) -> CompiledEntity:
-        return self.instruction.target
-
-
-@dataclass(frozen=True, slots=True)
 class UnversionedWriteBatch:
     """Writes of unversioned objects batching joined into one multi-row instruction.
 
@@ -308,32 +183,138 @@ class UnversionedWriteBatch:
 
 
 @dataclass(frozen=True, slots=True)
-class InsertionAuthorizedWrite:
-    """A keyed write authorized by an admitted insertion rather than by a read.
+class StateObserved:
+    """A read's State Observation licenses the write.
+
+    ``retained_observation`` is the state the write's source observed, which
+    never changes. A source's authority may reach a later state this attempt's
+    own completed writes produced from it: for a versioned Non-Temporal source
+    ``current`` names that protected state where it is not the observed one,
+    and the write claims and settles against it; a temporal write settles
+    against what those writes left of its observed state when its range binds.
+
+    ``source_evidence`` holds, by identity, the Read Evidence of every source
+    whose write composed into this one, which keeps their demand alive while
+    the write is pending or planned and which only binding reads, for their
+    pins.
+    """
+
+    retained_observation: RetainedObservation
+    current: VersionedObjectStateKey | None = None
+    source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.retained_observation), RetainedObservation):
+            raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
+
+
+@dataclass(frozen=True, slots=True)
+class UnversionedLocked:
+    """The read's shared lock on an unversioned Non-Temporal object, which has
+    no state to observe, licenses the write.
+
+    ``source_evidence`` holds, by identity, the observation-free Read Evidence
+    of every source whose write composed into this one: it keeps their demand
+    alive while the write is pending or planned, and nothing reads it.
+    """
+
+    source_evidence: tuple[ReadEvidence, ...] = field(compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.source_evidence:
+            raise ValueError(_REQUIRES_SOURCE)
+
+
+@dataclass(frozen=True, slots=True)
+class InsertionAuthorized:
+    """This attempt's own admitted insertion of the object licenses the write.
 
     ``identity`` is the insertion's authority, which the unit of work checks
     still stands when it admits the write; completion changes nothing of it.
-    ``claim_scope`` is the claim scope a Non-Temporal write of a stored row takes —
-    the exact version this attempt's own writes left the row at, or the object
-    itself when the row is unversioned — so it composes with an observed write
-    of the same state. A temporal write composes by object and takes none,
-    and neither does a write folding into its object's pending insert.
+    ``claim_scope`` is the claim scope a Non-Temporal write of a stored row
+    takes — the exact version this attempt's own writes left the row at, or
+    the object itself when the row is unversioned — so it composes with an
+    observed write of the same state. A temporal write composes by object and
+    takes none, and neither does a write folding into its object's pending
+    insert.
+    """
+
+    identity: InsertionIdentity
+    claim_scope: VersionedObjectStateKey | ObjectKey | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VersionConditioned:
+    """A caller's stated version licenses the write of a versioned
+    Non-Temporal object.
+
+    ``source_evidence`` holds, by identity, the Read Evidence of the
+    source-backed writes composed into it, kept even where a destruction
+    superseded their assignments, which nothing reads; the caller's condition
+    stays whatever values survive.
+    """
+
+    expected: ExpectedVersion
+    source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TxStartConditioned:
+    """A caller's stated Transaction-Time start licenses the write of a
+    temporal object.
+
+    ``starting_row`` is the starting row a Locking write's admission read
+    whole: data its range may reuse, not part of what licenses the write.
+    """
+
+    expected: ExpectedTxStart
+    starting_row: RetainedStartingRow | None = field(default=None, compare=False)
+
+
+type WriteAuthority = (
+    StateObserved
+    | UnversionedLocked
+    | InsertionAuthorized
+    | VersionConditioned
+    | TxStartConditioned
+)
+"""What licenses one write of existing state."""
+
+type CallerConditioned = VersionConditioned | TxStartConditioned
+"""The authorities a caller's stated revision grants."""
+
+type TemporalCoverageAuthority = StateObserved | InsertionAuthorized | TxStartConditioned
+"""The authorities a write against temporal coverage can carry."""
+
+Authority_co = TypeVar("Authority_co", bound="WriteAuthority", covariant=True)
+
+
+@dataclass(frozen=True, slots=True)
+class LicensedWrite(Generic[Authority_co]):  # noqa: UP046 - PEP 695 infers invariance through the synthesized __replace__
+    """One write of one existing object, travelling with the ``authority``
+    that licenses it.
+
+    ``object_key`` is the object it writes. What it claims and the Read
+    Evidence it keeps are its authority's; a write against temporal coverage
+    also answers, alone, the intents and transform a composition of it keeps.
+    An update's row is its literal assignment set: the identity plus every
+    member its producer expressed.
     """
 
     instruction: PreparedKeyedInstruction
     object_key: ObjectKey
-    identity: InsertionIdentity
-    claim_scope: VersionedObjectStateKey | ObjectKey | None = None
+    authority: Authority_co
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert is admitted by its own verb: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} carries no insertion authority"
+                f"{self.instruction.target.identity.canonical!r} needs no licence "
+                "(m-unit-work: absence is structural)"
             )
         if len(self.instruction.rows) != 1:
             raise ValueError(
-                "an insertion's authority licenses writes of the one object it opened: "
+                "a licensed write addresses one existing object: "
                 f"`{self.instruction.mutation}` on "
                 f"{self.instruction.target.identity.canonical!r} addresses "
                 f"{len(self.instruction.rows)} rows"
@@ -348,110 +329,91 @@ class InsertionAuthorizedWrite:
         return self.instruction.target
 
     @property
+    def claim_scope(self) -> ClaimScope | None:
+        """The state or object the write claims and settles against, or
+        ``None`` where an insertion's write has not yet been given one."""
+        match self.authority:
+            case StateObserved(retained_observation=observed, current=current):
+                return observed.key if current is None else current
+            case UnversionedLocked() | TxStartConditioned():
+                return self.object_key
+            case InsertionAuthorized(claim_scope=scope):
+                return scope
+            case VersionConditioned(expected=expected):
+                return VersionedObjectStateKey(self.object_key, expected.version)
+
+    @property
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
-        return ()
+        match self.authority:
+            case (
+                StateObserved(source_evidence=evidence)
+                | UnversionedLocked(source_evidence=evidence)
+                | VersionConditioned(source_evidence=evidence)
+            ):
+                return evidence
+            case InsertionAuthorized() | TxStartConditioned():
+                return ()
 
     @property
-    def intents(self) -> tuple[TemporalIntent, ...]:
+    def intents(self: LicensedWrite[TemporalCoverageAuthority]) -> tuple[TemporalIntent, ...]:
         """This write of a temporal object alone, as the one intent a
         composition of it keeps, built when asked."""
-        return _alone_intents(self)
+        intent = keyed_intent(self.instruction)
+        assert intent is not None  # a write against existing coverage is no insert
+        return (temporal_intent(self, intent),)
 
     @property
-    def transform(self) -> CoverageTransform:
+    def transform(self: LicensedWrite[TemporalCoverageAuthority]) -> CoverageTransform:
         """What this write of a temporal object alone does to its existing
         coverage, built when asked."""
-        return _alone_transform(self)
+        ((key_name, _),) = self.object_key.primary_key
+        return _transformed(NO_TRANSFORM, self.instruction, key_name)
 
     @property
-    def selection(self) -> RowSelection:
+    def selection(self: LicensedWrite[TemporalCoverageAuthority]) -> RowSelection:
         """The row selection this write's rows are of."""
         return self.instruction.rows[0].selection
 
 
-@dataclass(frozen=True, slots=True)
-class TargetWrite:
-    """A target write of one existing object, carrying the
-    starting condition the caller stated rather than a read's evidence.
+def is_licensed_by[T: WriteAuthority](
+    item: ComposedWrite | OrderedWrite, authority: type[T]
+) -> TypeIs[LicensedWrite[T]]:
+    """Whether ``item`` is one licensed write whose authority is an
+    ``authority``."""
+    return isinstance(item, LicensedWrite) and isinstance(item.authority, authority)
 
-    ``claim_scope`` is the claim scope that condition names — the exact version a
-    versioned object is required to stand at, or the object itself when it is
-    temporal — which is the scope an observed write of the same state takes, so
-    the two compose there; a temporal object's writes compose by object
-    instead. ``source_evidence`` holds, by identity, the Read Evidence of the
-    source-backed writes composed into a Non-Temporal one, kept even where a
-    destruction superseded their assignments, which nothing reads; the
-    caller's condition stays whatever values survive, and a destruction
-    superseding the write keeps it too. ``starting_row`` is the starting row a
-    Locking temporal write's admission read whole, which its range may reuse.
-    """
 
-    instruction: PreparedKeyedInstruction
-    object_key: ObjectKey
-    expectation: TargetExpectation
-    claim_scope: VersionedObjectStateKey | ObjectKey
-    source_evidence: tuple[ReadEvidence, ...] = ()
-    starting_row: RetainedStartingRow | None = field(default=None, compare=False)
-
-    def __post_init__(self) -> None:
-        if self.instruction.mutation in INSERT_MUTATIONS or len(self.instruction.rows) != 1:
-            raise ValueError(
-                "a caller's condition addresses one existing object: "
-                f"`{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} is no such write"
-            )
-
-    @property
-    def phase(self) -> WritePhase:
-        return _revision_phase(self.instruction)
-
-    @property
-    def target(self) -> CompiledEntity:
-        return self.instruction.target
-
-    @property
-    def intents(self) -> tuple[TemporalIntent, ...]:
-        """This write of a temporal object alone, as the one intent a
-        composition of it keeps, built when asked."""
-        return _alone_intents(self)
-
-    @property
-    def transform(self) -> CoverageTransform:
-        """What this write of a temporal object alone does to its existing
-        coverage, built when asked."""
-        return _alone_transform(self)
-
-    @property
-    def selection(self) -> RowSelection:
-        """The row selection this write's rows are of."""
-        return self.instruction.rows[0].selection
+def distinct_evidence(groups: Iterable[tuple[ReadEvidence, ...]]) -> tuple[ReadEvidence, ...]:
+    """Every Read Evidence of ``groups`` once, by identity, in first-occurrence
+    order — the first group itself where the others add none."""
+    remaining = iter(groups)
+    first = next(remaining, ())
+    distinct: dict[int, ReadEvidence] | None = None
+    added = False
+    for group in remaining:
+        for evidence in group:
+            if distinct is None:
+                distinct = {id(held): held for held in first}
+            if id(evidence) not in distinct:
+                distinct[id(evidence)] = evidence
+                added = True
+    return first if distinct is None or not added else tuple(distinct.values())
 
 
 def target_write(
     prepared: PreparedTargetInstruction, families: inheritance.InheritanceFacet
-) -> TargetWrite:
-    """``prepared`` as the admitted write that carries its caller's condition: the
-    keyed write it executes as, claimed at the scope its expectation names."""
+) -> LicensedWrite[CallerConditioned]:
+    """``prepared`` as the licensed write that carries its caller's condition:
+    the keyed write it executes as, under the condition preparation judged."""
     instruction = keyed_instruction_from_target(prepared)
     key = resolve_object_key(instruction, families)
     assert key is not None  # preparation required the key
-    expectation = prepared.expectation
-    return TargetWrite(
-        instruction=instruction,
-        object_key=key,
-        expectation=expectation,
-        claim_scope=(
-            VersionedObjectStateKey(key, expectation.version)
-            if isinstance(expectation, ExpectedVersion)
-            else key
-        ),
-    )
-
-
-type ReadAuthorizedWrite = StateObservedWrite | UnversionedLocked
-"""One keyed write travelling with the claim its verb took for it, at either
-scope. The two share what coalescing manipulates — an instruction —
-and differ only in the grain their claims are taken at."""
+    match prepared.expectation:
+        case ExpectedVersion() as expected:
+            authority = VersionConditioned(expected)
+        case ExpectedTxStart() as expected:
+            authority = TxStartConditioned(expected)
+    return LicensedWrite(instruction, key, authority)
 
 
 @overload
@@ -471,7 +433,7 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     insertion: InsertionIdentity,
-) -> InsertionAuthorizedWrite: ...
+) -> LicensedWrite[InsertionAuthorized]: ...
 
 
 @overload
@@ -481,7 +443,7 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
-) -> ReadAuthorizedWrite: ...
+) -> LicensedWrite[StateObserved | UnversionedLocked]: ...
 
 
 @overload
@@ -491,7 +453,7 @@ def admitted_write(
     object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
-) -> KeyedInsert | ReadAuthorizedWrite: ...
+) -> KeyedInsert | LicensedWrite[StateObserved | UnversionedLocked]: ...
 
 
 def admitted_write(
@@ -501,7 +463,7 @@ def admitted_write(
     *,
     source: ReadEvidence | None = None,
     insertion: InsertionIdentity | None = None,
-) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite:
+) -> AdmittedWrite:
     """``instruction`` as the admitted write of ``object_key`` that settles
     against ``evidence``, retaining ``source``, the Read Evidence it was
     admitted through, where it has one.
@@ -533,30 +495,25 @@ def admitted_write(
         )
     if evidence is None:
         assert insertion is not None  # only an insert carries neither
-        return InsertionAuthorizedWrite(
-            instruction=instruction, object_key=object_key, identity=insertion
-        )
+        return LicensedWrite(instruction, object_key, InsertionAuthorized(insertion))
     retained = () if source is None else (source,)
     if isinstance(evidence, ObjectKey):
-        return UnversionedLocked(
-            instruction=instruction, object_key=object_key, source_evidence=retained
-        )
+        return LicensedWrite(instruction, object_key, UnversionedLocked(retained))
     if isinstance(evidence, RetainedObservation):
-        return StateObservedWrite(
-            instruction=instruction,
-            object_key=object_key,
-            retained_observation=evidence,
-            source_evidence=retained,
+        return LicensedWrite(
+            instruction, object_key, StateObserved(evidence, source_evidence=retained)
         )
     observation = None if source is None else source.observation
     if observation is None:
         raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
-    return StateObservedWrite(
-        instruction=instruction,
-        object_key=object_key,
-        retained_observation=observation,
-        current=None if evidence == observation.key else evidence,
-        source_evidence=retained,
+    return LicensedWrite(
+        instruction,
+        object_key,
+        StateObserved(
+            observation,
+            current=None if evidence == observation.key else evidence,
+            source_evidence=retained,
+        ),
     )
 
 
@@ -631,37 +588,35 @@ class ComposedTemporalWrite:
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
         """The distinct Read Evidence of every source whose write the
         composition holds, by identity, in authored order."""
-        distinct: tuple[ReadEvidence, ...] = ()
-        for intent in self.intents:
-            if isinstance(intent, StateObservedIntent):
-                distinct = _with_distinct(distinct, intent.source_evidence)
-        return distinct
+        return distinct_evidence(
+            intent.source_evidence
+            for intent in self.intents
+            if isinstance(intent, StateObservedIntent)
+        )
 
 
-type TemporalCoverageWrite = (
-    StateObservedWrite | InsertionAuthorizedWrite | TargetWrite | ComposedTemporalWrite
-)
+type TemporalCoverageWrite = LicensedWrite[TemporalCoverageAuthority] | ComposedTemporalWrite
 """One temporal object's pending writes against its existing coverage: an
 admitted write still alone, or the composition of several. Either answers its
 target, object key, intents, and transform."""
 
 
 def temporal_intent(
-    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite, intent: WriteIntent
+    write: LicensedWrite[TemporalCoverageAuthority], intent: WriteIntent
 ) -> TemporalIntent:
     """What ``write``, stating ``intent``, keeps once composed."""
-    if isinstance(write, StateObservedWrite):
-        return StateObservedIntent(intent, write.retained_observation, write.source_evidence)
-    if isinstance(write, InsertionAuthorizedWrite):
-        return InsertionAuthorizedIntent(intent)
-    expected = write.expectation
-    assert isinstance(expected, ExpectedTxStart)  # preparation states a temporal target's start
-    return TargetIntent(intent, expected, write.starting_row)
+    match write.authority:
+        case StateObserved(retained_observation=observed, source_evidence=evidence):
+            return StateObservedIntent(intent, observed, evidence)
+        case InsertionAuthorized():
+            return InsertionAuthorizedIntent(intent)
+        case TxStartConditioned(expected=expected, starting_row=starting_row):
+            return TargetIntent(intent, expected, starting_row)
 
 
 def compose_temporal_write(
     held: TemporalCoverageWrite,
-    arriving: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+    arriving: LicensedWrite[TemporalCoverageAuthority],
     intent: TemporalIntent,
     key_name: str,
 ) -> ComposedTemporalWrite:
@@ -688,7 +643,7 @@ def compose_temporal_write(
 
 def compact_observed_run(
     held: TemporalCoverageWrite,
-    arriving: StateObservedWrite,
+    arriving: LicensedWrite[StateObserved],
     intent: StateObservedIntent,
     key_name: str,
 ) -> ComposedTemporalWrite:
@@ -703,7 +658,7 @@ def compact_observed_run(
     """
     (only,) = held.intents
     assert isinstance(only, StateObservedIntent)  # only an observed run compacts
-    evidence = _with_distinct(only.source_evidence, intent.source_evidence)
+    evidence = distinct_evidence((only.source_evidence, intent.source_evidence))
     if evidence is not only.source_evidence or only.intent != intent.intent:
         only = StateObservedIntent(intent.intent, only.retained_observation, evidence)
     return ComposedTemporalWrite(
@@ -713,32 +668,6 @@ def compact_observed_run(
         transform=_transformed(held.transform, arriving.instruction, key_name),
         selection=held.selection,
     )
-
-
-def _alone_intents(
-    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
-) -> tuple[TemporalIntent, ...]:
-    intent = keyed_intent(write.instruction)
-    assert intent is not None  # a write against existing coverage is no insert
-    return (temporal_intent(write, intent),)
-
-
-def _alone_transform(
-    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
-) -> CoverageTransform:
-    ((key_name, _),) = write.object_key.primary_key
-    return _transformed(NO_TRANSFORM, write.instruction, key_name)
-
-
-def _with_distinct(
-    held: tuple[ReadEvidence, ...], arriving: tuple[ReadEvidence, ...]
-) -> tuple[ReadEvidence, ...]:
-    """``held`` followed by each of ``arriving`` it does not already hold, by
-    identity — ``held`` itself where it holds them all."""
-    for evidence in arriving:
-        if all(evidence is not kept for kept in held):
-            held = (*held, evidence)
-    return held
 
 
 def _transformed(
@@ -879,9 +808,7 @@ class PostRemovalInsert:
         return self.insert.target
 
 
-type AdmittedWrite = (
-    KeyedInsert | StateObservedWrite | UnversionedLocked | InsertionAuthorizedWrite | TargetWrite
-)
+type AdmittedWrite = KeyedInsert | LicensedWrite[WriteAuthority]
 """What admission accepts: one write of one row, under the authority it
 carries."""
 

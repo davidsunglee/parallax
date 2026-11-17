@@ -23,7 +23,8 @@ from parallax.core._execution._unit_work.row_acquisition import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetWrite,
+    LicensedWrite,
+    TxStartConditioned,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import inheritance
@@ -84,8 +85,12 @@ def _state(predecessor: PredecessorRow) -> TemporalObjectStateKey:
     return state
 
 
-def _holding(item: TargetWrite, state: RetainedStartingRow) -> TargetWrite:
-    return dataclasses.replace(item, starting_row=state)
+def _holding(
+    item: LicensedWrite[TxStartConditioned], state: RetainedStartingRow
+) -> LicensedWrite[TxStartConditioned]:
+    return dataclasses.replace(
+        item, authority=dataclasses.replace(item.authority, starting_row=state)
+    )
 
 
 def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> WritePlan:

@@ -11,7 +11,7 @@ from typing import Final
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work._write_ownership import NoInsertionAuthority
 from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
-from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ParticipationToken,
@@ -32,8 +32,11 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ComposedWrite,
     KeyedInsert,
+    LicensedWrite,
     PostRemovalInsert,
-    TargetWrite,
+    TxStartConditioned,
+    VersionConditioned,
+    WriteAuthority,
 )
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
@@ -58,6 +61,7 @@ __all__ = [
     "NO_ROW_READS",
     "TEST_ACTOR_IDENTITY",
     "admit",
+    "admit_licensed",
     "admitted_writes",
     "deferred_ranges",
     "object_source",
@@ -230,8 +234,16 @@ def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity |
     revision reads nothing."""
     if isinstance(item, KeyedInsert):
         return admission.admit_insert(item, insertion_advice=None)
-    admission.admit(item, confirm_target=_optimistic)
+    admit_licensed(admission, item)
     return None
+
+
+def admit_licensed(admission: WriteAdmission, item: LicensedWrite[WriteAuthority]) -> BufferOutcome:
+    """``item`` admitted under the Optimistic strategy, whose confirmation of
+    a caller's revision reads nothing."""
+    return admission.admit(
+        item, confirm_version=_optimistic_version, confirm_tx_start=_optimistic_tx_start
+    )
 
 
 def source_registry(
@@ -250,7 +262,13 @@ def write_admission(model: Metamodel) -> WriteAdmission:
     return WriteAdmission(model, registry=source_registry(model))
 
 
-def _optimistic(item: TargetWrite) -> TargetWrite:
+def _optimistic_version(item: LicensedWrite[VersionConditioned]) -> None:
+    del item
+
+
+def _optimistic_tx_start(
+    item: LicensedWrite[TxStartConditioned],
+) -> LicensedWrite[TxStartConditioned]:
     return item
 
 

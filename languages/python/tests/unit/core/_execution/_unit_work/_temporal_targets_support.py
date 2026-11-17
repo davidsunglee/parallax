@@ -11,8 +11,10 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_items import (
-    StateObservedWrite,
-    TargetWrite,
+    LicensedWrite,
+    StateObserved,
+    TxStartConditioned,
+    is_licensed_by,
     target_write,
 )
 from parallax.core.internal import inheritance, temporal_read
@@ -74,13 +76,13 @@ def addressed_write(
     until: dt.datetime | None = SEP,
     tx_start: dt.datetime = T0,
     **members: object,
-) -> TargetWrite:
+) -> LicensedWrite[TxStartConditioned]:
     mutation: TargetMutation = (
         ("replace" if until is None else "replaceUntil")
         if replaces
         else ("amend" if until is None else "amendUntil")
     )
-    return target_write(
+    item = target_write(
         prepare_wire_write(
             TargetWriteInstruction(
                 mutation,
@@ -94,6 +96,8 @@ def addressed_write(
         ),
         FAMILIES,
     )
+    assert is_licensed_by(item, TxStartConditioned)
+    return item
 
 
 def observed_write(
@@ -103,13 +107,13 @@ def observed_write(
     valid_from: dt.datetime = MAR,
     until: dt.datetime | None = SEP,
     **members: object,
-) -> StateObservedWrite:
+) -> LicensedWrite[StateObserved]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
         write_preparation_of(POSITION),
     )
     item = admitted_write(prepared, evidence, evidence.key.object)
-    assert isinstance(item, StateObservedWrite)
+    assert is_licensed_by(item, StateObserved)
     return item
 
 

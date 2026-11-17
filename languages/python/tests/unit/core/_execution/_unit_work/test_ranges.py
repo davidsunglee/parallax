@@ -33,7 +33,6 @@ from parallax.core._execution._unit_work.row_acquisition import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    StateObservedWrite,
     target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
@@ -403,14 +402,14 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     span = ObjectKey(_SPAN, (("id", 1),))
-    item = StateObservedWrite(
+    item = admitted_write(
         prepared,
-        span,
         RetainedObservation(
             VersionedObjectStateKey(span, 1),
             VersionObservation(observed_version=1),
             None,
         ),
+        span,
     )
     clock = CountingClock([_PLANNED_AT])
     with raises_code(InternalError, WRITE_PLANNING_FAILED, match="closes the current milestone"):

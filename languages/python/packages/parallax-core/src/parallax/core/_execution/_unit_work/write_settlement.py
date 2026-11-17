@@ -31,16 +31,19 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     InsertBatch,
-    InsertionAuthorizedWrite,
+    InsertionAuthorized,
     KeyedInsert,
+    LicensedWrite,
     MutationPhase,
     OrderedWrite,
+    StateObserved,
     StateObservedIntent,
-    StateObservedWrite,
-    TargetWrite,
     TemporalCoverageWrite,
-    UnversionedLocked,
+    TxStartConditioned,
     UnversionedWriteBatch,
+    VersionConditioned,
+    WriteAuthority,
+    is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import (
     SettledWrite,
@@ -285,9 +288,11 @@ class WritePlanCompiler:
                 read_keys,
                 guards=guards,
             )
-        if isinstance(
-            item,
-            ComposedTemporalWrite | StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+        if (
+            isinstance(item, ComposedTemporalWrite)
+            or is_licensed_by(item, StateObserved)
+            or is_licensed_by(item, InsertionAuthorized)
+            or is_licensed_by(item, TxStartConditioned)
         ) and isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._range(
                 item,
@@ -313,15 +318,7 @@ class WritePlanCompiler:
 
     def _settle_keyed(
         self,
-        item: (
-            KeyedInsert
-            | InsertBatch
-            | StateObservedWrite
-            | UnversionedLocked
-            | UnversionedWriteBatch
-            | InsertionAuthorizedWrite
-            | TargetWrite
-        ),
+        item: KeyedInsert | LicensedWrite[WriteAuthority] | InsertBatch | UnversionedWriteBatch,
         preference: ConcurrencyPreference,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
@@ -343,14 +340,17 @@ class WritePlanCompiler:
         if isinstance(item, UnversionedWriteBatch):
             return self._settle(instruction, item.object_keys, None, preference, audit)
         scope = item.claim_scope
+        authority = item.authority
         return self._settle(
             instruction,
             (item.object_key,),
-            item.observation if isinstance(item, StateObservedWrite) else None,
+            authority.retained_observation.evidence
+            if isinstance(authority, StateObserved)
+            else None,
             preference,
             audit,
             own_version=scope.version if isinstance(scope, VersionedObjectStateKey) else None,
-            conditioned=isinstance(item, TargetWrite),
+            conditioned=isinstance(authority, VersionConditioned),
         )
 
     def _settle(
@@ -655,7 +655,7 @@ class WritePlanCompiler:
         An unversioned target has no version to advance from AND is entitled to
         no observation at all, so an observation arriving for one is refused
         rather than dropped: this is the model-aware half of the rule
-        :class:`~parallax.core._execution._unit_work.write_items.StateObservedWrite`
+        :class:`~parallax.core._execution._unit_work.write_items.StateObserved`
         delegates here, and discarding the evidence instead would be the
         silently-unobserved mode `m-unit-work` forbids.
         """
@@ -774,8 +774,8 @@ def _require_unobserved(
     observationless ("unversioned Non-Temporal writes have no observation",
     absence structural). Whether a write may hold evidence at all needs the
     model, so the admitted write, a keyed
-    :class:`~parallax.core._execution._unit_work.write_items.StateObservedWrite`,
-    can only refuse the instruction-local half and
+    :class:`~parallax.core._execution._unit_work.write_items.StateObserved`
+    write, can only refuse the instruction-local half and
     delegate this half to the model-aware settlement. This is that delegation:
     every write that IS settled crosses it, whatever produced it, so a
     producer that resolves evidence a target cannot carry is told rather than

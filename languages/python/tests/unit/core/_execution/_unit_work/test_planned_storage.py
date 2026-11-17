@@ -22,7 +22,7 @@ from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
 )
-from parallax.core._execution._unit_work.write_items import TargetWrite, target_write
+from parallax.core._execution._unit_work.write_items import LicensedWrite, target_write
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_settlement import (
     WritePlanCompiler,  # producer-reach regression only
@@ -154,7 +154,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
     assert not [value for value in walked if _is_producer(value)]
     # It keeps what its write settled to, not the write admitted or prepared.
     assert not [
-        value for value in walked if isinstance(value, TargetWrite | PreparedTargetInstruction)
+        value for value in walked if isinstance(value, LicensedWrite | PreparedTargetInstruction)
     ]
     assert not [value for value in walked if isinstance(value, OpenedRows | AuditDecoration)]
     assert all(value is not TEST_ACTOR_IDENTITY for value in walked)

@@ -38,9 +38,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
-    InsertionAuthorizedWrite,
     KeyedInsert,
-    TargetWrite,
 )
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, TemporalBound
@@ -68,7 +66,7 @@ from parallax.core.internal.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.internal.unit_work import KeyedWriteInstruction, admitted_write
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
-from tests._support.planner_probes import source_registry
+from tests._support.planner_probes import admit_licensed, source_registry
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WHERE_POSITION_META
@@ -88,10 +86,6 @@ _OPENER = KeyedWriteRefusalAdvice(
 _REPEATER = KeyedWriteRefusalAdvice(
     not_stored="not stored", already_stored="already stored", repeated_insert="amend the repeat"
 )
-
-
-def _confirmed(item: TargetWrite) -> TargetWrite:
-    return item
 
 
 def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert:
@@ -199,9 +193,7 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> Insert
         write_preparation_of(_POSITION),
     )
     assert isinstance(termination, PreparedKeyedInstruction)
-    admission.admit(
-        InsertionAuthorizedWrite(termination, _KEY, identity), confirm_target=_confirmed
-    )
+    admit_licensed(admission, admitted_write(termination, None, _KEY, insertion=identity))
     return identity
 
 
@@ -372,7 +364,7 @@ def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() ->
     assert isinstance(amendment, PreparedKeyedInstruction)
     with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
         ownership.resolve_insertion_authorized_write(
-            InsertionAuthorizedWrite(amendment, _KEY, first)
+            admitted_write(amendment, None, _KEY, insertion=first)
         )
 
 
@@ -404,7 +396,7 @@ def test_an_ended_opening_retires_its_identity_and_its_reinsertion_follows_it() 
     opening = ComposedBitemporalOpening(insert=insert, transform=NO_TRANSFORM, intents=())
     opening = opening.followed_by(replacement, "id").followed_by(destruction, "id")
     assert opening.beyond is not None
-    arriving = InsertionAuthorizedWrite(destruction, _KEY, identity)
+    arriving = admitted_write(destruction, None, _KEY, insertion=identity)
     composition = ownership.apply_insertion_composition(
         _KEY, arriving=arriving, proposed_opening=opening
     )

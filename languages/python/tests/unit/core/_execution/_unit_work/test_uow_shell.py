@@ -55,9 +55,12 @@ from parallax.core._execution._unit_work.row_acquisition import (
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import OpenFlush
 from parallax.core._execution._unit_work.write_items import (
-    InsertionAuthorizedWrite,
+    InsertionAuthorized,
     KeyedInsert,
-    StateObservedWrite,
+    LicensedWrite,
+    StateObserved,
+    UnversionedLocked,
+    is_licensed_by,
     target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
@@ -103,7 +106,6 @@ from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
-    ReadAuthorizedWrite,
     RetainedObservation,
     SystemClock,
     TransactionInstant,
@@ -227,7 +229,7 @@ def _inserted(meta: Metamodel, write: KeyedWriteInstruction) -> KeyedInsert:
 
 def _insertion_write(
     identity: InsertionIdentity | None, meta: Metamodel, write: KeyedWriteInstruction
-) -> InsertionAuthorizedWrite:
+) -> LicensedWrite[InsertionAuthorized]:
     """``write`` licensed by the insertion ``identity`` buffering issued, as a
     verb writing through the inserted value admits it."""
     assert identity is not None
@@ -237,7 +239,9 @@ def _insertion_write(
     return admitted_write(prepared, None, key, insertion=identity)
 
 
-def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> ReadAuthorizedWrite:
+def _unclosable(
+    meta: Metamodel, write: KeyedWriteInstruction
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     """A temporal ``write`` admitted against a Version Observation, which no
     close can address, gate on, or carry state forward from, so planning
     refuses it."""
@@ -309,9 +313,9 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
     # unwrapping it, opening-row canonicalization treats every observed write as
     # a revising write, and insert batching excludes observed writes — so an insert that
     # reached planning wearing evidence would corrupt each in turn.
-    with pytest.raises(ValueError, match="an insert carries no State Observation"):
-        StateObservedWrite(
-            instruction=_prepared_keyed(
+    with pytest.raises(ValueError, match="an insert is admitted by its own verb"):
+        admitted_write(
+            _prepared_keyed(
                 KeyedWriteInstruction(
                     "insert",
                     "Account",
@@ -319,10 +323,8 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
                 ),
                 _ACCOUNT,
             ),
-            object_key=corpus_object_key("Account", ("id", 1)),
-            retained_observation=RetainedObservation(
-                _account_state(1, 1), VersionObservation(observed_version=1), None
-            ),
+            RetainedObservation(_account_state(1, 1), VersionObservation(observed_version=1), None),
+            corpus_object_key("Account", ("id", 1)),
         )
 
 
@@ -333,7 +335,7 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
     # addresses: the planner unwraps it once, builds a multi-key target, and
     # advances every key from `observed + 1`, so a version observed for `id 1`
     # would carry `id 2` to the same new version and expect two affected rows.
-    with pytest.raises(ValueError, match="evidence about one row"):
+    with pytest.raises(ValueError, match="addresses 2 rows"):
         admitted_write(
             _prepared_keyed(
                 KeyedWriteInstruction(
@@ -354,12 +356,10 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
     # rows names no single object at all.
     insertion = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
     with pytest.raises(ValueError, match="admitted by its own verb"):
-        InsertionAuthorizedWrite(
-            instruction=_account_insert(1).instruction,
-            object_key=insertion.object_key,
-            identity=insertion,
+        admitted_write(
+            _account_insert(1).instruction, None, insertion.object_key, insertion=insertion
         )
-    with pytest.raises(ValueError, match="the one object it opened"):
+    with pytest.raises(ValueError, match="addresses 2 rows"):
         admitted_write(
             _prepared_keyed(
                 KeyedWriteInstruction(
@@ -564,7 +564,9 @@ def _balance_state(key: int) -> ObjectStateKey:
     )
 
 
-def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> ReadAuthorizedWrite:
+def _account_write(
+    mutation: KeyedMutation, account_id: int, version: int
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     row: dict[str, object] = {"id": account_id}
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
@@ -576,7 +578,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Re
     )
 
 
-def _balance_update(key: int) -> ReadAuthorizedWrite:
+def _balance_update(key: int) -> LicensedWrite[StateObserved | UnversionedLocked]:
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
     return admitted_write(
         _prepared_keyed(
@@ -588,7 +590,9 @@ def _balance_update(key: int) -> ReadAuthorizedWrite:
     )
 
 
-def _refused_as_claimed(uow: UnitOfWork, item: ReadAuthorizedWrite) -> UsageError:
+def _refused_as_claimed(
+    uow: UnitOfWork, item: LicensedWrite[StateObserved | UnversionedLocked]
+) -> UsageError:
     with raises_code(UsageError, "write-evidence-already-claimed") as refusal:
         uow.buffer(item)
     return refusal.value
@@ -603,7 +607,7 @@ _PERSON_META = model_of(PERSON)
 
 def _person_write(
     mutation: KeyedMutation, person_id: int, source: ReadEvidence | None = None
-) -> ReadAuthorizedWrite:
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
@@ -696,7 +700,7 @@ def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_
     def body(uow: UnitOfWork) -> None:
         inserted = uow.buffer_insert(_account_insert(9), insertion_advice=None)
         uow.buffer(_account_write("delete", 1, 7))
-        with pytest.raises(ValueError, match="evidence about one row"):
+        with pytest.raises(ValueError, match="addresses 2 rows"):
             uow.buffer(
                 admitted_write(
                     _prepared_keyed(
@@ -724,7 +728,7 @@ class _Abandoned(Exception):
 # --------------------------------------------------------------------------- #
 def _account_delete(
     identity: InsertionIdentity | None, account_id: int
-) -> InsertionAuthorizedWrite:
+) -> LicensedWrite[InsertionAuthorized]:
     """A delete of the Account the insertion ``identity`` opened."""
     return _insertion_write(
         identity, _ACCOUNT, KeyedWriteInstruction("delete", "Account", ({"id": account_id},))
@@ -794,7 +798,9 @@ def _balance_insert(key: int) -> KeyedInsert:
     )
 
 
-def _balance_update_from(key: int, tx_start: object) -> ReadAuthorizedWrite:
+def _balance_update_from(
+    key: int, tx_start: object
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -832,7 +838,9 @@ def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
     assert _kinds(simulated) == ["insert", "update"]
 
 
-def _balance_terminate_from(key: int, tx_start: object) -> ReadAuthorizedWrite:
+def _balance_terminate_from(
+    key: int, tx_start: object
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -885,7 +893,9 @@ def test_each_settled_write_publishes_its_change_before_the_next_group_executes(
         _account_write("delete", 3, 1),
     )
     retained = tuple(
-        write.retained_observation for write in writes if isinstance(write, StateObservedWrite)
+        write.authority.retained_observation
+        for write in writes
+        if is_licensed_by(write, StateObserved)
     )
     seen: list[tuple[bool, ...]] = []
 
@@ -950,11 +960,11 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     failure = RuntimeError("the statement failed")
     claimed = _account_write("amend", 1, 7)
-    assert isinstance(claimed, StateObservedWrite)
+    assert is_licensed_by(claimed, StateObserved)
     steps = ObservedSteps(_simulated(), failing=0, failure=failure)
 
     def body(uow: UnitOfWork) -> str:
-        uow.source_registry.retain(claimed.retained_observation)
+        uow.source_registry.retain(claimed.authority.retained_observation)
         uow.buffer(claimed)
         with pytest.raises(RuntimeError, match="the statement failed"):
             uow.read(lambda: None)
@@ -968,7 +978,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     with raises_code(UsageError, TRANSACTION_ROLLBACK_ONLY) as exc:
         _run(body, steps=steps)
     assert exc.value.__cause__ is failure
-    assert not claimed.retained_observation.invalidated
+    assert not claimed.authority.retained_observation.invalidated
 
 
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
@@ -1136,7 +1146,9 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
     assert _kinds(simulated) == (["guard"] if kept else ["close", "insert"])
 
 
-def _account_amend(account_id: int, claim: RetainedObservation) -> ReadAuthorizedWrite:
+def _account_amend(
+    account_id: int, claim: RetainedObservation
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     row = {"id": account_id, "balance": Decimal("1.00")}
     prepared = _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT)
     return admitted_write(prepared, claim, claim.key.object)
@@ -1227,7 +1239,9 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetIn
     return prepared
 
 
-def _observed_amendment(claim: RetainedObservation) -> ReadAuthorizedWrite:
+def _observed_amendment(
+    claim: RetainedObservation,
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     observed = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",
@@ -1273,7 +1287,7 @@ def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the
 
 def _observed_value(
     claim: RetainedObservation, start: dt.datetime, until: dt.datetime
-) -> ReadAuthorizedWrite:
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     observed = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",

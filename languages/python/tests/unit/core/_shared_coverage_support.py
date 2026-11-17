@@ -25,7 +25,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetWrite,
+    LicensedWrite,
+    StateObserved,
+    TxStartConditioned,
+    UnversionedLocked,
+    is_licensed_by,
     target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
@@ -39,7 +43,6 @@ from parallax.core.internal.planned_step import ObjectKey, PredecessorRow, Tempo
 from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
-    ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
     TransactionInstant,
@@ -165,11 +168,13 @@ def observation(entity: type[Bitemporal], row: PredecessorRow) -> RetainedObserv
     return RetainedObservation(_state(entity, row), TemporalObservation(predecessor=row), None)
 
 
-def frag(entity: type[Bitemporal], key: int, parts: int) -> list[ReadAuthorizedWrite]:
+def frag(
+    entity: type[Bitemporal], key: int, parts: int
+) -> list[LicensedWrite[StateObserved | UnversionedLocked]]:
     """``frag(key, parts)``'s writes, each through its observation of an even
     rectangle, in Valid-Time order."""
     rows = frag_rows(entity, key, parts)
-    writes: list[ReadAuthorizedWrite] = []
+    writes: list[LicensedWrite[StateObserved | UnversionedLocked]] = []
     for pair in range(parts):
         prepared = prepare_wire_write(
             KeyedWriteInstruction(
@@ -187,7 +192,9 @@ def frag(entity: type[Bitemporal], key: int, parts: int) -> list[ReadAuthorizedW
     return writes
 
 
-def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, PredecessorRow]:
+def covered_target(
+    entity: type[Bitemporal], key: int
+) -> tuple[LicensedWrite[TxStartConditioned], PredecessorRow]:
     """A Locking target write of object ``key`` over ``[d_0, d_1)`` beside the
     one stored rectangle ``[d_0, ∞)`` its acquisition retained, which covers
     its whole window."""
@@ -212,9 +219,9 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
         positional_row(view.member_selection.shape, stored.members, absent=ABSENT),
         stored.document,
     )
-    return replace(
-        target_write(prepared, inheritance_facet_of(MODEL)), starting_row=starting_row
-    ), stored
+    item = target_write(prepared, inheritance_facet_of(MODEL))
+    assert is_licensed_by(item, TxStartConditioned)
+    return replace(item, authority=replace(item.authority, starting_row=starting_row)), stored
 
 
 def plan(
