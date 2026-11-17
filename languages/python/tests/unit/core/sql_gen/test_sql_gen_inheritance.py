@@ -721,9 +721,6 @@ def test_tph_equivalent_narrow_spellings_collapse() -> None:
         POSTGRES,
         target(ANIMAL, "Animal"),
     )
-    # The LOWERING is what must collapse. `narrow_to` deliberately does not: it
-    # reports the narrow the caller AUTHORED, which materialization resolves for
-    # itself — so the two compiled reads are compared statement to statement.
     assert by_abstract.statement == by_concretes.statement
 
 
