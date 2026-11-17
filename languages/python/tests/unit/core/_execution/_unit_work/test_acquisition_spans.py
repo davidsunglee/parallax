@@ -50,7 +50,13 @@ from parallax.core._execution._unit_work.row_acquisition import (
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.write_items import AdmittedWrite, TargetWrite, target_write
+from parallax.core._execution._unit_work.write_items import (
+    AdmittedWrite,
+    LicensedWrite,
+    TxStartConditioned,
+    is_licensed_by,
+    target_write,
+)
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -725,7 +731,7 @@ def _log_row(key: int) -> PredecessorRow:
     return PredecessorRow(members={"id": key, "amount": key, "txStart": T0, "txEnd": INFINITY})
 
 
-def _log_target(key: int, *, covered: bool = False) -> TargetWrite:
+def _log_target(key: int, *, covered: bool = False) -> LicensedWrite[TxStartConditioned]:
     """A target write of object ``key`` stating ``T0``, beside, where
     ``covered``, the current row its Locking acquisition retained."""
     prepared = prepare_wire_write(
@@ -737,6 +743,7 @@ def _log_target(key: int, *, covered: bool = False) -> TargetWrite:
     assert isinstance(prepared, PreparedTargetInstruction)
     families = inheritance_facet_of(_LOG_MODEL)
     write = target_write(prepared, families)
+    assert is_licensed_by(write, TxStartConditioned)
     if not covered:
         return write
     view = families.entity(ShareLog.identity)
@@ -747,7 +754,8 @@ def _log_target(key: int, *, covered: bool = False) -> TargetWrite:
         ObjectKey(ShareLog.identity, (("id", key),)), milestone_edge(shape, stored, None)
     )
     row = positional_row(view.member_selection.shape, stored.members, absent=ABSENT)
-    return replace(write, starting_row=RetainedStartingRow(state, 0, row, None))
+    starting_row = RetainedStartingRow(state, 0, row, None)
+    return replace(write, authority=replace(write.authority, starting_row=starting_row))
 
 
 def _log_plan(

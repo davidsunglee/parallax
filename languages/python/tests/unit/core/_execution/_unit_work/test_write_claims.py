@@ -25,15 +25,22 @@ from parallax.core._execution._unit_work.claims import (
     admits_composed,
     settled_evidence,
 )
+from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
+    ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import (
-    StateObservedWrite,
-    TargetWrite,
+    InsertionAuthorized,
+    LicensedWrite,
+    StateObserved,
+    TxStartConditioned,
     UnversionedLocked,
+    VersionConditioned,
+    WriteAuthority,
     admitted_write,
+    is_licensed_by,
 )
 from parallax.core.internal import concurrency
 from parallax.core.internal.base import INFINITY
@@ -335,24 +342,51 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     ) is (None)
 
 
-def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:
-    # The unversioned write's own structural half, which needs no model: an opening row has
-    # no prior row to claim, and a claim is about the object ONE row addresses.
-    with pytest.raises(ValueError, match="an insert claims no object"):
-        insertion = instructions.deserialize(
-            {"mutation": "insert", "entity": "Person", "rows": [{"id": 1, "name": "Ada"}]}
-        )
-        prepared = instructions.prepare_wire_write(insertion, write_preparation_of(_PERSON_META))
-        assert isinstance(prepared, PreparedKeyedInstruction)
-        UnversionedLocked(prepared, _PERSON_ONE, (object_source(_PERSON_ONE),))
-    with pytest.raises(ValueError, match="an object claim addresses one object"):
-        UnversionedLocked(_prepared_person_delete(1, 2), _PERSON_ONE, (object_source(_PERSON_ONE),))
+_AUTHORITIES: tuple[WriteAuthority, ...] = (
+    StateObserved(_RETAINED),
+    UnversionedLocked((object_source(_PERSON_ONE),)),
+    InsertionAuthorized(InsertionIdentity(_PERSON_ONE)),
+    VersionConditioned(ExpectedVersion(3)),
+    TxStartConditioned(ExpectedTxStart(_VALID_FROM)),
+)
+
+
+@pytest.mark.parametrize("authority", _AUTHORITIES, ids=lambda authority: type(authority).__name__)
+def test_a_licensed_write_refuses_an_insert_and_a_write_of_several_objects(
+    authority: WriteAuthority,
+) -> None:
+    # The record's own structural half, which needs no model: an opening row
+    # needs no licence, and a licence is about the one object a write addresses.
+    insert = instructions.prepare_wire_write(
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
+        write_preparation_of(_PERSON_META),
+    )
+    assert isinstance(insert, PreparedKeyedInstruction)
+    with pytest.raises(ValueError, match="an insert is admitted by its own verb"):
+        LicensedWrite(insert, _PERSON_ONE, authority)
+    with pytest.raises(ValueError, match="addresses one existing object"):
+        LicensedWrite(_prepared_person_delete(1, 2), _PERSON_ONE, authority)
+
+
+def test_the_factory_refuses_a_licensed_insert_and_a_licensed_write_of_several_objects() -> None:
+    insert = instructions.prepare_wire_write(
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
+        write_preparation_of(_PERSON_META),
+    )
+    assert isinstance(insert, PreparedKeyedInstruction)
+    source = object_source(_PERSON_ONE)
+    with pytest.raises(ValueError, match="an insert is admitted by its own verb"):
+        admitted_write(insert, _PERSON_ONE, _PERSON_ONE, source=source)
+    with pytest.raises(ValueError, match="an insert is admitted by its own verb"):
+        admitted_write(insert, None, _PERSON_ONE, insertion=InsertionIdentity(_PERSON_ONE))
+    with pytest.raises(ValueError, match="addresses 2 rows"):
+        admitted_write(_prepared_person_delete(1, 2), _PERSON_ONE, _PERSON_ONE, source=source)
 
 
 def test_an_unversioned_write_requires_the_source_it_was_admitted_through() -> None:
     # The object key is the claim; the source evidence beside it is what keeps
-    # that source's demand alive, so neither the factory nor the write admits
-    # a write without one.
+    # that source's demand alive, so neither the factory nor the authority
+    # admits a write without one.
     prepared = _prepared_person_delete(1)
     message = (
         "A write of an unversioned object requires the source evidence it was admitted through"
@@ -360,10 +394,10 @@ def test_an_unversioned_write_requires_the_source_it_was_admitted_through() -> N
     with pytest.raises(ValueError, match=message):
         admitted_write(prepared, _PERSON_ONE, _PERSON_ONE)
     with pytest.raises(ValueError, match=message):
-        UnversionedLocked(prepared, _PERSON_ONE, ())
+        UnversionedLocked(())
     source = object_source(_PERSON_ONE)
     claimed = admitted_write(prepared, _PERSON_ONE, _PERSON_ONE, source=source)
-    assert isinstance(claimed, UnversionedLocked)
+    assert is_licensed_by(claimed, UnversionedLocked)
     assert claimed.source_evidence == (source,) and claimed.source_evidence[0] is source
 
 
@@ -373,26 +407,14 @@ def test_an_unversioned_write_requires_the_source_it_was_admitted_through() -> N
 def test_an_observed_write_requires_a_retained_observation(evidence: object) -> None:
     # Application ingress hands a write the retained observation its read
     # produced; a plain State Observation names no claim and spends nothing, so
-    # it is refused where the observed write is built, before anything is buffered.
+    # it is refused where the observed authority is built, before anything is
+    # buffered.
     prepared = _prepared_person_delete(1)
     with pytest.raises(ValueError, match="requires the retained observation"):
-        StateObservedWrite(prepared, _PERSON_ONE, evidence)  # pyright: ignore[reportArgumentType]
+        StateObserved(evidence)  # pyright: ignore[reportArgumentType]
     if evidence is not None:
         with pytest.raises(ValueError, match="requires the retained observation"):
             admitted_write(prepared, evidence, _PERSON_ONE)  # pyright: ignore[reportArgumentType, reportCallIssue]
     observed = admitted_write(prepared, _RETAINED, _PERSON_ONE)
-    assert isinstance(observed, StateObservedWrite)
-    assert observed.observation is _RETAINED.evidence
-
-
-def test_a_target_write_refuses_an_insert_and_a_write_of_several_objects() -> None:
-    insert = instructions.prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
-        write_preparation_of(_PERSON_META),
-    )
-    several = _prepared_person_delete(1, 2)
-    person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
-    for instruction in (insert, several):
-        assert isinstance(instruction, PreparedKeyedInstruction)
-        with pytest.raises(ValueError, match="addresses one existing object"):
-            TargetWrite(instruction, person, ExpectedVersion(3), VersionedObjectStateKey(person, 3))
+    assert is_licensed_by(observed, StateObserved)
+    assert observed.authority.retained_observation is _RETAINED

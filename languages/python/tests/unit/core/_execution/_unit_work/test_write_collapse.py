@@ -12,6 +12,7 @@ from parallax.core._execution._unit_work.write_items import (
     InsertBatch,
     UnversionedLocked,
     UnversionedWriteBatch,
+    is_licensed_by,
 )
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INT64, UsageError
@@ -317,14 +318,14 @@ def test_unversioned_runs_preserve_whole_run_membership(
         tuple(
             len(item.instruction.rows)
             for item in result
-            if isinstance(item, UnversionedLocked | UnversionedWriteBatch)
+            if isinstance(item, UnversionedWriteBatch) or is_licensed_by(item, UnversionedLocked)
         )
         == sizes
     )
     assert tuple(
         row.cell(AttributeIdentity(entity.identity, "id"))
         for item in result
-        if isinstance(item, UnversionedLocked | UnversionedWriteBatch)
+        if isinstance(item, UnversionedWriteBatch) or is_licensed_by(item, UnversionedLocked)
         for row in item.instruction.rows
     ) == tuple(row["id"] for row in rows)
 

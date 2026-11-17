@@ -39,7 +39,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.write_items import StateObservedWrite
+from parallax.core._execution._unit_work.write_items import StateObserved, is_licensed_by
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
@@ -204,9 +204,9 @@ def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> 
     _write(uow, _ACCOUNT, fresh, "amend", balance=Decimal("9.00"))
     composed = uow._admission.composed_writes()  # pyright: ignore[reportPrivateUsage] - the buffer the two writes coalesced into
     (merged,) = composed
-    assert isinstance(merged, StateObservedWrite)
+    assert is_licensed_by(merged, StateObserved)
     assert merged.claim_scope == VersionedObjectStateKey(_account(1), 2)
-    assert merged.retained_observation is not fresh.observation
+    assert merged.authority.retained_observation is not fresh.observation
     assert merged.source_evidence == (old, fresh)
     # A destruction through either source now refuses the other's assignment.
     _write(uow, _ACCOUNT, fresh, "delete")

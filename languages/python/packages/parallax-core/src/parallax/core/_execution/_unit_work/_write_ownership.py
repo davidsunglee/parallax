@@ -13,9 +13,11 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity, Reta
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
-    InsertionAuthorizedWrite,
+    InsertionAuthorized,
     KeyedInsert,
-    ReadAuthorizedWrite,
+    LicensedWrite,
+    StateObserved,
+    UnversionedLocked,
 )
 from parallax.core.internal import concurrency, temporal_read
 from parallax.core.internal.base import INFINITY, TemporalBound, UsageError, retain_document_value
@@ -566,7 +568,7 @@ class WriteOwnership:
         self,
         target: ObjectKey,
         *,
-        arriving: ReadAuthorizedWrite | InsertionAuthorizedWrite,
+        arriving: LicensedWrite[StateObserved | UnversionedLocked | InsertionAuthorized],
         proposed_opening: ComposedBitemporalOpening | None,
     ) -> InsertionComposition:
         """What composing ``arriving`` into the still-pending insertion of
@@ -626,8 +628,8 @@ class WriteOwnership:
             record.unlink()
 
     def resolve_insertion_authorized_write(
-        self, write: InsertionAuthorizedWrite
-    ) -> InsertionAuthorizedWrite:
+        self, write: LicensedWrite[InsertionAuthorized]
+    ) -> LicensedWrite[InsertionAuthorized]:
         """``write`` while the insertion authority it carries stands, given
         the claim scope a stored Non-Temporal row takes — the version this
         attempt's completed updates left it at, the version an insert stores
@@ -638,7 +640,8 @@ class WriteOwnership:
         Raises ``insertion-authority-invalid`` once that authority no longer
         stands.
         """
-        record = self._standing(write.identity)
+        authority = write.authority
+        record = self._standing(authority.identity)
         instruction = write.instruction
         target = instruction.target
         if record is None:
@@ -654,7 +657,7 @@ class WriteOwnership:
             version = concurrency.INITIAL_VERSION
         key = write.object_key
         scope = key if version is None else VersionedObjectStateKey(key, version)
-        return replace(write, claim_scope=scope)
+        return replace(write, authority=replace(authority, claim_scope=scope))
 
     def _standing(self, identity: InsertionIdentity) -> InsertionRecord | None:
         """The record whose standing authority ``identity`` is, if any."""

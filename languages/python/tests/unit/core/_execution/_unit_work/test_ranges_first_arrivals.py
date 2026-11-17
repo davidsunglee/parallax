@@ -27,7 +27,8 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetWrite,
+    CallerConditioned,
+    LicensedWrite,
     target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
@@ -298,7 +299,7 @@ def test_an_observed_transaction_time_write_closes_its_observed_row_at_planning(
 # --------------------------------------------------------------------------- #
 def _balance_target(
     tx_start: dt.datetime, mutation: TargetMutation = "amend", **members: object
-) -> TargetWrite:
+) -> LicensedWrite[CallerConditioned]:
     return target_write(
         prepare_wire_write(
             TargetWriteInstruction(mutation, "Balance", {"id": 1, **members}, if_tx_start=tx_start),
@@ -343,7 +344,7 @@ _OWNED_BALANCE = OpenedRows(
     ids=["termination", "amendment-then-termination"],
 )
 def test_an_optimistic_transaction_time_target_assigning_nothing_binds_from_its_stated_start(
-    writes: Callable[[], list[TargetWrite]],
+    writes: Callable[[], list[LicensedWrite[CallerConditioned]]],
 ) -> None:
     plan = _planned(_BALANCE, *writes())
     (write,) = settled_writes(plan)
@@ -381,7 +382,9 @@ def test_a_termination_stating_a_start_its_instant_cannot_follow_is_refused_at_p
         _planned(_BALANCE, _balance_target(tx_start, "terminate"))
 
 
-def _position_target(mutation: TargetMutation, **members: object) -> TargetWrite:
+def _position_target(
+    mutation: TargetMutation, **members: object
+) -> LicensedWrite[CallerConditioned]:
     return target_write(
         prepare_wire_write(
             TargetWriteInstruction(

@@ -37,6 +37,11 @@ from parallax.core._execution._retention import (
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
+from parallax.core._execution._unit_work.write_items import (
+    LicensedWrite,
+    StateObserved,
+    UnversionedLocked,
+)
 from parallax.core.internal import concurrency, inheritance, temporal_read
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
@@ -59,7 +64,6 @@ from parallax.core.internal.read_delivery._page import (
 from parallax.core.internal.temporal_read import Edge, Pin
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
-    ReadAuthorizedWrite,
     ReadEvidence,
     RetainedObservation,
     TransactionSettings,
@@ -654,7 +658,9 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 # --------------------------------------------------------------------------- #
 # Freshness: evidence is judged against the state its rows had when read.     #
 # --------------------------------------------------------------------------- #
-def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> ReadAuthorizedWrite:
+def _balance_update(
+    model: AcceptedMetamodel, hint: ReadEvidence
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     instruction = prepare_typed_write(
         KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)),
         write_preparation_of(model),

@@ -73,7 +73,6 @@ from parallax.core._execution._unit_work.uow import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    ReadAuthorizedWrite,
     admitted_write,
 )
 from parallax.core._execution._unit_work.write_planner import (
@@ -117,7 +116,6 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWriteInstruction",
-    "ReadAuthorizedWrite",
     "ReadEvidence",
     "RetainedObservation",
     "SettledEvidence",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     derive_keyed_instruction,
@@ -11,10 +10,13 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     InsertBatch,
     KeyedInsert,
+    LicensedWrite,
     OrderedWrite,
     PostRemovalInsert,
     UnversionedLocked,
     UnversionedWriteBatch,
+    distinct_evidence,
+    is_licensed_by,
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.metamodel import AttributeMetadata, Metamodel
@@ -34,7 +36,7 @@ def collapse_writes(
     inserts, remain barriers. Row order and distinct source evidence survive.
     """
     result: list[OrderedWrite | PostRemovalInsert] = []
-    candidates: list[KeyedInsert | UnversionedLocked] = []
+    candidates: list[KeyedInsert | LicensedWrite[UnversionedLocked]] = []
     group: object = None
 
     def close_run() -> None:
@@ -46,7 +48,7 @@ def collapse_writes(
         candidates.clear()
 
     for item in writes:
-        if isinstance(item, KeyedInsert | UnversionedLocked):
+        if isinstance(item, KeyedInsert) or is_licensed_by(item, UnversionedLocked):
             arriving = _group_key(item.instruction)
             if candidates and arriving == group:
                 candidates.append(item)
@@ -72,7 +74,7 @@ def _group_key(instruction: PreparedKeyedInstruction) -> object:
 
 
 def _collapsed(
-    model: Metamodel, run: Sequence[KeyedInsert | UnversionedLocked]
+    model: Metamodel, run: Sequence[KeyedInsert | LicensedWrite[UnversionedLocked]]
 ) -> InsertBatch | UnversionedWriteBatch | None:
     first = run[0]
     instruction = first.instruction
@@ -85,25 +87,18 @@ def _collapsed(
 
     rows: list[ManagedRow] = []
     assigns = False
-    insert_keys: list[ObjectKey] = []
-    locked_keys: list[ObjectKey] = []
-    retained: dict[int, ReadEvidence] = {}
+    keys: list[ObjectKey] = []
     for item in run:
         rows.extend(item.instruction.rows)
         assigns = assigns or item.instruction.assigns
-        if isinstance(item, KeyedInsert):
-            insert_keys.append(item.object_key)
-        else:
-            locked_keys.append(item.object_key)
-            for held in item.source_evidence:
-                retained.setdefault(id(held), held)
+        keys.append(item.object_key)
     merged = derive_keyed_instruction(instruction, tuple(rows), assigns=assigns)
     if isinstance(first, KeyedInsert):
-        return InsertBatch(instruction=merged, object_keys=tuple(insert_keys))
+        return InsertBatch(instruction=merged, object_keys=tuple(keys))
     return UnversionedWriteBatch(
         instruction=merged,
-        object_keys=tuple(locked_keys),
-        source_evidence=tuple(retained.values()),
+        object_keys=tuple(keys),
+        source_evidence=distinct_evidence(item.source_evidence for item in run),
     )
 
 
@@ -113,7 +108,9 @@ def _primary_key(model: Metamodel, instruction: PreparedKeyedInstruction) -> Att
     return position.primary_key
 
 
-def _uniform_assignments(model: Metamodel, run: Sequence[KeyedInsert | UnversionedLocked]) -> bool:
+def _uniform_assignments(
+    model: Metamodel, run: Sequence[KeyedInsert | LicensedWrite[UnversionedLocked]]
+) -> bool:
     first = run[0].instruction
     row = first.rows[0]
     key = row.selection.members.index[_primary_key(model, first).identity]

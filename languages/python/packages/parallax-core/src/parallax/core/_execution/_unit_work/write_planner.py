@@ -8,7 +8,6 @@ from typing import Never, final
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
-    ExpectedVersion,
     PreparedPredicateInstruction,
 )
 from parallax.core._execution._unit_work.strategy import (
@@ -25,7 +24,8 @@ from parallax.core._execution._unit_work.write_items import (
     MutationPhase,
     OrderedWrite,
     PostRemovalInsert,
-    TargetWrite,
+    VersionConditioned,
+    is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
@@ -339,7 +339,7 @@ def _without_noop_rows(
         return None if _amends_nothing(item.transform) else item
     if isinstance(item, ComposedBitemporalOpening | PostRemovalInsert):
         return item
-    if isinstance(item, TargetWrite) and isinstance(item.expectation, ExpectedVersion):
+    if is_licensed_by(item, VersionConditioned):
         # A caller-conditioned write of a versioned row still advances its
         # version, which is the revision its caller asked for.
         return item

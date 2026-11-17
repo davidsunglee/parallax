@@ -34,7 +34,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, KeyedInsert
+from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import (
     CompiledEntity,
@@ -262,7 +262,7 @@ def test_an_insertion_its_writes_preparation_ended_is_refused_when_the_write_is_
             if interference == "superseded":
                 return tx.uow.buffer_insert(KeyedInsert(opening, key), insertion_advice=None)
             deletion = _prepared(model, "delete", entity, {"id": 7})
-            return tx.uow.buffer(InsertionAuthorizedWrite(deletion, key, insertion))
+            return tx.uow.buffer(admitted_write(deletion, None, key, insertion=insertion))
 
         with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
             tx.keyed_write(_RevisingInsertedAccountSeven(insertion, interfere), "amend")

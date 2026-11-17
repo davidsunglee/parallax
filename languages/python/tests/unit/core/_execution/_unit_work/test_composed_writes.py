@@ -20,9 +20,13 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
+    LicensedWrite,
+    StateObserved,
     StateObservedIntent,
-    StateObservedWrite,
-    TargetWrite,
+    TxStartConditioned,
+    UnversionedLocked,
+    VersionConditioned,
+    is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal import temporal_read
@@ -55,7 +59,6 @@ from parallax.core.internal.unit_work import (
     AdmittedWrite,
     KeyedMutation,
     KeyedWriteInstruction,
-    ReadAuthorizedWrite,
     RetainedObservation,
     WritePlanningRequest,
     admitted_write,
@@ -66,6 +69,7 @@ from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admit,
+    admit_licensed,
     admitted_writes,
     deferred_ranges,
     plan_steps,
@@ -132,17 +136,17 @@ def _write(
     *,
     source: ReadEvidence | None = None,
     **members: object,
-) -> StateObservedWrite:
+) -> LicensedWrite[StateObserved]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
         write_preparation_of(_BALANCE),
     )
     item = admitted_write(prepared, evidence, evidence.key.object, source=source)
-    assert isinstance(item, StateObservedWrite)
+    assert is_licensed_by(item, StateObserved)
     return item
 
 
-def _plan(*writes: StateObservedWrite) -> WritePlan:
+def _plan(*writes: LicensedWrite[StateObserved]) -> WritePlan:
     return build_write_planner(bound_model(_BALANCE)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -269,7 +273,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
         VersionedObjectStateKey(position, 1), VersionObservation(observed_version=1), None
     )
     write = admitted_write(prepared, unobserved, position)
-    assert isinstance(write, StateObservedWrite)
+    assert is_licensed_by(write, StateObserved)
     with raises_code(
         InternalError, WRITE_PLANNING_FAILED, match="requires the Temporal Observation"
     ):
@@ -372,7 +376,6 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     # correction closes the stored rectangle it observed and keeps its source.
     registry = source_registry(POSITION)
     admission = WriteAdmission(POSITION, registry=registry)
-    confirm = _unconditioned
     identity = admission.admit_insert(
         admitted_write(
             _position_write("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
@@ -384,7 +387,8 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         admitted_write(
             _position_write("amendUntil", MAR, MAY, value="150.00"), START, OBJECT, source=source
         ),
-        confirm_target=confirm,
+        confirm_version=_unconditioned_version,
+        confirm_tx_start=_unconditioned_tx_start,
     )
     assert identity is not None
     admission.admit(
@@ -394,7 +398,8 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
             OBJECT,
             insertion=identity,
         ),
-        confirm_target=confirm,
+        confirm_version=_unconditioned_version,
+        confirm_tx_start=_unconditioned_tx_start,
     )
     plan = build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
@@ -428,7 +433,13 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     assert tuple(map(id, correction.source_evidence)) == (id(source),)
 
 
-def _unconditioned(item: TargetWrite) -> TargetWrite:
+def _unconditioned_version(item: LicensedWrite[VersionConditioned]) -> None:
+    raise AssertionError(f"no target write is admitted, but {item!r} was")
+
+
+def _unconditioned_tx_start(
+    item: LicensedWrite[TxStartConditioned],
+) -> LicensedWrite[TxStartConditioned]:
     raise AssertionError(f"no target write is admitted, but {item!r} was")
 
 
@@ -470,7 +481,7 @@ def _balance(
 
 def _observed_balance(
     mutation: KeyedMutation, observation: RetainedObservation, **members: object
-) -> ReadAuthorizedWrite:
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     ((_, balance_id),) = observation.key.object.primary_key
     assert isinstance(balance_id, int)
     return admitted_write(
@@ -481,10 +492,6 @@ def _observed_balance(
 def _closed(plan: WritePlan) -> list[tuple[object, ...]]:
     """The key of each row ``plan`` closes at planning, in execution order."""
     return [step.target.key_values for step in plan_steps(plan) if isinstance(step, PlannedClose)]
-
-
-def _unconfirmed(item: TargetWrite) -> TargetWrite:
-    return item
 
 
 def _admission() -> tuple[WriteAdmission, SourceRegistry]:
@@ -512,7 +519,7 @@ def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_befo
         _observed_balance("terminate", other),
         _observed_balance("terminate", first),
     ):
-        admission.admit(write, confirm_target=_unconfirmed)
+        admit_licensed(admission, write)
     # Ordering keeps authored order among same-rank deletions, and the run's
     # destruction was authored last.
     assert _closed(_admitted_plan(admission, registry)) == [(3,), (1,)]

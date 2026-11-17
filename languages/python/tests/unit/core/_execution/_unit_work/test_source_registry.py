@@ -31,7 +31,6 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
-from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
@@ -305,7 +304,7 @@ def test_an_insertion_stands_until_a_completed_removal_of_its_rows_and_its_histo
     )
     assert isinstance(termination, PreparedKeyedInstruction)
     write = registry.resolve_insertion_authorized_write(
-        InsertionAuthorizedWrite(termination, OBJECT, identity)
+        admitted_write(termination, None, OBJECT, insertion=identity)
     )
     assert write.claim_scope is None  # a temporal write claims by object instead
     registry.complete_write(WriteEffects(removed=(row,)))

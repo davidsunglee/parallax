@@ -57,7 +57,12 @@ from parallax.core._execution._unit_work.row_acquisition import (
 )
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.strategy import AuditDecoration
-from parallax.core._execution._unit_work.write_items import StateObservedWrite
+from parallax.core._execution._unit_work.write_items import (
+    LicensedWrite,
+    StateObserved,
+    UnversionedLocked,
+    is_licensed_by,
+)
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.internal import predicate as predicate_algebra
@@ -88,7 +93,6 @@ from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
-    ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
     TransactionSettings,
@@ -335,7 +339,9 @@ def _target(
 _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 4, 6, 9))
 
 
-def _observed_amend(key: int, claim: RetainedObservation) -> ReadAuthorizedWrite:
+def _observed_amend(
+    key: int, claim: RetainedObservation
+) -> LicensedWrite[StateObserved | UnversionedLocked]:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
         write_preparation_of(TARGET_POSITION),
@@ -727,13 +733,15 @@ def _span_uow(
     return uow, simulated
 
 
-def _completed_changes(uow: UnitOfWork, writes: Sequence[ReadAuthorizedWrite]) -> list[bool]:
+def _completed_changes(
+    uow: UnitOfWork, writes: Sequence[LicensedWrite[StateObserved | UnversionedLocked]]
+) -> list[bool]:
     """Whether a completed write of ``uow`` changed what each of ``writes``
     observed, judged as a read before any change would be."""
     changed: list[bool] = []
     for write in writes:
-        assert isinstance(write, StateObservedWrite)
-        state = write.retained_observation.key
+        assert is_licensed_by(write, StateObserved)
+        state = write.authority.retained_observation.key
         changed.append(not uow.source_registry.is_unchanged_since(state, 0))
     return changed
 

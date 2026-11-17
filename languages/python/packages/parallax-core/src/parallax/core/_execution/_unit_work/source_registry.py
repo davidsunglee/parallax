@@ -29,9 +29,11 @@ from parallax.core._execution._unit_work.instructions import KeyedMutation
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
-    InsertionAuthorizedWrite,
+    InsertionAuthorized,
     KeyedInsert,
-    ReadAuthorizedWrite,
+    LicensedWrite,
+    StateObserved,
+    UnversionedLocked,
 )
 from parallax.core.internal import concurrency
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -455,8 +457,8 @@ class SourceRegistry:
         return self._ownership.insertion_anchor(identity)
 
     def resolve_insertion_authorized_write(
-        self, write: InsertionAuthorizedWrite
-    ) -> InsertionAuthorizedWrite:
+        self, write: LicensedWrite[InsertionAuthorized]
+    ) -> LicensedWrite[InsertionAuthorized]:
         """``write`` while the insertion authority it carries stands, with the
         claim scope its stored row takes
         (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.resolve_insertion_authorized_write`)."""
@@ -490,7 +492,7 @@ class SourceRegistry:
         self,
         target: ObjectKey,
         *,
-        arriving: ReadAuthorizedWrite | InsertionAuthorizedWrite,
+        arriving: LicensedWrite[StateObserved | UnversionedLocked | InsertionAuthorized],
         proposed_opening: ComposedBitemporalOpening | None,
     ) -> InsertionComposition:
         """What composing ``arriving`` into the still-pending insertion of

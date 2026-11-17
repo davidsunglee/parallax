@@ -38,9 +38,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     KeyedInsert,
+    LicensedWrite,
     PostRemovalInsert,
-    StateObservedWrite,
+    StateObserved,
     UnversionedLocked,
+    is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._formation_profile import form_metamodel
@@ -200,18 +202,31 @@ def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedK
 
 
 def _observed(
-    write: KeyedWriteInstruction, evidence: StateObservation | RetainedObservation
-) -> StateObservedWrite:
+    write: KeyedWriteInstruction,
+    evidence: StateObservation | RetainedObservation,
+    source: ReadEvidence | None = None,
+) -> LicensedWrite[StateObserved]:
     prepared = _prepared_keyed(write, _ACCOUNT)
     if not isinstance(evidence, RetainedObservation):
         evidence = retained_observation(prepared, _ACCOUNT, evidence)
-    return StateObservedWrite(prepared, evidence.key.object, evidence)
+    observed = admitted_write(prepared, evidence, evidence.key.object, source=source)
+    assert is_licensed_by(observed, StateObserved)
+    return observed
 
 
-def _claimed(write: KeyedWriteInstruction) -> UnversionedLocked:
+def _claimed(
+    write: KeyedWriteInstruction, *evidence: ReadEvidence
+) -> LicensedWrite[UnversionedLocked]:
+    """``write`` of a Wallet through ``evidence``, else through one fresh
+    source of the object it writes."""
     (row,) = write.rows
     wallet = corpus_object_key("Wallet", ("id", row["id"]))
-    return UnversionedLocked(_prepared_keyed(write, _WALLET), wallet, (object_source(wallet),))
+    first, *others = evidence or (object_source(wallet),)
+    claimed = admitted_write(_prepared_keyed(write, _WALLET), wallet, wallet, source=first)
+    assert is_licensed_by(claimed, UnversionedLocked)
+    if not others:
+        return claimed
+    return dataclasses.replace(claimed, authority=UnversionedLocked((first, *others)))
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -364,13 +379,7 @@ def test_an_unversioned_batch_keeps_each_rows_object_and_distinct_evidence_in_fi
     assert first == twin and first is not twin
     held = ((third,), (first, third), (twin, second))
     run = [
-        UnversionedLocked(
-            _prepared_keyed(
-                KeyedWriteInstruction("delete", "Wallet", (dict(key.primary_key),)), _WALLET
-            ),
-            key,
-            evidence,
-        )
+        _claimed(KeyedWriteInstruction("delete", "Wallet", (dict(key.primary_key),)), *evidence)
         for key, evidence in zip(keys, held, strict=True)
     ]
     plan = _finalized(run, _WALLET)
@@ -1502,21 +1511,13 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
         ReadEvidence(retired.key.object.entity, retired.key.object, ParticipationToken(), retired),
     ]
     buffer = [
-        dataclasses.replace(
-            _observed(KeyedWriteInstruction("delete", "Account", ({"id": 1},)), shared),
-            source_evidence=(sources[0],),
+        _observed(KeyedWriteInstruction("delete", "Account", ({"id": 1},)), shared, sources[0]),
+        _observed(
+            KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
+            shared,
+            sources[1],
         ),
-        dataclasses.replace(
-            _observed(
-                KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
-                shared,
-            ),
-            source_evidence=(sources[1],),
-        ),
-        dataclasses.replace(
-            _observed(KeyedWriteInstruction("amend", "Account", ({"id": 2},)), retired),
-            source_evidence=(sources[2],),
-        ),
+        _observed(KeyedWriteInstruction("amend", "Account", ({"id": 2},)), retired, sources[2]),
     ]
     finalized = build_write_planner(bound_model(_ACCOUNT)).finalize(
         WritePlanningRequest(

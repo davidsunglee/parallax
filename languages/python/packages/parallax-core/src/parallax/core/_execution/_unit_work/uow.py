@@ -18,7 +18,6 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
-    ExpectedTxStart,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
@@ -32,10 +31,11 @@ from parallax.core._execution._unit_work.row_acquisition import (
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.strategy import ActorIdentity, AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
-    InsertionAuthorizedWrite,
     KeyedInsert,
-    ReadAuthorizedWrite,
-    TargetWrite,
+    LicensedWrite,
+    TxStartConditioned,
+    VersionConditioned,
+    WriteAuthority,
     target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
@@ -50,7 +50,11 @@ from parallax.core.internal.base import normalize_instant
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
-from parallax.core.internal.planned_step.keys import ObjectKey, TemporalObjectStateKey
+from parallax.core.internal.planned_step.keys import (
+    ObjectKey,
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
+)
 from parallax.core.internal.planned_step.observe import PredecessorRow
 from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.planned_step.write_effects import (
@@ -244,9 +248,7 @@ class UnitOfWork:
         # while work that needs none never captures at all.
         self._transaction_instant = TransactionInstant(clock)
 
-    def buffer(
-        self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
-    ) -> BufferOutcome:
+    def buffer(self, item: LicensedWrite[WriteAuthority]) -> BufferOutcome:
         """Admit ``item``, a write of existing state, under the authority it
         carries and buffer it for flush at the unit-of-work boundary — all of
         it, or nothing
@@ -267,11 +269,12 @@ class UnitOfWork:
         source value it came from.
 
         A target write
-        (:class:`~parallax.core._execution._unit_work.write_items.TargetWrite`)
+        (:class:`~parallax.core._execution._unit_work.write_items.VersionConditioned`,
+        :class:`~parallax.core._execution._unit_work.write_items.TxStartConditioned`)
         is admitted as :meth:`buffer_target` describes, its caller's revision
         confirmed under this attempt's concurrency strategy. A write an
         insertion authorized
-        (:class:`~parallax.core._execution._unit_work.write_items.InsertionAuthorizedWrite`) is
+        (:class:`~parallax.core._execution._unit_work.write_items.InsertionAuthorized`) is
         admitted only while that authority stands, and a write leaving nothing
         of what a still-unflushed insertion opened ends it.
 
@@ -281,7 +284,9 @@ class UnitOfWork:
         recognized when the pair is complete rather than when it is planned.
         """
         self._ensure_open()
-        return self._admission.admit(item, confirm_target=self._confirm_target)
+        return self._admission.admit(
+            item, confirm_version=self._confirm_version, confirm_tx_start=self._confirm_tx_start
+        )
 
     def buffer_insert(
         self, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
@@ -384,61 +389,63 @@ class UnitOfWork:
         if prepared.mutation in AMEND_MUTATIONS and not prepared.assigns:
             return
         item = target_write(prepared, inheritance.inheritance_facet_of(self.meta))
-        self._admission.admit(item, confirm_target=self._confirm_target)
+        self._admission.admit(
+            item, confirm_version=self._confirm_version, confirm_tx_start=self._confirm_tx_start
+        )
 
-    def _confirm_target(self, item: TargetWrite) -> TargetWrite:
-        """``item`` once its caller's revision is confirmed under its target's
-        Effective Concurrency Strategy, answered with the row it read where it
-        read one, or refused.
+    def _confirm_version(self, item: LicensedWrite[VersionConditioned]) -> None:
+        """Confirm the version ``item``'s caller stated under its target's
+        Effective Concurrency Strategy, or refuse it.
 
-        Admission has already found no pending write proving that revision.
+        Admission has already found no pending write proving that version.
         Under Locking a live read of exactly that state this attempt holds
         proves it, else the stored row is read under the shared lock; the
         Optimistic strategy reads nothing.
         """
         target = item.instruction.target
-        if self._versioning.effective_strategy(target.identity, self.settings.preference) != (
-            "locking"
-        ):
-            return item
-        expectation = item.expectation
-        scope = item.claim_scope
+        if not self._locks(target):
+            return
+        expected = item.authority.expected
         key = item.object_key
-        if isinstance(expectation, ExpectedTxStart):
-            return self._confirm_temporal_target(item, key, expectation)
-        if isinstance(scope, ObjectKey) or not self.source_registry.has_live_observation(scope):
+        if not self.source_registry.has_live_observation(
+            VersionedObjectStateKey(key, expected.version)
+        ):
             stored, _row, _document = self._stored_target(target, key, None)
-            if stored is None or stored.version != expectation.version:
+            if stored is None or stored.version != expected.version:
                 raise WritePreconditionError(
-                    target.identity, dict(key.primary_key), expectation.version
+                    target.identity, dict(key.primary_key), expected.version
                 )
-        return item
 
-    def _confirm_temporal_target(
-        self, item: TargetWrite, key: ObjectKey, expectation: ExpectedTxStart
-    ) -> TargetWrite:
-        """Prove a Locking target write of a temporal object starts
-        from the state its caller stated, or refuse it, answering the write
-        with the row it read where it read one.
+    def _confirm_tx_start(
+        self, item: LicensedWrite[TxStartConditioned]
+    ) -> LicensedWrite[TxStartConditioned]:
+        """``item`` once the Transaction-Time start its caller stated is
+        confirmed under its target's Effective Concurrency Strategy, answered
+        with the row it read where it read one, or refused.
 
-        A live read of the state this attempt holds proves it, else it is
-        read, whole, and kept with the write as the state the read found at
-        this point of the attempt's changes.
+        Admission has already found no pending write proving that start.
+        Under Locking a live read of the state this attempt holds proves it,
+        else it is read under the shared lock, whole, and kept with the write
+        as the state the read found at this point of the attempt's changes;
+        the Optimistic strategy reads nothing.
         """
+        target = item.instruction.target
+        if not self._locks(target):
+            return item
+        authority = item.authority
+        expected = authority.expected
+        key = item.object_key
         window = item.instruction.valid_time_window
         valid_from = None if window is None else window.start
         registry = self.source_registry
         if registry.has_live_observation(
-            TemporalObjectStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
+            TemporalObjectStateKey(key, Edge(tx_time=expected.instant, valid_time=valid_from))
         ):
             return item
-        target = item.instruction.target
         read_at = registry.freshness
         stored, row, document = self._stored_target(target, key, valid_from, retains=True)
-        if stored is None or stored.tx_start != expectation.instant:
-            raise WritePreconditionError(
-                target.identity, dict(key.primary_key), expectation.instant
-            )
+        if stored is None or stored.tx_start != expected.instant:
+            raise WritePreconditionError(target.identity, dict(key.primary_key), expected.instant)
         assert row is not None  # a stored revision was read off this row
         selection = self._family(target).member_selection
         shape = temporal_read.temporal_facet_of(self.meta).shape(target.identity)
@@ -446,7 +453,15 @@ class UnitOfWork:
         state = TemporalObjectStateKey(
             key, milestone_edge(shape, PredecessorRow.over_row(selection, row, None, None), None)
         )
-        return replace(item, starting_row=RetainedStartingRow(state, read_at, row, document))
+        starting_row = RetainedStartingRow(state, read_at, row, document)
+        return replace(item, authority=replace(authority, starting_row=starting_row))
+
+    def _locks(self, target: CompiledEntity) -> bool:
+        """Whether ``target``'s Effective Concurrency Strategy is Locking."""
+        return (
+            self._versioning.effective_strategy(target.identity, self.settings.preference)
+            == "locking"
+        )
 
     def _stored_target(
         self,
