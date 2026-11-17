@@ -358,8 +358,6 @@ def _retained_row(key: int) -> RetainedObservation:
 
 
 def _yielded(monkeypatch: pytest.MonkeyPatch, observe: Callable[[WriteGroup], object]) -> None:
-    """Call ``observe`` with each Write Group an acquisition span yields, as it
-    is yielded."""
     advance = SpanWriteGroups.__next__
 
     def advancing(groups: SpanWriteGroups) -> WriteGroup:

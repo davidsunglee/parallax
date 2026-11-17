@@ -232,8 +232,6 @@ class SpanWriteGroups:
     def _bind_ready(
         self, invocation: _Invocation
     ) -> Iterator[tuple[BoundRange, tuple[PlannedStep, ...]]]:
-        """Each leading ready range, bound in order beside its steps, up to the
-        first range still waiting for a read; it reads nothing."""
         acquisitions = self._acquisitions
         while acquisitions and acquisitions[0].ready:
             yield self._bind_head(invocation)
@@ -264,9 +262,6 @@ class SpanWriteGroups:
 
 
 def _prepare_range(acquisition: _RangeAcquisition, invocation: _Invocation) -> None:
-    """Complete the retained starting rows ``acquisition``'s range still
-    reuses, then derive the coverage it still needs read, ready at once where
-    it needs none."""
     deferred = acquisition.range
     completion = deferred.take_retained_completion(invocation.current)
     reused = None if completion is None else invocation.acquire_rows(completion, consume_completion)

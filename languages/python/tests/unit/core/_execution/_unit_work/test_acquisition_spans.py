@@ -153,7 +153,6 @@ _SHAPES = pytest.mark.parametrize(
 
 
 def _formed(ranges: Sequence[DeferredRange]) -> list[tuple[object, ...]]:
-    """The objects of each span ``ranges`` form, in order."""
     return [tuple(deferred.key_value for deferred in span.ranges) for span in form_spans(ranges)]
 
 
@@ -291,7 +290,6 @@ class _Traced:
 
 
 def _groups(written: WritePlan, acquire: AcquireRows, model: Metamodel = MODEL) -> SpanWriteGroups:
-    """The Write Groups of ``written``'s one turn, an acquisition span."""
     (span,) = written.turns
     assert isinstance(span, AcquisitionSpan)
     return _span_groups(span, acquire, model)
@@ -325,7 +323,6 @@ def _keys(group: WriteGroup) -> tuple[object, ...]:
 
 
 def _members(groups: Sequence[WriteGroup]) -> list[BoundRange]:
-    """Every bound range of ``groups``, in order."""
     members: list[BoundRange] = []
     for group in groups:
         for write in group.writes:
@@ -335,8 +332,6 @@ def _members(groups: Sequence[WriteGroup]) -> list[BoundRange]:
 
 
 def _drained(groups: SpanWriteGroups, trace: list[tuple[str, tuple[Any, ...]]]) -> list[WriteGroup]:
-    """Each group of ``groups``, its keys recorded in ``trace`` as it is
-    answered."""
     answered: list[WriteGroup] = []
     with groups:
         for each in groups:
@@ -350,8 +345,6 @@ def _closes(bound: BoundRange) -> int:
 
 
 def _span(written: WritePlan) -> WritePlan:
-    """``written``, whose every write is deferred into its one acquisition
-    span."""
     (span,) = written.turns
     assert isinstance(span, AcquisitionSpan) and len(span.ranges) > 1
     return written
