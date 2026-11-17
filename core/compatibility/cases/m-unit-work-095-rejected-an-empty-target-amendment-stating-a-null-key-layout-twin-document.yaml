@@ -1,6 +1,3 @@
-# An amendment naming nothing beside its key is the empty write, dropped once it is
-# validated; a null key fails that validation, so the empty amendment is refused
-# rather than dropped (m-unit-work, m-pk-gen).
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-unit-work, m-pk-gen, write, rejected, target-write, layout-twin, document, slice-snapshot-1]
 shape: rejected

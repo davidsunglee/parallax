@@ -48,7 +48,7 @@ from parallax.core._execution._unit_work.instructions import (
     derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
-    refuse_unaddressed_target,
+    refuse_keyless_target,
     resolve_target,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
@@ -660,11 +660,10 @@ class TxnAttempt(_TxnAttemptBase):
         Concurrency Strategy needs participation.
 
         Re-entry is refused first, then ``adapter`` asked for its input under
-        this attempt's write projection, then a write naming no object refused
-        ahead of everything else about it — one stating no key
-        (`write-key-absent`) or a null one (`write-required-attribute-missing`)
-        — and only then a stated start judged. The canonical instruction states
-        that input under the caller's revision and window, and the target, the
+        this attempt's write projection, then a write stating no key refused
+        (`write-key-absent`) ahead of everything else about it, and only then a
+        stated start judged. The canonical instruction states that input under
+        the caller's revision and window, and the target, a null key, the
         window, the revision, and the payload are preparation's to judge. A stated
         ``until``, ``None`` included, selects the bounded verb, and every
         revision keyword stated, ``None`` included, reaches preparation as
@@ -675,7 +674,7 @@ class TxnAttempt(_TxnAttemptBase):
         write = adapter.write_input(self._write, mutation)
         meta = self._write.preparation.meta
         target = write.target if write.target is not None else resolve_target(meta, write.entity)
-        refuse_unaddressed_target(meta, target, mutation, write.row)
+        refuse_keyless_target(meta, target, mutation, write.row)
         start = stated_valid_from(valid_from)
         revision = target_revision_arguments(version=version, tx_start=tx_start)
         instruction = TargetWriteInstruction(

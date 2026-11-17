@@ -1,15 +1,15 @@
 """The target-write order, stated once and asserted of both representations.
 
 Every ``_if`` verb, Typed or Wire, enters one ingress: lifecycle re-entry, then
-the representation's own capture of what it addresses and the refusal of a key
-naming no object, then the stated start, then the one preparation that judges
-the target, the verb, the window, the revision, and only then the payload, and
-finally the buffering that drops an amendment of nothing, refuses an object this
-attempt inserted, and under Locking acquires the stored row at the call. What a
-row fixes is the ANSWER that order gives — the refusal's class, code, message,
-the point it landed at, and the DML emitted — beside the whole port chronology,
-so a refusal that read or flushed anything, and an Optimistic write that read at
-the call, are different answers rather than agreeing ones.
+the representation's own capture of what it addresses, then the stated start,
+then the one preparation that judges the target, a key naming no object, the
+verb, the window, the revision, and only then the payload, and finally the
+buffering that drops an amendment of nothing, refuses an object this attempt
+inserted, and under Locking acquires the stored row at the call. What a row
+fixes is the ANSWER that order gives — the refusal's class, code, message, the
+point it landed at, and the DML emitted — beside the whole port chronology, so a
+refusal that read or flushed anything, and an Optimistic write that read at the
+call, are different answers rather than agreeing ones.
 
 Each row states one expectation per representation that can express it and
 asserts it of each in turn; nothing here compares one representation to the
@@ -631,9 +631,9 @@ def test_what_a_representation_captures_is_judged_before_the_window(row: _Row) -
 
 
 # --------------------------------------------------------------------------- #
-# A key stated as null names no object: it is refused once the address is     #
-# captured, ahead of a stated start, the window, the revision, and the        #
-# payload, and before a Locking call acquires anything.                        #
+# A key stated as null names no object: preparation refuses it once the       #
+# target resolves, after a stated start and ahead of the window, the          #
+# revision, and the payload, and before a Locking call acquires anything.     #
 # --------------------------------------------------------------------------- #
 def _null_key(entity: str) -> _Expected:
     return _refused(
@@ -661,7 +661,7 @@ _NULL_KEY: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         TargetWriteScenario(_POSITION, "amend", valid_from="none", payload="null_key"),
-        _both(_null_key("WherePosition")),
+        _both(_refused(UsageError, _START_REFUSAL, code="write-instruction-invalid")),
     ),
     _Row(
         TargetWriteScenario(
@@ -684,7 +684,7 @@ _NULL_KEY: Final[tuple[_Row, ...]] = (
 
 
 @pytest.mark.parametrize("row", _NULL_KEY, ids=str)
-def test_a_null_key_is_refused_once_the_address_is_captured(row: _Row) -> None:
+def test_a_null_key_is_refused_once_the_target_resolves(row: _Row) -> None:
     _assert_row(row)
 
 
@@ -959,8 +959,8 @@ def test_the_revision_is_judged_after_the_window_and_before_the_payload(row: _Ro
 # --------------------------------------------------------------------------- #
 # The payload last: a window fault, then a revision fault, outranks it, and   #
 # once both admit the write its fault is heard rather than the write dropped. #
-# A Typed key and assignments are judged there through the deferred members,  #
-# however eagerly the Wire document's shape was captured.                     #
+# A non-null Typed key and assignments are judged there through the deferred  #
+# members, however eagerly the Wire document's shape was captured.            #
 # --------------------------------------------------------------------------- #
 _PAYLOAD: Final[tuple[_Row, ...]] = (
     _Row(

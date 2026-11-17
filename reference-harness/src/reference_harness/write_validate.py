@@ -166,22 +166,19 @@ def assignment_violation(
     )
 
 
-def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
-    """Why *entity* refuses a target write's *row*, or ``None``
+def _target_key_violation(entity: Entity, row: dict[str, Any]) -> str | None:
+    """Why a target write's *row* names no object of *entity*, or ``None``
     (`m-unit-work` *Target writes*).
 
     The row names its object by every primary-key member, each stating a value
     that member admits. A null one is refused by the key's own non-null type,
     so it raises its classified ``write-required-attribute-missing``
     :class:`RejectionError`, the observable a `rejected` case grades, rather
-    than answering a detail. Every other member it states is judged as
-    an assignment (:func:`assignment_violation`). A replacement states the
-    object's whole writable state, so it also omits no required member a caller
-    may assign; an omitted nullable member is written empty, and an omitted
-    `many` value object or scalar collection is its empty collection.
+    than answering a detail.
     """
-    keys = [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
-    for attribute in keys:
+    for attribute in entity.attributes:
+        if not attribute.get("primaryKey"):
+            continue
         path = f"{entity.name}.{attribute['name']}"
         if attribute["name"] not in row:
             return f"{path}: a target write states every primary-key member"
@@ -189,7 +186,23 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
         detail = _violation_detail(judge, keep=frozenset({WRITE_REQUIRED_ATTRIBUTE_MISSING}))
         if detail is not None:
             return detail
-    key_names = {attribute["name"] for attribute in keys}
+    return None
+
+
+def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
+    """Why *entity* refuses the members a target write's *row* states beside
+    the key :func:`_target_key_violation` judged, or ``None`` (`m-unit-work`
+    *Target writes*).
+
+    Every such member is judged as an assignment (:func:`assignment_violation`).
+    A replacement states the object's whole writable state, so it also omits no
+    required member a caller may assign; an omitted nullable member is written
+    empty, and an omitted `many` value object or scalar collection is its empty
+    collection.
+    """
+    key_names = {
+        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
+    }
     for name, value in row.items():
         violation = None if name in key_names else assignment_violation(entity, name, value)
         if violation is not None:
@@ -219,19 +232,23 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
 
 
 def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> str | None:
-    """Why a target instruction's verb, row, revision or window does
+    """Why a target instruction's key, verb, row, revision or window does
     not fit its target, or ``None`` (`m-unit-work` *Target writes*).
 
-    The model decides all four, which the case schema cannot see: a temporal
-    target is deleted by no target write and a Non-Temporal one is
-    terminated by none; the row is judged as :func:`target_row_violation`
-    judges it, and a destructive write's names the key alone; a temporal target states
-    ``ifTxStart`` and a versioned Non-Temporal one ``ifVersion``, while an
-    unversioned one has no revision and takes no target write; a
-    Bitemporal target states ``validFrom``, and a Transaction-Time-Only or
-    Non-Temporal one no window.
+    The model decides all five, which the case schema cannot see: a key naming
+    no object is refused first (:func:`_target_key_violation`); a temporal
+    target is deleted by no target write and a Non-Temporal one is terminated
+    by none; the rest of the row is judged as :func:`target_row_violation`
+    judges it, and a destructive write's names the key alone; a temporal
+    target states ``ifTxStart`` and a versioned Non-Temporal one
+    ``ifVersion``, while an unversioned one has no revision and takes no target
+    write; a Bitemporal target states ``validFrom``, and a Transaction-Time-Only
+    or Non-Temporal one no window.
     """
     mutation = instruction.get("mutation")
+    key_violation = _target_key_violation(entity, instruction["row"])
+    if key_violation is not None:
+        return f"a target write of {entity.name} — {key_violation}"
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     if mutation == ("delete" if axes else "terminate"):
         return f"a target write of {entity.name} takes no `{mutation}`"

@@ -457,11 +457,12 @@ class TypedKeyTargetWriteAdapter:
 
     Inert when constructed and private to one verb call. ``key`` addresses the
     family's one primary-key Attribute whatever its declared name; a mapping or
-    tuple is no key here. The key and assignments are the write's payload,
-    judged only once its verb, window, and revision admit it. Each assignment's
-    reference is judged against the class's own ancestry before any is
-    flattened into the row, so an inherited member applies and a foreign one is
-    refused.
+    tuple is no key here. A ``None`` key names no object and is refused before
+    the verb is weighed; otherwise the key and assignments are the write's
+    payload, judged only once its verb, window, and revision admit it. Each
+    assignment's reference is judged against the class's own ancestry before
+    any is flattened into the row, so an inherited member applies and a foreign
+    one is refused.
     """
 
     __slots__ = ("_assignments", "_entity_class", "_key")
