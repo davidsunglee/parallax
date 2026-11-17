@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from parallax.core._execution._unit_work.claims import WriteIntent
+from parallax.core._execution._unit_work.claims import SettledEvidence, WriteIntent
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ParticipationToken,
@@ -20,7 +20,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
+from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,
@@ -30,16 +30,17 @@ from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedIntent,
     InsertionAuthorizedWrite,
     KeyedInsert,
-    ObjectLockedBatch,
-    ObjectLockedWrite,
     OrderedWrite,
     PostRemovalInsert,
+    ReadAuthorizedWrite,
     StateObservedIntent,
     StateObservedWrite,
     TargetIntent,
     TargetWrite,
     TemporalCoverageWrite,
     TemporalIntent,
+    UnversionedLocked,
+    UnversionedWriteBatch,
     WritePhase,
 )
 from parallax.core.internal.metamodel import CompiledEntity
@@ -132,7 +133,15 @@ def test_a_licensed_write_names_the_object_it_writes(licence: str) -> None:
             )
             admitted_write(prepared, observed, None)
         else:
-            admitted_write(prepared, None, None, authority=InsertionIdentity(key))
+            admitted_write(prepared, None, None, insertion=InsertionIdentity(key))
+
+
+def test_a_write_is_licensed_by_read_evidence_or_an_insertion_never_both() -> None:
+    prepared = _prepared("amend", {"id": 1, "balance": Decimal("2.00")})
+    key = _account_key(1)
+    observed = RetainedObservation(VersionedObjectStateKey(key, 4), VersionObservation(4), None)
+    with pytest.raises(ValueError, match="never by both"):
+        admitted_write(prepared, observed, key, insertion=InsertionIdentity(key))  # pyright: ignore[reportArgumentType,reportCallIssue] - no overload takes evidence and an insertion together
 
 
 def test_a_composed_opening_names_the_object_its_insert_names() -> None:
@@ -165,7 +174,7 @@ def _position_opening() -> ComposedBitemporalOpening:
     )
     assert identity is not None
     admission.admit(
-        admitted_write(amendment, None, OBJECT, authority=identity), confirm_target=_confirmed
+        admitted_write(amendment, None, OBJECT, insertion=identity), confirm_target=_confirmed
     )
     (opening,) = admission.composed_writes()
     assert isinstance(opening, ComposedBitemporalOpening)
@@ -200,14 +209,34 @@ def test_a_composed_temporal_write_keeps_equal_but_distinct_evidence_once_each_i
 
 if TYPE_CHECKING:
 
+    def _static_factory_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
+        prepared: PreparedKeyedInstruction,
+        evidence: SettledEvidence,
+        maybe_evidence: SettledEvidence | None,
+        key: ObjectKey,
+        insertion: InsertionIdentity,
+        source: ReadEvidence,
+    ) -> None:
+        inserted: KeyedInsert = admitted_write(prepared, None, key)
+        authorized: InsertionAuthorizedWrite = admitted_write(
+            prepared, None, key, insertion=insertion
+        )
+        read: ReadAuthorizedWrite = admitted_write(prepared, evidence, key, source=source)
+        ingress: KeyedInsert | ReadAuthorizedWrite = admitted_write(
+            prepared, maybe_evidence, key, source=source
+        )
+        del inserted, authorized, read, ingress
+        admitted_write(prepared, None, key, insertion=insertion, source=source)  # pyright: ignore[reportCallIssue] - an insertion is no read, so it retains no source
+        admitted_write(prepared, maybe_evidence, key, insertion=insertion)  # pyright: ignore[reportArgumentType,reportCallIssue] - evidence and an insertion never license one write together
+
     def _static_projection_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
         insert: KeyedInsert,
         observed: StateObservedWrite,
-        locked: ObjectLockedWrite,
+        locked: UnversionedLocked,
         authorized: InsertionAuthorizedWrite,
         targeted: TargetWrite,
         insert_batch: InsertBatch,
-        locked_batch: ObjectLockedBatch,
+        locked_batch: UnversionedWriteBatch,
         composed: ComposedTemporalWrite,
         opening: ComposedBitemporalOpening,
         marker: PostRemovalInsert,
@@ -243,20 +272,20 @@ if TYPE_CHECKING:
         observation: RetainedObservation = observed_intent.retained_observation
         observed_evidence: tuple[ReadEvidence, ...] = observed_intent.source_evidence
         expected: ExpectedTxStart = target_intent.expected
-        retained_row: RetainedTargetState | None = target_intent.retained
+        starting_row: RetainedStartingRow | None = target_intent.starting_row
         del intents, opening_intents, stated, observation, observed_evidence, expected
-        del retained_row
+        del starting_row
         pending_intents: tuple[TemporalIntent, ...] = coverage.intents
         pending_transform: CoverageTransform = coverage.transform
         pending_key: ObjectKey = coverage.object_key
         pending_target: CompiledEntity = coverage.target
         del pending_intents, pending_transform, pending_key, pending_target
         _ = coverage.instruction  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a composition holds no one instruction
-        _ = locked.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an object-locked row is no temporal write
+        _ = locked.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a write of an unversioned object is no temporal write
         _ = admitted.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert composes nothing
         _ = composed_write.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - inserts and markers keep none
         _ = observed_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
-        _ = observed_intent.retained  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
+        _ = observed_intent.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
         _ = authorized_intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion observed nothing
         _ = authorized_intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - insertion authority is no Read Evidence
         _ = authorized_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start

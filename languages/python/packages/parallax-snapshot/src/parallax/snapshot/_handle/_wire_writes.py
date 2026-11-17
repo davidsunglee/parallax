@@ -47,7 +47,7 @@ from parallax.snapshot._handle._sources import (
 from parallax.snapshot._handle._typed_writes import typed_selection
 from parallax.snapshot._publication._wire import (
     WireEntity,
-    authoring_of,
+    insertion_of,
     opened_wire_entity,
     stored_provenance_of,
 )
@@ -348,12 +348,12 @@ def published_entity(meta: Metamodel, node: object, verb: str) -> CompiledEntity
     """The concrete Entity a node Parallax published names, by the provenance
     it carries, or the refusal for anything else."""
     stored = stored_provenance_of(node) if isinstance(node, WireEntity) else None
-    authoring = authoring_of(node) if isinstance(node, WireEntity) else None
+    insertion = insertion_of(node) if isinstance(node, WireEntity) else None
     entity = (
         stored.entity
         if stored is not None
-        else authoring.object_key.entity
-        if authoring is not None
+        else insertion.object_key.entity
+        if insertion is not None
         else None
     )
     if entity is None:
@@ -614,7 +614,7 @@ class WireKeyedInsertSource:
             opened.identity,
             row.stated_cells(),
             row.selection.absent,
-            opened.authority,
+            opened.insertion,
         )
 
 
@@ -630,12 +630,12 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
     the provenance is absent; none can authorize a keyed write.
     """
     stored = stored_provenance_of(observed) if isinstance(observed, WireEntity) else None
-    authoring = authoring_of(observed) if isinstance(observed, WireEntity) else None
+    insertion = insertion_of(observed) if isinstance(observed, WireEntity) else None
     entity = (
         stored.entity
         if stored is not None
-        else authoring.object_key.entity
-        if authoring is not None
+        else insertion.object_key.entity
+        if insertion is not None
         else None
     )
     if entity is None:

@@ -38,9 +38,9 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     KeyedInsert,
-    ObjectLockedWrite,
     PostRemovalInsert,
     StateObservedWrite,
+    UnversionedLocked,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._formation_profile import form_metamodel
@@ -208,10 +208,10 @@ def _observed(
     return StateObservedWrite(prepared, evidence.key.object, evidence)
 
 
-def _claimed(write: KeyedWriteInstruction) -> ObjectLockedWrite:
+def _claimed(write: KeyedWriteInstruction) -> UnversionedLocked:
     (row,) = write.rows
     wallet = corpus_object_key("Wallet", ("id", row["id"]))
-    return ObjectLockedWrite(_prepared_keyed(write, _WALLET), wallet, (object_source(wallet),))
+    return UnversionedLocked(_prepared_keyed(write, _WALLET), wallet, (object_source(wallet),))
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -318,8 +318,8 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
     assert _assignment_values(standing) == {"owner": "Grace", "version": 6}
 
 
-def test_object_locked_writes_of_one_unversioned_row_merge_into_one_step() -> None:
-    # The object-locked case reaches the same algebra by the same call: what such
+def test_writes_of_one_unversioned_row_merge_into_one_step() -> None:
+    # The unversioned case reaches the same algebra by the same call: what such
     # writes share is the object, because no state stands behind them.
     first = _claimed(
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
@@ -331,7 +331,7 @@ def test_object_locked_writes_of_one_unversioned_row_merge_into_one_step() -> No
     assert _assignment_values(step) == {"balance": Decimal("5.00"), "owner": "Grace"}
 
 
-def test_object_locked_writes_of_two_rows_still_collapse_into_one_batch() -> None:
+def test_unversioned_writes_of_two_rows_still_collapse_into_one_batch() -> None:
     # A claim is per object, so two objects' deletes are two claims — and each
     # batches as the bare instruction it carries would, which is what keeps
     # `m-batch-write`'s set-based collapse reachable for unversioned rows. The
@@ -351,9 +351,7 @@ def test_object_locked_writes_of_two_rows_still_collapse_into_one_batch() -> Non
     assert (tuple(write.changed), write.destroyed, write.advanced) == (keys, keys, ())
 
 
-def test_an_object_locked_batch_keeps_each_rows_object_and_distinct_evidence_in_first_order() -> (
-    None
-):
+def test_an_unversioned_batch_keeps_each_rows_object_and_distinct_evidence_in_first_order() -> None:
     # The batch names the object of every row it writes, in row order, and keeps
     # each evidence object its writes held once, in the order they first held
     # it: equal evidence published twice is two lifetimes, kept apart.
@@ -366,7 +364,7 @@ def test_an_object_locked_batch_keeps_each_rows_object_and_distinct_evidence_in_
     assert first == twin and first is not twin
     held = ((third,), (first, third), (twin, second))
     run = [
-        ObjectLockedWrite(
+        UnversionedLocked(
             _prepared_keyed(
                 KeyedWriteInstruction("delete", "Wallet", (dict(key.primary_key),)), _WALLET
             ),
@@ -879,10 +877,10 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
     assert step.affected_rows == ExactCount(2, MISSING_TARGET)
 
 
-def test_inserts_and_object_locked_writes_batch_apart_and_only_the_latter_keep_sources() -> None:
-    # Inserts batch with inserts and object-locked writes with object-locked
+def test_inserts_and_unversioned_writes_batch_apart_and_only_the_latter_keep_sources() -> None:
+    # Inserts batch with inserts and unversioned writes with unversioned
     # writes, each run into one statement; an insert batch was admitted
-    # through no read, while an object-locked batch keeps every source its
+    # through no read, while an unversioned batch keeps every source its
     # writes were admitted through, by identity.
     buffer: list[_TestAdmittedWrite] = [
         KeyedWriteInstruction(

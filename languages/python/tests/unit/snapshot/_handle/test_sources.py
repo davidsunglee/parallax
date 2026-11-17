@@ -35,7 +35,8 @@ from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._typed_writes import TypedKeyedInsertSource, TypedKeyedWriteSource
 from parallax.snapshot._handle._wire_writes import WireKeyedInsertSource, WireKeyedWriteSource
 from parallax.snapshot._inspection import insertion_of, snapshot_state_of
-from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
+from parallax.snapshot._publication._wire import insertion_of as wire_insertion_of
+from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
@@ -225,7 +226,7 @@ class _Row:
     """One carrier and the facts its resolved record answers.
 
     ``pinned`` asks whether the record carries the view's Pin; ``evidence`` and
-    ``authoring`` whether it carries exactly the Read Evidence or insertion
+    ``insertion`` whether it carries exactly the Read Evidence or insertion
     authority the carrier itself holds."""
 
     name: str
@@ -235,7 +236,7 @@ class _Row:
     provenance: Provenance
     pinned: bool = False
     evidence: bool = False
-    authoring: bool = False
+    insertion: bool = False
 
     def __str__(self) -> str:
         return self.name
@@ -250,13 +251,13 @@ _SOURCE_ROWS: Final = (
     _Row("typed-pinned-read", "typed", WHERE_POSITION_META, _pinned_typed, "this", pinned=True),
     _Row("typed-diagnostic", "typed", CONTACT_MODEL, _diagnostic_typed, "none"),
     _Row("typed-foreign-lifecycle", "typed", ACCOUNT, _foreign_typed, "foreign"),
-    _Row("typed-inserted", "typed", ACCOUNT, _inserted_typed, "none", authoring=True),
+    _Row("typed-inserted", "typed", ACCOUNT, _inserted_typed, "none", insertion=True),
     _Row("wire-standalone-read", "wire", ACCOUNT, _standalone_wire, "this"),
     _Row("wire-read-only-read", "wire", ACCOUNT, _read_only_wire, "this"),
     _Row("wire-writable-read", "wire", ACCOUNT, _writable_wire, "this", evidence=True),
     _Row("wire-projected", "wire", ACCOUNT, _projected_writable_wire, "this", evidence=True),
     _Row("wire-pinned-read", "wire", WHERE_POSITION_META, _pinned_wire, "this", pinned=True),
-    _Row("wire-inserted", "wire", ACCOUNT, _inserted_wire, "none", authoring=True),
+    _Row("wire-inserted", "wire", ACCOUNT, _inserted_wire, "none", insertion=True),
 )
 """What a source-backed write's adapter answers for each carrier. Typed
 diagnostic data keeps its inspection state yet is no stored value, and the node
@@ -316,8 +317,8 @@ def _carried_evidence(value: object) -> object:
     return None if state is None else state.provenance.read_evidence
 
 
-def _carried_authoring(value: object) -> object:
-    return authoring_of(value) if isinstance(value, WireEntity) else insertion_of(value)
+def _carried_insertion(value: object) -> object:
+    return wire_insertion_of(value) if isinstance(value, WireEntity) else insertion_of(value)
 
 
 def _advice(representation: Representation) -> KeyedWriteRefusalAdvice:
@@ -338,9 +339,9 @@ def test_a_source_answers_the_facts_its_carrier_holds(row: _Row) -> None:
     evidence = _carried_evidence(value)
     assert (evidence is not None) is row.evidence
     assert resolved.read_evidence is evidence
-    authoring = _carried_authoring(value)
-    assert (authoring is not None) is row.authoring
-    assert resolved.authoring is authoring
+    insertion = _carried_insertion(value)
+    assert (insertion is not None) is row.insertion
+    assert resolved.insertion is insertion
     assert resolved.advice == _advice(row.representation)
 
 

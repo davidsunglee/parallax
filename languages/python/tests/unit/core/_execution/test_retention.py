@@ -159,7 +159,7 @@ def _retained(
 ) -> ReadEvidenceByFetchedRow:
     """What one participating read of ``rows`` retains, in a unit of work of its own."""
     return judged_evidence(
-        model, entity, *rows, evidence_context=_unit_of_work(model).source_authority
+        model, entity, *rows, evidence_context=_unit_of_work(model).source_registry
     )
 
 
@@ -175,7 +175,7 @@ def _hint(
         entity,
         columns,
         document=document,
-        evidence_context=_unit_of_work(model).source_authority,
+        evidence_context=_unit_of_work(model).source_registry,
     )[0]
 
 
@@ -200,7 +200,7 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
         lambda _node: None,
         lambda _node: entity,
         lambda _node: 1,
-        evidence_context=_unit_of_work(model).source_authority,
+        evidence_context=_unit_of_work(model).source_registry,
         pin=Pin(),
     )
 
@@ -222,7 +222,7 @@ def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_a
         lambda _node: None,
         lambda _node: unknown,
         lambda _node: 1,
-        evidence_context=_unit_of_work(model).source_authority,
+        evidence_context=_unit_of_work(model).source_registry,
         pin=Pin(),
     )
 
@@ -268,7 +268,7 @@ def test_unresolved_sources_file_into_the_attempts_authority_and_hold_nothing_of
     None
 ):
     # Until every projection resolves, a read's sources keep their evidence
-    # context: the attempt's source authority, never the unit of work that
+    # context: the attempt's source registry, never the unit of work that
     # executes its writes or anything that execution reaches.
     model = _accepted("account")
     uow = _unit_of_work(model)
@@ -277,17 +277,17 @@ def test_unresolved_sources_file_into_the_attempts_authority_and_hold_nothing_of
         corpus_entity("Account"),
         _account_columns(),
         _account_columns(id_=2),
-        evidence_context=uow.source_authority,
+        evidence_context=uow.source_registry,
     )
     sources[0]
-    assert reaches([sources], uow.source_authority, depth=1)
+    assert reaches([sources], uow.source_registry, depth=1)
     for part in (uow, uow.execute_write_steps, uow.clock):
         assert not reaches([sources], part, depth=_SHELL_DEPTH)
-    assert sources[1].participation is uow.source_authority.participation
+    assert sources[1].participation is uow.source_registry.participation
 
 
 _SHELL_DEPTH = 12
-"""Deeper than any path from a read's sources through its authority and the
+"""Deeper than any path from a read's sources through its registry and the
 planner's version operation to what they hold."""
 
 
@@ -427,10 +427,10 @@ def test_two_reads_of_one_milestone_at_different_pins_retain_one_state() -> None
 
     def observe(uow: UnitOfWork) -> tuple[RetainedObservation, RetainedObservation]:
         first = judged_evidence(
-            model, balance, _balance_columns(), evidence_context=uow.source_authority
+            model, balance, _balance_columns(), evidence_context=uow.source_registry
         )[0].observation
         second = judged_evidence(
-            model, balance, _balance_columns(), evidence_context=uow.source_authority
+            model, balance, _balance_columns(), evidence_context=uow.source_registry
         )[0].observation
         assert first is not None
         assert second is not None
@@ -451,17 +451,17 @@ def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
 
     def observe(uow: UnitOfWork) -> tuple[ObjectStateKey, ObjectStateKey]:
         first_read = judged_evidence(
-            model, account, _account_columns(version=4), evidence_context=uow.source_authority
+            model, account, _account_columns(version=4), evidence_context=uow.source_registry
         )
         second_read = judged_evidence(
-            model, account, _account_columns(version=7), evidence_context=uow.source_authority
+            model, account, _account_columns(version=7), evidence_context=uow.source_registry
         )
         earlier = first_read[0].observation
         later = second_read[0].observation
         assert earlier is not None
         assert later is not None
         reread = judged_evidence(
-            model, account, _account_columns(version=4), evidence_context=uow.source_authority
+            model, account, _account_columns(version=4), evidence_context=uow.source_registry
         )
         assert reread[0].observation is earlier
         return earlier.key, later.key
@@ -506,7 +506,7 @@ def test_two_projections_of_one_state_share_one_retained_observation() -> None:
     def observe(uow: UnitOfWork) -> tuple[ReadEvidence, ReadEvidence]:
         row = _account_columns()
         sources = judged_evidence(
-            model, corpus_entity("Account"), row, row, evidence_context=uow.source_authority
+            model, corpus_entity("Account"), row, row, evidence_context=uow.source_registry
         )
         return sources[0], sources[1]
 
@@ -525,7 +525,7 @@ def test_two_judged_projections_of_one_temporal_state_share_one_retained_observa
     def observe(uow: UnitOfWork) -> tuple[ReadEvidence, ReadEvidence]:
         row = _balance_columns()
         sources = judged_evidence(
-            model, corpus_entity("Balance"), row, row, evidence_context=uow.source_authority
+            model, corpus_entity("Balance"), row, row, evidence_context=uow.source_registry
         )
         return sources[0], sources[1]
 
@@ -613,7 +613,7 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
     entity_state(page_rows(page), bond)
     entity_state(page_rows(page), stock)
     observations = ReadEvidenceCollector(
-        model, evidence_context=_unit_of_work(model).source_authority
+        model, evidence_context=_unit_of_work(model).source_registry
     )
     observations.observe_fetched_row(bond, corpus_entity("Bond"), None)
     observations.observe_fetched_row(stock, corpus_entity("Stock"), None)
@@ -640,12 +640,12 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
             model,
             corpus_entity("Account"),
             _account_columns(),
-            evidence_context=uow.source_authority,
+            evidence_context=uow.source_registry,
         )[0]
         assert hint.observation is not None
         return (
-            hint.participation is uow.source_authority.participation
-            and hint.observation.participation is uow.source_authority.participation
+            hint.participation is uow.source_registry.participation
+            and hint.observation.participation is uow.source_registry.participation
         )
 
     assert _in_transaction(model, observe)
@@ -669,13 +669,13 @@ def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> 
 
     def observe(uow: UnitOfWork) -> None:
         unsubmitted = judged_evidence(
-            model, entity, _balance_columns(), evidence_context=uow.source_authority
+            model, entity, _balance_columns(), evidence_context=uow.source_registry
         )
         unaffected = judged_evidence(
-            model, entity, _balance_columns(id_=2), evidence_context=uow.source_authority
+            model, entity, _balance_columns(id_=2), evidence_context=uow.source_registry
         )
         writer = judged_evidence(
-            model, entity, _balance_columns(), evidence_context=uow.source_authority
+            model, entity, _balance_columns(), evidence_context=uow.source_registry
         )[0]
         uow.buffer(_balance_update(model, writer))
         uow.read(lambda: None)
@@ -686,7 +686,7 @@ def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> 
         other = unaffected[0].observation
         assert other is not None and not other.invalidated
         fresh = judged_evidence(
-            model, entity, _balance_columns(), evidence_context=uow.source_authority
+            model, entity, _balance_columns(), evidence_context=uow.source_registry
         )[0].observation
         assert fresh is not None and not fresh.invalidated
 
@@ -699,11 +699,11 @@ def test_an_own_change_invalidates_a_built_observation_no_write_used() -> None:
 
     def observe(uow: UnitOfWork) -> None:
         built = judged_evidence(
-            model, entity, _balance_columns(), evidence_context=uow.source_authority
+            model, entity, _balance_columns(), evidence_context=uow.source_registry
         )[0].observation
         assert built is not None
         writer = judged_evidence(
-            model, entity, _balance_columns(), evidence_context=uow.source_authority
+            model, entity, _balance_columns(), evidence_context=uow.source_registry
         )[0]
         assert writer.observation is built  # one state, one shared observation
         uow.buffer(_balance_update(model, writer))

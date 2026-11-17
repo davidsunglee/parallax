@@ -17,7 +17,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import ExecutionLifecycleProvider
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.source_authority import SourceAuthority
+from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
@@ -302,23 +302,23 @@ def run_plan(
     )
     if units is not None:
         units.append(uow)
-    ownership = uow.source_authority.planning_ownership(concluding=False)
+    ownership = uow.source_registry.planning_ownership(concluding=False)
     if completed is None:
         uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
         return
-    complete = SourceAuthority.complete_write
+    complete = SourceRegistry.complete_write
 
     def recording(
-        authority: SourceAuthority,
+        registry: SourceRegistry,
         effects: WriteEffects,
         *,
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
         completed.append(len(port.calls))
-        complete(authority, effects, captured=captured)
+        complete(registry, effects, captured=captured)
 
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(SourceAuthority, "complete_write", recording)
+        patched.setattr(SourceRegistry, "complete_write", recording)
         uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
 
 

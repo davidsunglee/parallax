@@ -591,7 +591,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._read_query",
     ): frozenset({"resolve_read_query"}),
     ("parallax.conformance._wire_submission", "parallax.snapshot._publication._wire"): frozenset(
-        {"authoring_of", "read_evidence_of"}
+        {"insertion_of", "read_evidence_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
     # production planner, write preparation, and source-pin check through, read

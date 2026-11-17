@@ -263,7 +263,7 @@ class SpanWriteGroups:
 
 def _prepare_range(acquisition: _RangeAcquisition, invocation: _Invocation) -> None:
     deferred = acquisition.range
-    completion = deferred.take_retained_completion(invocation.current)
+    completion = deferred.take_starting_row_completion(invocation.current)
     reused = None if completion is None else invocation.acquire_rows(completion, consume_completion)
     if reused is not None:
         acquisition.rows = [reused]

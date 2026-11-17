@@ -89,7 +89,7 @@ class RetainedObservation:
 
         An invalidated observation no longer describes the stored state; what
         its sources may still write is what the attempt's own completed writes
-        left of that state, which the attempt's source authority answers.
+        left of that state, which the attempt's source registry answers.
         """
         return self._invalidated
 

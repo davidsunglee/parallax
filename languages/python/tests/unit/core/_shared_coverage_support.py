@@ -22,7 +22,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
+from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,
@@ -206,13 +206,15 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
     assert isinstance(prepared, PreparedTargetInstruction)
     view = inheritance_facet_of(MODEL).entity(entity.identity)
     assert view is not None
-    retained = RetainedTargetState(
+    starting_row = RetainedStartingRow(
         _state(entity, stored),
         0,
         positional_row(view.member_selection.shape, stored.members, absent=ABSENT),
         stored.document,
     )
-    return replace(target_write(prepared, inheritance_facet_of(MODEL)), retained=retained), stored
+    return replace(
+        target_write(prepared, inheritance_facet_of(MODEL)), starting_row=starting_row
+    ), stored
 
 
 def plan(

@@ -14,7 +14,7 @@ two row counts or two variants, so everything a transaction costs that does not
 grow with them cancels, and an equality says nothing grows.
 
 A read's sources that have not all resolved yet keep the attempt's source
-authority as their evidence context, and through it nothing of the unit of
+registry as their evidence context, and through it nothing of the unit of
 work that executes the attempt's writes.
 """
 
@@ -35,8 +35,8 @@ from parallax.core._execution._unit_work._write_ownership import (
     _HeldCurrentRows,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
     _Origin,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
 )
-from parallax.core._execution._unit_work.source_authority import (
-    SourceAuthority,
+from parallax.core._execution._unit_work.source_registry import (
+    SourceRegistry,
     _ReadRegistration,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
 )
 from parallax.core.internal.unit_work import UnitOfWork
@@ -183,8 +183,8 @@ def test_only_publications_after_their_objects_deletion_register_and_only_while_
 
 
 _SHELL_DEPTH: Final = 12
-"""Deeper than any path from a read's sources through its authority to what
-that authority holds."""
+"""Deeper than any path from a read's sources through its registry to what
+that registry holds."""
 
 
 @in_a_child_interpreter
@@ -208,14 +208,14 @@ def test_a_streamed_reads_unresolved_sources_hold_nothing_of_the_unit_of_work() 
             seen.append(
                 (
                     len(unresolved),
-                    reaches(unresolved, unit.source_authority, depth=1),
+                    reaches(unresolved, unit.source_registry, depth=1),
                     any(
                         reaches(unresolved, part, depth=_SHELL_DEPTH)
                         for part in (unit, unit.execute_write_steps, unit.acquire_rows)
                     ),
                 )
             )
-            assert isinstance(unit.source_authority, SourceAuthority)
+            assert isinstance(unit.source_registry, SourceRegistry)
             del first, objects, unresolved, unit
 
     with connect(port, PERSON, clock=FixedClock(FIXED), binding=TEST_BINDING) as root:

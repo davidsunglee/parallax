@@ -17,7 +17,7 @@ from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadRequest,
-    RetainedTargetState,
+    RetainedStartingRow,
     RowConsumer,
     RowRequest,
 )
@@ -72,10 +72,10 @@ assert _VIEW is not None
 _SHAPE = _VIEW.member_selection.shape
 
 
-def _held(predecessor: PredecessorRow, *, read_at: int = 0) -> RetainedTargetState:
+def _held(predecessor: PredecessorRow, *, read_at: int = 0) -> RetainedStartingRow:
     """``predecessor`` as a Locking acquisition retained it."""
     row = positional_row(_SHAPE, predecessor.members, absent=ABSENT)
-    return RetainedTargetState(_state(predecessor), read_at, row, None)
+    return RetainedStartingRow(_state(predecessor), read_at, row, None)
 
 
 def _state(predecessor: PredecessorRow) -> TemporalObjectStateKey:
@@ -84,8 +84,8 @@ def _state(predecessor: PredecessorRow) -> TemporalObjectStateKey:
     return state
 
 
-def _holding(item: TargetWrite, state: RetainedTargetState) -> TargetWrite:
-    return dataclasses.replace(item, retained=state)
+def _holding(item: TargetWrite, state: RetainedStartingRow) -> TargetWrite:
+    return dataclasses.replace(item, starting_row=state)
 
 
 def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> WritePlan:
@@ -196,7 +196,7 @@ def test_a_retained_row_is_released_by_a_range_that_binds_twice() -> None:
 def test_a_retained_row_is_completed_as_one_original_beside_an_observed_one() -> None:
     # A retained row whose state an observed original already is joins nothing.
     observed = retained(_START)
-    state = RetainedTargetState(
+    state = RetainedStartingRow(
         _state(_START), 0, positional_row(_SHAPE, _START.members, absent=ABSENT), None
     )
     settled = _settled(

@@ -10,8 +10,8 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.write_collapse import collapse_writes
 from parallax.core._execution._unit_work.write_items import (
     InsertBatch,
-    ObjectLockedBatch,
-    ObjectLockedWrite,
+    UnversionedLocked,
+    UnversionedWriteBatch,
 )
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INT64, UsageError
@@ -301,7 +301,7 @@ def test_insert_runs_use_the_admitted_target_and_preserve_row_order(
     ],
     ids=["singleton", "uniform", "whole-run-nonuniform", "presence", "delete-payload"],
 )
-def test_object_locked_runs_preserve_whole_run_membership(
+def test_unversioned_runs_preserve_whole_run_membership(
     mutation: Literal["amend", "delete"],
     rows: tuple[dict[str, object], ...],
     sizes: tuple[int, ...],
@@ -317,14 +317,14 @@ def test_object_locked_runs_preserve_whole_run_membership(
         tuple(
             len(item.instruction.rows)
             for item in result
-            if isinstance(item, ObjectLockedWrite | ObjectLockedBatch)
+            if isinstance(item, UnversionedLocked | UnversionedWriteBatch)
         )
         == sizes
     )
     assert tuple(
         row.cell(AttributeIdentity(entity.identity, "id"))
         for item in result
-        if isinstance(item, ObjectLockedWrite | ObjectLockedBatch)
+        if isinstance(item, UnversionedLocked | UnversionedWriteBatch)
         for row in item.instruction.rows
     ) == tuple(row["id"] for row in rows)
 
@@ -350,7 +350,7 @@ def test_delete_runs_ignore_nonkey_presence(model: Metamodel) -> None:
     result = collapse_writes(model, admitted)
     assert len(result) == 1
     (batch,) = result
-    assert isinstance(batch, ObjectLockedBatch)
+    assert isinstance(batch, UnversionedWriteBatch)
     assert tuple(row.cell(AttributeIdentity(PERSON, "id")) for row in batch.instruction.rows) == (
         3,
         1,
@@ -369,7 +369,7 @@ def test_uniform_updates_exclude_the_inherited_addressing_key(
         for key in (3, 1)
     ]
     (batch,) = collapse_writes(model, observed_buffer(writes, model, None))
-    assert isinstance(batch, ObjectLockedBatch)
+    assert isinstance(batch, UnversionedWriteBatch)
     assert tuple(key.primary_key for key in batch.object_keys) == ((("id", 3),), (("id", 1),))
 
 

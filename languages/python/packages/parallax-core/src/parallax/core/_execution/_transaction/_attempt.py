@@ -533,7 +533,7 @@ class TxnAttempt(_TxnAttemptBase):
             actor_identity=actor,
         )
         self._inputs = ReadInputs(
-            connection, self._uow.settings.preference, self._uow.source_authority
+            connection, self._uow.settings.preference, self._uow.source_registry
         )
 
     @property
