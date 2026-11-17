@@ -14,12 +14,13 @@ import pytest
 
 from parallax.core import InternalError
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
+from parallax.core._execution._unit_work.ranges import DeferredRange
+from parallax.core._execution._unit_work.row_acquisition import CoverageReadRequest
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.planned_step import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.internal.planned_step.steps import (
@@ -49,7 +50,7 @@ from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
-    settled_writes,
+    deferred_ranges,
 )
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     alone,
@@ -87,20 +88,12 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
 # Binding: the coverage a range reads.                                         #
 # --------------------------------------------------------------------------- #
 def _deferred_write(
-    *writes: AdmittedWrite, concurrency: str = "optimistic", guards: bool = False
-) -> SettledWrite:
-    write = _planned_write(*writes, concurrency=concurrency, guards=guards)
-    assert write.deferred is not None
-    return write
-
-
-def _planned_write(
     *writes: AdmittedWrite,
     concurrency: str = "optimistic",
     guards: bool = False,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> SettledWrite:
-    (write,) = settled_writes(
+) -> DeferredRange:
+    (write,) = deferred_ranges(
         _plan(*writes, concurrency=concurrency, guards=guards, ownership=ownership)
     )
     return write
@@ -125,7 +118,7 @@ def _plan(
 
 
 def _bound(
-    settled: SettledWrite,
+    settled: DeferredRange,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -137,7 +130,7 @@ def _bound(
     )
 
 
-def _coverage(settled: SettledWrite) -> CoverageReadRequest:
+def _coverage(settled: DeferredRange) -> CoverageReadRequest:
     """The coverage read ``settled write``'s deferred range asks for."""
     return coverage_read(POSITION, alone(settled), transaction_instant=_instant())
 
@@ -165,7 +158,6 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
         acctNum="O",
     )
     settled = _deferred_write(observed)
-    assert settled.deferred is not None
     windows = _coverage(settled).terms[0].valid_time_windows
     assert windows is not None
     (window,) = windows
@@ -178,7 +170,6 @@ def test_a_range_its_observations_leave_uncovered_reads_only_the_uncovered_suffi
 def test_a_lone_target_range_reads_through_the_very_window_its_caller_prepared() -> None:
     target = addressed_write(value="150.00")
     settled = _deferred_write(target)
-    assert settled.deferred is not None
     windows = _coverage(settled).terms[0].valid_time_windows
     assert windows is not None
     (window,) = windows
@@ -316,11 +307,10 @@ def _opened(start: dt.datetime, value: str) -> PredecessorRow:
 def test_a_continuing_observed_write_binds_to_the_values_the_earlier_write_left() -> None:
     # The attempt holds none of the rows the earlier write left, so the range
     # reads them as ordinary coverage.
-    settled = _planned_write(
+    settled = _deferred_write(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
         ownership=_changed(),
     )
-    assert settled.deferred is not None
     bound = _bound(settled, [_opened(APR, "150.00")], ownership=_changed())
     opened = [
         {identity.name: value for identity, value in step.entries[0].row.attributes.items()}

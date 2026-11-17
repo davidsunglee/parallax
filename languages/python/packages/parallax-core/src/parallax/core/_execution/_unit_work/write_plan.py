@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator, Hashable, Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from parallax.core.internal.planned_step.steps import PlannedInsert, PlannedStep
 from parallax.core.internal.planned_step.write_effects import (
@@ -10,22 +11,14 @@ from parallax.core.internal.planned_step.write_effects import (
     WriteEffects,
 )
 
+if TYPE_CHECKING:
+    from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
+
 __all__ = [
-    "AcquisitionSpan",
-    "DeferredRange",
     "SettledWrite",
     "WriteGroup",
     "WritePlan",
 ]
-
-
-class DeferredRange:
-    """A finalized range whose physical steps depend on coverage no planning
-    input knew, which the unit of work that planned it binds at its settled
-    write's turn. Field-free here: what binding reads belongs to its unit-of-work
-    subclass."""
-
-    __slots__ = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -39,16 +32,11 @@ class SettledWrite(WriteEffects):
     coordinates remains owned, and an insertion whose last row the write
     removed still stands when a row the write opened continues it.
 
-    A settled write with a ``deferred`` range is a plan entry of its own and
-    has no planned step: its steps and effects come from binding that range,
-    and the group it executes in is formed only once it is bound.
-
     ``source_evidence`` holds, by identity, the Read Evidence of every source
     whose write it settled, so those sources stay published for as long as the
     plan holding it is reachable. Nothing interprets it.
     """
 
-    deferred: DeferredRange | None = None
     source_evidence: tuple[object, ...] = ()
 
 
@@ -184,27 +172,13 @@ class _Layout:
 
 
 @dataclass(frozen=True, slots=True)
-class AcquisitionSpan:
-    """The entries ``[start, stop)`` of a plan, at least two, each one deferred
-    settled write, whose coverage is acquired together (`m-unit-work` *Shared
-    coverage acquisition*). Each write binds once the coverage it needs is read,
-    and the leading ready writes of what remains execute and complete as one
-    Write Group."""
-
-    start: int
-    stop: int
-
-
-@dataclass(frozen=True, slots=True)
 class WritePlan:
-    """One flush's finalized writes in execution order, and the acquisition
-    spans among them, in order and never overlapping.
+    """One flush's finalized writes in execution order.
 
-    Each of ``entries`` is a Write Group, or one deferred settled write, which
-    is grouped only once it is bound. A plan of no entry is the one canonical
-    result for complete cancellation or known no-op elimination; there is no
-    empty-plan sentinel and no second result variant.
+    Each of ``turns`` is a Write Group, or an acquisition span of deferred
+    writes, which are grouped only as they are bound. A plan of no turn is the
+    one canonical result for complete cancellation or known no-op elimination;
+    there is no empty-plan sentinel and no second result variant.
     """
 
-    entries: tuple[WriteGroup | SettledWrite, ...] = ()
-    acquisition_spans: tuple[AcquisitionSpan, ...] = ()
+    turns: tuple[WriteGroup | AcquisitionSpan, ...] = ()

@@ -1080,18 +1080,16 @@ releases them all.
 
 ### Shared coverage acquisition
 
-An **acquisition span** is a bounded run of at least two consecutive plan entries,
-each one deferred settled write that names its one complete Object Key,
-whatever its Entity's temporal shape or the verb that
-wrote it. Its writes belong to one mutation phase, target one concrete Entity — so
-one key attribute and one member selection — and either all take the shared lock
-their coverage read takes under Locking or none do. Each names an object no
-earlier write of the span names under its Inheritance Family's primary key. A
-span never skips an entry: any Write Group, a deferred write of another Entity or
-lock requirement, a repeated object, a phase boundary, or the bound, which is the
-implementation's, ends it, and the next eligible write may start another. A
-deferred write outside any span acquires its coverage alone at its turn and
-executes as a Write Group of its own.
+An **acquisition span** is a bounded run of one or more consecutive deferred
+settled writes of the plan, each naming its one complete Object Key, whatever
+its Entity's temporal shape or the verb that wrote it. Its writes belong to one
+mutation phase, target one concrete Entity — so one key attribute and one member
+selection — and either all take the shared lock their coverage read takes under
+Locking or none do. Each names an object no earlier write of the span names
+under its Inheritance Family's primary key. A span never skips a write: any
+Write Group, a deferred write of another Entity or lock requirement, a repeated
+object, a phase boundary, or the bound, which is the implementation's, ends it,
+and the next deferred write starts another.
 
 A span grants acquisition permission; its execution groups follow readiness.
 Whenever the span's first remaining write is ready, the unit of work binds it
@@ -1099,7 +1097,7 @@ and each consecutive ready write after it, up to the first that is not, as one
 Write Group under *Write Group formation*'s rules; it executes
 and completes that group before binding any later write or reading any further
 statement (*Write Groups complete before later work runs*). No statement is read,
-and no ready group delayed, to enlarge a group. Each write binds against
+and no group of ready writes delayed, to enlarge a group. Each write binds against
 the rows read and the Attempt Ownership every earlier group published; the
 writes of one group name distinct objects, so none binds against another's
 completion. A deferred dependency is not coverage: no write's coverage is read

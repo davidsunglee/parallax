@@ -9,15 +9,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition import (
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, form_spans
+from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.metamodel import Metamodel
@@ -62,7 +62,10 @@ class HeldRows:
         self, request: Request, consumer: RowConsumer[Request, Result], /
     ) -> Result:
         self.requests.append(request)
-        view = inheritance.inheritance_facet_of(self.model).entity(request.entity.identity)
+        entity = (
+            request.read_key.entity if isinstance(request, CoverageReadRequest) else request.entity
+        )
+        view = inheritance.inheritance_facet_of(self.model).entity(entity.identity)
         assert view is not None
         selection = view.member_selection
         if isinstance(request, CompletionRequest):
@@ -78,14 +81,15 @@ class HeldRows:
         return consumer(request, selection, iter(positional), ABSENT, documents, len(positional))
 
     def _overlaps(self, request: CoverageReadRequest, row: PredecessorRow) -> bool:
-        key = row.members[request.key_attribute.name]
+        read_key = request.read_key
+        key = row.members[read_key.key_attribute.name]
         terms = [term for term in request.terms if term.key_value == key]
         windows = [term.valid_time_windows for term in terms if term.valid_time_windows]
         if not terms:
             return False
         if len(windows) != len(terms):
             return True
-        shape = temporal_read.temporal_facet_of(self.model).shape(request.entity.identity)
+        shape = temporal_read.temporal_facet_of(self.model).shape(read_key.entity.identity)
         assert shape is not None
         coverage = valid_time_coverage(shape, row, None)
         assert coverage is not None
@@ -100,23 +104,19 @@ def _never_current(state: ObjectStateKey, read_at: int) -> bool:
 
 def range_bindings(
     model: Metamodel,
-    plan: WritePlan,
+    span: AcquisitionSpan,
     acquire_rows: AcquireRows,
     *,
-    start: int,
-    stop: int,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = _never_current,
 ) -> RangeBindings:
-    """The scoped binding a flush binds ``plan``'s deferred entries ``[start,
-    stop)`` through, reading through ``acquire_rows`` under ``ownership``,
-    their retained rows judged by ``current``."""
+    """The scoped binding a flush binds ``span``'s deferred writes through,
+    reading through ``acquire_rows`` under ``ownership``, their retained rows
+    judged by ``current``."""
     planner = build_write_planner(bound_model(model))
     return RangeBindings(
-        plan,
-        start=start,
-        stop=stop,
+        span,
         acquire_rows=acquire_rows,
         current=current,
         ownership=ownership,
@@ -127,32 +127,29 @@ def range_bindings(
     )
 
 
-def alone(settled: SettledWrite) -> WritePlan:
-    """The plan of the deferred ``settled`` write alone, as settlement plans a
-    lone deferred write: one entry, in no acquisition span."""
-    assert isinstance(settled.deferred, DeferredTemporalRange)
-    return WritePlan((settled,))
+def alone(deferred: DeferredRange) -> AcquisitionSpan:
+    """The acquisition span of ``deferred`` alone, as formation spans a
+    deferred write no neighbour shares with."""
+    (span,) = form_spans((deferred,))
+    return span
 
 
 def bind_deferred(
     model: Metamodel,
-    plan: WritePlan,
+    span: AcquisitionSpan,
     acquire_rows: AcquireRows,
     *,
-    position: int = 0,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = _never_current,
 ) -> BoundRange:
-    """The deferred write at ``plan``'s entry ``position`` bound alone, through
-    its :func:`range_bindings`: the one write of the one Write Group they
-    answer, whose steps are its own."""
+    """The one deferred write of ``span`` bound, through its
+    :func:`range_bindings`: the one write of the one Write Group they answer,
+    whose steps are its own."""
     with range_bindings(
         model,
-        plan,
+        span,
         acquire_rows,
-        start=position,
-        stop=position + 1,
         transaction_instant=transaction_instant,
         ownership=ownership,
         current=current,
@@ -166,41 +163,32 @@ def bind_deferred(
 
 def bind_held(
     model: Metamodel,
-    plan: WritePlan,
+    span: AcquisitionSpan,
     rows: Sequence[PredecessorRow],
     *,
-    position: int = 0,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> BoundRange:
-    """The deferred write at ``plan``'s entry ``position`` bound, as the unit
-    of work binds it at execution, to a coverage read finding ``rows`` under
-    ``ownership``."""
+    """The one deferred write of ``span`` bound, as the unit of work binds it
+    at execution, to a coverage read finding ``rows`` under ``ownership``."""
     return bind_deferred(
         model,
-        plan,
+        span,
         HeldRows(model, rows),
-        position=position,
         transaction_instant=transaction_instant,
         ownership=ownership,
     )
 
 
 def coverage_read(
-    model: Metamodel,
-    plan: WritePlan,
-    *,
-    position: int = 0,
-    transaction_instant: TransactionInstant,
+    model: Metamodel, span: AcquisitionSpan, *, transaction_instant: TransactionInstant
 ) -> CoverageReadRequest:
-    """The coverage read the deferred write at ``plan``'s entry ``position``
-    asks for when the unit of work binds it, observed as the read is asked for
-    and before any binding."""
+    """The coverage read the one deferred write of ``span`` asks for when the
+    unit of work binds it, observed as the read is asked for and before any
+    binding."""
     observed = _ObservedRead()
     with contextlib.suppress(_ObservedRead):
-        bind_deferred(
-            model, plan, observed, position=position, transaction_instant=transaction_instant
-        )
+        bind_deferred(model, span, observed, transaction_instant=transaction_instant)
     assert isinstance(observed.request, CoverageReadRequest)
     return observed.request
 

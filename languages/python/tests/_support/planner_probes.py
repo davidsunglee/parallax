@@ -10,7 +10,7 @@ from typing import Final
 
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work._write_ownership import NoInsertionAuthority
-from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
@@ -23,6 +23,8 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
+from parallax.core._execution._unit_work.ranges import DeferredRange
+from parallax.core._execution._unit_work.row_acquisition import AcquireRows, RowConsumer, RowRequest
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
@@ -57,6 +59,7 @@ __all__ = [
     "TEST_ACTOR_IDENTITY",
     "admit",
     "admitted_writes",
+    "deferred_ranges",
     "object_source",
     "observed_buffer",
     "observed_write",
@@ -277,20 +280,26 @@ def _settled(
 def plan_steps(plan: WritePlan) -> tuple[PlannedStep, ...]:
     """Every Planned Step of ``plan``'s Write Groups, in execution order; a
     deferred write plans none."""
-    return tuple(
-        step for entry in plan.entries if isinstance(entry, WriteGroup) for step in entry.steps
-    )
+    return tuple(step for turn in plan.turns if isinstance(turn, WriteGroup) for step in turn.steps)
 
 
 def settled_writes(plan: WritePlan) -> tuple[SettledWrite, ...]:
-    """Every settled write of ``plan``, grouped or deferred, in completion
-    order."""
+    """Every settled write of ``plan``'s Write Groups, in completion order; a
+    deferred write is none until it binds."""
     writes: list[SettledWrite] = []
-    for entry in plan.entries:
-        if isinstance(entry, SettledWrite):
-            writes.append(entry)
-            continue
-        for write in entry.writes:
-            assert isinstance(write, SettledWrite)  # planning groups settled writes
-            writes.append(write)
+    for turn in plan.turns:
+        if isinstance(turn, WriteGroup):
+            for write in turn.writes:
+                assert isinstance(write, SettledWrite)  # planning groups settled writes
+                writes.append(write)
     return tuple(writes)
+
+
+def deferred_ranges(plan: WritePlan) -> tuple[DeferredRange, ...]:
+    """Every deferred write of ``plan``'s acquisition spans, in order."""
+    return tuple(
+        deferred
+        for turn in plan.turns
+        if isinstance(turn, AcquisitionSpan)
+        for deferred in turn.ranges
+    )

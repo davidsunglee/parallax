@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition import RowConsumer, RowRequest
+from parallax.core._execution._unit_work.row_acquisition import RowConsumer, RowRequest
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel

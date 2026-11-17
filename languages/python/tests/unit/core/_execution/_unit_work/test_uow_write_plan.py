@@ -34,14 +34,7 @@ from parallax.core import (
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    CompletionRequest,
-    CoverageReadRequest,
-    RowConsumer,
-    RowRequest,
-    TargetReadRequest,
-)
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, form_spans
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -49,15 +42,18 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    CompletionRequest,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+    TargetReadRequest,
+)
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import StateObservedWrite
-from parallax.core._execution._unit_work.write_plan import (
-    DeferredRange,
-    SettledWrite,
-    WriteGroup,
-    WritePlan,
-)
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal import temporal_read
@@ -103,6 +99,7 @@ from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     NO_ROW_READS,
     TEST_ACTOR_IDENTITY,
+    deferred_ranges,
     retained_observation,
 )
 from tests._support.write_preparation import write_preparation_of
@@ -130,6 +127,7 @@ from tests.unit.core._shared_coverage_support import (
     frag,
     frag_rows,
 )
+from tests.unit.core._shared_coverage_support import plan as shared_plan
 from tests.unit.core._shared_coverage_support import rectangle as shared_rectangle
 
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -200,8 +198,8 @@ def _group(*writes: SettledWrite, steps: tuple[PlannedStep, ...] = ()) -> WriteG
 
 
 def _groups(plan: WritePlan) -> list[WriteGroup]:
-    groups = [entry for entry in plan.entries if isinstance(entry, WriteGroup)]
-    assert len(groups) == len(plan.entries)
+    groups = [turn for turn in plan.turns if isinstance(turn, WriteGroup)]
+    assert len(groups) == len(plan.turns)
     return groups
 
 
@@ -267,17 +265,31 @@ def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes(
     assert statement_kinds(simulated.statements) == ["close"]
 
 
-class _Foreign(DeferredRange):
-    __slots__ = ()
+def test_an_acquisition_spans_turn_runs_between_the_groups_around_it() -> None:
+    (span,) = form_spans(
+        deferred_ranges(shared_plan([*frag(ShareCols, 1, 1), *frag(ShareCols, 2, 1)]))
+    )
+    plan = WritePlan((_group(SettledWrite()), span, _group(SettledWrite())))
+    events: list[tuple[str, object]] = []
 
+    def watch(request: RowRequest) -> None:
+        assert isinstance(request, CoverageReadRequest)
+        events.append(("read", tuple(term.key_value for term in request.terms)))
 
-def test_a_deferred_description_no_planner_finalized_is_refused_before_anything_is_read() -> None:
-    held = HeldRows(POSITION_META)
-    simulated = _simulated(POSITION_META)
-    plan = WritePlan((SettledWrite(deferred=_Foreign()),))
-    with pytest.raises(TypeError, match="did not finalize"):
-        _run(_uow(POSITION_META, simulated, rows=held), plan)
-    assert held.requests == []
+    steps = ObservedSteps(
+        _simulated(SHARED_MODEL),
+        observe=lambda _position, held: events.append(("execute", len(held))),
+    )
+    stored = HeldRows(
+        SHARED_MODEL, frag_rows(ShareCols, 1, 1) + frag_rows(ShareCols, 2, 1), overlapping=True
+    )
+    uow = _uow(SHARED_MODEL, steps, rows=_Watched(stored, watch))
+    _run(uow, plan)
+    # The span's one read follows the group before it, and both its ranges
+    # execute and complete as one group ahead of the group after it.
+    assert [kind for kind, _held in events] == ["execute", "read", "execute", "execute"]
+    assert events[1] == ("read", (1, 2))
+    assert uow.source_authority.freshness == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -445,11 +457,12 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
     uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
     uow.flush(trigger="pre_commit")
-    ((planned, deferred),) = [plan.entries for plan in plans]
+    ((planned, deferred),) = [plan.turns for plan in plans]
     assert isinstance(planned, WriteGroup)
-    assert isinstance(deferred, SettledWrite)
+    # A deferred write no neighbour shares with is a span of its own.
+    assert isinstance(deferred, AcquisitionSpan)
+    assert len(deferred.ranges) == 1
     (bound,) = ranges
-    assert deferred.deferred is not None
     assert bound.steps
     # A deferred write executes nothing until its range is bound, and its
     # group of one runs the very steps the range bound.

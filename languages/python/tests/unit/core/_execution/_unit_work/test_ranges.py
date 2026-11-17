@@ -18,24 +18,24 @@ import pytest
 import parallax.core._execution._planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    CoverageReadRequest,
-    RowConsumer,
-    RowRequest,
-)
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import RangeBindings
+from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+)
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     StateObservedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY, InternalError
 from parallax.core.internal.metamodel import EntityIdentity
@@ -61,7 +61,6 @@ from parallax.core.internal.planned_step.steps import (
 from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    Openings,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
@@ -81,6 +80,7 @@ from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
+    deferred_ranges,
     plan_steps,
     settled_writes,
 )
@@ -181,18 +181,17 @@ def _plan(
     )
 
 
-def _deferred(plan: WritePlan) -> tuple[SettledWrite, CoverageReadRequest]:
+def _deferred(plan: WritePlan) -> tuple[DeferredRange, CoverageReadRequest]:
     """``plan``'s one deferred write, and the coverage read the unit of work asks
     for when it binds that write's range."""
-    (write,) = settled_writes(plan)
-    assert write.deferred is not None
+    (write,) = deferred_ranges(plan)
     return write, coverage_read(
-        _SPANS, plan, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+        _SPANS, alone(write), transaction_instant=instant_at(_PLANNED_AT.isoformat())
     )
 
 
 def _bind(
-    settled: SettledWrite,
+    settled: DeferredRange,
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -221,7 +220,7 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
     head, tail = _retained(_HEAD), _retained(_TAIL)
     known = _plan(_update(head, _MAR, _JUN), _update(tail, _JUN, _SEP))
     (planned,) = settled_writes(known)
-    assert planned.deferred is None
+    assert not deferred_ranges(known)
     read, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
@@ -242,8 +241,6 @@ def test_a_range_binds_alike_whether_planning_knew_its_coverage_or_execution_rea
         (),
     ]
     assert (bound.removed, bound.derived, bound.current_outputs) == ((), (), ())
-    # A deferred settled write's plan entry publishes nothing of its own.
-    assert (tuple(read.changed), read.opened) == ((), Openings())
 
 
 def test_a_read_that_found_no_row_binds_the_range_to_what_it_observed() -> None:
@@ -372,7 +369,7 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
     later = _retained(_span(_MAR, INFINITY, 200, tx_start=_T1))
     plan = _plan(_update(earlier, _MAR, _APR), _update(later, _MAY, _JUL), ownership=ownership)
     (write,) = settled_writes(plan)
-    assert write.deferred is None
+    assert not deferred_ranges(plan)
     validation, closing, *successors = plan_steps(plan)
     # The earlier observation is only validated: it retires its own row ahead
     # of the later one's close, and every successor derives from the later one.
@@ -441,13 +438,11 @@ def _answering(held: AcquireRows, answers: list[object]) -> AcquireRows:
     return acquire
 
 
-def _scoped(settled: SettledWrite, acquire: AcquireRows) -> RangeBindings:
+def _scoped(settled: DeferredRange, acquire: AcquireRows) -> RangeBindings:
     return range_bindings(
         _SPANS,
         alone(settled),
         acquire,
-        start=0,
-        stop=1,
         transaction_instant=instant_at(_PLANNED_AT.isoformat()),
     )
 

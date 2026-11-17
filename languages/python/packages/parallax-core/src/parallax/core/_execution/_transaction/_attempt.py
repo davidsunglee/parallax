@@ -28,14 +28,6 @@ from parallax.core._execution._read_pipeline import (
     resolved,
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.acquisition import (
-    CompletionRequest,
-    CoverageReadRequest,
-    RowConsumer,
-    RowReadRequest,
-    RowRequest,
-    TargetReadRequest,
-)
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
@@ -50,6 +42,14 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
     refuse_keyless_target,
     resolve_target,
+)
+from parallax.core._execution._unit_work.row_acquisition import (
+    CompletionRequest,
+    CoverageReadRequest,
+    RowConsumer,
+    RowReadRequest,
+    RowRequest,
+    TargetReadRequest,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
@@ -738,9 +738,16 @@ class TxnAttempt(_TxnAttemptBase):
                 request, cast("RowConsumer[CompletionRequest, Result]", consumer)
             )
         if isinstance(request, CoverageReadRequest):
-            return self._consume(self._coverage_read(request), self._flush, request, consumer)
-        with self._activity.read(request.entity.identity, "row-acquisition") as read:
-            return self._consume(self._target_read(request), read, request, consumer)
+            return self._consume(
+                self._coverage_read(request),
+                self._flush,
+                request.read_key.entity,
+                request,
+                consumer,
+            )
+        entity = request.entity
+        with self._activity.read(entity.identity, "row-acquisition") as read:
+            return self._consume(self._target_read(request), read, entity, request, consumer)
 
     def _completed_rows[Result](
         self, request: CompletionRequest, consumer: RowConsumer[CompletionRequest, Result]
@@ -762,20 +769,21 @@ class TxnAttempt(_TxnAttemptBase):
         self,
         plan: ReadPlan,
         calls: DatabaseCallScope,
+        entity: CompiledEntity,
         request: Request,
         consumer: RowConsumer[Request, Result],
     ) -> Result:
-        """Execute ``plan`` as one flat Page and run ``consumer`` over its
-        judged member rows, releasing the Page and dropping this reader's own
+        """Execute ``plan`` as one flat Page of ``entity`` and run ``consumer``
+        over its judged member rows, releasing the Page and dropping this reader's own
         references to its staging, rows, and raw documents however the
         consumer left it — before starting the rows, part way through them, or
         by raising, whose failure keeps its traceback. What the consumer
         returned keeps what it adopted. A retaining target read's rows have
         only their Attributes judged."""
         model = self._write.model
-        layout = entity_layout(model.meta, request.entity)
+        layout = entity_layout(model.meta, entity)
         if layout is None:  # pragma: no cover - a write target always owns rows
-            raise ValueError(f"{request.entity.identity.canonical}: write target has no Table")
+            raise ValueError(f"{entity.identity.canonical}: write target has no Table")
         stage = PageReader().read_page(plan, PageReadContext(self._connection, calls))
         page = stage.page
         rows = (
@@ -819,10 +827,11 @@ class TxnAttempt(_TxnAttemptBase):
         )
 
     def _coverage_read(self, request: CoverageReadRequest) -> ReadPlan:
+        read_key = request.read_key
         query = read_planning.plan_coverage_read(
-            request.entity,
+            read_key.entity,
             model=self._write.model.meta,
-            key=request.key_attribute.name,
+            key=read_key.key_attribute.name,
             terms=tuple((term.key_value, term.valid_time_windows) for term in request.terms),
         )
         return self._planner.plan_acquisition(
@@ -831,7 +840,7 @@ class TxnAttempt(_TxnAttemptBase):
             dialect=self._connection.dialect,
             query=query,
             preference=self._uow.settings.preference,
-            coverage_shared_lock=request.shared_lock,
+            coverage_shared_lock=read_key.shared_lock,
         )
 
     # Flush execution.

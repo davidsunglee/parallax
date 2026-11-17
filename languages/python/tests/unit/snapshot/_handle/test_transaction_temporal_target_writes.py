@@ -23,9 +23,9 @@ import pytest
 
 from parallax.core import Attr, DomainModel, Entity, InternalError, UsageError, attr
 from parallax.core._execution._unit_work import ranges
-from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
+from parallax.core._execution._unit_work.ranges import DeferredRange
+from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core.internal.base import DocumentValue
 from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import MappingRow, StructuredDocument
@@ -198,7 +198,7 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     bind = ranges._bind_range  # pyright: ignore[reportPrivateUsage] - the binding a flush's range takes
 
     def recording(
-        deferred: DeferredTemporalRange,
+        deferred: DeferredRange,
         reused: PredecessorRows | None,
         acquired: Sequence[PredecessorRows],
         /,

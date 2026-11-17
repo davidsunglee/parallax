@@ -20,14 +20,7 @@ from parallax.core import Attr, Bitemporal, DomainModel, InternalError, TxTempor
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work import write_plan as plan_module
-from parallax.core._execution._unit_work.acquisition import (
-    AcquireRows,
-    CompletionRequest,
-    CoverageReadRequest,
-    RetainedTargetState,
-    RowConsumer,
-    RowRequest,
-)
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.effects import (
     CARDINALITY_CORRUPTION,
     WRITE_PRECONDITION_FAILED,
@@ -37,14 +30,17 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
-from parallax.core._execution._unit_work.write_items import AdmittedWrite, TargetWrite, target_write
-from parallax.core._execution._unit_work.write_plan import (
-    AcquisitionSpan,
-    SettledWrite,
-    WriteGroup,
-    WritePlan,
+from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.row_acquisition import (
+    AcquireRows,
+    CompletionRequest,
+    CoverageReadRequest,
+    RetainedTargetState,
+    RowConsumer,
+    RowRequest,
 )
+from parallax.core._execution._unit_work.write_items import AdmittedWrite, TargetWrite, target_write
+from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_error import DatabaseError
@@ -153,13 +149,18 @@ class _Traced:
 
 
 def _bindings(written: WritePlan, acquire: AcquireRows, model: Metamodel = MODEL) -> RangeBindings:
-    """The scoped binding of every entry of ``written``: its one acquisition
-    span, or its one deferred write."""
+    """The scoped binding of ``written``'s one turn, an acquisition span."""
+    (span,) = written.turns
+    assert isinstance(span, AcquisitionSpan)
+    return _span_bindings(span, acquire, model)
+
+
+def _span_bindings(
+    span: AcquisitionSpan, acquire: AcquireRows, model: Metamodel = MODEL
+) -> RangeBindings:
     planner = build_write_planner(bound_model(model))
     return RangeBindings(
-        written,
-        start=0,
-        stop=len(written.entries),
+        span,
         acquire_rows=acquire,
         current=_always,
         ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -203,11 +204,10 @@ def _drained(bindings: RangeBindings, trace: list[tuple[str, tuple[Any, ...]]]) 
 
 
 def _span(written: WritePlan) -> WritePlan:
-    assert written.acquisition_spans == (AcquisitionSpan(0, len(written.entries)),)
-    assert all(
-        isinstance(entry, SettledWrite) and isinstance(entry.deferred, DeferredTemporalRange)
-        for entry in written.entries
-    )
+    """``written``, whose every write is deferred into its one acquisition
+    span."""
+    (span,) = written.turns
+    assert isinstance(span, AcquisitionSpan) and len(span.ranges) > 1
     return written
 
 
@@ -234,12 +234,12 @@ class _Bound:
 
     def __call__(
         self,
-        deferred: DeferredTemporalRange,
+        deferred: DeferredRange,
         reused: PredecessorRows | None,
         acquired: Sequence[PredecessorRows],
         **keywords: Any,
     ) -> BoundRange:
-        self.calls.append((deferred.meaning.key_value, reused, tuple(acquired)))
+        self.calls.append((deferred.key_value, reused, tuple(acquired)))
         return _BIND_RANGE(deferred, reused, acquired, **keywords)
 
 
@@ -302,7 +302,8 @@ def test_each_read_names_at_most_64_parts_of_the_span(parts: tuple[int, ...], re
     if len(parts) == 1:
         (count,) = parts
         written = plan(frag(ShareCols, 1, count))
-        assert written.acquisition_spans == ()
+        (alone,) = written.turns
+        assert isinstance(alone, AcquisitionSpan) and len(alone.ranges) == 1
         stored = frag_rows(ShareCols, 1, count)
     else:
         written, stored = _fragmented(ShareCols, parts)
@@ -609,58 +610,18 @@ def test_a_later_writes_failed_binding_leaves_no_frame_holding_the_earlier_bound
     assert not reaches([bindings, *owned], earlier)
 
 
-def _scoped(written: WritePlan, start: int, stop: int, held: HeldRows) -> RangeBindings:
-    planner = build_write_planner(bound_model(MODEL))
-    return RangeBindings(
-        written,
-        start=start,
-        stop=stop,
-        acquire_rows=held,
-        current=_always,
-        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-        audit=planner.audit_decoration(
-            actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=instant_at(AT.isoformat())
-        ),
-        payloads=planner.payloads,
-    )
-
-
-@pytest.mark.parametrize(
-    ("start", "stop", "refusal"),
-    [
-        (0, 0, "not within"),
-        (2, 4, "not within"),
-        (-1, 1, "not within"),
-        (0, 2, "not an acquisition span"),
-        (1, 3, "not an acquisition span"),
-    ],
-)
-def test_an_interval_settlement_did_not_record_is_refused_before_anything_is_read(
-    start: int, stop: int, refusal: str
-) -> None:
-    written, stored = _fragmented(ShareCols, (1, 1, 1))
-    held = HeldRows(MODEL, stored, overlapping=True)
-    with pytest.raises(ValueError, match=refusal):
-        _scoped(written, start, stop, held)
-    assert held.requests == []
-
-
-def test_an_entry_holding_no_deferred_range_is_refused_before_anything_is_read() -> None:
+def test_a_deferred_write_a_planned_write_separates_binds_in_a_span_of_its_own() -> None:
     planned = plan([*frag(ShareCols, 1, 1), _inside_write(), *frag(ShareCols, 2, 1)])
-    assert [type(entry) for entry in planned.entries] == [SettledWrite, WriteGroup, SettledWrite]
-    held = HeldRows(MODEL, frag_rows(ShareCols, 1, 1), overlapping=True)
-    with pytest.raises(TypeError, match="did not finalize"):
-        _scoped(planned, 1, 2, held)
-    (group,) = [entry for entry in planned.entries if isinstance(entry, WriteGroup)]
-    (bound_at_planning,) = group.writes
-    assert isinstance(bound_at_planning, SettledWrite)
-    with pytest.raises(TypeError, match="did not finalize"):
-        _scoped(WritePlan((bound_at_planning,)), 0, 1, held)
-    assert held.requests == []
-    # A lone deferred write is its own interval, in no span.
-    with _scoped(planned, 2, 3, HeldRows(MODEL, frag_rows(ShareCols, 2, 1))) as bindings:
-        (group,) = bindings
-    assert _keys(group) == (2,)
+    first, group, last = planned.turns
+    assert isinstance(group, WriteGroup)
+    for span in (first, last):
+        assert isinstance(span, AcquisitionSpan) and len(span.ranges) == 1
+    assert isinstance(last, AcquisitionSpan)
+    held = HeldRows(MODEL, frag_rows(ShareCols, 2, 1), overlapping=True)
+    with _span_bindings(last, held) as bindings:
+        (bound,) = bindings
+    assert _keys(bound) == (2,)
+    assert len(held.requests) == 1
 
 
 def _inside_write() -> AdmittedWrite:

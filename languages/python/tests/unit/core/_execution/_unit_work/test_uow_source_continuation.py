@@ -549,7 +549,6 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     assert raised.value is failure
     assert alive == [True]
     owned = frames(raised.value.__traceback__, module=uow_module.__file__)
-    assert "_execute_deferred" in {frame.f_code.co_name for frame in owned}
     assert reaches(owned, held[0](), depth=_PLANNED_EVIDENCE_DEPTH)
     assert not reaches(owned, write, depth=_PLANNED_EVIDENCE_DEPTH)
     del write, owned

@@ -4,7 +4,6 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Final, Literal, overload
 
-from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.claims import (
     SettledEvidence,
     WriteIntent,
@@ -27,6 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     keyed_instruction_from_target,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
+from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY, TemporalBound
 from parallax.core.internal.metamodel import CompiledEntity

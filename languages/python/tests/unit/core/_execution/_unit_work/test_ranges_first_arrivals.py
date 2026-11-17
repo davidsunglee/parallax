@@ -24,12 +24,13 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
@@ -77,6 +78,7 @@ from tests._support.errors import raises_code
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admit,
+    deferred_ranges,
     plan_steps,
     settled_writes,
     write_admission,
@@ -138,7 +140,7 @@ def _planned(meta: Metamodel, *writes: AdmittedWrite) -> WritePlan:
     return _plan(admission, meta)
 
 
-def _bound(meta: Metamodel, settled: SettledWrite, rows: Sequence[PredecessorRow]) -> BoundRange:
+def _bound(meta: Metamodel, settled: DeferredRange, rows: Sequence[PredecessorRow]) -> BoundRange:
     return bind_held(meta, alone(settled), rows, transaction_instant=_instant())
 
 
@@ -216,7 +218,7 @@ def test_an_observed_bitemporal_write_inside_its_rectangle_binds_at_planning() -
         ),
     )
     (write,) = settled_writes(plan)
-    assert write.deferred is None
+    assert not deferred_ranges(plan)
     close, *opened = plan_steps(plan)
     assert isinstance(close, PlannedClose)
     assert (close.cause, _gate(close)) == (SUPERSEDED, T0)
@@ -238,8 +240,7 @@ def test_an_observed_bitemporal_write_past_its_rectangle_reads_the_rest_at_execu
             _position("amendUntil", MAR, SEP, value="150.00"), START, OBJECT, source=source
         ),
     )
-    (write,) = settled_writes(plan)
-    assert write.deferred is not None
+    (write,) = deferred_ranges(plan)
     assert tuple(map(id, write.source_evidence)) == (id(source),)
     (term,) = coverage_read(POSITION, alone(write), transaction_instant=_instant()).terms
     assert term.valid_time_windows == (TimeInterval(JUN, SEP),)
@@ -278,7 +279,7 @@ def test_an_observed_transaction_time_write_closes_its_observed_row_at_planning(
         admitted_write(_balance(mutation, **members), observed, _BALANCE_OBJECT, source=source),
     )
     (write,) = settled_writes(plan)
-    assert write.deferred is None
+    assert not deferred_ranges(plan)
     planned = plan_steps(plan)
     assert [type(step) for step in planned] == steps
     close = planned[0]
@@ -308,8 +309,7 @@ def _balance_target(
 
 
 def test_a_transaction_time_target_binds_the_row_its_caller_named() -> None:
-    (write,) = settled_writes(_planned(_BALANCE, _balance_target(T0, value="175.00")))
-    assert write.deferred is not None
+    (write,) = deferred_ranges(_planned(_BALANCE, _balance_target(T0, value="175.00")))
     assert write.source_evidence == ()
     bound = _bound(_BALANCE, write, [_balance_row("100.00")])
     close, opened = bound.steps
@@ -319,7 +319,7 @@ def test_a_transaction_time_target_binds_the_row_its_caller_named() -> None:
 
 
 def test_a_transaction_time_target_finding_no_row_binds_nothing() -> None:
-    (write,) = settled_writes(_planned(_BALANCE, _balance_target(T0, value="175.00")))
+    (write,) = deferred_ranges(_planned(_BALANCE, _balance_target(T0, value="175.00")))
     with pytest.raises(WritePreconditionError) as refused:
         _bound(_BALANCE, write, [])
     assert refused.value.expected == T0
@@ -347,7 +347,7 @@ def test_an_optimistic_transaction_time_target_assigning_nothing_binds_from_its_
 ) -> None:
     plan = _planned(_BALANCE, *writes())
     (write,) = settled_writes(plan)
-    assert write.deferred is None
+    assert not deferred_ranges(plan)
     (close,) = plan_steps(plan)
     assert isinstance(close, PlannedClose)
     assert (close.cause, _gate(close)) == (TERMINATED, T0)
@@ -399,14 +399,13 @@ def _position_target(mutation: TargetMutation, **members: object) -> TargetWrite
 
 
 def test_a_target_assignment_and_its_destruction_over_one_window_state_one_condition() -> None:
-    (write,) = settled_writes(
+    (write,) = deferred_ranges(
         _planned(
             POSITION,
             _position_target("amendUntil", value="150.00"),
             _position_target("terminateUntil"),
         )
     )
-    assert write.deferred is not None
     stored = [rectangle(JAN, JUN, "100.00"), rectangle(JUN, INFINITY, "200.00")]
     bound = _bound(POSITION, write, stored)
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]

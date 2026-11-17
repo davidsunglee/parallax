@@ -17,19 +17,18 @@ from typing import Final, cast
 
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
+from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
+from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -68,7 +67,6 @@ __all__ = [
     "observation",
     "physical_row",
     "plan",
-    "ranges_of",
     "rectangle",
 ]
 
@@ -232,13 +230,3 @@ def plan(
             composed_writes=admitted_writes(MODEL, list(writes)),
         )
     )
-
-
-def ranges_of(written: WritePlan) -> tuple[DeferredTemporalRange, ...]:
-    """The deferred range of each of ``written``'s entries, in order."""
-    ranges: list[DeferredTemporalRange] = []
-    for entry in written.entries:
-        assert isinstance(entry, SettledWrite)
-        assert isinstance(entry.deferred, DeferredTemporalRange)
-        ranges.append(entry.deferred)
-    return tuple(ranges)

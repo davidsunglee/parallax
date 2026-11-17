@@ -126,8 +126,9 @@ TargetWrite               the caller's stated revision     versioned: the stated
 
 `source_evidence` is a lifetime edge: it keeps the Read Evidence of every source whose
 write composed into this one reachable while the write is pending or planned, and
-nothing reads it for a decision. Planning carries it onto every `SettledWrite`, so the
-sources stay published while the plan holding the write is reachable. `retained` is the
+nothing reads it for a decision. Planning carries it onto every `SettledWrite` and
+`DeferredRange`, so the sources stay published while the plan holding the write is
+reachable. `retained` is the
 starting row a Locking temporal target write's admission read whole, which its range
 may reuse (`RetainedTargetState`).
 
@@ -163,10 +164,11 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.write_items:admitted_write`
 - `parallax.core._execution._unit_work.evidence:ReadEvidence`
 - `parallax.core._execution._unit_work.evidence:RetainedObservation`
-- `parallax.core._execution._unit_work.acquisition:RetainedTargetState`
+- `parallax.core._execution._unit_work.row_acquisition:RetainedTargetState`
 - `parallax.core._execution._unit_work.evidence:InsertionIdentity`
 - `parallax.core._execution._unit_work.claims:SettledEvidence`
 - `parallax.core._execution._unit_work.write_plan:SettledWrite.source_evidence`
+- `parallax.core._execution._unit_work.ranges:DeferredRange.source_evidence`
 - `parallax.core._execution._unit_work.instructions:ExpectedVersion`
 - `parallax.core._execution._unit_work.instructions:ExpectedTxStart`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority`
@@ -403,27 +405,27 @@ removed and reinserted this way.
             OrderedWrite = AdmittedWrite | ComposedTemporalWrite
               | ComposedBitemporalOpening | InsertBatch | ObjectLockedBatch
               │
-              │ WritePlanCompiler.compile: settle each write once                 write_settlement
-              │   into a SettledWrite carrying its sources' source_evidence
+              │ WritePlanCompiler.compile: settle each write once, carrying       write_settlement
+              │   its sources' source_evidence
               │   insert or Non-Temporal write  → its Planned Steps now
               │   temporal write or composition → settle_range                   ranges
               │   pending Bitemporal opening    → settle_opening
-              │       → BoundRange (steps now) | DeferredTemporalRange (no step yet)
-              │   group: consecutive settled writes of one phase over distinct
+              │       → BoundRange (steps now) | DeferredRange (no step yet)
+              │   group: consecutive SettledWrites of one phase over distinct
               │     objects, up to the group bound; effects before inserts
-              │   a deferred write: an entry of its own; consecutive eligible ones
-              │     are recorded as an AcquisitionSpan of at most 32
+              │   deferred: each unbroken run → form_spans → AcquisitionSpans    acquisition_spans
+              │     of at most 32 ranges reading alike, each object once
               ▼
- WritePlan(entries: WriteGroup | SettledWrite, acquisition_spans)                  write_plan
+ WritePlan(turns: WriteGroup | AcquisitionSpan)                                    write_plan
               │
               │ WriteAdmission.drain_planned: the buffer empties, and the          admission
               │   insertions it held are stored or retired
               │   (SourceAuthority.finish_insertion_planning)
               │
-              │ UnitOfWork._run_write_plan, entry by entry, in order               uow
+              │ UnitOfWork._run_write_plan, turn by turn, in order                 uow
               │   WriteGroup        → _execute_write_group
-              │   deferred entry    → RangeBindings: complete retained starting rows,
-              │     (or its span)     read uncovered coverage through acquire_rows,
+              │   AcquisitionSpan   → RangeBindings: complete retained starting rows,
+              │                       read uncovered coverage through acquire_rows,
               │                       bind each ready range → WriteGroup
               │                       → _execute_write_group; repeat
               │
@@ -457,12 +459,12 @@ the planner indexes nothing again and starts by dropping known no-op work in
 `_without_noop_rows`. `compile` performs Write Settlement and returns the `WritePlan`
 that `finalize` returns unchanged.
 
-A deferred settled write is the one entry whose steps are not known at planning:
-its window reaches coverage no planning input held. Its meaning, gates and instant are
-fixed in its `DeferredTemporalRange`, and the flush reads the missing coverage when it
-reaches the entry, inside the same Flush. Planned groups and deferred entries
-interleave in plan order, and each group completes before any later group binds or
-executes.
+A deferred write is the one write whose steps are not known at planning: its window
+reaches coverage no planning input held. Its meaning, read key, gates, instant and
+source evidence are fixed in its `DeferredRange`, and the flush reads the missing
+coverage when it reaches the write's acquisition span, inside the same Flush. Planned
+groups and spans interleave in plan order, and each group completes before any later
+group binds or executes.
 
 Completion publishes what a write did to later work, through the same
 `SourceAuthority` that resolved the write's licence. It invalidates every
@@ -501,7 +503,7 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.finish_insertion_planning`
 - `parallax.core._execution._unit_work.write_runner:ExecuteWriteSteps`
 - `parallax.core._execution._unit_work.write_runner:ExecuteCountedStep`
-- `parallax.core._execution._unit_work.acquisition:AcquireRows`
+- `parallax.core._execution._unit_work.row_acquisition:AcquireRows`
 - `parallax.core._execution._transaction._attempt:TxnAttempt._execute_write_steps`
 - `parallax.core._execution._transaction._attempt:TxnAttempt._execute_counted_step`
 - `parallax.core._execution._transaction._attempt:TxnAttempt._acquire_rows`
@@ -522,18 +524,20 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.write_settlement:WritePlanCompiler.compile`
 - `parallax.core._execution._unit_work.ranges:settle_range`
 - `parallax.core._execution._unit_work.ranges:settle_opening`
-- `parallax.core._execution._unit_work.ranges:DeferredTemporalRange`
+- `parallax.core._execution._unit_work.ranges:DeferredRange`
+- `parallax.core._execution._unit_work.ranges:DeferredRange.read_key`
 - `parallax.core._execution._unit_work.ranges:RangeBindings`
+- `parallax.core._execution._unit_work.acquisition_spans:form_spans`
+- `parallax.core._execution._unit_work.acquisition_spans:AcquisitionSpan`
+- `parallax.core._execution._unit_work.acquisition_spans:AcquisitionSpan.ranges`
+- `parallax.core._execution._unit_work.row_acquisition:CoverageReadKey`
 - `parallax.core.internal.planned_step.write_effects:BoundRange`
 - `parallax.core._execution._unit_work.write_plan:SettledWrite`
-- `parallax.core._execution._unit_work.write_plan:SettledWrite.deferred`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup.writes`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup.steps`
-- `parallax.core._execution._unit_work.write_plan:AcquisitionSpan`
 - `parallax.core._execution._unit_work.write_plan:WritePlan`
-- `parallax.core._execution._unit_work.write_plan:WritePlan.entries`
-- `parallax.core._execution._unit_work.write_plan:WritePlan.acquisition_spans`
+- `parallax.core._execution._unit_work.write_plan:WritePlan.turns`
 - `parallax.core.internal.planned_step.steps:PlannedStep`
 - `parallax.core._execution._unit_work.clock:TransactionInstant`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor`
@@ -573,7 +577,7 @@ ComposedTemporalWrite     ─┘  composed: .intents and .transform retained
                                      │
                                      ▼
                        predecessors cover the window? → bind now: PredecessorExpander
-                       otherwise                      → DeferredTemporalRange
+                       otherwise                      → DeferredRange
 ```
 
 The three leaf types are not temporal-only: each also carries Non-Temporal writes. Only
@@ -614,7 +618,7 @@ owns it and so revises or removes it in place, and the successors it opens.
 - `parallax.core.internal.temporal_write.coverage:CoverageSegment`
 - `parallax.core._execution._unit_work.ranges:settle_range`
 - `parallax.core._execution._unit_work.ranges:settle_opening`
-- `parallax.core._execution._unit_work.ranges:DeferredTemporalRange`
+- `parallax.core._execution._unit_work.ranges:DeferredRange`
 - `parallax.core.internal.temporal_write.expansion:PredecessorExpander`
 
 ## Where the contracts live

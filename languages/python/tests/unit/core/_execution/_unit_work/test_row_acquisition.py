@@ -20,19 +20,20 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import InternalError
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work import acquisition as acquisition_module
-from parallax.core._execution._unit_work.acquisition import (
+from parallax.core._execution._unit_work import row_acquisition as acquisition_module
+from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
+from parallax.core._execution._unit_work.instructions import (
+    PreparedTargetInstruction,
+    prepare_wire_write,
+)
+from parallax.core._execution._unit_work.row_acquisition import (
+    CoverageReadKey,
     CoverageReadRequest,
     CoverageTerm,
     TargetReadRequest,
     consume_coverage,
     consume_coverage_by_key,
     consume_target,
-)
-from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetInstruction,
-    prepare_wire_write,
 )
 from parallax.core._execution._unit_work.uow import FlushScope
 from parallax.core.internal import inheritance
@@ -53,6 +54,7 @@ from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests._support.write_preparation import write_preparation_of
+from tests.unit._corpus_model_support import formed, records, target
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
@@ -223,7 +225,8 @@ def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_ha
     with pytest.raises(_Unjudged) as raised:
         if coverage:
             coverage_request = CoverageReadRequest(
-                request.entity, _key(request), (CoverageTerm(1, None),), shared_lock=False
+                CoverageReadKey(request.entity, _key(request), shared_lock=False),
+                (CoverageTerm(1, None),),
             )
             consume_coverage(
                 coverage_request, selection, _failing_after(rows, 1), _ABSENT, documents, 2
@@ -234,6 +237,21 @@ def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_ha
     assert consumer
     assert not reaches(consumer, documents)
     assert not reaches(consumer, rows[0])
+
+
+def test_read_keys_compare_by_entity_identity_key_attribute_and_lock_alone() -> None:
+    first, second = (target(formed(records("balance")), "Balance") for _ in range(2))
+    assert first is not second
+    key_attribute = AttributeIdentity(first.identity, "id")
+    key = CoverageReadKey(first, key_attribute, shared_lock=True)
+    alike = CoverageReadKey(second, key_attribute, shared_lock=True)
+    assert key == alike
+    assert len({key, alike}) == 1
+    assert key != CoverageReadKey(first, key_attribute, shared_lock=False)
+    assert key != CoverageReadKey(
+        first, AttributeIdentity(first.identity, "acctNum"), shared_lock=True
+    )
+    assert key != key_attribute
 
 
 def _key(request: TargetReadRequest) -> AttributeIdentity:
@@ -248,7 +266,9 @@ def _key(request: TargetReadRequest) -> AttributeIdentity:
 def _shared_request() -> CoverageReadRequest:
     request = _target_request()
     terms = (CoverageTerm(1, None), CoverageTerm(2, None), CoverageTerm(3, None))
-    return CoverageReadRequest(request.entity, _key(request), terms, shared_lock=False)
+    return CoverageReadRequest(
+        CoverageReadKey(request.entity, _key(request), shared_lock=False), terms
+    )
 
 
 def test_a_shared_reads_rows_and_documents_go_to_the_object_each_row_holds_the_key_of() -> None:
