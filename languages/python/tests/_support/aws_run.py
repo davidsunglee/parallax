@@ -44,6 +44,7 @@ from parallax.conformance.provision import (
     reset_database,
 )
 from parallax.core.internal.database_binding import DatabaseBinding, ResolvedBinding
+from parallax.core.internal.db_error import DatabaseError
 from tests._support.aws_environment import AwsTestEnvironment, PublishedEnvironment
 
 if TYPE_CHECKING:
@@ -255,12 +256,8 @@ class AwsRun:
     def _begin(self) -> None:
         teardown = self._teardown
         teardown.push("releasing the fetched certificate bundle", self._ports.close)
-        control = self._reached(self.environment.writer_host, CONTROL_DATABASE)
+        control = self._admit()
         teardown.push("closing the control session", control.close)
-        control.execute_write(AS_LOGIN, [])
-        self._pacing.lock.wait_until(
-            lambda: _single(control, _TRY_LOCK, [SUITE_LOCK]) is True, "the cloud suite lock"
-        )
         teardown.push("releasing the cloud suite lock", lambda: self._unlock(control))
         for stale in self._stale(control):
             self._drop(control, stale)
@@ -273,8 +270,40 @@ class AwsRun:
         self._administration = administration
         hosts = [self.environment.writer_host, self.environment.reader_host]
         for host in hosts + [instance.host for instance in self.environment.instances]:
-            self._warm(host)
+            self._warm(host, database)
+        _single(control, _ANSWER, [])
+        _single(administration, _ANSWER, [])
         teardown.push("closing every runtime the suite opened", self._ledger.release)
+
+    def _admit(self) -> DriverControl:
+        # A pause already in progress can kill the lock holder while readers resume.
+        # Admit only after warming, before creating any run-owned database state.
+        for attempt in range(3):
+            control = self._reached(self.environment.writer_host, CONTROL_DATABASE)
+            try:
+                control.execute_write(AS_LOGIN, [])
+                self._pacing.lock.wait_until(
+                    lambda control=control: _single(control, _TRY_LOCK, [SUITE_LOCK]) is True,
+                    "the cloud suite lock",
+                )
+                hosts = [self.environment.writer_host, self.environment.reader_host]
+                for host in hosts + [instance.host for instance in self.environment.instances]:
+                    self._warm(host, CONTROL_DATABASE)
+                _single(control, _ANSWER, [])
+            except BaseException as failure:
+                try:
+                    control.close()
+                except BaseException as cleanup:
+                    _raise([failure, cleanup])
+                if (
+                    isinstance(failure, DatabaseError)
+                    and failure.native_code == "57P01"
+                    and attempt < 2
+                ):
+                    continue
+                raise
+            return control
+        raise AssertionError("admission attempts exhausted")
 
     def _stale(self, control: DriverControl) -> list[str]:
         """Every run database the login owns; under the lock, none is in use."""
@@ -341,9 +370,9 @@ class AwsRun:
             raise timed_out from (refused[0] if refused else None)
         return opened[0]
 
-    def _warm(self, host: str) -> None:
-        """Wait for *host* to accept and answer a session in the run database."""
-        session = self._reached(host, self.identity.database)
+    def _warm(self, host: str, database: str) -> None:
+        """Wait for *host* to accept and answer a session in *database*."""
+        session = self._reached(host, database)
         try:
             _single(session, _ANSWER, [])
         finally:

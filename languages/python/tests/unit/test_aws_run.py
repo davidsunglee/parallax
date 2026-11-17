@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from parallax.conformance._replication import Pacing
+from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint
 from tests._support.aws_environment import AwsInstance, AwsTestEnvironment
@@ -220,7 +221,17 @@ def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> N
         f"{_CONTROL}: open",
         f"{_CONTROL}: set role none",
         f"{_CONTROL}: select pg_try_advisory_lock(?)",
-        f"{_CONTROL}: {cluster.log[3].split(': ', 1)[1]}",
+        *(
+            entry
+            for host in (_WRITER, _READER, _WRITER_INSTANCE, _READER_INSTANCE)
+            for entry in (
+                f"{host}/{CONTROL_DATABASE}: open",
+                f"{host}/{CONTROL_DATABASE}: select 1",
+                f"{host}/{CONTROL_DATABASE}: close",
+            )
+        ),
+        f"{_CONTROL}: select 1",
+        f"{_CONTROL}: {cluster.log[16].split(': ', 1)[1]}",
         *_drop_steps("ci_1_1"),
         f'{_CONTROL}: create database "ci_7_2"',
         f"{_ADMIN}: open",
@@ -234,8 +245,10 @@ def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> N
                 f"{host}/ci_7_2: close",
             )
         ),
+        f"{_CONTROL}: select 1",
+        f"{_ADMIN}: select 1",
     ]
-    assert cluster.log[3].startswith(f"{_CONTROL}: select d.datname")
+    assert cluster.log[16].startswith(f"{_CONTROL}: select d.datname")
 
 
 def test_closing_releases_in_ownership_order_and_only_once() -> None:
@@ -299,19 +312,14 @@ def test_a_host_that_never_answers_fails_the_run_chained_to_its_last_refusal() -
         _started(cluster)
 
     assert isinstance(timed_out.value.__cause__, ConnectionError)
-    assert cluster.log[-12:] == [
-        f"{_ADMIN}: close",
-        *_drop_steps("ci_7_2"),
-        f"{_CONTROL}: select pg_advisory_unlock(?)",
-        f"{_CONTROL}: close",
-        "ports: close",
-    ]
+    assert cluster.log[-2:] == [f"{_CONTROL}: close", "ports: close"]
+    assert not any("create database" in entry for entry in cluster.log)
 
 
 def test_a_resuming_host_is_waited_for() -> None:
     cluster = _Cluster(owned=[], refusing={_WRITER_INSTANCE: 2})
     _started(cluster)
-    assert f"{_WRITER_INSTANCE}/ci_7_2: select 1" in cluster.log
+    assert f"{_WRITER_INSTANCE}/{CONTROL_DATABASE}: select 1" in cluster.log
 
 
 def test_a_paused_writer_is_waited_for_before_the_control_session() -> None:
@@ -364,7 +372,11 @@ def test_an_unconfirmed_drop_at_close_fails_the_run_after_every_other_step() -> 
 
 
 def test_a_failed_start_and_a_failed_cleanup_are_both_raised() -> None:
-    cluster = _Cluster(owned=[], refusing={_READER: 1_000}, lingering={"ci_7_2"})
+    cluster = _Cluster(
+        owned=[],
+        failing={'create database "ci_7_2"': TimeoutError("creation timed out")},
+        lingering={"ci_7_2"},
+    )
 
     with pytest.raises(ExceptionGroup) as both:
         _started(cluster)
@@ -621,3 +633,55 @@ def test_failure_restoring_timeout_is_raised_beside_the_drop_failure() -> None:
         run.close()
     assert len(failures.value.exceptions) == 2
     assert all(isinstance(error, ConnectionError) for error in failures.value.exceptions)
+
+
+@pytest.mark.parametrize("shutdowns", [1, 3])
+def test_shutdown_during_warmup_restarts_admission_with_a_fresh_lock(
+    shutdowns: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cluster = _Cluster(owned=[])
+    sessions: list[_Session] = []
+    lost: set[int] = set()
+    remaining = shutdowns
+
+    class Ports(_Ports):
+        def session(self, host: str, database: str) -> Any:
+            nonlocal remaining
+            session = super().session(host, database)
+            if host == _READER_INSTANCE and remaining:
+                remaining -= 1
+                lost.update(id(old) for old in sessions)
+            sessions.append(session)
+            return session
+
+    original = cluster.answer
+
+    def answer(session: _Session, sql: str, binds: Sequence[object]) -> list[tuple[Any, ...]]:
+        if id(session) in lost:
+            raise DatabaseError(category=None, native_code="57P01", message="shutdown")
+        return original(session, sql, binds)
+
+    monkeypatch.setattr(cluster, "answer", answer)
+    ports = Ports(cluster)
+    if shutdowns == 3:
+        with pytest.raises(DatabaseError, match="57P01"):
+            AwsRun.start(_ENVIRONMENT, _IDENTITY, ports, _pacing(_Clock()))
+        assert not any("create database" in entry for entry in cluster.log)
+        assert cluster.log[-1] == "ports: close"
+    else:
+        run = AwsRun.start(_ENVIRONMENT, _IDENTITY, ports, _pacing(_Clock()))
+        create = cluster.log.index(f'{_CONTROL}: create database "ci_7_2"')
+        assert sum("pg_try_advisory_lock" in entry for entry in cluster.log[:create]) == 2
+        assert cluster.log.count(f'{_CONTROL}: create database "ci_7_2"') == 1
+        run.close()
+    assert sum("pg_try_advisory_lock" in entry for entry in cluster.log) == min(shutdowns + 1, 3)
+
+
+def test_admission_does_not_retry_unrelated_database_errors() -> None:
+    failure = DatabaseError(category=None, native_code="42501", message="permission denied")
+    cluster = _Cluster(owned=[], failing={"select 1": failure})
+    with pytest.raises(DatabaseError) as refused:
+        _started(cluster)
+    assert refused.value is failure
+    assert sum("pg_try_advisory_lock" in entry for entry in cluster.log) == 1
+    assert not any("create database" in entry for entry in cluster.log)
