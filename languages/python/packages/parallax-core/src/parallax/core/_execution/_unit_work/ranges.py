@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence, Set
 from dataclasses import dataclass
 from operator import attrgetter
-from types import TracebackType
-from typing import TYPE_CHECKING, Final, Self, cast
+from typing import Final, cast
 
 from parallax.core._execution._unit_work.effects import (
     MISSING_TARGET,
@@ -16,14 +14,10 @@ from parallax.core._execution._unit_work.effects import (
 )
 from parallax.core._execution._unit_work.evidence import ReadEvidence, RetainedObservation
 from parallax.core._execution._unit_work.row_acquisition import (
-    AcquireRows,
     CompletionRequest,
     CoverageReadKey,
-    CoverageReadRequest,
     CoverageTerm,
     RetainedTargetState,
-    consume_coverage,
-    consume_coverage_by_key,
 )
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
@@ -34,7 +28,6 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalCoverageWrite,
     TemporalIntent,
 )
-from parallax.core._execution._unit_work.write_plan import WriteGroup
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import AttributeIdentity
@@ -47,7 +40,7 @@ from parallax.core.internal.planned_step.managed_row import ManagedRow
 from parallax.core.internal.planned_step.observe import PredecessorRow, TemporalObservation
 from parallax.core.internal.planned_step.payload import WritePayloadPreparer
 from parallax.core.internal.planned_step.predecessor_rows import PredecessorRows
-from parallax.core.internal.planned_step.steps import KeyTarget, PlannedStep
+from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.planned_step.write_effects import BoundRange, TemporalWriteOwnership
 from parallax.core.internal.temporal_read import (
     Bitemporal,
@@ -64,22 +57,11 @@ from parallax.core.internal.temporal_write.expansion import (
     TemporalFacts,
 )
 
-if TYPE_CHECKING:
-    from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
-
 __all__ = [
     "DeferredRange",
-    "RangeBindings",
     "settle_opening",
     "settle_range",
 ]
-
-_PARTS_PER_READ: Final = 64
-"""The most uncovered parts one coverage read names (`m-sql` *Requested
-ranges*): each uncovered Valid-Time interval, and each Transaction-Time-Only
-current row, is one. More parts are read by several reads, all before the
-range binds. Past this many, one statement's cost grows faster than the round
-trip a larger statement saves."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -576,8 +558,8 @@ class _TemporalRangeBinder:
 @dataclass(frozen=True, slots=True)
 class DeferredRange:
     """A range whose requested window reaches coverage no planning input knew,
-    as the finalized data :class:`RangeBindings` binds once its unit of work
-    has read that coverage: a Write Plan's deferred write.
+    as the finalized data it binds once its unit of work has read that
+    coverage: a Write Plan's deferred write.
 
     It holds what settlement decided and nothing that could decide again: no
     ownership, audit, clock, or model. ``predecessors`` are the current rows
@@ -609,6 +591,98 @@ class DeferredRange:
     def key_value(self) -> ManagedValue:
         """The value its object's key holds."""
         return self.meaning.key_value
+
+    def take_retained_completion(
+        self, current: Callable[[ObjectStateKey, int], bool]
+    ) -> CompletionRequest | None:
+        """The completion of every starting row the range retained that is
+        still ``current`` — no change the attempt completed since its read
+        replaced it — and that no other predecessor of the range already is,
+        or ``None`` where none is reusable.
+
+        Each retained row is taken from its state here, reused or not, so a
+        stale one is discarded without being judged. A range gated by
+        Optimistic proofs reuses none: a row's freshness within the attempt
+        says nothing of changes outside it.
+        """
+        retained = self.retained
+        if not retained:
+            return None
+        meaning = self.meaning
+        held = {predecessor.state for predecessor in (*self.predecessors, *self.validations)}
+        rows: list[tuple[object, ...]] = []
+        documents: list[object | None] = []
+        for state in retained:
+            taken = state.take()
+            if (
+                taken is None
+                or meaning.gated
+                or state.state in held
+                or not current(state.state, state.read_at)
+            ):
+                continue
+            held.add(state.state)
+            row, document = taken
+            rows.append(row)
+            documents.append(document)
+        if not rows:
+            return None
+        return CompletionRequest(
+            entity=meaning.facts.entity,
+            key_attribute=meaning.key_attribute,
+            rows=tuple(rows),
+            documents=(
+                None if all(document is None for document in documents) else tuple(documents)
+            ),
+        )
+
+    def missing_term(self, reused: PredecessorRows | None) -> CoverageTerm | None:
+        """The coverage the range's window needs that nothing already holds —
+        its known predecessors, among them the current rows the attempt's
+        completed writes produced and hold for a continuing source, the
+        ``reused`` starting rows, and a pending insertion's own window — or
+        ``None`` where nothing remains to read.
+
+        What remains of a Bitemporal window is its sorted, disjoint parts. A
+        Transaction-Time-Only object's one part is its current row, read unless
+        a reused, known, or held row already is it.
+        """
+        meaning = self.meaning
+        known = self.predecessors
+        key_value = meaning.key_value
+        window = meaning.valid_time_window
+        if window is None:
+            return None if known or reused is not None else CoverageTerm(key_value, None)
+        covered = [predecessor.valid_time_coverage for predecessor in known]
+        if reused is not None:
+            shape = meaning.facts.shape
+            covered.extend(
+                valid_time_coverage(shape, reused, index) for index in range(len(reused))
+            )
+        seed = meaning.opening
+        if seed is not None:
+            covered.append(seed.window)
+        missing = window.uncovered(
+            sorted((interval for interval in covered if interval is not None), key=_START)
+        )
+        return CoverageTerm(key_value, missing) if missing else None
+
+    def bind(
+        self,
+        rows: Sequence[PredecessorRows],
+        *,
+        ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
+        payloads: WritePayloadPreparer,
+    ) -> BoundRange:
+        """The range bound to the current rows its window holds — ``rows``,
+        the starting rows it reused before the rows each coverage read
+        returned — through the same binding a range known at planning takes,
+        under the attempt's current ``ownership``, every produced row
+        finalized and every emitted close decorated once."""
+        binding = _binding(self.meaning, ownership, audit, payloads)
+        current = binding.read(rows)
+        return binding.bind(binding.acquired(current, self.predecessors), self.validations)
 
 
 def settle_range(
@@ -778,366 +852,6 @@ def _retained(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedTargetState,
         for intent in intents
         if isinstance(intent, TargetIntent) and intent.retained is not None
     )
-
-
-def _retained_completion(
-    deferred: DeferredRange, current: Callable[[ObjectStateKey, int], bool]
-) -> CompletionRequest | None:
-    """The completion of every starting row ``deferred`` retained that is
-    still ``current`` — no change the attempt completed since its read replaced
-    it — and that no other predecessor of the range already is, or ``None``
-    where none is reusable.
-
-    Each retained row is taken from its state here, reused or not, so a stale
-    one is discarded without being judged. A range gated by Optimistic proofs
-    reuses none: a row's freshness within the attempt says nothing of changes
-    outside it.
-    """
-    retained = deferred.retained
-    if not retained:
-        return None
-    meaning = deferred.meaning
-    held = {predecessor.state for predecessor in (*deferred.predecessors, *deferred.validations)}
-    rows: list[tuple[object, ...]] = []
-    documents: list[object | None] = []
-    for state in retained:
-        taken = state.take()
-        if (
-            taken is None
-            or meaning.gated
-            or state.state in held
-            or not current(state.state, state.read_at)
-        ):
-            continue
-        held.add(state.state)
-        row, document = taken
-        rows.append(row)
-        documents.append(document)
-    if not rows:
-        return None
-    return CompletionRequest(
-        entity=meaning.facts.entity,
-        key_attribute=meaning.key_attribute,
-        rows=tuple(rows),
-        documents=None if all(document is None for document in documents) else tuple(documents),
-    )
-
-
-def _missing_term(deferred: DeferredRange, reused: PredecessorRows | None) -> CoverageTerm | None:
-    """The coverage ``deferred``'s window needs that nothing already holds —
-    its known predecessors, among them the current rows the attempt's
-    completed writes produced and hold for a continuing source, the ``reused``
-    starting rows, and a pending insertion's own window — or ``None`` where
-    nothing remains to read.
-
-    What remains of a Bitemporal window is its sorted, disjoint parts. A
-    Transaction-Time-Only object's one part is its current row, read unless a
-    reused, known, or held row already is it.
-    """
-    meaning = deferred.meaning
-    known = deferred.predecessors
-    key_value = meaning.key_value
-    window = meaning.valid_time_window
-    if window is None:
-        return None if known or reused is not None else CoverageTerm(key_value, None)
-    covered = [predecessor.valid_time_coverage for predecessor in known]
-    if reused is not None:
-        shape = meaning.facts.shape
-        covered.extend(valid_time_coverage(shape, reused, index) for index in range(len(reused)))
-    seed = meaning.opening
-    if seed is not None:
-        covered.append(seed.window)
-    missing = window.uncovered(
-        sorted((interval for interval in covered if interval is not None), key=_START)
-    )
-    return CoverageTerm(key_value, missing) if missing else None
-
-
-def _pack_reads(
-    read_key: CoverageReadKey, terms: Iterable[CoverageTerm]
-) -> Iterator[CoverageReadRequest]:
-    """Reads by ``read_key`` of every uncovered part ``terms`` name, in order,
-    each naming at most :data:`_PARTS_PER_READ` parts. A current-row term is one part, placed
-    whole; an object whose Valid-Time windows do not fit what remains of one
-    read continues in the next."""
-    pending: list[CoverageTerm] = []
-    room = _PARTS_PER_READ
-    for term in terms:
-        windows = term.valid_time_windows
-        first = 0
-        while windows is None or first < len(windows):
-            if not room:
-                yield CoverageReadRequest(read_key, tuple(pending))
-                pending, room = [], _PARTS_PER_READ
-            if windows is None:
-                pending.append(term)
-                room -= 1
-                break
-            part = windows[first : first + room]
-            pending.append(
-                term if len(part) == len(windows) else CoverageTerm(term.key_value, part)
-            )
-            first += len(part)
-            room -= len(part)
-    if pending:
-        yield CoverageReadRequest(read_key, tuple(pending))
-
-
-def _bind_range(
-    deferred: DeferredRange,
-    reused: PredecessorRows | None,
-    acquired: Sequence[PredecessorRows],
-    *,
-    ownership: TemporalWriteOwnership,
-    audit: AuditDecoration,
-    payloads: WritePayloadPreparer,
-) -> BoundRange:
-    """``deferred`` bound to the current rows its window holds — the
-    starting rows it ``reused`` and the coverage ``acquired`` beside them —
-    through the same binding a range known at planning takes, under the
-    attempt's current ``ownership``, every produced row finalized and every
-    emitted close decorated once."""
-    binding = _binding(deferred.meaning, ownership, audit, payloads)
-    current = binding.read(acquired if reused is None else (reused, *acquired))
-    return binding.bind(binding.acquired(current, deferred.predecessors), deferred.validations)
-
-
-@dataclass(slots=True)
-class _PendingRange:
-    """One active range between its preparation and its binding: the retained
-    starting rows it reuses, the coverage it needs read until its parts are
-    packed into reads, the number of the coverage read finishing its coverage
-    — 0 where it needs none — and the nonempty rows each of its coverage reads
-    returned, in read order."""
-
-    deferred: DeferredRange
-    reused: PredecessorRows | None
-    missing_term: CoverageTerm | None
-    ready_after_reads: int
-    acquired: list[PredecessorRows] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _Invocation:
-    """What one :class:`RangeBindings` reads, judges, and binds through."""
-
-    acquire_rows: AcquireRows
-    current: Callable[[ObjectStateKey, int], bool]
-    ownership: TemporalWriteOwnership
-    audit: AuditDecoration
-    payloads: WritePayloadPreparer
-
-
-class RangeBindings:
-    """The deferred writes of one acquisition span a flush binds from its
-    turn, bound only as the flush asks for them: a scoped, single-pass
-    iterator of the Write Groups they execute in, in order.
-
-    The first advance takes the ranges from ``span``, keeping no reference to
-    it, completes, through ``acquire_rows``, every retained starting row each
-    range holds that ``current`` still judges current, and derives once the
-    uncovered parts nothing each range holds covers. Those parts are packed, in
-    range order — a Bitemporal range's in Valid-Time order, a
-    Transaction-Time-Only range's one current row whole — into reads naming at
-    most :data:`_PARTS_PER_READ` each, and a range is ready once every read
-    naming its parts succeeded, whatever the reads returned; a range with no
-    uncovered part is ready at once, but never binds ahead of an earlier range
-    that is not. Each advance reads only while the next range is not ready,
-    each read's rows sealed as Predecessor Rows of the object whose key each
-    stored row holds while its resources are live. It then binds that range
-    and every ready range following it, up to the first that is not, under
-    ``ownership`` as it stands then, every row the binding produces finalized
-    and every close it emits decorated once by ``audit``, and answers them as
-    one Write Group. Binding reads nothing, nothing is bound ahead of the
-    advance asking for it, and nothing is executed or published: the flush
-    executes and completes each group before advancing.
-
-    Exhausting the iterator, leaving its scope, or a failure of its own drops
-    every row reference and dependency it still holds, without suppressing or
-    replacing the failure; what a group carries keeps its own lifetime.
-    """
-
-    __slots__ = (
-        "_completed_reads",
-        "_invocation",
-        "_lookup",
-        "_pending",
-        "_reads",
-        "_requests",
-        "_span",
-    )
-
-    def __init__(
-        self,
-        span: AcquisitionSpan,
-        /,
-        *,
-        acquire_rows: AcquireRows,
-        current: Callable[[ObjectStateKey, int], bool],
-        ownership: TemporalWriteOwnership,
-        audit: AuditDecoration,
-        payloads: WritePayloadPreparer,
-    ) -> None:
-        self._span: AcquisitionSpan | None = span
-        self._invocation: _Invocation | None = _Invocation(
-            acquire_rows, current, ownership, audit, payloads
-        )
-        self._pending: deque[_PendingRange] = deque()
-        self._lookup: dict[ManagedValue, _PendingRange] | None = None
-        self._requests: Iterator[CoverageReadRequest] | None = None
-        self._reads = 0
-        self._completed_reads = 0
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self._release()
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(self) -> WriteGroup:
-        invocation = self._invocation
-        if invocation is None:
-            raise StopIteration
-        try:
-            return self._bind_next_group(invocation)
-        except BaseException:
-            self._release()
-            raise
-
-    def _bind_next_group(self, invocation: _Invocation) -> WriteGroup:
-        if self._span is not None:
-            self._prepare(invocation)
-        pending = self._pending
-        if not pending:
-            raise StopIteration
-        while pending[0].ready_after_reads > self._completed_reads:
-            self._read(invocation)
-        return WriteGroup.from_members(
-            self._bind_ready_writes(invocation), effect_shape=invocation.payloads.effect_shape
-        )
-
-    def _bind_ready_writes(
-        self, invocation: _Invocation
-    ) -> Iterator[tuple[BoundRange, tuple[PlannedStep, ...]]]:
-        """Each leading range whose reads have all finished, bound in order
-        beside its steps, up to the first range still waiting for a read; it
-        reads nothing."""
-        pending = self._pending
-        while pending and pending[0].ready_after_reads <= self._completed_reads:
-            yield self._bind_head(invocation)
-
-    def _bind_head(self, invocation: _Invocation) -> tuple[BoundRange, tuple[PlannedStep, ...]]:
-        head = self._pending[0]
-        bound = _bind_range(
-            head.deferred,
-            head.reused,
-            head.acquired or (),
-            ownership=invocation.ownership,
-            audit=invocation.audit,
-            payloads=invocation.payloads,
-        )
-        self._pending.popleft()
-        lookup = self._lookup
-        if lookup is not None:
-            del lookup[head.deferred.key_value]
-        head.reused = head.acquired = None
-        return bound, bound.steps
-
-    def _prepare(self, invocation: _Invocation) -> None:
-        span = self._span
-        assert span is not None  # prepared once, on the first advance
-        self._span = None
-        pending = self._pending
-        parts = 0
-        for deferred in span.ranges:
-            # Each range's completed rows are held only by its record, which a
-            # failure releases, never by a local a later completion's failure
-            # frame would keep.
-            record = _PendingRange(deferred, None, None, 0)
-            pending.append(record)
-            completion = _retained_completion(deferred, invocation.current)
-            if completion is not None:
-                record.reused = invocation.acquire_rows(completion, consume_coverage)
-            term = _missing_term(deferred, record.reused)
-            if term is not None:
-                parts += term.part_count
-                record.ready_after_reads = -(-parts // _PARTS_PER_READ)
-                record.missing_term = term
-                self._reads = record.ready_after_reads
-        if len(pending) > 1:
-            self._lookup = {record.deferred.key_value: record for record in pending}
-        if self._reads:
-            self._requests = _pack_reads(span.read_key, _take_missing_terms(deque(pending)))
-
-    def _read(self, invocation: _Invocation) -> None:
-        requests = self._requests
-        assert requests is not None  # the reads a range waits for are packed
-        request = next(requests)
-        lookup = self._lookup
-        if lookup is None:
-            _collect(self._pending[0], invocation.acquire_rows(request, consume_coverage))
-        else:
-            _transfer(lookup, invocation.acquire_rows(request, consume_coverage_by_key))
-        self._completed_reads += 1
-        if self._completed_reads == self._reads:
-            self._requests = None
-
-    def _release(self) -> None:
-        for pending in self._pending:
-            pending.reused = pending.acquired = pending.missing_term = None
-        self._pending.clear()
-        self._lookup = None
-        self._requests = None
-        self._span = None
-        self._invocation = None
-
-
-def _take_missing_terms(unpacked: deque[_PendingRange]) -> Iterator[CoverageTerm]:
-    """Each missing term of ``unpacked``, in order, released from its range
-    as packing takes it; the ranges still waiting to be packed are the only
-    ones held."""
-    while unpacked:
-        record = unpacked.popleft()
-        term = record.missing_term
-        record.missing_term = None
-        del record
-        if term is not None:
-            yield term
-
-
-def _collect(pending: _PendingRange, rows: PredecessorRows | None) -> None:
-    if rows is None:
-        return
-    if pending.acquired is None:
-        pending.acquired = [rows]
-    else:
-        pending.acquired.append(rows)
-
-
-def _transfer(
-    lookup: dict[ManagedValue, _PendingRange], evidence: dict[ManagedValue, PredecessorRows]
-) -> None:
-    """Hand each object's rows of one shared read to its pending range,
-    taking each from ``evidence`` as it goes and dropping what is left
-    however it leaves."""
-    rows: PredecessorRows | None = None
-    try:
-        while evidence:
-            key, rows = evidence.popitem()
-            pending = lookup.get(key)
-            assert pending is not None  # a shared read returns only rows of the objects it names
-            _collect(pending, rows)
-    finally:
-        evidence.clear()
-        del evidence, rows
 
 
 def _binding(

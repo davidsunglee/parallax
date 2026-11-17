@@ -7,7 +7,7 @@ from types import TracebackType
 from typing import Literal, Protocol, cast
 
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
+from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, write_groups
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
@@ -23,7 +23,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
 )
 from parallax.core._execution._unit_work.lifetime import AttemptLifetime
-from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     RetainedTargetState,
@@ -602,7 +601,7 @@ class UnitOfWork:
                 case AcquisitionSpan():
                     if audit is None:
                         audit = self._audit_decoration()
-                    with RangeBindings(
+                    with write_groups(
                         turn,
                         acquire_rows=self.acquire_rows,
                         current=self.source_authority.is_unchanged_since,

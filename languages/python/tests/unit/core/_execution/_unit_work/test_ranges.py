@@ -17,13 +17,14 @@ import pytest
 
 import parallax.core._execution._planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work import ranges as ranges_module
+from parallax.core._execution._unit_work import acquisition_spans as spans_module
+from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CoverageReadRequest,
@@ -92,7 +93,7 @@ from tests.unit.core._execution._unit_work._acquired_rows_support import (
     alone,
     bind_held,
     coverage_read,
-    range_bindings,
+    span_groups,
 )
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -438,8 +439,8 @@ def _answering(held: AcquireRows, answers: list[object]) -> AcquireRows:
     return acquire
 
 
-def _scoped(settled: DeferredRange, acquire: AcquireRows) -> RangeBindings:
-    return range_bindings(
+def _scoped(settled: DeferredRange, acquire: AcquireRows) -> SpanWriteGroups:
+    return span_groups(
         _SPANS,
         alone(settled),
         acquire,
@@ -448,11 +449,7 @@ def _scoped(settled: DeferredRange, acquire: AcquireRows) -> RangeBindings:
 
 
 def _binding_frames(failure: BaseException) -> list[FrameType]:
-    return [
-        frame
-        for frame in frames(failure.__traceback__, module=ranges_module.__file__)
-        if frame.f_code.co_qualname.startswith(f"{RangeBindings.__name__}.")
-    ]
+    return frames(failure.__traceback__, module=spans_module.__file__)
 
 
 @pytest.mark.parametrize("leaves", ["break", "raise"])

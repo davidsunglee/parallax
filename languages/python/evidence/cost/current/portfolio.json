@@ -18506,7 +18506,7 @@
             "wire-insert-response": "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen node it answers; no flush, lowering, or serialization"
           }
         },
-        "workloadDigest": "e49641595e17c901c14351164a3608a477a0132d995a090f7ba58f710aaadd93"
+        "workloadDigest": "2692c15893d57d88e47fb750b528b498d097c999380dc161cadd12af4a8335b0"
       },
       "readings": [
         {

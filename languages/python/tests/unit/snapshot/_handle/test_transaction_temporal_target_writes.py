@@ -22,9 +22,8 @@ from typing import Any, Literal, cast
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, InternalError, UsageError, attr
-from parallax.core._execution._unit_work import ranges
+from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import RetainedTargetState
 from parallax.core.internal.base import DocumentValue
 from parallax.core.internal.db_error import DatabaseError
@@ -33,10 +32,8 @@ from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.metamodel import (
     EntityIdentity,
 )
-from parallax.core.internal.planned_step import PredecessorRows
 from parallax.core.internal.planned_step.payload import AssignmentPayload
 from parallax.core.internal.planned_step.steps import PlannedAssignments
-from parallax.core.internal.planned_step.write_effects import BoundRange
 from parallax.core.internal.read_delivery import InvalidDataError
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
@@ -179,45 +176,43 @@ def test_an_optimistic_bitemporal_target_binds_every_interval_its_window_reaches
 
 
 @pytest.mark.parametrize(
-    ("coverage", "acquired"),
+    "coverage",
     [
         pytest.param(
             [_rectangle(_JAN, _JUN), _rectangle(_JUN, INFINITY_INSTANT, "200.00", tx_start=_T1)],
-            2,
             id="rows",
         ),
-        pytest.param([], None, id="no-row"),
+        pytest.param([], id="no-row"),
     ],
 )
 def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_write(
-    monkeypatch: pytest.MonkeyPatch, coverage: list[MappingRow], acquired: int | None
+    monkeypatch: pytest.MonkeyPatch, coverage: list[MappingRow]
 ) -> None:
-    writes = () if acquired is None else (Write(times=6),)
+    writes = (Write(times=6),) if coverage else ()
     port = ScriptedAdapter(Transact(Read(rows=coverage), *writes))
-    seen: list[tuple[int, int, int | None]] = []
-    bind = ranges._bind_range  # pyright: ignore[reportPrivateUsage] - the binding a flush's range takes
+    seen: list[tuple[int, int]] = []
+    advance = SpanWriteGroups.__next__
 
-    def recording(
-        deferred: DeferredRange,
-        reused: PredecessorRows | None,
-        acquired: Sequence[PredecessorRows],
-        /,
-        **supplied: Any,
-    ) -> BoundRange:
-        assert reused is None
-        read = sum(len(rows) for rows in acquired) if acquired else None
-        seen.append((len(_reads(port)), len(_writes(port)), read))
-        return bind(deferred, reused, acquired, **supplied)
+    def advancing(groups: SpanWriteGroups) -> Any:
+        binding = True
+        try:
+            return advance(groups)
+        except StopIteration:
+            binding = False
+            raise
+        finally:
+            if binding:
+                seen.append((len(_reads(port)), len(_writes(port))))
 
-    monkeypatch.setattr(ranges, "_bind_range", recording)
-    if acquired is None:
+    monkeypatch.setattr(SpanWriteGroups, "__next__", advancing)
+    if coverage:
+        _db(port).transact(lambda tx: _patch(tx, value="150.00"))
+    else:
         with pytest.raises(WritePreconditionError):
             _db(port).transact(lambda tx: _patch(tx, value="150.00"))
-    else:
-        _db(port).transact(lambda tx: _patch(tx, value="150.00"))
-    # The coverage read has run and no write has: the evidence arrives as read,
-    # or as no evidence at all where the read found no row.
-    assert seen == [(1, 0, acquired)]
+    # The coverage read has run and no write has, whether the range binds to
+    # the rows read or fails for the row the read did not find.
+    assert seen == [(1, 0)]
 
 
 @pytest.mark.parametrize(
@@ -367,17 +362,12 @@ _FOUR = (
 )
 
 
-@pytest.mark.parametrize("terms", [2, 1], ids=["one-read", "one-read-per-part"])
-def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_cap(
-    monkeypatch: pytest.MonkeyPatch, terms: int
-) -> None:
-    monkeypatch.setattr(ranges, "_PARTS_PER_READ", terms)
+def test_the_parts_two_acquired_starts_leave_are_read_together() -> None:
     first, second, third, fourth = _calendar(*_FOUR)
-    coverage = (
-        [Read(rows=[second, fourth])] if terms > 1 else [Read(rows=[second]), Read(rows=[fourth])]
-    )
     port = ScriptedAdapter(
-        Transact(Read(rows=[first]), Read(rows=[third]), *coverage, Write(times=9))
+        Transact(
+            Read(rows=[first]), Read(rows=[third]), Read(rows=[second, fourth]), Write(times=9)
+        )
     )
 
     def fn(tx: TxnContext) -> None:
@@ -387,18 +377,12 @@ def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_ca
     _predicated(port).transact(fn, concurrency="locking")
     reads = _reads(port)[2:]
     may, jul = _FOUR[2][0], _FOUR[3][0]
-    if terms > 1:
-        (read,) = reads
-        assert read.sql.endswith(
-            "where t0.id = ? and ((t0.thru_z > ? and t0.from_z < ?) or "
-            "(t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ? for share of t0"
-        )
-        assert read.binds == (1, _MAR, may, jul, _AUG, INFINITY_INSTANT)
-    else:
-        assert [read.binds for read in reads] == [
-            (1, _MAR, may, INFINITY_INSTANT),
-            (1, jul, _AUG, INFINITY_INSTANT),
-        ]
+    (read,) = reads
+    assert read.sql.endswith(
+        "where t0.id = ? and ((t0.thru_z > ? and t0.from_z < ?) or "
+        "(t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ? for share of t0"
+    )
+    assert read.binds == (1, _MAR, may, jul, _AUG, INFINITY_INSTANT)
     # The rectangle between the two windows is read, and left as it stands.
     closes = [call.binds[2] for call in _writes(port) if " set out_z = " in call.sql]
     assert closes == [_MAR, jul, "infinity"]

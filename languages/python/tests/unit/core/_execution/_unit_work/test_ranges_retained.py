@@ -12,8 +12,8 @@ from collections.abc import Callable, Sequence
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work import acquisition_spans as spans_module
+from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadRequest,
@@ -48,7 +48,7 @@ from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
     alone,
     bind_deferred,
-    range_bindings,
+    span_groups,
 )
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -239,7 +239,7 @@ def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> N
         reused.append(answer)
         return answer
 
-    bindings = range_bindings(
+    bindings = span_groups(
         POSITION,
         alone(settled),
         acquire,
@@ -250,11 +250,7 @@ def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> N
         next(bindings)
     # The failure is the read's own, its traceback intact.
     assert raised.value is failure
-    owned = [
-        frame
-        for frame in frames(raised.value.__traceback__, module=ranges_module.__file__)
-        if frame.f_code.co_qualname.startswith(f"{RangeBindings.__name__}.")
-    ]
+    owned = frames(raised.value.__traceback__, module=spans_module.__file__)
     assert owned
     (rows,) = reused
     assert rows is not None

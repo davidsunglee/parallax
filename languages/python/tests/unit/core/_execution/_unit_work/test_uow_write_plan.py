@@ -33,8 +33,13 @@ from parallax.core import (
 )
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, form_spans
+from parallax.core._execution._unit_work import uow as uow_module
+from parallax.core._execution._unit_work.acquisition_spans import (
+    AcquisitionSpan,
+    SpanWriteGroups,
+    form_spans,
+    write_groups,
+)
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -352,7 +357,17 @@ def _retained_row(key: int) -> RetainedObservation:
     return RetainedObservation(state, observation, None)
 
 
-_BIND_RANGE: Final = ranges_module._bind_range  # pyright: ignore[reportPrivateUsage] - the binding every deferred range takes
+def _yielded(monkeypatch: pytest.MonkeyPatch, observe: Callable[[WriteGroup], object]) -> None:
+    """Call ``observe`` with each Write Group an acquisition span yields, as it
+    is yielded."""
+    advance = SpanWriteGroups.__next__
+
+    def advancing(groups: SpanWriteGroups) -> WriteGroup:
+        group = advance(groups)
+        observe(group)
+        return group
+
+    monkeypatch.setattr(SpanWriteGroups, "__next__", advancing)
 
 
 def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> None:
@@ -381,7 +396,7 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
 ) -> None:
     simulated = _simulated(TARGET_POSITION)
     reads: list[tuple[int, int, tuple[object, ...]]] = []
-    bindings: list[tuple[int, int]] = []
+    yielded: list[tuple[int, int, int]] = []
     uow: UnitOfWork | None = None
 
     def watch(request: RowRequest) -> None:
@@ -389,22 +404,23 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
         keys = tuple(term.key_value for term in request.terms)
         reads.append((uow.source_authority.freshness, len(simulated.statements), keys))
 
-    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
+    def bound(group: WriteGroup) -> None:
         assert uow is not None
-        bindings.append((uow.source_authority.freshness, len(simulated.statements)))
-        return _BIND_RANGE(*arguments, **keywords)
+        yielded.append(
+            (uow.source_authority.freshness, len(simulated.statements), len(group.writes))
+        )
 
-    monkeypatch.setattr(ranges_module, "_bind_range", binding)
+    _yielded(monkeypatch, bound)
     rows = [{**rectangle(_JAN, INFINITY, "100.00").members, "id": key} for key in (1, 2)]
     held = HeldRows(TARGET_POSITION, [PredecessorRow(row) for row in rows], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=_Watched(held, watch))
     uow.buffer_target(_target(_APR, _SEP, "150.00", key=1))
     uow.buffer_target(_target(_APR, _SEP, "150.00", key=2))
     uow.flush(trigger="pre_commit")
-    # One read serves both ranges, and both bind before their one group
+    # One read serves both ranges, and both bind into one group before it
     # executes anything or completes either.
     assert reads == [(0, 0, (1, 2))]
-    assert bindings == [(0, 0), (0, 0)]
+    assert yielded == [(0, 0, 2)]
     assert uow.source_authority.freshness == 2
     assert statement_kinds(simulated.statements) == ["grouped close", "insert"]
 
@@ -435,19 +451,15 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plans: list[WritePlan] = []
-    ranges: list[BoundRange] = []
-    finalize, bind = WritePlanner.finalize, _BIND_RANGE
+    yielded: list[WriteGroup] = []
+    finalize = WritePlanner.finalize
 
     def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         plans.append(finalize(planner, request))
         return plans[-1]
 
-    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
-        ranges.append(bind(*arguments, **keywords))
-        return ranges[-1]
-
     monkeypatch.setattr(WritePlanner, "finalize", planning)
-    monkeypatch.setattr(ranges_module, "_bind_range", binding)
+    _yielded(monkeypatch, yielded.append)
     executed: list[tuple[PlannedStep, ...]] = []
     steps = ObservedSteps(
         _simulated(TARGET_POSITION), observe=lambda _position, held: executed.append(held)
@@ -462,10 +474,12 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
     # A deferred write no neighbour shares with is a span of its own.
     assert isinstance(deferred, AcquisitionSpan)
     assert len(deferred.ranges) == 1
-    (bound,) = ranges
-    assert bound.steps
+    (group,) = yielded
+    (bound,) = group.writes
+    assert isinstance(bound, BoundRange) and bound.steps
     # A deferred write executes nothing until its range is bound, and its
     # group of one runs the very steps the range bound.
+    assert group.steps is bound.steps
     assert [id(held) for held in executed] == [id(planned.steps), id(bound.steps)]
 
 
@@ -479,23 +493,23 @@ def test_planning_and_deferred_binding_borrow_the_one_ownership_view_of_their_fl
     # demanding nothing a write leaves for a source.
     planned: list[TemporalWriteOwnership] = []
     bound: list[tuple[TemporalWriteOwnership, bool]] = []
-    finalize, bind = WritePlanner.finalize, _BIND_RANGE
+    finalize = WritePlanner.finalize
 
     def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
         planned.append(request.ownership)
         return finalize(planner, request)
 
-    def binding(*args: Any, **kwargs: Any) -> BoundRange:
-        ownership = kwargs["ownership"]
+    def opening(span: AcquisitionSpan, **collaborators: Any) -> SpanWriteGroups:
+        ownership = collaborators["ownership"]
         # The earlier write amended object 2 from April on, opening its current tail.
         opened = TemporalRowCoordinates(
             corpus_object_key("Position", ("id", 2)).entity, (2,), OPEN_BITEMPORAL_ENDS
         )
         bound.append((ownership, ownership.owns(opened)))
-        return bind(*args, **kwargs)
+        return write_groups(span, **collaborators)
 
     monkeypatch.setattr(WritePlanner, "finalize", planning)
-    monkeypatch.setattr(ranges_module, "_bind_range", binding)
+    monkeypatch.setattr(uow_module, "write_groups", opening)
     simulated = _simulated(TARGET_POSITION)
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=held)

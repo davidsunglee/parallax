@@ -1,6 +1,6 @@
 """An in-memory row acquisition answering the rows a database holds, and
-deferred ranges read and bound over it through the unit of work's own scoped
-range binding."""
+deferred ranges read and bound over it through the Write Groups their
+acquisition span yields."""
 
 from __future__ import annotations
 
@@ -9,8 +9,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan, form_spans
-from parallax.core._execution._unit_work.ranges import DeferredRange, RangeBindings
+from parallax.core._execution._unit_work.acquisition_spans import (
+    AcquisitionSpan,
+    SpanWriteGroups,
+    form_spans,
+    write_groups,
+)
+from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CompletionRequest,
@@ -40,7 +45,7 @@ __all__ = [
     "bind_deferred",
     "bind_held",
     "coverage_read",
-    "range_bindings",
+    "span_groups",
 ]
 
 
@@ -102,7 +107,7 @@ def _never_current(state: ObjectStateKey, read_at: int) -> bool:
     return False
 
 
-def range_bindings(
+def span_groups(
     model: Metamodel,
     span: AcquisitionSpan,
     acquire_rows: AcquireRows,
@@ -110,12 +115,12 @@ def range_bindings(
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = _never_current,
-) -> RangeBindings:
-    """The scoped binding a flush binds ``span``'s deferred writes through,
+) -> SpanWriteGroups:
+    """The Write Groups a flush binds ``span``'s deferred writes into,
     reading through ``acquire_rows`` under ``ownership``, their retained rows
     judged by ``current``."""
     planner = build_write_planner(bound_model(model))
-    return RangeBindings(
+    return write_groups(
         span,
         acquire_rows=acquire_rows,
         current=current,
@@ -144,17 +149,17 @@ def bind_deferred(
     current: Callable[[ObjectStateKey, int], bool] = _never_current,
 ) -> BoundRange:
     """The one deferred write of ``span`` bound, through its
-    :func:`range_bindings`: the one write of the one Write Group they answer,
+    :func:`span_groups`: the one write of the one Write Group they answer,
     whose steps are its own."""
-    with range_bindings(
+    with span_groups(
         model,
         span,
         acquire_rows,
         transaction_instant=transaction_instant,
         ownership=ownership,
         current=current,
-    ) as bindings:
-        (group,) = bindings
+    ) as groups:
+        (group,) = groups
     (bound,) = group.writes
     assert isinstance(bound, BoundRange)
     assert group.steps is bound.steps

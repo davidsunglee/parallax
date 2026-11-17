@@ -424,9 +424,10 @@ removed and reinserted this way.
               │
               │ UnitOfWork._run_write_plan, turn by turn, in order                 uow
               │   WriteGroup        → _execute_write_group
-              │   AcquisitionSpan   → RangeBindings: complete retained starting rows,
-              │                       read uncovered coverage through acquire_rows,
-              │                       bind each ready range → WriteGroup
+              │   AcquisitionSpan   → write_groups: complete retained            acquisition_spans
+              │                       starting rows, read uncovered coverage
+              │                       through acquire_rows, bind each ready
+              │                       range → WriteGroup
               │                       → _execute_write_group; repeat
               │
               │ _execute_write_group
@@ -471,7 +472,7 @@ Completion publishes what a write did to later work, through the same
 `RetainedObservation` of a state the write changed, advances or ends the sources of the
 states it updated or deleted, retires the owned rows it removed before registering the
 rows it opened, and records what it left for the temporal sources that continue through
-it. A deferred write binds against the same facts: its `RangeBindings` asks
+it. A deferred write binds against the same facts: its span's `SpanWriteGroups` asks
 `SourceAuthority.is_unchanged_since` whether a retained starting row is still current.
 The pre-commit flush plans under a concluding view of the same ownership, which demands
 nothing its writes leave, since no later write follows it. A failure while executing,
@@ -526,10 +527,12 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.ranges:settle_opening`
 - `parallax.core._execution._unit_work.ranges:DeferredRange`
 - `parallax.core._execution._unit_work.ranges:DeferredRange.read_key`
-- `parallax.core._execution._unit_work.ranges:RangeBindings`
+- `parallax.core._execution._unit_work.ranges:DeferredRange.bind`
 - `parallax.core._execution._unit_work.acquisition_spans:form_spans`
 - `parallax.core._execution._unit_work.acquisition_spans:AcquisitionSpan`
 - `parallax.core._execution._unit_work.acquisition_spans:AcquisitionSpan.ranges`
+- `parallax.core._execution._unit_work.acquisition_spans:write_groups`
+- `parallax.core._execution._unit_work.acquisition_spans:SpanWriteGroups`
 - `parallax.core._execution._unit_work.row_acquisition:CoverageReadKey`
 - `parallax.core.internal.planned_step.write_effects:BoundRange`
 - `parallax.core._execution._unit_work.write_plan:SettledWrite`
