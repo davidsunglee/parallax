@@ -1172,6 +1172,26 @@ EXAMPLES: Final[list[Example]] = [
         '# raises UsageError(code="read-only-write-target")',
     ),
     Example(
+        "m-unit-work-096",
+        "A target amendment of a ReadOnly family's concrete subtype omitting its key",
+        "db.transact(\n"
+        "    lambda tx: tx.wire.amend_if(\n"
+        '        "Magazine", {"title": "Spring issue"}, version=1\n'
+        "    )\n"
+        ")\n"
+        '# raises UsageError(code="read-only-write-target")',
+    ),
+    Example(
+        "m-unit-work-097",
+        "A target amendment of a ReadOnly family's concrete subtype stating a null key",
+        "db.transact(\n"
+        "    lambda tx: tx.amend_if(\n"
+        '        Magazine, Magazine.title.set("Spring issue"), key=None, version=1\n'
+        "    )\n"
+        ")\n"
+        '# raises UsageError(code="read-only-write-target")',
+    ),
+    Example(
         "m-unit-work-069",
         "A predicate amendment of a ReadOnly Entity",
         "db.transact(\n"
