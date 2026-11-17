@@ -1,4 +1,19 @@
 {
+  "adjustment": {
+    "date": "2026-11-17",
+    "redigested": {
+      "members": [
+        "write-lowering"
+      ],
+      "producingCommit": "0253277ec9cebb8a582b06959134324a8ed126ce",
+      "unchanged": "every reading, sample, comparison, and measurement condition; the producing commit's own digest code reproduces each recorded digest, and HEAD's digest code finds the producing commit's measured inputs equal to HEAD's",
+      "workloadDigest": {
+        "atCapture": "e49641595e17c901c14351164a3608a477a0132d995a090f7ba58f710aaadd93",
+        "redigestedUnder": "2692c15893d57d88e47fb750b528b498d097c999380dc161cadd12af4a8335b0"
+      }
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "feature-boundary": {
       "runtimes": {

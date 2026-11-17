@@ -27,12 +27,13 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.row_acquisition import (
+    CompletionRequest,
     CoverageReadKey,
     CoverageReadRequest,
     CoverageTerm,
     TargetReadRequest,
+    consume_completion,
     consume_coverage,
-    consume_coverage_by_key,
     consume_target,
 )
 from parallax.core._execution._unit_work.uow import FlushScope
@@ -214,22 +215,22 @@ def _failing_after(rows: Sequence[tuple[object, ...]], after: int) -> Iterator[t
     raise _Unjudged
 
 
-@pytest.mark.parametrize("coverage", [False, True], ids=["target", "coverage"])
+@pytest.mark.parametrize("completion", [False, True], ids=["target", "completion"])
 def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_handed(
-    coverage: bool,
+    completion: bool,
 ) -> None:
     rows = [(1, "Ada", Decimal("100.00"), 3), (2, "Bea", Decimal("200.00"), 3)]
     documents: list[object | None] = ["raw-1", "raw-2"]
     request = _target_request()
     selection = _selection(_ACCOUNT, "Account")
     with pytest.raises(_Unjudged) as raised:
-        if coverage:
-            coverage_request = CoverageReadRequest(
-                CoverageReadKey(request.entity, _key(request), shared_lock=False),
-                (CoverageTerm(1, None),),
-            )
-            consume_coverage(
-                coverage_request, selection, _failing_after(rows, 1), _ABSENT, documents, 2
+        if completion:
+            # A completion's consumer is handed judged rows, not the raw rows
+            # the request carries.
+            raw = tuple((*row,) for row in rows)
+            completing = CompletionRequest(request.entity, _key(request), raw, tuple(documents))
+            consume_completion(
+                completing, selection, _failing_after(rows, 1), _ABSENT, documents, 2
             )
         else:
             consume_target(request, selection, _failing_after(rows, 0), _ABSENT, documents, 1)
@@ -280,7 +281,7 @@ def test_a_shared_reads_rows_and_documents_go_to_the_object_each_row_holds_the_k
     ]
     documents: list[object | None] = ["raw-2a", "raw-1", "raw-2a", "raw-2b"]
     selection = _selection(_ACCOUNT, "Account")
-    evidence = consume_coverage_by_key(
+    evidence = consume_coverage(
         _shared_request(), selection, iter(rows), _ABSENT, documents, len(rows)
     )
     # Object 3 returned no row and has no evidence; a row read twice is kept twice.
@@ -300,7 +301,7 @@ def test_a_shared_reads_rows_and_documents_go_to_the_object_each_row_holds_the_k
 
 def test_a_shared_read_returning_nothing_is_no_objects_evidence() -> None:
     selection = _selection(_ACCOUNT, "Account")
-    assert consume_coverage_by_key(_shared_request(), selection, iter(()), _ABSENT, None, 0) == {}
+    assert consume_coverage(_shared_request(), selection, iter(()), _ABSENT, None, 0) == {}
 
 
 def test_a_shared_reads_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents() -> None:
@@ -308,7 +309,7 @@ def test_a_shared_reads_consumer_a_row_fails_in_holds_none_of_the_rows_or_docume
     documents: list[object | None] = ["raw-1", "raw-2"]
     selection = _selection(_ACCOUNT, "Account")
     with pytest.raises(_Unjudged) as raised:
-        consume_coverage_by_key(
+        consume_coverage(
             _shared_request(), selection, _failing_after(rows, 2), _ABSENT, documents, 2
         )
     consumer = frames(raised.value.__traceback__, module=acquisition_module.__file__)

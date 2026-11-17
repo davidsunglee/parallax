@@ -15,13 +15,20 @@ WRITE_SOURCES: Final = (
 
 FEATURE_SOURCE: Final = "tests/unit/_feature_boundary_support.py"
 
+_WRITE_OMITTED: Final = frozenset({"write_lowering_digest", "marked_flushes"})
+
 
 def write_digest(sources: Sequence[str], manifests: Sequence[str]) -> str:
     """The write-lowering identity of ``sources``, in :data:`WRITE_SOURCES`
-    order, and the frozen structural and scalar-type ``manifests``."""
+    order, and the frozen structural and scalar-type ``manifests``.
+
+    The first source's ``marked_flushes`` is omitted with its digest
+    declaration: it places the instrument's region marks on production
+    methods and defines no part of what a workload measures.
+    """
     digest = hashlib.sha256()
     for index, source in enumerate(sources):
-        omitted = frozenset({"write_lowering_digest"}) if index == 0 else frozenset[str]()
+        omitted = _WRITE_OMITTED if index == 0 else frozenset[str]()
         digest.update(canonical_source(source, omit_functions=omitted))
         digest.update(b"\0")
     for manifest in manifests:

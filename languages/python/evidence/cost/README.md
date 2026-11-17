@@ -435,9 +435,10 @@ manifests.
 
 Workload source enters each digest as executable syntax. Comments, formatting,
 standalone documentation strings, import statements, and only the workload's
-own digest declaration are ignored; assigned literals, names, export strings,
-and operational expressions remain part of the identity. Prose edits and moved
-imports therefore need no amendment.
+own digest declaration and write lowering's region-marking hook are ignored;
+assigned literals, names, export strings, and operational expressions remain
+part of the identity. Prose edits and moved imports therefore need no
+amendment.
 
 All required proofs finish before writing. The command amends only stale
 workload digest fields and records their old and new values in conditions;

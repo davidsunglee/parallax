@@ -25,8 +25,8 @@ __all__ = [
     "RowReadRequest",
     "RowRequest",
     "TargetReadRequest",
+    "consume_completion",
     "consume_coverage",
-    "consume_coverage_by_key",
     "consume_target",
 ]
 
@@ -201,8 +201,7 @@ class AcquireRows(Protocol):
     returns once the read's resources are settled, however the consumer left.
 
     A target request reads in a Read of its own; a coverage request reads in
-    the Flush activity of the flush reaching its deferred range or acquisition
-    span. A
+    the Flush activity of the flush reaching its acquisition span. A
     :class:`CompletionRequest` reads nothing: its rows are judged with no
     statement, Database Call, or activity, and its consumer runs over them.
     """
@@ -232,26 +231,21 @@ def consume_target(
         del rows, documents
 
 
-def consume_coverage(
-    request: CoverageReadRequest | CompletionRequest,
+def consume_completion(
+    request: CompletionRequest,
     selection: EntityMemberSelection,
     rows: Iterator[tuple[object, ...]],
     absent: object,
     documents: Sequence[object | None] | None,
     root_count: int,
 ) -> PredecessorRows | None:
-    """Every current row the coverage read returned, or the completion
-    completed, as complete Predecessor Rows, or ``None`` where there was none.
+    """Every row the completion completed, as complete Predecessor Rows, or
+    ``None`` where there was none.
 
     However it leaves, it drops the builder and its borrowed row and document
     references; only the returned evidence keeps what it adopted."""
     del root_count
-    key_attribute = (
-        request.key_attribute
-        if isinstance(request, CompletionRequest)
-        else request.read_key.key_attribute
-    )
-    evidence = _builder(selection, selection.position(key_attribute), absent, documents)
+    evidence = _builder(selection, selection.position(request.key_attribute), absent, documents)
     row: tuple[object, ...] | None = None
     try:
         for position, row in enumerate(rows):
@@ -261,7 +255,7 @@ def consume_coverage(
         del evidence, rows, documents, row
 
 
-def consume_coverage_by_key(
+def consume_coverage(
     request: CoverageReadRequest,
     selection: EntityMemberSelection,
     rows: Iterator[tuple[object, ...]],
@@ -269,9 +263,9 @@ def consume_coverage_by_key(
     documents: Sequence[object | None] | None,
     root_count: int,
 ) -> dict[ManagedValue, PredecessorRows]:
-    """Every current row a coverage read of several objects returned, as
-    complete Predecessor Rows of each object it returned any row of, keyed by
-    the key value the stored row holds.
+    """Every current row a coverage read returned, as complete Predecessor
+    Rows of each object it returned any row of, keyed by the key value the
+    stored row holds.
 
     Each row goes to its own object's evidence, in read order, with the
     document it was read with, whatever order the objects' rows arrive in;

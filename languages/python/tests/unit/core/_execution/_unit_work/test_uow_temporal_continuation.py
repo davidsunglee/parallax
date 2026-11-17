@@ -29,6 +29,7 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
+from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
@@ -39,6 +40,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
     RowConsumer,
     RowRequest,
 )
+from parallax.core._execution._unit_work.write_plan import WriteGroup
 from parallax.core._execution._unit_work.write_runner import (
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
@@ -399,16 +401,16 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
 ) -> None:
     released: list[_CurrentRowCapture] = []
     release = _CurrentRowCapture.release
-    bound: list[BoundRange] = []
-    bind = ranges._bind_range  # pyright: ignore[reportPrivateUsage] - the binding every deferred range takes
+    yielded: list[WriteGroup] = []
+    advance = SpanWriteGroups.__next__
 
     def releasing(capture: _CurrentRowCapture) -> None:
         released.append(capture)
         release(capture)
 
-    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
-        bound.append(bind(*arguments, **keywords))
-        return bound[-1]
+    def advancing(groups: SpanWriteGroups) -> WriteGroup:
+        yielded.append(advance(groups))
+        return yielded[-1]
 
     def failing(positions: StoredPositions) -> Callable[..., None]:
         def execute(*arguments: Any, **keywords: Any) -> None:
@@ -418,12 +420,13 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
         return execute
 
     monkeypatch.setattr(_CurrentRowCapture, "release", releasing)
-    monkeypatch.setattr(ranges, "_bind_range", binding)
+    monkeypatch.setattr(SpanWriteGroups, "__next__", advancing)
     session = _Session(execute=failing, ends=(_SEP, INFINITY))
     source = session.observed()
     with pytest.raises(RuntimeError, match="the group failed") as raised:
         session.flush((_write(_FEB, acctNum="O"), source))
-    ((range_,),) = [bound]
+    ((range_,),) = [group.writes for group in yielded]
+    assert isinstance(range_, BoundRange)
     (capture,) = released
     # The capture staged the rows the group's payloads stored, and dropped
     # them with every description once the group failed.

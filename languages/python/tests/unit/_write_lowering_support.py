@@ -121,8 +121,8 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._planning import build_write_preparation
+from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.preparation import TYPED_LANE
-from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._write_step_executor import WriteStepExecutor
@@ -1771,12 +1771,12 @@ def _replaced(owner: type, name: str, replacement: object) -> Generator[None]:
 def marked_flushes(regions: FlushRegions) -> Generator[None]:
     """Every flush inside the block calling ``regions`` around production's
     own planning, range binding, and step execution:
-    :meth:`WritePlanner.finalize`, ``RangeBindings.__next__``, and
+    :meth:`WritePlanner.finalize`, ``SpanWriteGroups.__next__``, and
     :meth:`WriteStepExecutor.execute` are wrapped for the block's whole life,
     so the wrappers are installed once rather than around each flush, and the
     marks are read from ``regions`` at each call."""
     finalize = WritePlanner.finalize
-    advance = RangeBindings.__next__
+    advance = SpanWriteGroups.__next__
     execute = WriteStepExecutor.execute
 
     def finalized(planner: WritePlanner, request: WritePlanningRequest, /) -> WritePlan:
@@ -1785,10 +1785,10 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         regions.planned()
         return plan
 
-    def advanced(bindings: RangeBindings, /) -> WriteGroup:
+    def advanced(groups: SpanWriteGroups, /) -> WriteGroup:
         regions.binding()
         try:
-            return advance(bindings)
+            return advance(groups)
         finally:
             regions.bound()
 
@@ -1816,7 +1816,7 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
 
     with (
         _replaced(WritePlanner, "finalize", finalized),
-        _replaced(RangeBindings, "__next__", advanced),
+        _replaced(SpanWriteGroups, "__next__", advanced),
         _replaced(WriteStepExecutor, "execute", executed),
     ):
         yield

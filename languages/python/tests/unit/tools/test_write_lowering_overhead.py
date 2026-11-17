@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import dataclasses
 import datetime as dt
 import json
@@ -25,7 +26,7 @@ from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract, derive_memory_gates
 from parallax.conformance.cost_envelope import validate
 from parallax.core import Bitemporal, TxTemporal
-from parallax.core._execution._unit_work.ranges import RangeBindings
+from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_step_executor import WriteStepExecutor
@@ -55,6 +56,7 @@ from production_origins import ORIGINS_FIELD
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _write_lowering_support as lowering_support
+from tests.unit._workload_digest_support import write_digest
 from tests.unit.tools._provenance_support import CHILD_ORIGINS, pin_dirty_tree
 
 _CATEGORICAL_OPERATIONS = {
@@ -537,6 +539,22 @@ def test_the_write_digest_ignores_prose_imports_and_layout_and_tracks_operationa
 
     monkeypatch.setattr(Path, "read_text", operational)
     assert lowering_support.write_lowering_digest() != baseline
+
+
+def test_the_write_digest_omits_only_its_declaration_and_the_region_marking_hook() -> None:
+    source = Path(lowering_support.__file__).read_text(encoding="utf-8")
+    lines = source.splitlines(keepends=True)
+    baseline = write_digest([source], ())
+    unweighed: set[str] = set()
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        first = node.body[0]
+        probe = " " * first.col_offset + "_WORKLOAD_PROBE = 1\n"
+        probed = [*lines[: first.lineno - 1], probe, *lines[first.lineno - 1 :]]
+        if write_digest(["".join(probed)], ()) == baseline:
+            unweighed.add(node.name)
+    assert unweighed == {"write_lowering_digest", "marked_flushes"}
 
 
 # --------------------------------------------------------------------------- #
@@ -1691,14 +1709,14 @@ def test_a_requesting_deferred_flush_hands_each_write_the_rows_its_source_contin
 
 def test_marked_flushes_restore_production_on_every_exit() -> None:
     finalize = WritePlanner.finalize
-    advance = RangeBindings.__next__
+    advance = SpanWriteGroups.__next__
     execute = WriteStepExecutor.execute
     with lowering_support.marked_flushes(lowering_support.FlushRegions()):
         assert WritePlanner.finalize is not finalize
-        assert RangeBindings.__next__ is not advance
+        assert SpanWriteGroups.__next__ is not advance
         assert WriteStepExecutor.execute is not execute
     assert WritePlanner.finalize is finalize
-    assert RangeBindings.__next__ is advance
+    assert SpanWriteGroups.__next__ is advance
     assert WriteStepExecutor.execute is execute
     with (
         pytest.raises(RuntimeError, match="left"),
@@ -1706,7 +1724,7 @@ def test_marked_flushes_restore_production_on_every_exit() -> None:
     ):
         raise RuntimeError("left")
     assert WritePlanner.finalize is finalize
-    assert RangeBindings.__next__ is advance
+    assert SpanWriteGroups.__next__ is advance
     assert WriteStepExecutor.execute is execute
 
 
