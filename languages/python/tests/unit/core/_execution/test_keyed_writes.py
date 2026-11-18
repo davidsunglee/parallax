@@ -82,14 +82,14 @@ def _resolved(entity: CompiledEntity, named: Named) -> ResolvedKeyedWriteSource:
     authority names account 3, as ``named`` selects; neither is this attempt's,
     so the write is refused for its evidence."""
     evidence = ReadEvidence(entity.identity, _key(entity.identity, 2), ParticipationToken(), None)
-    authoring = InsertionIdentity(_key(entity.identity, 3))
+    insertion = InsertionIdentity(_key(entity.identity, 3))
     return ResolvedKeyedWriteSource(
         entity,
         None,
         evidence if named in ("evidence", "both") else None,
         "this",
         _ADVICE,
-        authoring if named in ("authoring", "both") else None,
+        insertion if named in ("authoring", "both") else None,
     )
 
 

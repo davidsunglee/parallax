@@ -318,7 +318,7 @@ class TypedKeyedInsertSource[E: EntityBase]:
                 self._construction,
                 attempt.model.layouts.entity(opened.identity),
                 opened.row,
-                opened.insertion,
+                insertion=opened.insertion,
             ),
         )
 

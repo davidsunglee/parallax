@@ -50,14 +50,14 @@ __all__ = [
     "SnapshotInspectionCode",
     "SnapshotNodeState",
     "bind_insertion",
-    "insertion_authoring",
-    "insertion_of",
+    "insertion_state",
     "inspection_refusal",
     "is_view_loaded",
     "pin_for_shape",
     "required_pin",
     "snapshot_state_of",
     "typed_edge_of",
+    "typed_insertion_of",
     "typed_pin_of",
     "view",
 ]
@@ -200,14 +200,14 @@ class SnapshotNodeState:
 
 
 @dataclass(frozen=True, slots=True)
-class _InsertionAuthoring(DetachedLifecycleState):
+class _InsertionState(DetachedLifecycleState):
     """The authority an admitted insertion granted a value no read published."""
 
     identity: InsertionIdentity
 
 
 @dataclass(frozen=True, slots=True)
-class _AuthoredNode:
+class _InsertedNodeState:
     """The authority an admitted insertion granted a value that also carries a
     materialized node's state — diagnostic data a classified read exposed with
     no Read Evidence — which stays that node's own, untouched."""
@@ -227,12 +227,12 @@ def snapshot_state_of(node: object) -> SnapshotNodeState | None:
     its editedness. An insertion's authority bound to the value later
     (:func:`bind_insertion`) changes none of it."""
     state = _lifecycle_state_of(node)
-    if isinstance(state, _AuthoredNode):
+    if isinstance(state, _InsertedNodeState):
         return state.node
     return state if isinstance(state, SnapshotNodeState) else None
 
 
-def insertion_of(value: object) -> InsertionIdentity | None:
+def typed_insertion_of(value: object) -> InsertionIdentity | None:
     """The insertion authority ``value`` carries, or ``None`` for a value no
     admitted insertion was stated through or derived from.
 
@@ -240,7 +240,7 @@ def insertion_of(value: object) -> InsertionIdentity | None:
     derived from an inserted instance after the insertion carries its
     authority; one derived before carries none."""
     state = _lifecycle_state_of(value)
-    if isinstance(state, _InsertionAuthoring | _AuthoredNode):
+    if isinstance(state, _InsertionState | _InsertedNodeState):
         return state.identity
     return None
 
@@ -255,15 +255,15 @@ def bind_insertion(value: Entity, identity: InsertionIdentity) -> None:
     is kept as it stands beside the authority."""
     node = snapshot_state_of(value)
     attach_lifecycle_state(
-        value, _InsertionAuthoring(identity) if node is None else _AuthoredNode(identity, node)
+        value, _InsertionState(identity) if node is None else _InsertedNodeState(identity, node)
     )
 
 
-def insertion_authoring(identity: InsertionIdentity) -> DetachedLifecycleState:
+def insertion_state(identity: InsertionIdentity) -> DetachedLifecycleState:
     """The lifecycle state a value an allocating insert published carries: the
     insertion's authority alone, with no materialized node state and so no
     read provenance."""
-    return _InsertionAuthoring(identity)
+    return _InsertionState(identity)
 
 
 def typed_pin_of(node: object) -> Pin:
