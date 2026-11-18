@@ -83,7 +83,6 @@ from parallax.core.internal.planned_step.steps import INFINITY as PLANNED_INFINI
 from parallax.core.internal.planned_step.steps import Finite, PlannedStep
 from parallax.core.internal.planned_step.write_effects import (
     OPEN_BITEMPORAL_ENDS,
-    BoundRange,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
@@ -207,14 +206,14 @@ def _group(*writes: SettledWrite, steps: tuple[PlannedStep, ...] = ()) -> WriteG
 
 
 def _groups(plan: WritePlan) -> list[WriteGroup]:
-    groups = [turn for turn in plan.turns if isinstance(turn, WriteGroup)]
-    assert len(groups) == len(plan.turns)
+    groups = [entry for entry in plan.entries if isinstance(entry, WriteGroup)]
+    assert len(groups) == len(plan.entries)
     return groups
 
 
 def _changing(key: int) -> SettledWrite:
     """A settled write whose completion records one change."""
-    return SettledWrite(changed=(corpus_object_key("Position", ("id", key)),))
+    return SettledWrite(steps=(), changed=(corpus_object_key("Position", ("id", key)),))
 
 
 def test_each_group_executes_its_own_steps_once_every_earlier_group_completed() -> None:
@@ -260,7 +259,7 @@ def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes(
         (
             _group(_changing(1), steps=(close(1),)),
             _group(_changing(2), _changing(3), steps=(close(2), close(3))),
-            _group(SettledWrite(), steps=(close(4),)),
+            _group(SettledWrite(steps=()), steps=(close(4),)),
         )
     )
     simulated = _simulated(POSITION_META)
@@ -278,7 +277,7 @@ def test_an_acquisition_spans_turn_runs_between_the_groups_around_it() -> None:
     (span,) = form_spans(
         deferred_ranges(shared_plan([*frag(ShareCols, 1, 1), *frag(ShareCols, 2, 1)]))
     )
-    plan = WritePlan((_group(SettledWrite()), span, _group(SettledWrite())))
+    plan = WritePlan((_group(SettledWrite(steps=())), span, _group(SettledWrite(steps=()))))
     events: list[tuple[str, object]] = []
 
     def watch(request: RowRequest) -> None:
@@ -448,7 +447,9 @@ def test_a_flush_assembles_the_audit_its_ranges_bind_under_once_and_only_for_a_r
         uow.buffer_target(_target(_APR, _SEP, "150.00", key=key))
     uow.buffer(_observed_amend(3, _retained_row(3)))
     uow.flush(trigger="pre_commit")
-    assert len(assembled) == min(deferred, 1)
+    # Planning settles under the one it assembles for itself; binding
+    # assembles its own once, and only where the plan holds a range.
+    assert len(assembled) == 1 + min(deferred, 1)
 
 
 def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_bound(
@@ -473,14 +474,14 @@ def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_boun
     uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
     uow.flush(trigger="pre_commit")
-    ((planned, deferred),) = [plan.turns for plan in plans]
+    ((planned, deferred),) = [plan.entries for plan in plans]
     assert isinstance(planned, WriteGroup)
     # A deferred write no neighbour shares with is a span of its own.
     assert isinstance(deferred, AcquisitionSpan)
     assert len(deferred.ranges) == 1
     (group,) = yielded
     (bound,) = group.writes
-    assert isinstance(bound, BoundRange) and bound.steps
+    assert bound.steps
     # A deferred write executes nothing until its range is bound, and its
     # group of one runs the very steps the range bound.
     assert group.steps is bound.steps

@@ -13,24 +13,25 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.flush_facts import FlushFacts
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     TargetWriteInstruction,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.non_temporal_settlement import NonTemporalSettlement
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
 )
+from parallax.core._execution._unit_work.temporal_settlement import TemporalSettlement
 from parallax.core._execution._unit_work.write_items import LicensedWrite, target_write
 from parallax.core._execution._unit_work.write_plan import WritePlan
-from parallax.core._execution._unit_work.write_settlement import (
-    WritePlanCompiler,  # producer-reach regression only
-)
 from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.internal import inheritance
 from parallax.core.internal.metamodel._accepted import FacetKey
 from parallax.core.internal.model_formation import ModelCompilerRequirement
+from parallax.core.internal.planned_step import ObjectKey, VersionObservation
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.temporal_write.expansion import PredecessorExpander
 from parallax.core.internal.unit_work import (
@@ -50,12 +51,14 @@ from tests._support.planner_probes import (
     deferred_ranges,
     observed_buffer,
     plan_steps,
+    settled_writes,
 )
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
 _MODELS = models.load_models()
+_ACCOUNT = _MODELS["account"]
 _BALANCE = _MODELS["balance"]
 _POSITION = _MODELS["position"]
 _OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -71,7 +74,9 @@ _PRODUCER_CLASSES = (
     FixedClock,
     SystemClock,
     WritePlanner,
-    WritePlanCompiler,
+    TemporalSettlement,
+    NonTemporalSettlement,
+    FlushFacts,
     PredecessorExpander,
     AuditStrategy,
     type(_BALANCE),
@@ -202,3 +207,31 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
     )
     assert len(list(plan_steps(plan))) == 2
     assert not [value for value in _reachable_from_plan(plan) if _is_producer(value)]
+
+
+def test_a_non_temporal_plan_retains_its_settled_writes_and_neither_producer_nor_flush() -> None:
+    # Non-Temporal settlement settles an insert and an observed amendment in
+    # one flush; the plan keeps their steps and completions, and nothing that
+    # settled them or that the flush shared while they settled.
+    account = next(entity.identity for entity in _ACCOUNT.entities)
+    writes = [
+        KeyedWriteInstruction(
+            "insert", "Account", ({"id": 2, "owner": "Ada", "balance": Decimal("1.00")},)
+        ),
+        KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("5.00")},)),
+    ]
+    plan = build_write_planner(bound_model(_ACCOUNT)).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=inert_instant(),
+            preference="optimistic",
+            composed_writes=observed_buffer(
+                writes, _ACCOUNT, {ObjectKey(account, (("id", 1),)): VersionObservation(3)}
+            ),
+        )
+    )
+    assert [len(write.steps) for write in settled_writes(plan)] == [1, 1]
+    walked = _reachable_from_plan(plan)
+    assert not [value for value in walked if _is_producer(value)]
+    assert not [value for value in walked if isinstance(value, AuditDecoration)]
+    assert all(value is not TEST_ACTOR_IDENTITY for value in walked)

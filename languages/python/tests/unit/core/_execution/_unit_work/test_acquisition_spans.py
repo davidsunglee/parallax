@@ -24,7 +24,7 @@ from parallax.core import Attr, Bitemporal, DomainModel, InternalError, TxTempor
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import acquisition_spans as spans_module
 from parallax.core._execution._unit_work import write_plan as plan_module
-from parallax.core._execution._unit_work import write_settlement as settlement
+from parallax.core._execution._unit_work import write_planner as planner_module
 from parallax.core._execution._unit_work.acquisition_spans import (
     AcquisitionSpan,
     SpanWriteGroups,
@@ -36,6 +36,7 @@ from parallax.core._execution._unit_work.effects import (
     WRITE_PRECONDITION_FAILED,
     WritePreconditionError,
 )
+from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     prepare_wire_write,
@@ -53,11 +54,12 @@ from parallax.core._execution._unit_work.row_acquisition import (
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     LicensedWrite,
+    StateObserved,
     TxStartConditioned,
     is_licensed_by,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_error import DatabaseError
@@ -122,14 +124,14 @@ def _bitemporal(
     concurrency: ConcurrencyPreference = "optimistic",
 ) -> tuple[DeferredRange, ...]:
     """The deferred range of one Bitemporal write of each object ``keys``
-    names, settled in one compilation."""
+    names, settled in one finalization."""
     writes = [write for key in keys for write in frag(entity, key, 1)]
     return deferred_ranges(plan(writes, concurrency=concurrency))
 
 
 def _transaction_time_only(*keys: int) -> tuple[DeferredRange, ...]:
     """The deferred range of one Optimistic Transaction-Time-Only target
-    amendment of each object ``keys`` names, settled in one compilation."""
+    amendment of each object ``keys`` names, settled in one finalization."""
     targets = [
         target_write(
             prepare_wire_write(
@@ -184,7 +186,7 @@ def test_no_range_forms_no_span() -> None:
 def test_a_range_of_an_object_the_open_span_holds_starts_the_next_span(
     settled: Callable[..., tuple[DeferredRange, ...]],
 ) -> None:
-    # One compilation settles one range per object, so the repeat is another's.
+    # One finalization settles one range per object, so the repeat is another's.
     first, second = settled(1, 2)
     (repeated,) = settled(2)
     (third,) = settled(3)
@@ -236,7 +238,7 @@ def test_a_span_reads_by_its_first_ranges_read_key() -> None:
 def test_the_ready_writes_of_a_full_span_fit_one_write_group() -> None:
     # A span's ready writes execute as one group, which no span can overfill.
     ranges = spans_module._WRITES_PER_SPAN  # pyright: ignore[reportPrivateUsage] - the span bound
-    writes = settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
+    writes = planner_module._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
     assert ranges <= writes
 
 
@@ -296,7 +298,7 @@ class _Traced:
 
 
 def _groups(written: WritePlan, acquire: AcquireRows, model: Metamodel = MODEL) -> SpanWriteGroups:
-    (span,) = written.turns
+    (span,) = written.entries
     assert isinstance(span, AcquisitionSpan)
     return _span_groups(span, acquire, model)
 
@@ -328,13 +330,8 @@ def _keys(group: WriteGroup) -> tuple[object, ...]:
     return tuple(_key(write) for write in group.writes)
 
 
-def _members(groups: Sequence[WriteGroup]) -> list[BoundRange]:
-    members: list[BoundRange] = []
-    for group in groups:
-        for write in group.writes:
-            assert isinstance(write, BoundRange)
-            members.append(write)
-    return members
+def _members(groups: Sequence[WriteGroup]) -> list[SettledWrite]:
+    return [write for group in groups for write in group.writes]
 
 
 def _drained(groups: SpanWriteGroups, trace: list[tuple[str, tuple[Any, ...]]]) -> list[WriteGroup]:
@@ -346,12 +343,12 @@ def _drained(groups: SpanWriteGroups, trace: list[tuple[str, tuple[Any, ...]]]) 
     return answered
 
 
-def _closes(bound: BoundRange) -> int:
+def _closes(bound: SettledWrite) -> int:
     return sum(isinstance(step, PlannedClose) for step in bound.steps)
 
 
 def _span(written: WritePlan) -> WritePlan:
-    (span,) = written.turns
+    (span,) = written.entries
     assert isinstance(span, AcquisitionSpan) and len(span.ranges) > 1
     return written
 
@@ -416,7 +413,7 @@ def test_each_read_names_at_most_64_parts_of_the_span(parts: tuple[int, ...], re
     if len(parts) == 1:
         (count,) = parts
         written = plan(frag(ShareCols, 1, count))
-        (alone,) = written.turns
+        (alone,) = written.entries
         assert isinstance(alone, AcquisitionSpan) and len(alone.ranges) == 1
         stored = frag_rows(ShareCols, 1, count)
     else:
@@ -679,18 +676,43 @@ def test_a_later_writes_failed_binding_leaves_no_frame_holding_the_earlier_bound
     with raises_code(InternalError, CARDINALITY_CORRUPTION) as raised, groups:
         next(groups)
     # Both ranges are ready after the one read: the earlier write was bound
-    # and handed to the group being assembled when the later one failed;
-    # neither the assembly, the producer, nor the scope keeps it.
+    # and handed, as the settled write carrying its steps, to the group being
+    # assembled when the later one failed; neither the assembly, the producer,
+    # nor the scope keeps it.
     assert "affected 2 row(s), expected 1" in str(raised.value)
     (earlier,) = bound
     assembling = frames(raised.value.__traceback__, module=plan_module.__file__)
-    assert any(frame.f_code.co_name == "from_members" for frame in assembling)
-    assert not reaches([groups, *_scope_frames(raised.value), *assembling], earlier)
+    assert any(frame.f_code.co_name == "from_writes" for frame in assembling)
+    owners = [groups, *_scope_frames(raised.value), *assembling]
+    assert not reaches(owners, earlier)
+    assert not reaches(owners, earlier.steps)
+
+
+def test_a_bound_deferred_write_is_a_settled_write_carrying_its_ranges_own_evidence() -> None:
+    (write,) = frag(ShareCols, 1, 1)
+    assert is_licensed_by(write, StateObserved)
+    retained = write.authority.retained_observation
+    source = ReadEvidence(ShareCols.identity, write.object_key, ParticipationToken(), retained)
+    sourced = replace(write, authority=replace(write.authority, source_evidence=(source,)))
+    written = plan([sourced])
+    (deferred,) = deferred_ranges(written)
+    held = HeldRows(MODEL, frag_rows(ShareCols, 1, 1), overlapping=True)
+    with _groups(written, held) as groups:
+        (group,) = groups
+    (bound,) = group.writes
+    # Binding settles the range into the write its group completes, which
+    # carries the range's own evidence and its own steps, the group's alone.
+    assert type(bound) is SettledWrite
+    assert bound.source_evidence is deferred.source_evidence
+    (carried,) = bound.source_evidence
+    assert carried is source
+    assert bound.steps is group.steps
+    assert _key(bound) == 1
 
 
 def test_a_deferred_write_a_planned_write_separates_binds_in_a_span_of_its_own() -> None:
     planned = plan([*frag(ShareCols, 1, 1), _inside_write(), *frag(ShareCols, 2, 1)])
-    first, group, last = planned.turns
+    first, group, last = planned.entries
     assert isinstance(group, WriteGroup)
     for span in (first, last):
         assert isinstance(span, AcquisitionSpan) and len(span.ranges) == 1
@@ -771,7 +793,7 @@ def _log_plan(
     )
 
 
-def _closed(bound: BoundRange) -> tuple[object, ...]:
+def _closed(bound: SettledWrite) -> tuple[object, ...]:
     (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
     assert isinstance(close.target, MilestoneTarget)
     return close.target.key_values

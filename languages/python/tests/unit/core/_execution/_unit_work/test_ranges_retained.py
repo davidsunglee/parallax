@@ -26,13 +26,12 @@ from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
     TxStartConditioned,
 )
-from parallax.core._execution._unit_work.write_plan import WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.planned_step import PlannedClose, PredecessorRow
 from parallax.core.internal.planned_step.keys import ObjectStateKey, TemporalObjectStateKey
-from parallax.core.internal.planned_step.write_effects import BoundRange
 from parallax.core.internal.temporal_read import TimeInterval
 from parallax.core.internal.unit_work import WritePlanningRequest
 from tests._support.bindings import bound_model
@@ -120,7 +119,7 @@ def _bind(
     stored: Sequence[PredecessorRow],
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,
-) -> tuple[BoundRange, HeldRows]:
+) -> tuple[SettledWrite, HeldRows]:
     held = HeldRows(POSITION, stored, overlapping=True)
     bound = bind_deferred(
         POSITION, alone(settled), held, transaction_instant=_INSTANT, current=current

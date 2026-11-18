@@ -1459,7 +1459,7 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
     # write changes one object, so the unit of work's change count says how
     # many completed.
     def settled(key: int) -> SettledWrite:
-        return SettledWrite(changed=(ObjectKey(_SEQUENCE_SPAN, (("id", key),)),))
+        return SettledWrite(steps=(), changed=(ObjectKey(_SEQUENCE_SPAN, (("id", key),)),))
 
     known = _span_revision({"amount": 300}, predecessor_document_is_object=True, key=1)
     plan = WritePlan(

@@ -31,7 +31,6 @@ from parallax.core._execution._unit_work.write_items import (
     is_licensed_by,
 )
 from parallax.core.internal.base import ManagedValue
-from parallax.core.internal.inheritance import InheritanceEntityView
 from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.planned_step.keys import (
     ObjectKey,
@@ -381,7 +380,7 @@ class _RangeMeaning:
     begins and shared by the coverage check, acquisition, and continuation;
     ``None`` on a Transaction-Time-Only object. ``read_key`` is the read its
     coverage is read by, one instance per Entity and lock decision of the
-    compilation that settled it. ``opening`` is the pending insertion a
+    finalization that settled it. ``opening`` is the pending insertion a
     replacement reaching past it settles with.
     """
 
@@ -703,10 +702,8 @@ def settle_range(
     item: TemporalCoverageWrite,
     intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
     *,
-    view: InheritanceEntityView,
-    shape: TransactionTimeOnly | Bitemporal,
+    facts: TemporalFacts,
     read_key: CoverageReadKey,
-    instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
     payloads: WritePayloadPreparer,
@@ -740,17 +737,15 @@ def settle_range(
     proving that start when it executes. A range bound now reuses none, and
     releases each such row here.
 
-    ``read_key`` names the read its coverage is read by and decides whether
-    its writes gate. ``instant`` is the attempt's already-resolved Transaction
-    Instant, which a deferred range retains as a value.
+    ``facts`` are what ``item`` settles about its target, among them the
+    attempt's already-resolved Transaction Instant, which a deferred range
+    retains as a value. ``read_key`` names the read its coverage is read by
+    and decides whether its writes gate.
     """
     target = item.object_key
     ((_, key_value),) = target.primary_key
     transform = item.transform
     window = transform.valid_time_window
-    facts = TemporalFacts(
-        entity=item.target, view=view, shape=shape, instant=instant, selection=item.selection
-    )
     predecessors, validations = _known_predecessors(intents, window, facts, target, ownership)
     meaning = _RangeMeaning(
         facts=facts,
@@ -787,10 +782,8 @@ def settle_range(
 def settle_opening(
     opening: ComposedBitemporalOpening,
     *,
-    view: InheritanceEntityView,
-    shape: Bitemporal,
+    facts: TemporalFacts,
     read_key: CoverageReadKey,
-    instant: dt.datetime,
     ownership: TemporalWriteOwnership,
     audit: AuditDecoration,
     payloads: WritePayloadPreparer,
@@ -807,19 +800,16 @@ def settle_opening(
     row it reaches is transformed under its own condition, and the
     replacement's gaps open. An amendment or a destruction reaches past the
     window only as far as such a replacement does, and transforms what it
-    reaches there too. ``read_key`` names the read that coverage is read by
-    and decides whether the closes beyond the window gate. ``instant`` is the
-    attempt's already-resolved Transaction Instant.
+    reaches there too. ``facts`` are what the opening settles about its
+    target, among them the attempt's already-resolved Transaction Instant.
+    ``read_key`` names the read that coverage is read by and decides whether
+    the closes beyond the window gate.
     """
     insert = opening.insert.instruction
-    entity = insert.target
     window = insert.valid_time_window
     assert window is not None  # a Bitemporal opening states its window
     key_attribute = read_key.key_attribute
     (seed,) = insert.rows
-    facts = TemporalFacts(
-        entity=entity, view=view, shape=shape, instant=instant, selection=seed.selection
-    )
     transform = opening.transform
     if opening.beyond is None:
         return PredecessorExpander(

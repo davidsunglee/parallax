@@ -24,7 +24,7 @@ from parallax.core import (
     TxTemporal,
     attr,
 )
-from parallax.core._execution._unit_work import write_settlement
+from parallax.core._execution._unit_work import write_planner
 from parallax.core.execution_lifecycle import DatabaseCallStarted, ExecutionEvent, FlushStarted
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_error import DatabaseError
@@ -83,7 +83,7 @@ class Card(Entity, table="wgh_card", namespace=_NS):
 
 
 _MODEL: Final = DomainModel(SpanRow, AuditedRow, PlainRow, Card)
-_LIMIT: Final = write_settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
+_LIMIT: Final = write_planner._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
 
 
 def _rows(kind: str, objects: int) -> list[MappingRow]:

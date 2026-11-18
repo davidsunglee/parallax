@@ -23,6 +23,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
     RowConsumer,
     RowRequest,
 )
+from parallax.core._execution._unit_work.write_plan import SettledWrite
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.metamodel import Metamodel
@@ -30,7 +31,6 @@ from parallax.core.internal.planned_step import PredecessorRow
 from parallax.core.internal.planned_step.keys import ObjectStateKey
 from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
-    BoundRange,
     TemporalWriteOwnership,
 )
 from parallax.core.internal.temporal_read import valid_time_coverage
@@ -147,7 +147,7 @@ def bind_deferred(
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = _never_current,
-) -> BoundRange:
+) -> SettledWrite:
     """The one deferred write of ``span`` bound, through its
     :func:`span_groups`: the one write of the one Write Group they answer,
     whose steps are its own."""
@@ -161,7 +161,6 @@ def bind_deferred(
     ) as groups:
         (group,) = groups
     (bound,) = group.writes
-    assert isinstance(bound, BoundRange)
     assert group.steps is bound.steps
     return bound
 
@@ -173,7 +172,7 @@ def bind_held(
     *,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> BoundRange:
+) -> SettledWrite:
     """The one deferred write of ``span`` bound, as the unit of work binds it
     at execution, to a coverage read finding ``rows`` under ``ownership``."""
     return bind_deferred(

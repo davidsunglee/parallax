@@ -114,8 +114,8 @@ class _Port:
 
 
 def _grouped(steps: Sequence[PlannedStep], meta: Any = WALLET) -> WriteGroup:
-    return WriteGroup.from_members(
-        ((SettledWrite(), (step,)) for step in steps),
+    return WriteGroup.from_writes(
+        (SettledWrite(steps=(step,)) for step in steps),
         effect_shape=LayoutPayloadPreparer(bound_model(meta)).effect_shape,
     )
 

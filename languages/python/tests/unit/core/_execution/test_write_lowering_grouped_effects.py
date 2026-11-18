@@ -94,8 +94,8 @@ def grouped(
     """``steps``, one per settled write, laid out as one Write Group by the
     model's own shapes, and the statements a dry traversal of it lowers to."""
     preparer = LayoutPayloadPreparer(bound_model(meta)) if payloads is None else payloads
-    group = WriteGroup.from_members(
-        ((SettledWrite(), (step,)) for step in steps), effect_shape=preparer.effect_shape
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=(step,)) for step in steps), effect_shape=preparer.effect_shape
     )
     statements = list(
         stream_physical(
@@ -862,8 +862,8 @@ def test_one_writes_closes_of_distinct_milestones_share_its_shapes_statement() -
         close(POSITION, "Position", milestone(POSITION, "Position", 1)),
     ]
     second = [close(POSITION, "Position", milestone(POSITION, "Position", 2))]
-    group = WriteGroup.from_members(
-        [(SettledWrite(), tuple(first)), (SettledWrite(), tuple(second))],
+    group = WriteGroup.from_writes(
+        [SettledWrite(steps=tuple(first)), SettledWrite(steps=tuple(second))],
         effect_shape=preparer.effect_shape,
     )
     (statement,) = stream_physical(
@@ -886,8 +886,8 @@ def test_a_writes_later_close_waits_behind_its_own_revision() -> None:
         close(POSITION, "Position", milestone(POSITION, "Position", 1)),
     ]
     other = [close(POSITION, "Position", milestone(POSITION, "Position", 2))]
-    group = WriteGroup.from_members(
-        [(SettledWrite(), tuple(own)), (SettledWrite(), tuple(other))],
+    group = WriteGroup.from_writes(
+        [SettledWrite(steps=tuple(own)), SettledWrite(steps=tuple(other))],
         effect_shape=preparer.effect_shape,
     )
     # The later close cannot join the block before its own write's revision, so

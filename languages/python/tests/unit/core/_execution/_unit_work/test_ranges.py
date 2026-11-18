@@ -35,7 +35,7 @@ from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY, InternalError
 from parallax.core.internal.metamodel import EntityIdentity
@@ -60,7 +60,6 @@ from parallax.core.internal.planned_step.steps import (
 )
 from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
-    BoundRange,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
@@ -196,7 +195,7 @@ def _bind(
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     transaction_instant: TransactionInstant | None = None,
-) -> BoundRange:
+) -> SettledWrite:
     return bind_held(
         _SPANS,
         alone(settled),

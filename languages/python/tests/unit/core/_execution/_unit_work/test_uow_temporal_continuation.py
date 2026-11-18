@@ -49,7 +49,6 @@ from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import entity_by_name
 from parallax.core.internal.planned_step import ObjectKey, PredecessorRow, TemporalObservation
-from parallax.core.internal.planned_step.write_effects import BoundRange
 from parallax.core.internal.unit_work import (
     TRANSACTION_ROLLBACK_ONLY,
     KeyedWriteInstruction,
@@ -396,7 +395,7 @@ def test_a_deferred_range_records_for_continuation_only_where_a_submission_follo
         assert ownership.continues(source, _MAR)
 
 
-def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bound_range(
+def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bound_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     released: list[_CurrentRowCapture] = []
@@ -426,7 +425,6 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
     with pytest.raises(RuntimeError, match="the group failed") as raised:
         session.flush((_write(_FEB, acctNum="O"), source))
     ((range_,),) = [group.writes for group in yielded]
-    assert isinstance(range_, BoundRange)
     (capture,) = released
     # The capture staged the rows the group's payloads stored, and dropped
     # them with every description once the group failed.

@@ -147,7 +147,7 @@ class AuditDecoration:
 
     Each hook's answer is held to its contract before settlement uses it, so a
     strategy cannot move what a step addresses or change a value without
-    stating it as an executed assignment. ``settled`` holds the Attributes
+    stating it as an executed assignment. ``reserved`` holds the Attributes
     settlement alone decides — every primary key, temporal bound, and optimistic
     version — which no answer may state.
     """
@@ -155,7 +155,7 @@ class AuditDecoration:
     audit: AuditStrategy
     actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
-    settled: Container[object]
+    reserved: Container[object]
 
     def finalize_row(self, write_row: WriteRow) -> WriteRow:
         finalized = self.audit.finalize_row(
@@ -164,7 +164,7 @@ class AuditDecoration:
             transaction_instant=self.transaction_instant,
         )
         if finalized is not write_row:
-            _require_finalized(write_row, finalized, self.settled)
+            _require_finalized(write_row, finalized, self.reserved)
         return finalized
 
     def decorate_update(self, update: PlannedUpdate) -> PlannedUpdate:
@@ -178,7 +178,7 @@ class AuditDecoration:
             or decorated.target != update.target
             or decorated.concurrency != update.concurrency
             or decorated.affected_rows != update.affected_rows
-            or not _extends(update.assignments, decorated.assignments, self.settled)
+            or not _extends(update.assignments, decorated.assignments, self.reserved)
         ):
             raise _audit_refused("an update's decoration")
         return decorated
@@ -195,23 +195,23 @@ class AuditDecoration:
             or decorated.cause != close.cause
             or decorated.concurrency != close.concurrency
             or decorated.affected_rows != close.affected_rows
-            or not _extends(close.assignments, decorated.assignments, self.settled)
+            or not _extends(close.assignments, decorated.assignments, self.reserved)
         ):
             raise _audit_refused("a close's decoration")
         return decorated
 
 
 def _require_finalized(
-    write_row: WriteRow, finalized: WriteRow, settled: Container[object]
+    write_row: WriteRow, finalized: WriteRow, reserved: Container[object]
 ) -> None:
     """Refuse a finalized row that changed its origin, dropped an executed
     member, changed a member it does not state as executed, or states a
-    ``settled`` one."""
+    ``reserved`` one."""
     executed = finalized.executed
     if (
         finalized.origin is not write_row.origin
         or any(member not in executed for member in write_row.executed)
-        or any(member in settled for member in executed if member not in write_row.executed)
+        or any(member in reserved for member in executed if member not in write_row.executed)
         or not _keeps(write_row.row, finalized.row, executed)
     ):
         raise _audit_refused("a row's finalization")
@@ -238,10 +238,10 @@ def _keeps(row: ManagedRow, final: ManagedRow, stated: Collection[object]) -> bo
 
 
 def _extends(
-    stated: PlannedAssignments, final: PlannedAssignments, settled: Container[object]
+    stated: PlannedAssignments, final: PlannedAssignments, reserved: Container[object]
 ) -> bool:
     """Whether ``final`` keeps every assignment ``stated`` makes, as stated,
-    and adds none to a ``settled`` Attribute."""
+    and adds none to a ``reserved`` Attribute."""
     return (
         all(
             identity in final.attributes and final.attributes[identity] is value
@@ -252,7 +252,7 @@ def _extends(
             for identity, value in stated.value_objects.items()
         )
         and not any(
-            identity in settled and identity not in stated.attributes
+            identity in reserved and identity not in stated.attributes
             for identity in final.attributes
         )
     )

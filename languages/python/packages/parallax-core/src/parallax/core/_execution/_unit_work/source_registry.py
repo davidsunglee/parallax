@@ -345,10 +345,7 @@ class SourceRegistry:
             object_key=object_key,
             observation=observation,
         )
-        if (
-            self._versioning.effective_strategy(target.identity, self._preference) == "optimistic"
-            and observation is None
-        ):
+        if observation is None and self._versioning.gates(target.identity, self._preference):
             raise write_evidence_refusal(
                 WRITE_EVIDENCE_UNAVAILABLE,
                 object_key,

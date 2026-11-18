@@ -20,7 +20,7 @@ from parallax.core._execution._unit_work.row_acquisition import CoverageReadRequ
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
 )
-from parallax.core._execution._unit_work.write_plan import WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.planned_step import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.internal.planned_step.steps import (
@@ -34,7 +34,6 @@ from parallax.core.internal.planned_step.steps import INFINITY as OPEN_END
 from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
-    BoundRange,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
@@ -122,7 +121,7 @@ def _bound(
     rows: Sequence[PredecessorRow],
     *,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
-) -> BoundRange:
+) -> SettledWrite:
     """``settled write``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
     return bind_held(
@@ -139,7 +138,7 @@ def _instant() -> TransactionInstant:
     return instant_at("2024-10-01T00:00:00+00:00")
 
 
-def _windows(bound: BoundRange) -> list[tuple[object, object, object]]:
+def _windows(bound: SettledWrite) -> list[tuple[object, object, object]]:
     windows: list[tuple[object, object, object]] = []
     for step in bound.steps:
         if isinstance(step, PlannedInsert):

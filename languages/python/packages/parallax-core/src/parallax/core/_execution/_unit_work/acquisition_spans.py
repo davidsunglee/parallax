@@ -16,13 +16,12 @@ from parallax.core._execution._unit_work.row_acquisition import (
     consume_coverage,
 )
 from parallax.core._execution._unit_work.strategy import AuditDecoration
-from parallax.core._execution._unit_work.write_plan import WriteGroup
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.planned_step.keys import ObjectStateKey
 from parallax.core.internal.planned_step.payload import WritePayloadPreparer
 from parallax.core.internal.planned_step.predecessor_rows import PredecessorRows
-from parallax.core.internal.planned_step.steps import PlannedStep
-from parallax.core.internal.planned_step.write_effects import BoundRange, TemporalWriteOwnership
+from parallax.core.internal.planned_step.write_effects import TemporalWriteOwnership
 
 __all__ = ["AcquisitionSpan", "SpanWriteGroups", "form_spans", "write_groups"]
 
@@ -147,7 +146,8 @@ class SpanWriteGroups:
     object whose key each stored row holds while its resources are live. It
     then binds that range and every ready range following it, up to the first
     that is not, under the ownership as it stands then, and answers them as one
-    Write Group. Binding reads nothing, nothing is bound ahead of the advance
+    Write Group of settled writes, each carrying its range's source evidence.
+    Binding reads nothing, nothing is bound ahead of the advance
     asking for it, and nothing is executed or published: the flush executes and
     completes each group before advancing.
 
@@ -197,7 +197,7 @@ class SpanWriteGroups:
             raise StopIteration
         while not acquisitions[0].ready:
             self._read(invocation)
-        return WriteGroup.from_members(
+        return WriteGroup.from_writes(
             self._bind_ready(invocation), effect_shape=invocation.payloads.effect_shape
         )
 
@@ -229,14 +229,12 @@ class SpanWriteGroups:
         for acquisition in finished:
             acquisition.ready = True
 
-    def _bind_ready(
-        self, invocation: _Invocation
-    ) -> Iterator[tuple[BoundRange, tuple[PlannedStep, ...]]]:
+    def _bind_ready(self, invocation: _Invocation) -> Iterator[SettledWrite]:
         acquisitions = self._acquisitions
         while acquisitions and acquisitions[0].ready:
             yield self._bind_head(invocation)
 
-    def _bind_head(self, invocation: _Invocation) -> tuple[BoundRange, tuple[PlannedStep, ...]]:
+    def _bind_head(self, invocation: _Invocation) -> SettledWrite:
         head = self._acquisitions[0]
         bound = head.range.bind(
             head.rows or (),
@@ -249,7 +247,7 @@ class SpanWriteGroups:
         if by_key is not None:
             del by_key[head.range.key_value]
         head.rows = None
-        return bound, bound.steps
+        return SettledWrite.from_bound(bound, source_evidence=head.range.source_evidence)
 
     def _release(self) -> None:
         for acquisition in self._acquisitions:
