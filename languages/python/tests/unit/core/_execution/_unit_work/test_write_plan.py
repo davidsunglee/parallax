@@ -7,11 +7,12 @@ step before any insert.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from typing import cast
 
 import pytest
 
+from parallax.core._execution._unit_work import write_plan as plan_module
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup
 from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.planned_step import PlannedInsert
@@ -37,6 +38,7 @@ from parallax.core.internal.planned_step.write_effects import (
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
+from tests.unit.core._execution._reach_support import frames, reaches
 
 _ACCOUNT_MODEL = corpus_model("account")
 _ACCOUNT = entity_of(_ACCOUNT_MODEL, "Account").identity
@@ -144,18 +146,32 @@ class _Refused(Exception):
     pass
 
 
-def test_a_second_write_is_asked_for_only_once_the_first_is_taken() -> None:
-    asked: list[int] = []
+def _pulled(keys: Sequence[int], events: list[tuple[str, object]]) -> Iterator[SettledWrite]:
+    for key in keys:
+        events.append(("pull", key))
+        yield SettledWrite(steps=(_delete(key),))
 
-    def writes() -> Iterator[SettledWrite]:
-        for key in (1, 2):
-            asked.append(key)
-            yield SettledWrite(steps=(_insert(key),))
-            assert asked == [1, 2][: len(asked)]
 
-    group = WriteGroup.from_writes(writes(), effect_shape=_unshaped)
-    assert asked == [1, 2]
-    assert len(group.writes) == 2
+def _laid_out(events: list[tuple[str, object]]) -> Callable[[PlannedStep], Hashable | None]:
+    def shape(step: PlannedStep) -> Hashable | None:
+        events.append(("lay out", _key(step)))
+        return None
+
+    return shape
+
+
+def test_each_write_after_the_second_is_asked_for_only_once_the_one_before_is_laid_out() -> None:
+    events: list[tuple[str, object]] = []
+    group = WriteGroup.from_writes(_pulled((1, 2, 3), events), effect_shape=_laid_out(events))
+    assert events == [
+        ("pull", 1),
+        ("pull", 2),
+        ("lay out", 1),
+        ("lay out", 2),
+        ("pull", 3),
+        ("lay out", 3),
+    ]
+    assert len(group.writes) == 3
 
 
 def test_a_failing_producer_leaves_no_group_and_its_failure_intact() -> None:
@@ -171,19 +187,24 @@ def test_a_failing_producer_leaves_no_group_and_its_failure_intact() -> None:
     assert raised.value is failure
 
 
-def test_a_failure_taking_a_write_closes_the_suspended_producer() -> None:
+def test_a_failure_taking_a_write_closes_the_suspended_producer_before_its_next_write() -> None:
+    produced: list[int] = []
     closed: list[bool] = []
 
     def writes() -> Iterator[SettledWrite]:
         try:
+            produced.append(1)
             yield SettledWrite(steps=(_insert(1),))
+            produced.append(2)
             yield SettledWrite(steps=cast("tuple[PlannedStep, ...]", 0))  # steps no layout reads
+            produced.append(3)
             yield SettledWrite(steps=(_insert(3),))
         finally:
             closed.append(True)
 
     with pytest.raises(TypeError):
         WriteGroup.from_writes(writes(), effect_shape=_unshaped)
+    assert produced == [1, 2]
     assert closed == [True]
 
 
@@ -267,25 +288,45 @@ def test_inserts_follow_every_grouped_effect_in_write_order() -> None:
     assert group.effect_spans == (EffectSpan(0, 2, "X"),)
 
 
-def test_a_failing_effect_shape_closes_the_suspended_producer() -> None:
+def _refusing(key: object, failure: BaseException) -> Callable[[PlannedStep], Hashable | None]:
+    def shape(step: PlannedStep) -> Hashable | None:
+        if _key(step) == key:
+            raise failure
+        return None
+
+    return shape
+
+
+def test_a_failing_effect_shape_closes_the_suspended_producer_before_its_next_write() -> None:
+    produced: list[int] = []
     closed: list[bool] = []
     failure = _Refused()
 
-    def shape(step: PlannedStep) -> Hashable | None:
-        raise failure
-
     def writes() -> Iterator[SettledWrite]:
         try:
-            yield SettledWrite(steps=(_delete(1),))
-            yield SettledWrite(steps=(_delete(2),))
-            yield SettledWrite(steps=(_delete(3),))
+            for key in (1, 2, 3):
+                produced.append(key)
+                yield SettledWrite(steps=(_delete(key),))
         finally:
             closed.append(True)
 
     with pytest.raises(_Refused) as raised:
-        WriteGroup.from_writes(writes(), effect_shape=shape)
+        WriteGroup.from_writes(writes(), effect_shape=_refusing(1, failure))
     assert raised.value is failure
+    assert produced == [1, 2]
     assert closed == [True]
+
+
+def test_a_failing_effect_shape_leaves_no_frame_holding_a_write_it_took() -> None:
+    taken = [SettledWrite(steps=(_delete(key),), source_evidence=(object(),)) for key in (1, 2, 3)]
+    with pytest.raises(_Refused) as raised:
+        WriteGroup.from_writes(iter(taken), effect_shape=_refusing(2, _Refused()))
+    assembling = frames(raised.value.__traceback__, module=plan_module.__file__)
+    assert {frame.f_code.co_name for frame in assembling} == {"from_writes", "add"}
+    for write in taken[:2]:
+        assert not reaches(assembling, write)
+        assert not reaches(assembling, write.steps)
+        assert not reaches(assembling, write.source_evidence)
 
 
 @pytest.mark.parametrize(

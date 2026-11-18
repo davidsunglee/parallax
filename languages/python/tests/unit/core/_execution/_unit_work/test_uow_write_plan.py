@@ -428,28 +428,42 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     assert statement_kinds(simulated.statements) == ["grouped close", "insert"]
 
 
-@pytest.mark.parametrize("deferred", [0, 2])
+@pytest.mark.parametrize("spans", [0, 2])
 def test_a_flush_assembles_the_audit_its_ranges_bind_under_once_and_only_for_a_range(
-    monkeypatch: pytest.MonkeyPatch, deferred: int
+    monkeypatch: pytest.MonkeyPatch, spans: int
 ) -> None:
     assembled: list[AuditDecoration] = []
+    planned: list[tuple[int, int]] = []
     assemble = WritePlanner.audit_decoration
+    finalize = WritePlanner.finalize
 
     def assembling(planner: WritePlanner, **keywords: Any) -> AuditDecoration:
         assembled.append(assemble(planner, **keywords))
         return assembled[-1]
 
+    def planning(planner: WritePlanner, request: WritePlanningRequest) -> WritePlan:
+        plan = finalize(planner, request)
+        planned.append(
+            (len(assembled), sum(isinstance(entry, AcquisitionSpan) for entry in plan.entries))
+        )
+        return plan
+
     monkeypatch.setattr(WritePlanner, "audit_decoration", assembling)
+    monkeypatch.setattr(WritePlanner, "finalize", planning)
     rows = [{**rectangle(_JAN, INFINITY, "100.00").members, "id": key} for key in (1, 2)]
     held = HeldRows(TARGET_POSITION, [PredecessorRow(row) for row in rows], overlapping=True)
     uow = _uow(TARGET_POSITION, _simulated(TARGET_POSITION), rows=held)
-    for key in range(1, deferred + 1):
-        uow.buffer_target(_target(_APR, _SEP, "150.00", key=key))
+    # A settled write between two deferred writes splits them into two spans.
+    if spans:
+        uow.buffer_target(_target(_APR, _SEP, "150.00", key=1))
     uow.buffer(_observed_amend(3, _retained_row(3)))
+    if spans:
+        uow.buffer_target(_target(_APR, _SEP, "150.00", key=2))
     uow.flush(trigger="pre_commit")
     # Planning settles under the one it assembles for itself; binding
-    # assembles its own once, and only where the plan holds a range.
-    assert len(assembled) == 1 + min(deferred, 1)
+    # assembles its own once per flush, and only where the plan holds a span.
+    assert planned == [(1, spans)]
+    assert len(assembled) - 1 == min(spans, 1)
 
 
 def test_a_deferred_write_executes_its_group_then_the_exact_steps_its_range_bound(

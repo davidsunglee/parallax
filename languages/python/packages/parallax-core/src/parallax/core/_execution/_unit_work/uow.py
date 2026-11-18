@@ -564,8 +564,8 @@ class UnitOfWork:
         admission = self._admission
         # The planning request is the flush's last reference to the writes it
         # planned, so it ends with the call: once planning succeeds and the
-        # buffer drains, what a plan's deferred range took over is released as
-        # it executes rather than held until the flush ends.
+        # buffer drains, the starting rows a plan's deferred range took over
+        # are released as it executes rather than held until the flush ends.
         concluding = trigger == "pre_commit"
         ownership = self.source_registry.planning_ownership(concluding=concluding)
         plan = self._planner.finalize(

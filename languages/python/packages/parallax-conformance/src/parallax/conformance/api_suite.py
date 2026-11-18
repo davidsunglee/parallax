@@ -2308,9 +2308,9 @@ _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON: Final[str] = (
 _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
     "the rule is live and enforced on the developer path — prepared-write production refuses a "
     "plural keyed instruction on a temporal target before the unit of work buffers it, "
-    "and temporal settlement's insert path (`TemporalSettlement._insert`) refuses it again as "
-    "the last structural check before SQL — but the CASE's own authored shape has no "
-    "idiomatic spelling: every typed keyed verb "
+    "and a licensed write (`LicensedWrite`) refuses an admitted write of more than one row "
+    "again — but the CASE's own authored shape has no idiomatic spelling: every typed keyed "
+    "verb "
     "(`tx.amend` / `tx.terminate` / their bounded siblings) takes ONE instance and emits an "
     "instruction of one row, so no sequence of developer calls can construct the plural "
     "instruction this case authors. A permanent structural non-fit, not a deferred story"

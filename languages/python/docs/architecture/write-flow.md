@@ -448,7 +448,7 @@ removed and reinserted this way.
                       reading alike, each object once, up to the span bound
        close_phase    no group or span crosses a mutation phase
               ▼
- WritePlan(entries: WriteGroup | AcquisitionSpan)                                  write_plan
+ WritePlan(entries: (WriteGroup | AcquisitionSpan) …)                              write_plan
               │
               │ WriteAdmission.drain_planned: the buffer empties, and the          admission
               │   insertions it held are stored or retired
@@ -493,18 +493,20 @@ the planner indexes nothing again and starts by dropping known no-op work in
 `_without_noop_rows`. Write Settlement is one module per temporal profile, each built
 once when the planner is wired over only the facets it reads. Every value one flush
 shares reaches settlement in that finalization's `FlushFacts`, which no plan reaches.
-`ConcurrencyFacet.gates` alone decides whether a write gates, for both settlement
-modules and for `SourceRegistry.resolve_read_evidence`. Every settled write, whether
+`ConcurrencyFacet.gates` decides whether an Entity's writes gate under the flush's
+preference, for both settlement modules and for `SourceRegistry.resolve_read_evidence`;
+a pending Bitemporal opening gates only where a replacement it authorized reaches past
+its window. Every settled write, whether
 planned or bound at execution, is built by `SettledWrite.from_bound` from the
 `BoundRange` binding answered, which is not kept.
 
 ```text
 WritePlan
-└ entries: WriteGroup | AcquisitionSpan        in execution order
+└ entries: (WriteGroup | AcquisitionSpan) …    in execution order
    ├ WriteGroup       writes: SettledWrite …   one per ordered item, a batch included;
    │                                           each carries its own steps and effects
-   │                  steps:  PlannedStep …    laid out across its writes; like effects
-   │                                           share a statement
+   │                  steps:  PlannedStep …    laid out across its writes: effects shape
+   │                                           by shape, then inserts
    └ AcquisitionSpan  ranges: DeferredRange …  a run's deferred writes, bound into
                                                WriteGroups at execution
 ```
