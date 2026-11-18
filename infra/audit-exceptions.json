@@ -3,10 +3,5 @@
     "advisory": "GHSA-g3hv-75wg-m249",
     "package": "minimatch",
     "reason": "ESLint and typescript-eslint, at their latest releases, require minimatch 10, and the fix exists only in minimatch 11. The advisory needs attacker-chosen glob patterns; the linter evaluates only the patterns committed in this scope's configuration."
-  },
-  {
-    "advisory": "GHSA-fc5q-39xc-vjpf",
-    "package": "picomatch",
-    "reason": "No patched version is available. Infrastructure reaches picomatch through development tooling whose glob patterns come from repository configuration and fixed commands, not externally supplied patterns. This advisory requires attacker-chosen repeated extglob patterns. Remove this exception when the tooling resolves to a patched version."
   }
 ]
