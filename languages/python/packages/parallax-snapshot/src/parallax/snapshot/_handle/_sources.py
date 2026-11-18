@@ -15,15 +15,13 @@ from parallax.core.internal.metamodel import CompiledEntity
 from parallax.snapshot._inspection import (
     RootConformance,
     SnapshotNodeState,
-    insertion_of,
     snapshot_state_of,
+    typed_insertion_of,
 )
 from parallax.snapshot._publication._wire import (
     WireEntity,
     stored_provenance_of,
-)
-from parallax.snapshot._publication._wire import (
-    insertion_of as wire_insertion_of,
+    wire_insertion_of,
 )
 
 __all__ = [
@@ -94,7 +92,7 @@ def resolve_keyed_write_source(
         read_evidence=None if provenance is None else provenance.read_evidence,
         provenance=_typed_provenance(source, state),
         advice=TYPED_KEYED_WRITE_ADVICE,
-        insertion=insertion_of(source),
+        insertion=typed_insertion_of(source),
     )
 
 
@@ -146,6 +144,6 @@ def _typed_provenance(value: EntityBase, state: SnapshotNodeState | None) -> Pro
     if state is not None:
         conformance = state.provenance.root_conformance
         return "this" if conformance is RootConformance.CONFORMING else "none"
-    if lifecycle_state_of(value) is None or insertion_of(value) is not None:
+    if lifecycle_state_of(value) is None or typed_insertion_of(value) is not None:
         return "none"
     return "foreign"

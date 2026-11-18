@@ -38,7 +38,7 @@ from parallax.core.internal.entity import DomainModel
 from parallax.core.internal.execution import RetryPolicy
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import Database, TxnContext
-from parallax.snapshot._inspection import insertion_of, snapshot_state_of
+from parallax.snapshot._inspection import snapshot_state_of, typed_insertion_of
 from tests._support import mirrored_models as mm
 from tests._support.bindings import TEST_BINDING
 from tests._support.db_port import (
@@ -799,7 +799,7 @@ def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> N
         assert node is not None and node.provenance.read_evidence is None
         tx.insert(value)
         assert snapshot_state_of(value) is node
-        assert insertion_of(value) is not None
+        assert typed_insertion_of(value) is not None
         with pytest.raises(pickle.PicklingError):
             pickle.dumps(value)
         tx.amend(value.edit(name="Grace"))

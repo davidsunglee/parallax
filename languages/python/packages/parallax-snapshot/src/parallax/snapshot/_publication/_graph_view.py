@@ -36,7 +36,7 @@ from parallax.core.internal.read_delivery._page import (
     stored_order_key,
 )
 from parallax.core.internal.temporal_read import Pin
-from parallax.snapshot._inspection import insertion_authoring
+from parallax.snapshot._inspection import insertion_state
 
 __all__ = ["SNAPSHOT_FETCHED_ROW_CONFLICT", "GraphView", "fetched_row_refusal", "inserted_value"]
 
@@ -816,10 +816,10 @@ def inserted_value(
     construction: EntityGraphConstruction,
     layout: EntityLayout,
     row: ManagedRow,
-    authority: InsertionIdentity,
+    insertion: InsertionIdentity,
 ) -> object:
     """A fresh immutable instance of ``layout``'s Entity holding exactly what
-    ``row`` states, carrying the insertion's ``authority`` and no Read Evidence.
+    ``row`` states, carrying its insertion authority and no Read Evidence.
 
     ``row`` is the prepared opening row, so the instance holds the canonical
     values the insert stated, its allocated key included, and every
@@ -827,5 +827,5 @@ def inserted_value(
     into the stored row only.
     """
     return construction.publish(
-        _InsertedRowGraph(layout, row), lambda _instances: (insertion_authoring(authority),)
+        _InsertedRowGraph(layout, row), lambda _instances: (insertion_state(insertion),)
     )

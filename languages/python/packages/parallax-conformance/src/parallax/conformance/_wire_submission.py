@@ -27,7 +27,7 @@ from parallax.core.internal.unit_work import (
 )
 from parallax.core.internal.wire import WireValue, decode_wire
 from parallax.snapshot import Snapshot, TxnContext, WireEntity
-from parallax.snapshot._publication._wire import insertion_of, read_evidence_of
+from parallax.snapshot._publication._wire import read_evidence_of, wire_insertion_of
 
 __all__ = [
     "Buffered",
@@ -472,7 +472,7 @@ def _node_object_key(node: WireEntity) -> ObjectKey:
     hint = read_evidence_of(node)
     if hint is not None:
         return hint.object_key
-    insertion = insertion_of(node)
+    insertion = wire_insertion_of(node)
     assert insertion is not None  # every node this lane holds a read or an insert published
     return insertion.object_key
 

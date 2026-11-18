@@ -34,9 +34,8 @@ from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._typed_writes import TypedKeyedInsertSource, TypedKeyedWriteSource
 from parallax.snapshot._handle._wire_writes import WireKeyedInsertSource, WireKeyedWriteSource
-from parallax.snapshot._inspection import insertion_of, snapshot_state_of
-from parallax.snapshot._publication._wire import insertion_of as wire_insertion_of
-from parallax.snapshot._publication._wire import read_evidence_of
+from parallax.snapshot._inspection import snapshot_state_of, typed_insertion_of
+from parallax.snapshot._publication._wire import read_evidence_of, wire_insertion_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
@@ -318,7 +317,7 @@ def _carried_evidence(value: object) -> object:
 
 
 def _carried_insertion(value: object) -> object:
-    return wire_insertion_of(value) if isinstance(value, WireEntity) else insertion_of(value)
+    return wire_insertion_of(value) if isinstance(value, WireEntity) else typed_insertion_of(value)
 
 
 def _advice(representation: Representation) -> KeyedWriteRefusalAdvice:

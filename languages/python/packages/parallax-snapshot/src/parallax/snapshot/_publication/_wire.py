@@ -68,13 +68,13 @@ __all__ = [
     "InstanceReader",
     "NodeReader",
     "WireEntity",
-    "insertion_of",
     "opened_wire_entity",
     "projection_entity",
     "read_evidence_of",
     "required_wire_provenance",
     "stored_provenance_of",
     "wire_edge_of",
+    "wire_insertion_of",
     "wire_scalar_cache",
 ]
 
@@ -304,7 +304,7 @@ def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
     return value
 
 
-def insertion_of(entity: WireEntity) -> InsertionIdentity | None:
+def wire_insertion_of(entity: WireEntity) -> InsertionIdentity | None:
     """The insertion authority ``entity`` carries, or ``None`` for any node but
     one a Wire insert answered."""
     return getattr(entity, "_insertion", None)

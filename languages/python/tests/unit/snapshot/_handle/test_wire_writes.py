@@ -45,9 +45,9 @@ from parallax.snapshot import (
     pin_of,
 )
 from parallax.snapshot._publication._wire import (
-    insertion_of,
     read_evidence_of,
     stored_provenance_of,
+    wire_insertion_of,
 )
 from tests._support import mirrored_models as mm
 from tests._support.bindings import TEST_BINDING
@@ -1555,6 +1555,6 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         edge_of(opened[0])
     with raises_code(UsageError, "snapshot-node-required", match="an insert answered"):
         pin_of(opened[0])
-    insertion = insertion_of(opened[0])
+    insertion = wire_insertion_of(opened[0])
     assert insertion is not None
     assert insertion.object_key.entity.name == "CardPayment"

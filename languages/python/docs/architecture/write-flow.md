@@ -234,7 +234,8 @@ everything it opened is removed, or a later insertion of the object supersedes i
            → WriteAdmission.admit_insert → the issued InsertionIdentity
            → OpenedKeyedWrite (allocated_key) → the source publishes the answer:
              TypedKeyedInsertSource.publish binds the identity to a keyed
-             instance or publishes a new one from the row (inserted_value);
+             instance or calls inserted_value(..., insertion=...) to publish a
+             new one from the row.
              WireKeyedInsertSource.publish renders the node from the row
    source  → licence: the standing insertion's identity, or
              SourceRegistry.resolve_read_evidence(...) → SettledEvidence
