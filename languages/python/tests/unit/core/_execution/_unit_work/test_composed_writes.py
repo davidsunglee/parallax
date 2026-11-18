@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     LicensedWrite,
     StateObserved,
-    StateObservedIntent,
     TxStartConditioned,
     UnversionedLocked,
     VersionConditioned,
@@ -215,9 +214,9 @@ def test_a_repeated_termination_of_one_observation_adds_nothing() -> None:
     )
     assert isinstance(write, ComposedTemporalWrite)
     (intent,) = write.intents
-    assert isinstance(intent, StateObservedIntent)
-    assert intent.intent.kind == "destructive"
-    assert intent.retained_observation is current
+    assert is_licensed_by(intent, StateObserved)
+    assert intent.write_intent.kind == "destructive"
+    assert intent.authority.retained_observation is current
 
 
 def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> None:

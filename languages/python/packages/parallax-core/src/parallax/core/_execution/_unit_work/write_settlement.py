@@ -37,7 +37,6 @@ from parallax.core._execution._unit_work.write_items import (
     MutationPhase,
     OrderedWrite,
     StateObserved,
-    StateObservedIntent,
     TemporalCoverageWrite,
     TxStartConditioned,
     UnversionedWriteBatch,
@@ -446,8 +445,8 @@ class WritePlanCompiler:
         entity = item.target
         intents = item.intents
         if any(
-            isinstance(intent, StateObservedIntent)
-            and not isinstance(intent.retained_observation.evidence, TemporalObservation)
+            is_licensed_by(intent, StateObserved)
+            and not isinstance(intent.authority.retained_observation.evidence, TemporalObservation)
             for intent in intents
         ):
             raise _unobserved_close(entity)

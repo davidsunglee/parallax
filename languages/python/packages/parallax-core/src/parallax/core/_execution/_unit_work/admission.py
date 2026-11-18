@@ -28,7 +28,6 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity, Reta
 from parallax.core._execution._unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     REPLACE_MUTATIONS,
-    ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
 )
@@ -40,13 +39,10 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ComposedWrite,
     InsertionAuthorized,
-    InsertionAuthorizedIntent,
     KeyedInsert,
     LicensedWrite,
     PostRemovalInsert,
     StateObserved,
-    StateObservedIntent,
-    TargetIntent,
     TemporalCoverageAuthority,
     TemporalCoverageWrite,
     TemporalIntent,
@@ -58,7 +54,6 @@ from parallax.core._execution._unit_work.write_items import (
     compose_temporal_write,
     distinct_evidence,
     is_licensed_by,
-    temporal_intent,
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import UsageError
@@ -315,15 +310,16 @@ class WriteAdmission:
         against the object's other compositions too."""
         key = item.object_key
         instruction = item.instruction
-        intent = keyed_intent(instruction)
-        assert intent is not None  # a write against existing coverage is no insert
-        if not self._admits_temporal(item, key, intent):
+        write_intent = keyed_intent(instruction)
+        assert write_intent is not None  # a write against existing coverage is no insert
+        arriving = TemporalIntent(write_intent, item.authority)
+        if not self._admits_temporal(item.target, key, arriving):
             raise _already_claimed(key)
         folded = self._folded(item)
         if folded is not None:
             return folded
         self._note_removal(instruction, key)
-        self._add_temporal(item, intent, key)
+        self._add_temporal(item, arriving, key)
         return BufferOutcome.BUFFERED
 
     def _folded(self, item: _KeyedWrite) -> BufferOutcome | None:
@@ -391,15 +387,18 @@ class WriteAdmission:
             [LicensedWrite[TxStartConditioned]], LicensedWrite[TxStartConditioned]
         ],
     ) -> None:
-        intent = self._target_intent(item)
         instruction = item.instruction
         key = item.object_key
-        if not self._admits_temporal(item, key, intent):
+        arriving = TemporalIntent(self._target_intent(item), item.authority)
+        if not self._admits_temporal(item.target, key, arriving):
             raise _already_claimed(key)
         if not self._states_window(key, instruction.valid_time_window):
-            item = confirm_tx_start(item)
+            confirmed = confirm_tx_start(item)
+            if confirmed.authority is not item.authority:
+                arriving = TemporalIntent(arriving.write_intent, confirmed.authority)
+            item = confirmed
         self._note_removal(instruction, key)
-        self._add_temporal(item, intent, key)
+        self._add_temporal(item, arriving, key)
 
     def _admit_versioned_target(
         self,
@@ -629,10 +628,13 @@ class WriteAdmission:
         self._claim(scope, len(writes) - 1, key)
 
     def _add_temporal(
-        self, item: LicensedWrite[TemporalCoverageAuthority], intent: WriteIntent, key: ObjectKey
+        self,
+        item: LicensedWrite[TemporalCoverageAuthority],
+        arriving: TemporalIntent[TemporalCoverageAuthority],
+        key: ObjectKey,
     ) -> None:
-        """Compose ``item``, stating ``intent``, with its object's pending
-        writes, or buffer it alone as the object's first.
+        """Compose ``item``, which keeps ``arriving``, with its object's
+        pending writes, or buffer it alone as the object's first.
 
         A first write stays the admitted write it is until a second arrives,
         which composes the two. While the pending writes keep one observed
@@ -650,8 +652,7 @@ class WriteAdmission:
             self._temporal[key] = len(writes) - 1
             return
         key_name = self._key_name(item.target)
-        arriving = temporal_intent(item, intent)
-        if is_licensed_by(item, StateObserved) and isinstance(arriving, StateObservedIntent):
+        if is_licensed_by(arriving, StateObserved):
             verdict = _observed_run_verdict(held, arriving)
             if verdict == "supersede":
                 writes[index] = None
@@ -664,11 +665,14 @@ class WriteAdmission:
         writes[index] = compose_temporal_write(held, item, arriving, key_name)
 
     def _admits_temporal(
-        self, item: LicensedWrite[TemporalCoverageAuthority], key: ObjectKey, intent: WriteIntent
+        self,
+        entity: CompiledEntity,
+        key: ObjectKey,
+        arriving: TemporalIntent[TemporalCoverageAuthority],
     ) -> bool:
-        """Whether ``item``, a write of temporal object ``key`` against its
-        existing coverage stating ``intent``, composes with that object's
-        pending writes — every one of them, overwritten ones included.
+        """Whether a write of temporal object ``key`` against its existing
+        coverage, keeping ``arriving``, composes with that object's pending
+        writes — every one of them, overwritten ones included.
 
         Observed writes and those an insertion authorized compose with each
         other by the window algebra
@@ -691,70 +695,74 @@ class WriteAdmission:
         if held is None:
             return True
         intents = held.intents
-        authority = item.authority
-        targeted = isinstance(authority, TxStartConditioned)
-        scope = authority.retained_observation.key if isinstance(authority, StateObserved) else None
-        if not targeted and not any(isinstance(prior, TargetIntent) for prior in intents):
-            return admits_composed(_scoped(intents), scope, intent) != "incompatible"
-        start = self._starting_revision(item.target, key, item, intent.valid_time_window)
+        targeted = isinstance(arriving.authority, TxStartConditioned)
+        scope = _observed_scope(arriving)
+        write_intent = arriving.write_intent
+        if not targeted and not any(
+            isinstance(prior.authority, TxStartConditioned) for prior in intents
+        ):
+            return admits_composed(_scoped(intents), scope, write_intent) != "incompatible"
+        start = self._starting_revision(entity, key, arriving)
         untargeted: list[tuple[ObjectStateKey | None, WriteIntent]] = []
         for prior in intents:
-            if not targeted and not isinstance(prior, TargetIntent):
-                untargeted.append((_scope(prior), prior.intent))
-            elif not self._separable(key, prior, item, intent, start):
+            if not targeted and not isinstance(prior.authority, TxStartConditioned):
+                untargeted.append((_observed_scope(prior), prior.write_intent))
+            elif not self._separable(entity, key, prior, arriving, start):
                 return False
-        return admits_composed(untargeted, scope, intent) != "incompatible"
+        return admits_composed(untargeted, scope, write_intent) != "incompatible"
 
     def _separable(
         self,
+        entity: CompiledEntity,
         key: ObjectKey,
-        prior: TemporalIntent,
-        item: LicensedWrite[TemporalCoverageAuthority],
-        intent: WriteIntent,
+        prior: TemporalIntent[TemporalCoverageAuthority],
+        arriving: TemporalIntent[TemporalCoverageAuthority],
         start: object | None,
     ) -> bool:
-        """Whether ``item``, stating ``intent`` from Transaction-Time
+        """Whether the write keeping ``arriving``, from Transaction-Time
         ``start``, can stand beside the pending write that keeps ``prior`` —
         two writes of one temporal object, at least one a caller addressed —
         as one exact-window operation, or as separate ones over disjoint
         windows (:meth:`_admits_temporal`)."""
-        entity = item.target
-        prior_window = prior.intent.valid_time_window
-        window = intent.valid_time_window
+        prior_window = prior.write_intent.valid_time_window
+        window = arriving.write_intent.valid_time_window
         if prior_window == window:
             return (
-                not (prior.intent.kind == "destructive" and intent.kind == "assignment")
+                not (
+                    prior.write_intent.kind == "destructive"
+                    and arriving.write_intent.kind == "assignment"
+                )
                 and start is not None
-                and self._starting_revision(entity, key, prior, prior_window) == start
+                and self._starting_revision(entity, key, prior) == start
             )
         # Writes without Valid Time span the whole axis, so every two of an
         # object's are equal and only Valid-Time windows differ.
         assert prior_window is not None and window is not None
         if prior_window.overlaps(window):
             return False
-        if isinstance(prior, TargetIntent) and not self._rectangle_admits(
-            entity, key, prior.expected, prior_window, _arriving_observation(item)
-        ):
-            return False
-        authority = item.authority
-        return not isinstance(authority, TxStartConditioned) or self._rectangle_admits(
-            entity, key, authority.expected, window, _observation(prior)
+        return self._rectangle_admits(entity, key, prior, prior_window, arriving) and (
+            self._rectangle_admits(entity, key, arriving, window, prior)
         )
 
     def _rectangle_admits(
         self,
         entity: CompiledEntity,
         key: ObjectKey,
-        expected: ExpectedTxStart,
+        conditioned: TemporalIntent[TemporalCoverageAuthority],
         window: TimeInterval,
-        observed: RetainedObservation | None,
+        other: TemporalIntent[TemporalCoverageAuthority],
     ) -> bool:
-        """Whether ``observed``'s rectangle — or, where its source continues,
-        the current row the attempt holds — where it holds ``window``'s start,
-        stands at the Transaction-Time start ``expected`` a caller stated. A
-        write that observed nothing holds no rectangle to disagree."""
-        if observed is None:
+        """Whether ``other``'s observed rectangle — or, where its source
+        continues, the current row the attempt holds — where it holds
+        ``window``'s start, stands at the Transaction-Time start a caller
+        stated for ``conditioned``. A write no caller conditioned states no
+        start to disagree with, and one that observed nothing holds no
+        rectangle to disagree."""
+        authority = conditioned.authority
+        observed = _retained_observation(other)
+        if not isinstance(authority, TxStartConditioned) or observed is None:
             return True
+        expected = authority.expected
         observation = observed.evidence
         if not isinstance(observation, TemporalObservation):
             return True
@@ -774,49 +782,33 @@ class WriteAdmission:
         self,
         entity: CompiledEntity,
         key: ObjectKey,
-        write: TemporalIntent | LicensedWrite[TemporalCoverageAuthority],
-        window: TimeInterval | None,
+        intent: TemporalIntent[TemporalCoverageAuthority],
     ) -> object | None:
-        """The Transaction-Time start ``write``, a pending or arriving write of
-        temporal object ``key`` over ``window``, requires of the coverage at
-        the window's start: its caller's, the observed rectangle's own, or,
+        """The Transaction-Time start the pending or arriving write of
+        temporal object ``key`` keeping ``intent`` requires of the coverage at
+        its window's start: its caller's, the observed rectangle's own, or,
         where its source continues through what the attempt's completed
         writes left, that of the current row the attempt holds there. An
         insertion's write states none, and neither does a continuing one whose
         row there the attempt does not hold."""
-        if isinstance(write, TargetIntent):
-            return write.expected.instant
-        if isinstance(write, InsertionAuthorizedIntent):
-            return None
-        if isinstance(write, StateObservedIntent):
-            return self._observed_start(entity, key, write.retained_observation, window)
-        match write.authority:
+        match intent.authority:
             case TxStartConditioned(expected=expected):
                 return expected.instant
             case InsertionAuthorized():
                 return None
             case StateObserved(retained_observation=observed):
-                return self._observed_start(entity, key, observed, window)
-
-    def _observed_start(
-        self,
-        entity: CompiledEntity,
-        key: ObjectKey,
-        observed: RetainedObservation,
-        window: TimeInterval | None,
-    ) -> object | None:
-        """The Transaction-Time start an observed write of temporal object
-        ``key`` over ``window`` requires of the coverage at the window's start,
-        as :meth:`_starting_revision` describes."""
-        observation = observed.evidence
-        if not isinstance(observation, TemporalObservation):
-            return None
-        shape = self._temporal_facet.shape(entity.identity)
-        assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-        if observed.invalidated:
-            held = self._held_at(key, shape, None if window is None else window.start)
-            return None if held is None else milestone_edge(shape, held, None).tx_time
-        return milestone_edge(shape, observation.predecessor, None).tx_time
+                observation = observed.evidence
+                if not isinstance(observation, TemporalObservation):
+                    return None
+                shape = self._temporal_facet.shape(entity.identity)
+                assert isinstance(
+                    shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal
+                )
+                if observed.invalidated:
+                    window = intent.write_intent.valid_time_window
+                    held = self._held_at(key, shape, None if window is None else window.start)
+                    return None if held is None else milestone_edge(shape, held, None).tx_time
+                return milestone_edge(shape, observation.predecessor, None).tx_time
 
     def _held_at(
         self,
@@ -838,7 +830,7 @@ class WriteAdmission:
         ``window`` as its own."""
         held = self._composition(key)
         return held is not None and any(
-            prior.intent.valid_time_window == window for prior in held.intents
+            prior.write_intent.valid_time_window == window for prior in held.intents
         )
 
     def _composition(self, key: ObjectKey) -> TemporalCoverageWrite | None:
@@ -893,15 +885,15 @@ def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: Claim
 
 
 def _scoped(
-    intents: tuple[TemporalIntent, ...],
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
 ) -> Iterator[tuple[ObjectStateKey | None, WriteIntent]]:
     """Each of ``intents`` as the scope it claims and the intent it states
     over its window."""
-    return ((_scope(prior), prior.intent) for prior in intents)
+    return ((_observed_scope(prior), prior.write_intent) for prior in intents)
 
 
 def _observed_run_verdict(
-    held: TemporalCoverageWrite, arriving: StateObservedIntent
+    held: TemporalCoverageWrite, arriving: TemporalIntent[StateObserved]
 ) -> ClaimVerdict | None:
     """What the claim algebra makes of ``arriving`` against ``held``'s initial
     observed run — ``held`` keeping one observed intent of the identical
@@ -912,31 +904,30 @@ def _observed_run_verdict(
         return None
     (only,) = intents
     if (
-        not isinstance(only, StateObservedIntent)
-        or only.retained_observation is not arriving.retained_observation
-        or only.intent.valid_time_window != arriving.intent.valid_time_window
+        _retained_observation(only) is not arriving.authority.retained_observation
+        or only.write_intent.valid_time_window != arriving.write_intent.valid_time_window
     ):
         return None
-    verdict = admits(only.intent, arriving.intent)
+    verdict = admits(only.write_intent, arriving.write_intent)
     # Admission refused an assignment after the run's destruction before it
     # composed anything.
     assert verdict != "incompatible"
     return verdict
 
 
-def _scope(prior: TemporalIntent) -> ObjectStateKey | None:
-    return prior.retained_observation.key if isinstance(prior, StateObservedIntent) else None
+def _observed_scope(intent: TemporalIntent[TemporalCoverageAuthority]) -> ObjectStateKey | None:
+    observed = _retained_observation(intent)
+    return None if observed is None else observed.key
 
 
-def _observation(prior: TemporalIntent) -> RetainedObservation | None:
-    return prior.retained_observation if isinstance(prior, StateObservedIntent) else None
-
-
-def _arriving_observation(
-    item: LicensedWrite[TemporalCoverageAuthority],
+def _retained_observation(
+    intent: TemporalIntent[TemporalCoverageAuthority],
 ) -> RetainedObservation | None:
-    authority = item.authority
-    return authority.retained_observation if isinstance(authority, StateObserved) else None
+    match intent.authority:
+        case StateObserved(retained_observation=observed):
+            return observed
+        case InsertionAuthorized() | TxStartConditioned():
+            return None
 
 
 def _merge_assignment_into_insert(

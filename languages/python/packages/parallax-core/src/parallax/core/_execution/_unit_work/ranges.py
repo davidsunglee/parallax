@@ -22,11 +22,13 @@ from parallax.core._execution._unit_work.row_acquisition import (
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
-    InsertionAuthorizedIntent,
-    StateObservedIntent,
-    TargetIntent,
+    InsertionAuthorized,
+    StateObserved,
+    TemporalCoverageAuthority,
     TemporalCoverageWrite,
     TemporalIntent,
+    TxStartConditioned,
+    is_licensed_by,
 )
 from parallax.core.internal.base import ManagedValue
 from parallax.core.internal.inheritance import InheritanceEntityView
@@ -109,7 +111,7 @@ def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
 
 
 def _known_predecessors(
-    intents: tuple[TemporalIntent, ...],
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
     window: TimeInterval | None,
     facts: TemporalFacts,
     target: ObjectKey,
@@ -132,10 +134,11 @@ def _known_predecessors(
     distinct: list[_RangePredecessor] = []
     continuing = False
     for intent in intents:
-        if not isinstance(intent, StateObservedIntent):
+        authority = intent.authority
+        if not isinstance(authority, StateObserved):
             continue
-        retained = intent.retained_observation
-        if _continues(ownership, _observed_source(retained, intent.source_evidence)):
+        retained = authority.retained_observation
+        if _continues(ownership, _observed_source(retained, authority.source_evidence)):
             continuing = True
             continue
         observation = retained.evidence
@@ -186,17 +189,21 @@ def _held(
 _START: Final = attrgetter("start")
 
 
-def _anchor(intents: tuple[TemporalIntent, ...]) -> InsertionAuthorizedIntent | None:
+def _anchor(
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
+) -> TemporalIntent[InsertionAuthorized] | None:
     """The first write of a range an insertion authorized, whose window's start
     is where the range requires current coverage — every such write states
     that insertion's start — or ``None`` where no insertion authorized one."""
     for intent in intents:
-        if isinstance(intent, InsertionAuthorizedIntent):
+        if is_licensed_by(intent, InsertionAuthorized):
             return intent
     return None
 
 
-def _conditions(intents: tuple[TemporalIntent, ...]) -> tuple[TargetIntent, ...]:
+def _conditions(
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
+) -> tuple[TemporalIntent[TxStartConditioned], ...]:
     """The distinct target conditions the callers of a range's addressed
     writes state, in authored order, each as the first target intent
     stating it: the coverage at the start of its prepared window — the current
@@ -208,19 +215,21 @@ def _conditions(intents: tuple[TemporalIntent, ...]) -> tuple[TargetIntent, ...]
     window. Admission lets no two addressed windows share a start unless they
     are equal, so the distinct conditions keep every distinct addressed window.
     """
-    conditions: list[TargetIntent] = []
+    conditions: list[TemporalIntent[TxStartConditioned]] = []
     for intent in intents:
-        if isinstance(intent, TargetIntent) and all(
+        if is_licensed_by(intent, TxStartConditioned) and all(
             not _states_condition(held, intent) for held in conditions
         ):
             conditions.append(intent)
     return tuple(conditions)
 
 
-def _states_condition(held: TargetIntent, arriving: TargetIntent) -> bool:
+def _states_condition(
+    held: TemporalIntent[TxStartConditioned], arriving: TemporalIntent[TxStartConditioned]
+) -> bool:
     return (
-        held.intent.valid_time_window == arriving.intent.valid_time_window
-        and held.expected == arriving.expected
+        held.write_intent.valid_time_window == arriving.write_intent.valid_time_window
+        and held.authority.expected == arriving.authority.expected
     )
 
 
@@ -266,7 +275,9 @@ def _stated_predecessor(meaning: _RangeMeaning) -> _RangePredecessor:
     (condition,) = meaning.conditions
     return _RangePredecessor(
         row=None,
-        state=TemporalObjectStateKey(meaning.object_key, Edge(tx_time=condition.expected.instant)),
+        state=TemporalObjectStateKey(
+            meaning.object_key, Edge(tx_time=condition.authority.expected.instant)
+        ),
         valid_time_coverage=None,
     )
 
@@ -379,8 +390,8 @@ class _RangeMeaning:
     valid_time_window: TimeInterval | None
     read_key: CoverageReadKey
     key_value: ManagedValue
-    anchor: InsertionAuthorizedIntent | None = None
-    conditions: tuple[TargetIntent, ...] = ()
+    anchor: TemporalIntent[InsertionAuthorized] | None = None
+    conditions: tuple[TemporalIntent[TxStartConditioned], ...] = ()
     guards: bool = False
     opening: _OpeningSeed | None = None
 
@@ -473,7 +484,7 @@ class _TemporalRangeBinder:
         anchor = self.meaning.anchor
         if anchor is None:
             return
-        window = anchor.intent.valid_time_window
+        window = anchor.write_intent.valid_time_window
         if any(_holds_start(window, row) for row in predecessors):
             return
         raise shortfall(
@@ -495,19 +506,22 @@ class _TemporalRangeBinder:
             return ()
         starts: list[_RangePredecessor] = []
         for condition in conditions:
-            window = condition.intent.valid_time_window
+            window = condition.write_intent.valid_time_window
             start = next((row for row in predecessors if _holds_start(window, row)), None)
-            if start is None or start.state.milestone.tx_time != condition.expected.instant:
+            if (
+                start is None
+                or start.state.milestone.tx_time != condition.authority.expected.instant
+            ):
                 raise self._failed(condition)
             if all(start is not held for held in starts):
                 starts.append(start)
         return tuple(starts)
 
-    def _failed(self, condition: TargetIntent) -> WritePreconditionError:
+    def _failed(self, condition: TemporalIntent[TxStartConditioned]) -> WritePreconditionError:
         return WritePreconditionError(
             self.meaning.facts.entity.identity,
             {self.meaning.key_attribute.name: self.meaning.key_value},
-            condition.expected.instant,
+            condition.authority.expected.instant,
         )
 
     def acquired(
@@ -547,7 +561,7 @@ class _TemporalRangeBinder:
 
     def _require_one_start(self, current: Sequence[_RangePredecessor]) -> None:
         for condition in self.meaning.conditions:
-            window = condition.intent.valid_time_window
+            window = condition.write_intent.valid_time_window
             starting = sum(1 for row in current if _holds_start(window, row))
             if starting > 1:
                 raise cardinality_corruption(
@@ -687,7 +701,7 @@ class DeferredRange:
 
 def settle_range(
     item: TemporalCoverageWrite,
-    intents: tuple[TemporalIntent, ...],
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
@@ -844,13 +858,15 @@ def _with_opening(
     return sorted((seed.window, *coverage), key=_START)
 
 
-def _starting_rows(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedStartingRow, ...]:
+def _starting_rows(
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...],
+) -> tuple[RetainedStartingRow, ...]:
     """The starting row every target intent's Locking admission read whole,
     whichever condition it states, in authored order."""
     return tuple(
-        intent.starting_row
+        intent.authority.starting_row
         for intent in intents
-        if isinstance(intent, TargetIntent) and intent.starting_row is not None
+        if is_licensed_by(intent, TxStartConditioned) and intent.authority.starting_row is not None
     )
 
 

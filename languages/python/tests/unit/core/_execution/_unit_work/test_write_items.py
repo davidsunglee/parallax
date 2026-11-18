@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -34,14 +35,11 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedWrite,
     InsertBatch,
     InsertionAuthorized,
-    InsertionAuthorizedIntent,
     KeyedInsert,
     LicensedWrite,
     OrderedWrite,
     PostRemovalInsert,
     StateObserved,
-    StateObservedIntent,
-    TargetIntent,
     TemporalCoverageAuthority,
     TemporalCoverageWrite,
     TemporalIntent,
@@ -92,6 +90,7 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
     SEP,
     START,
     T0,
+    T1,
     addressed_write,
     observed_write,
     rectangle,
@@ -380,22 +379,21 @@ _WINDOW = WriteIntent("assignment", TimeInterval(MAR, SEP))
 
 
 @pytest.mark.parametrize(
-    ("build", "intent"),
+    "build",
     [
-        (
-            lambda: observed_write("amendUntil", START, value="150.00"),
-            StateObservedIntent(_WINDOW, START, ()),
-        ),
-        (_insertion_position, InsertionAuthorizedIntent(_WINDOW)),
-        (lambda: addressed_write(value="150.00"), TargetIntent(_WINDOW, ExpectedTxStart(T0))),
+        lambda: observed_write("amendUntil", START, value="150.00"),
+        _insertion_position,
+        lambda: addressed_write(value="150.00"),
     ],
     ids=["state-observed", "insertion-authorized", "tx-start-conditioned"],
 )
 def test_a_write_against_temporal_coverage_alone_answers_its_intent_transform_and_selection(
-    build: Callable[[], LicensedWrite[TemporalCoverageAuthority]], intent: TemporalIntent
+    build: Callable[[], LicensedWrite[TemporalCoverageAuthority]],
 ) -> None:
     write = build()
-    assert write.intents == (intent,)
+    (intent,) = write.intents
+    assert intent == TemporalIntent(_WINDOW, write.authority)
+    assert intent.authority is write.authority
     (segment,) = write.transform.segments
     assert segment.assigned is not None
     assert named_members(segment.assigned) == {"value": Decimal("150.00")}
@@ -409,15 +407,76 @@ def test_a_lone_intent_keeps_the_authoritys_evidence_and_starting_row() -> None:
     )
     assert is_licensed_by(observed, StateObserved)
     (intent,) = observed.intents
-    assert isinstance(intent, StateObservedIntent)
-    assert intent.retained_observation is START and intent.source_evidence[0] is source
-    state = START.key
-    assert isinstance(state, TemporalObjectStateKey)
-    row = RetainedStartingRow(state, 0, (), None)
+    assert is_licensed_by(intent, StateObserved) and intent.authority is observed.authority
+    assert intent.authority.retained_observation is START
+    assert intent.authority.source_evidence[0] is source
+    row = _starting_row(0)
     target = addressed_write(value="1.00")
     refined = replace(target, authority=replace(target.authority, starting_row=row))
     (condition,) = refined.intents
-    assert isinstance(condition, TargetIntent) and condition.starting_row is row
+    assert is_licensed_by(condition, TxStartConditioned)
+    assert condition.authority is refined.authority and condition.authority.starting_row is row
+
+
+def _starting_row(read_at: int) -> RetainedStartingRow:
+    state = START.key
+    assert isinstance(state, TemporalObjectStateKey)
+    return RetainedStartingRow(state, read_at, (), None)
+
+
+def _condition(
+    kind: Literal["assignment", "destructive"] = "assignment",
+    until: dt.datetime = SEP,
+    tx_start: dt.datetime = T0,
+    starting_row: RetainedStartingRow | None = None,
+) -> TemporalIntent[TxStartConditioned]:
+    return TemporalIntent(
+        WriteIntent(kind, TimeInterval(MAR, until)),
+        TxStartConditioned(ExpectedTxStart(tx_start), starting_row),
+    )
+
+
+def test_equal_conditions_are_one_condition_whatever_starting_row_each_kept() -> None:
+    first, second = (
+        _condition(starting_row=_starting_row(0)),
+        _condition(starting_row=_starting_row(1)),
+    )
+    assert first == second and first.authority.starting_row is not second.authority.starting_row
+    assert first in (_condition(),)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        _condition(kind="destructive"),
+        _condition(until=JUN),
+        _condition(tx_start=T1),
+    ],
+    ids=["kind", "window", "expected-start"],
+)
+def test_a_condition_differing_in_kind_window_or_expected_start_is_another(
+    other: TemporalIntent[TxStartConditioned],
+) -> None:
+    assert _condition() != other
+
+
+def test_an_intent_is_licensed_only_by_its_own_authority() -> None:
+    (observed,) = observed_write("amendUntil", START, value="1.00").intents
+    (authorized,) = _insertion_position().intents
+    (condition,) = addressed_write(value="1.00").intents
+    coverage: tuple[type[TemporalCoverageAuthority], ...] = (
+        StateObserved,
+        InsertionAuthorized,
+        TxStartConditioned,
+    )
+    for intent, licence in (
+        (observed, StateObserved),
+        (authorized, InsertionAuthorized),
+        (condition, TxStartConditioned),
+    ):
+        assert [is_licensed_by(intent, other) for other in coverage] == [
+            other is licence for other in coverage
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -510,7 +569,10 @@ if TYPE_CHECKING:
     def _static_variance_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
         observed: LicensedWrite[StateObserved],
         targeted: LicensedWrite[TxStartConditioned],
+        locked: LicensedWrite[UnversionedLocked],
         licensed: LicensedWrite[WriteAuthority],
+        condition: TemporalIntent[TxStartConditioned],
+        intent: TemporalIntent[TemporalCoverageAuthority],
         row: RetainedStartingRow,
     ) -> None:
         wide: LicensedWrite[WriteAuthority] = targeted
@@ -518,12 +580,24 @@ if TYPE_CHECKING:
         refined: LicensedWrite[TxStartConditioned] = replace(
             targeted, authority=replace(targeted.authority, starting_row=row)
         )
-        del wide, coverage, refined
+        wide_intent: TemporalIntent[TemporalCoverageAuthority] = condition
+        refined_intent: TemporalIntent[TxStartConditioned] = replace(
+            condition, authority=replace(condition.authority, starting_row=row)
+        )
+        built: TemporalIntent[TxStartConditioned] = TemporalIntent(
+            condition.write_intent, targeted.authority
+        )
+        del wide, coverage, refined, wide_intent, refined_intent, built
         narrowed: LicensedWrite[StateObserved] = licensed  # pyright: ignore[reportAssignmentType] - a licence is never widened into a narrower one
-        del narrowed
+        narrowed_intent: TemporalIntent[StateObserved] = intent  # pyright: ignore[reportAssignmentType] - a licence is never widened into a narrower one
+        del narrowed, narrowed_intent
+        TemporalIntent(intent.write_intent, locked.authority)  # pyright: ignore[reportArgumentType] - an unversioned object composes no temporal intent
 
     def _static_narrowing_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
-        admitted: AdmittedWrite, ordered: OrderedWrite
+        admitted: AdmittedWrite,
+        ordered: OrderedWrite,
+        intent: TemporalIntent[TemporalCoverageAuthority],
+        composed: ComposedTemporalWrite,
     ) -> None:
         if is_licensed_by(admitted, StateObserved):
             observed: StateObserved = admitted.authority
@@ -548,6 +622,23 @@ if TYPE_CHECKING:
         ):
             pending: TemporalCoverageWrite = ordered
             del pending
+        if is_licensed_by(intent, StateObserved):
+            observed_intent: StateObserved = intent.authority
+            del observed_intent
+        if is_licensed_by(intent, InsertionAuthorized):
+            authorized_intent: InsertionAuthorized = intent.authority
+            del authorized_intent
+        if is_licensed_by(intent, TxStartConditioned):
+            tx_start_intent: TxStartConditioned = intent.authority
+            del tx_start_intent
+        anchor: TemporalIntent[InsertionAuthorized] | None = next(
+            (held for held in composed.intents if is_licensed_by(held, InsertionAuthorized)), None
+        )
+        conditions: tuple[TemporalIntent[TxStartConditioned], ...] = tuple(
+            held for held in composed.intents if is_licensed_by(held, TxStartConditioned)
+        )
+        del anchor, conditions
+        is_licensed_by(intent, UnversionedLocked)  # pyright: ignore[reportArgumentType,reportCallIssue] - no temporal intent is an unversioned object's
 
     def _static_projection_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
         insert: KeyedInsert,
@@ -565,10 +656,10 @@ if TYPE_CHECKING:
         admitted: AdmittedWrite,
         composed_write: ComposedWrite,
         ordered: OrderedWrite,
-        observed_intent: StateObservedIntent,
-        authorized_intent: InsertionAuthorizedIntent,
-        target_intent: TargetIntent,
-        intent: TemporalIntent,
+        observed_intent: TemporalIntent[StateObserved],
+        authorized_intent: TemporalIntent[InsertionAuthorized],
+        target_intent: TemporalIntent[TxStartConditioned],
+        intent: TemporalIntent[TemporalCoverageAuthority],
         coverage: TemporalCoverageWrite,
     ) -> None:
         instruction: PreparedKeyedInstruction = admitted.instruction
@@ -596,19 +687,22 @@ if TYPE_CHECKING:
         starting_row: RetainedStartingRow | None = targeted.authority.starting_row
         del observation, current, observed_evidence, locked_evidence, identity, resolved
         del version, absorbed, start, starting_row
-        lone_intents: tuple[TemporalIntent, ...] = observed.intents
+        lone_intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...] = observed.intents
         lone_transform: CoverageTransform = authorized.transform
         lone_selection: RowSelection = targeted.selection
-        intents: tuple[TemporalIntent, ...] = composed.intents
+        intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...] = composed.intents
         opening_intents: tuple[WriteIntent, ...] = opening.intents
-        stated: WriteIntent = intent.intent
-        observed_observation: RetainedObservation = observed_intent.retained_observation
-        intent_evidence: tuple[ReadEvidence, ...] = observed_intent.source_evidence
-        expected: ExpectedTxStart = target_intent.expected
-        intent_row: RetainedStartingRow | None = target_intent.starting_row
+        stated: WriteIntent = intent.write_intent
+        intent_authority: TemporalCoverageAuthority = intent.authority
+        observed_observation: RetainedObservation = observed_intent.authority.retained_observation
+        intent_evidence: tuple[ReadEvidence, ...] = observed_intent.authority.source_evidence
+        insertion: InsertionIdentity = authorized_intent.authority.identity
+        expected: ExpectedTxStart = target_intent.authority.expected
+        intent_row: RetainedStartingRow | None = target_intent.authority.starting_row
         del lone_intents, lone_transform, lone_selection, intents, opening_intents, stated
-        del observed_observation, intent_evidence, expected, intent_row
-        pending_intents: tuple[TemporalIntent, ...] = coverage.intents
+        del intent_authority, observed_observation, intent_evidence, insertion, expected
+        del intent_row
+        pending_intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...] = coverage.intents
         pending_transform: CoverageTransform = coverage.transform
         pending_key: ObjectKey = coverage.object_key
         pending_target: CompiledEntity = coverage.target
@@ -627,16 +721,17 @@ if TYPE_CHECKING:
         _ = versioned.authority.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a temporal condition reads a starting row
         _ = observed.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's revision
         _ = admitted.authority  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert needs no licence
-        _ = observed_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
-        _ = observed_intent.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
-        _ = authorized_intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion observed nothing
-        _ = authorized_intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - insertion authority is no Read Evidence
-        _ = authorized_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start
-        _ = target_intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition observed nothing
-        _ = target_intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition is no Read Evidence
-        _ = intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent observed
-        _ = intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent holds evidence
-        _ = intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a target intent states a start
+        _ = observed_intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
+        _ = observed_intent.authority.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
+        _ = authorized_intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion observed nothing
+        _ = authorized_intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - insertion authority is no Read Evidence
+        _ = authorized_intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start
+        _ = target_intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition observed nothing
+        _ = target_intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition is no Read Evidence
+        _ = intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent observed
+        _ = intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent holds evidence
+        _ = intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a target intent states a start
+        _ = intent.instruction  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an intent keeps no instruction; the transform holds its values
         _ = insert.claim_scope  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert claims nothing
         _ = insert_batch.object_key  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a batch names several objects
         _ = insert_batch.claim_scope  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a batch claims nothing

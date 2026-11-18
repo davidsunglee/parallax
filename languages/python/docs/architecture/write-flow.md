@@ -143,9 +143,9 @@ Transaction-Time start holds any. Planning carries it onto every `SettledWrite` 
 `DeferredRange`, so the sources stay published while the plan holding the write is
 reachable. `starting_row` is the starting row a Locking temporal target write's
 admission read whole, which its range may reuse (`RetainedStartingRow`). Neither field
-takes part in equality. Where the whole write must move on to a signature taking only
-some licences, `is_licensed_by` narrows it, one authority class at a time; a decision
-that needs only the licence matches on the authority.
+takes part in equality. Where the whole write, or a temporal intent holding its authority, must move on to a
+signature taking only some licences, `is_licensed_by` narrows it, one authority class at
+a time; a decision that needs only the licence matches on the authority.
 
 The unit of work's `SourceRegistry` judges every licence. Its
 `SourceRegistry.resolve_read_evidence` turns a source's `ReadEvidence` into what the
@@ -581,30 +581,27 @@ member in its Column or at its path in the shared Structured Column, and
 
 ```text
 LicensedWrite[TemporalCoverageAuthority]  ─┐  alone: .intents and .transform derived
-  StateObserved | InsertionAuthorized      │  when asked, its intent translated from
-  | TxStartConditioned                     │  its authority by temporal_intent
+  StateObserved | InsertionAuthorized      │  when asked, its one intent holding
+  | TxStartConditioned                     │  the write's own authority
                                            ├  TemporalCoverageWrite
 ComposedTemporalWrite                     ─┘  composed: .intents and .transform retained
                                      │
                                      ▼
-                       TemporalIntent =
-                         StateObservedIntent        WriteIntent, retained_observation,
-                                                    source_evidence
-                       | InsertionAuthorizedIntent  WriteIntent (its window's start is
-                                                    the insertion's anchor)
-                       | TargetIntent               WriteIntent, expected: ExpectedTxStart,
-                                                    starting_row
+                       TemporalIntent[TemporalCoverageAuthority]
+                         write_intent               WriteIntent: kind and window
+                         authority                  the same authority object its
+                                                    write was admitted under
                        CoverageTransform = ordered, disjoint CoverageSegments
                                      │
                                      ▼
-                       settle_range reads each intent by type:
-                         StateObservedIntent        a predecessor: its observed milestone,
+                       settle_range reads each intent by its authority:
+                         StateObserved              a predecessor: its observed milestone,
                                                     or, where its source continues through
                                                     this attempt's completed writes, the
                                                     current rows those writes left
-                         TargetIntent               a condition on the coverage at its
+                         TxStartConditioned         a condition on the coverage at its
                                                     window's start, and its starting row
-                         InsertionAuthorizedIntent  the anchor that coverage must hold
+                         InsertionAuthorized        the anchor that coverage must hold
                                      │
                                      ▼
                        predecessors cover the window? → bind now: PredecessorExpander
@@ -618,9 +615,11 @@ Transaction-Time-Only or Bitemporal does settlement route the write through
 authority is a `TemporalCoverageAuthority` answers.
 
 The intent sequence keeps the authority and windows composition needs; it is not a
-record of every authored write. An initial run of observed writes sharing one
-observation and window compacts into one intent, and an equal target intent is kept
-once. Two observations whose coverage overlaps cannot both be current: the
+record of every authored write. Admission turns an arriving temporal write into its
+intent before judging it, so every judgment against the pending writes compares intents
+on both sides, and composition keeps that same intent. An initial run of observed writes
+sharing one observation and window compacts into one intent, and a caller's condition
+equal to one already held over the same window and start is kept once. Two observations whose coverage overlaps cannot both be current: the
 later-authored one is bound, and the earlier is validated alone. A pending Bitemporal
 opening is a separate composition: its `intents` are bare `WriteIntent`s, and it settles
 through `settle_opening`, which seeds every surviving part of its window from the
@@ -636,15 +635,11 @@ owns it and so revises or removes it in place, and the successors it opens.
 - `parallax.core._execution._unit_work.write_items:TemporalCoverageAuthority`
 - `parallax.core._execution._unit_work.write_items:LicensedWrite.intents`
 - `parallax.core._execution._unit_work.write_items:LicensedWrite.transform`
-- `parallax.core._execution._unit_work.write_items:temporal_intent`
 - `parallax.core._execution._unit_work.write_items:ComposedTemporalWrite.intents`
 - `parallax.core._execution._unit_work.write_items:ComposedTemporalWrite.transform`
 - `parallax.core._execution._unit_work.write_items:TemporalIntent`
-- `parallax.core._execution._unit_work.write_items:StateObservedIntent`
-- `parallax.core._execution._unit_work.write_items:InsertionAuthorizedIntent`
-- `parallax.core._execution._unit_work.write_items:TargetIntent`
-- `parallax.core._execution._unit_work.write_items:TargetIntent.expected`
-- `parallax.core._execution._unit_work.write_items:TargetIntent.starting_row`
+- `parallax.core._execution._unit_work.write_items:TemporalIntent.write_intent`
+- `parallax.core._execution._unit_work.write_items:TemporalIntent.authority`
 - `parallax.core._execution._unit_work.write_items:ComposedBitemporalOpening.intents`
 - `parallax.core._execution._unit_work.claims:WriteIntent`
 - `parallax.core.internal.temporal_write.coverage:CoverageTransform`
