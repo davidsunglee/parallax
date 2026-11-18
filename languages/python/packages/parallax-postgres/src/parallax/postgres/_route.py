@@ -181,10 +181,9 @@ class PostgresRoute:
         """Take the one slot that lets an acquisition try this route while it is
         known to be unreachable, answering whether this caller now holds it.
 
-        One holder at a time is what makes demand re-dial a route nothing
-        probes in the background without every concurrent caller queueing on
-        a route that just failed; the holder gives it back with
-        :meth:`release_probe` however its attempt ends.
+        Other preferred acquisitions can move on while the holder tries the
+        route. The holder gives the slot back with :meth:`release_probe`
+        however its attempt ends.
         """
         return self._probe_slot.acquire(blocking=False)
 

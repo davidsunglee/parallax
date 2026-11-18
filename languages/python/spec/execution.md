@@ -73,10 +73,9 @@ raises `ValueError`. `DatabaseStartupError.route` names which route failed.
 `ConnectionAcquisitionError.reason` spells `m-db-port`'s acquisition reasons in
 snake_case. `reader_preferred` gives the reader at most half of
 `acquire_timeout`. While a reader is known to be unreachable, one
-`reader_preferred` acquisition at a time tries it again, which is what re-dials
-it, and the others go to the writer at once. Required `credentials=` accepts
-`Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,
-never `None`. `parallax-aws` supplies
+`reader_preferred` acquisition at a time tries it again, and the others go to
+the writer at once. Required `credentials=` accepts `Password(...)`, a source
+with `resolve() -> Password`, or `DRIVER_MANAGED`, never `None`. `parallax-aws` supplies
 `RdsIamCredentials`; its optional `parallax.aws.postgres.rds_endpoint` composer
 returns a configured endpoint with the credential source and TLS mode required
 for IAM authentication, signing for its own host, which the application

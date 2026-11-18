@@ -99,22 +99,18 @@ def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleR
     and keep their cause; authorization setup is classified later, after
     checkout.
 
-    A spent budget is reported as the failure on the route's record where that
-    record explains it, and as a ``timeout`` otherwise; see :func:`_expired`.
-    An on-demand pool establishes on this thread, so what its dial met arrives
-    here as itself rather than as a timeout, and is classified on the spot
-    without consulting the record at all. A connection handed over clears the
-    record, whatever it said.
+    When the budget expires, report the latest dial failure still on record
+    or ``timeout`` if the record is empty. An on-demand pool can raise its dial
+    failure directly. A successful checkout clears the record.
     """
     establishment = route.establishment
-    waited_from = establishment.generation()
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        raise _expired(establishment, waited_from, None)
+        raise _expired(establishment, None)
     try:
         connection = route.pool.getconn(timeout=remaining)
     except psycopg_pool.PoolTimeout as exc:
-        raise _expired(establishment, waited_from, exc)  # noqa: B904 - the cause is chosen above
+        raise _expired(establishment, exc)  # noqa: B904 - the cause is chosen above
     except psycopg_pool.TooManyRequests as exc:
         raise ConnectionAcquisitionError(
             "the database runtime already has as many callers waiting as it admits",
@@ -163,27 +159,10 @@ _EXPIRED_FAILURES: Final[dict[DialReason, str]] = {
 
 
 def _expired(
-    establishment: ConnectionEstablishment, waited_from: int, native: BaseException | None
+    establishment: ConnectionEstablishment, native: BaseException | None
 ) -> ConnectionAcquisitionError:
-    """The failure a spent acquisition budget reports, and what it chains.
-
-    A refusal on record — a credential the source would not produce, a login the
-    server rejected, a session the codecs cannot run under — is named in place
-    of the wait, however long ago it was recorded: it happened on the route's
-    own background path, where the pool retries and logs it and nothing reaches
-    the caller waiting on it, it stays on record until a connection becomes
-    usable, and a configuration every new connection is refused under is what
-    an operator has to fix. Each is a different thing to fix, so each reports
-    its own reason.
-
-    An unreachable server is different, because a pool that is merely full
-    looks the same from inside the wait. It is reported only where it was
-    recorded DURING this wait (after ``waited_from``) and is still the route's
-    latest outcome; one that was already history when the wait began says
-    nothing about why this wait ran out, so that wait is a ``timeout``.
-    """
     failure = establishment.last_failure
-    if failure is None or (failure.reason == "unavailable" and failure.generation <= waited_from):
+    if failure is None:
         timed_out = ConnectionAcquisitionError(
             "no database connection became available within the acquisition timeout",
             reason="timeout",
@@ -420,10 +399,9 @@ class PostgresConnectionContext:
         """Establish this lease on the current step's route, or raise.
 
         A step a later one follows does not wait on a route already known to
-        be unreachable unless it holds that route's one probe slot: whoever
-        does tries it within the step's share and so re-dials it on demand,
-        and everyone else moves on at once. The slot is given back however
-        this step ends.
+        be unreachable unless it holds that route's one probe slot. The holder
+        tries the route within the step's share, and everyone else moves on at
+        once. The slot is given back however this step ends.
         """
         route = self._route
         refusal = route.refusal

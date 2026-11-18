@@ -745,12 +745,8 @@ _SERVER_GONE: Final = frozenset({_CANNOT_CONNECT_NOW, "57P01", "57P02"})
 
 @dataclass(frozen=True, slots=True)
 class DialFailure:
-    """The latest establishment failure on one route: its reason, what raised
-    it, and the generation it was recorded at."""
-
     reason: DialReason
     cause: BaseException
-    generation: int
 
 
 class ConnectionEstablishment:
@@ -768,10 +764,8 @@ class ConnectionEstablishment:
     The record exists because a pool creates most of its connections on its own
     background path: a failure there is retried and logged where a caller
     waiting for a connection never sees it, and what that caller eventually gets
-    is a bare timeout naming nothing to fix. Keeping the latest failure lets the
-    timeout say what is actually wrong, and its generation lets a waiter tell a
-    failure met during its own wait from one that was already history when the
-    wait began.
+    is a bare timeout. The record lets an expired checkout report the latest
+    dial failure even when the pool made no attempt during that wait.
 
     One record serves every attempt on the route, because a pool dials several
     at once on several workers and the caller it answers is waiting on the pool
@@ -786,24 +780,18 @@ class ConnectionEstablishment:
     bare timeout in its place.
     """
 
-    __slots__ = ("_generation", "_lock", "connection_class", "last_failure")
+    __slots__ = ("_lock", "connection_class", "last_failure")
 
     def __init__(self) -> None:
         self.last_failure: DialFailure | None = None
-        self._generation = 0
         self._lock = threading.Lock()
         self.connection_class: type[psycopg.Connection[TupleRow]] = _observed_connections(self)
-
-    def generation(self) -> int:
-        """The count of outcomes recorded so far, to compare a later failure against."""
-        return self._generation
 
     def failed(self, failure: BaseException) -> None:
         """Record ``failure`` as the route's latest establishment outcome."""
         reason = dial_reason(failure)
         with self._lock:
-            self._generation += 1
-            self.last_failure = DialFailure(reason, failure, self._generation)
+            self.last_failure = DialFailure(reason, failure)
 
     def checked_out(self) -> None:
         """Record that the route handed over a connection, which ends whatever
@@ -815,7 +803,6 @@ class ConnectionEstablishment:
 
     def _usable(self) -> None:
         with self._lock:
-            self._generation += 1
             self.last_failure = None
 
     def __call__(self, connection: psycopg.Connection[TupleRow]) -> None:
