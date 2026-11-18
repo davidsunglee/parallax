@@ -154,6 +154,7 @@ class _Layout:
         self.writes.append(write)
         blocks, shapes, opened = self._blocks, self._shapes, self._open
         previous = -1
+        step: PlannedStep | None = None
         try:
             for step in write.steps:
                 if isinstance(step, PlannedInsert):
@@ -173,8 +174,9 @@ class _Layout:
                 previous = block
         except BaseException:
             # A failure's traceback keeps this frame, which must not keep the
-            # write and its source evidence once the group releases it.
+            # write, its steps, or its source evidence once the group releases it.
             del write
+            step = None
             raise
 
     def finish(self) -> tuple[tuple[PlannedStep, ...], tuple[EffectSpan, ...]]:

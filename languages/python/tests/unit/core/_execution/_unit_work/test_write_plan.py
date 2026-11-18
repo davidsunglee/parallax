@@ -320,12 +320,12 @@ def test_a_failing_effect_shape_closes_the_suspended_producer_before_its_next_wr
 def test_a_failing_effect_shape_leaves_no_frame_holding_a_write_it_took() -> None:
     taken = [SettledWrite(steps=(_delete(key),), source_evidence=(object(),)) for key in (1, 2, 3)]
     with pytest.raises(_Refused) as raised:
-        WriteGroup.from_writes(iter(taken), effect_shape=_refusing(2, _Refused()))
+        WriteGroup.from_writes((write for write in taken), effect_shape=_refusing(2, _Refused()))
     assembling = frames(raised.value.__traceback__, module=plan_module.__file__)
     assert {frame.f_code.co_name for frame in assembling} == {"from_writes", "add"}
     for write in taken[:2]:
         assert not reaches(assembling, write)
-        assert not reaches(assembling, write.steps)
+        assert not any(reaches(assembling, step) for step in write.steps)
         assert not reaches(assembling, write.source_evidence)
 
 

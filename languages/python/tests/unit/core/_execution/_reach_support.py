@@ -5,7 +5,14 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Iterable, Iterator
-from types import FrameType, FunctionType, MethodType, ModuleType, TracebackType
+from types import (
+    FrameType,
+    FunctionType,
+    GeneratorType,
+    MethodType,
+    ModuleType,
+    TracebackType,
+)
 
 __all__ = ["frames", "reaches"]
 
@@ -23,8 +30,9 @@ def frames(traceback: TracebackType | None, *, module: str) -> list[FrameType]:
 
 def reaches(roots: Iterable[object], target: object, *, depth: int = 4) -> bool:
     """Whether ``target`` is one of ``roots`` or is held, at most ``depth``
-    references deep, by a frame's locals, a container's members, or an
-    object's fields. Code, modules, and classes are not followed."""
+    references deep, by a frame's locals, a suspended generator's frame, a
+    container's members, or an object's fields. Code, modules, and classes are
+    not followed."""
     seen: set[int] = set()
     level = list(roots)
     for _ in range(depth + 1):
@@ -45,6 +53,8 @@ def _referents(held: object) -> Iterator[object]:
         return
     if isinstance(held, FrameType):
         yield from held.f_locals.values()
+    elif isinstance(held, GeneratorType):
+        yield held.gi_frame
     elif isinstance(held, dict):
         for key, value in held.items():  # pyright: ignore[reportUnknownVariableType]
             yield key
