@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, Generic, Literal, TypeIs, TypeVar, cast, overload
 
 from parallax.core._execution._unit_work.claims import (
@@ -48,15 +48,12 @@ __all__ = [
     "ComposedWrite",
     "InsertBatch",
     "InsertionAuthorized",
-    "InsertionAuthorizedIntent",
     "KeyedInsert",
     "LicensedWrite",
     "MutationPhase",
     "OrderedWrite",
     "PostRemovalInsert",
     "StateObserved",
-    "StateObservedIntent",
-    "TargetIntent",
     "TemporalCoverageAuthority",
     "TemporalCoverageWrite",
     "TemporalIntent",
@@ -72,7 +69,6 @@ __all__ = [
     "distinct_evidence",
     "is_licensed_by",
     "target_write",
-    "temporal_intent",
 ]
 
 
@@ -355,12 +351,15 @@ class LicensedWrite(Generic[Authority_co]):  # noqa: UP046 - PEP 695 infers inva
                 return ()
 
     @property
-    def intents(self: LicensedWrite[TemporalCoverageAuthority]) -> tuple[TemporalIntent, ...]:
+    def intents(
+        self: LicensedWrite[TemporalCoverageAuthority],
+    ) -> tuple[TemporalIntent[TemporalCoverageAuthority], ...]:
         """This write of a temporal object alone, as the one intent a
-        composition of it keeps, built when asked."""
-        intent = keyed_intent(self.instruction)
-        assert intent is not None  # a write against existing coverage is no insert
-        return (temporal_intent(self, intent),)
+        composition of it keeps — under this write's own authority — built
+        when asked."""
+        write_intent = keyed_intent(self.instruction)
+        assert write_intent is not None  # a write against existing coverage is no insert
+        return (TemporalIntent(write_intent, self.authority),)
 
     @property
     def transform(self: LicensedWrite[TemporalCoverageAuthority]) -> CoverageTransform:
@@ -375,12 +374,45 @@ class LicensedWrite(Generic[Authority_co]):  # noqa: UP046 - PEP 695 infers inva
         return self.instruction.rows[0].selection
 
 
+CoverageAuthority_co = TypeVar(
+    "CoverageAuthority_co", bound="TemporalCoverageAuthority", covariant=True
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalIntent(Generic[CoverageAuthority_co]):  # noqa: UP046 - PEP 695 infers invariance through the synthesized __replace__
+    """What one write of a temporal object keeps once composed: the window and
+    kind it states, and the very authority it was admitted under.
+
+    Its values live in the composed transform, where a later write may
+    overwrite them; its authority stays whatever happens to them.
+    """
+
+    write_intent: WriteIntent
+    authority: CoverageAuthority_co
+
+
+@overload
 def is_licensed_by[T: WriteAuthority](
     item: ComposedWrite | OrderedWrite, authority: type[T]
-) -> TypeIs[LicensedWrite[T]]:
-    """Whether ``item`` is one licensed write whose authority is an
-    ``authority``."""
-    return isinstance(item, LicensedWrite) and isinstance(item.authority, authority)
+) -> TypeIs[LicensedWrite[T]]: ...
+
+
+@overload
+def is_licensed_by[T: TemporalCoverageAuthority](
+    item: TemporalIntent[TemporalCoverageAuthority], authority: type[T]
+) -> TypeIs[TemporalIntent[T]]: ...
+
+
+def is_licensed_by(
+    item: ComposedWrite | OrderedWrite | TemporalIntent[TemporalCoverageAuthority],
+    authority: type[WriteAuthority],
+) -> bool:
+    """Whether ``item`` is one licensed write, or one composed temporal
+    intent, whose authority is an ``authority``."""
+    return isinstance(item, (LicensedWrite, TemporalIntent)) and isinstance(
+        item.authority, authority
+    )
 
 
 def distinct_evidence(groups: Iterable[tuple[ReadEvidence, ...]]) -> tuple[ReadEvidence, ...]:
@@ -518,47 +550,6 @@ def admitted_write(
 
 
 @dataclass(frozen=True, slots=True)
-class StateObservedIntent:
-    """What one observed write of a temporal object keeps once composed: the
-    window and kind it states, the observation it settles against, and, by
-    identity, the Read Evidence of every source whose write it is, which keeps
-    their demand alive while the write is pending or planned and which only
-    binding reads, for their pins. Its values live in the composed transform,
-    where a later write may overwrite them; the observation stays required
-    whatever happens to them."""
-
-    intent: WriteIntent
-    retained_observation: RetainedObservation
-    source_evidence: tuple[ReadEvidence, ...] = field(compare=False)
-
-
-@dataclass(frozen=True, slots=True)
-class InsertionAuthorizedIntent:
-    """What one write an admitted insertion authorized keeps once composed: its
-    window's start is that insertion's anchor, where execution requires
-    current coverage."""
-
-    intent: WriteIntent
-
-
-@dataclass(frozen=True, slots=True)
-class TargetIntent:
-    """What one target write of a temporal object keeps once composed: the
-    Transaction-Time start its caller requires of the coverage at its window's
-    start. ``starting_row`` is the starting row the write's Locking admission
-    read whole: data its range may reuse, not part of what the write is."""
-
-    intent: WriteIntent
-    expected: ExpectedTxStart
-    starting_row: RetainedStartingRow | None = field(default=None, compare=False)
-
-
-type TemporalIntent = StateObservedIntent | InsertionAuthorizedIntent | TargetIntent
-"""One composed temporal write's intent and the authority it was admitted
-under."""
-
-
-@dataclass(frozen=True, slots=True)
 class ComposedTemporalWrite:
     """Every pending write of one temporal object against its existing
     coverage once a second arrives, composed in authored order at the position
@@ -574,7 +565,7 @@ class ComposedTemporalWrite:
 
     target: CompiledEntity
     object_key: ObjectKey
-    intents: tuple[TemporalIntent, ...]
+    intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...]
     transform: CoverageTransform
     selection: RowSelection
 
@@ -589,9 +580,9 @@ class ComposedTemporalWrite:
         """The distinct Read Evidence of every source whose write the
         composition holds, by identity, in authored order."""
         return distinct_evidence(
-            intent.source_evidence
+            intent.authority.source_evidence
             for intent in self.intents
-            if isinstance(intent, StateObservedIntent)
+            if is_licensed_by(intent, StateObserved)
         )
 
 
@@ -601,26 +592,13 @@ admitted write still alone, or the composition of several. Either answers its
 target, object key, intents, and transform."""
 
 
-def temporal_intent(
-    write: LicensedWrite[TemporalCoverageAuthority], intent: WriteIntent
-) -> TemporalIntent:
-    """What ``write``, stating ``intent``, keeps once composed."""
-    match write.authority:
-        case StateObserved(retained_observation=observed, source_evidence=evidence):
-            return StateObservedIntent(intent, observed, evidence)
-        case InsertionAuthorized():
-            return InsertionAuthorizedIntent(intent)
-        case TxStartConditioned(expected=expected, starting_row=starting_row):
-            return TargetIntent(intent, expected, starting_row)
-
-
 def compose_temporal_write(
     held: TemporalCoverageWrite,
-    arriving: LicensedWrite[TemporalCoverageAuthority],
-    intent: TemporalIntent,
+    item: LicensedWrite[TemporalCoverageAuthority],
+    arriving: TemporalIntent[TemporalCoverageAuthority],
     key_name: str,
 ) -> ComposedTemporalWrite:
-    """``held`` followed by ``arriving``, which keeps ``intent``: one temporal
+    """``held`` followed by ``item``, which keeps ``arriving``: one temporal
     object's writes composed in authored order.
 
     The arriving write's values replace earlier ones per member inside its own
@@ -628,44 +606,46 @@ def compose_temporal_write(
     intent stays. A caller's condition already held over the same window adds
     nothing to keep.
     """
-    instruction = arriving.instruction
     intents = held.intents
-    if not isinstance(intent, TargetIntent) or intent not in intents:
-        intents = (*intents, intent)
+    if not isinstance(arriving.authority, TxStartConditioned) or arriving not in intents:
+        intents = (*intents, arriving)
     return ComposedTemporalWrite(
         target=held.target,
         object_key=held.object_key,
         intents=intents,
-        transform=_transformed(held.transform, instruction, key_name),
+        transform=_transformed(held.transform, item.instruction, key_name),
         selection=held.selection,
     )
 
 
 def compact_observed_run(
     held: TemporalCoverageWrite,
-    arriving: LicensedWrite[StateObserved],
-    intent: StateObservedIntent,
+    item: LicensedWrite[TemporalCoverageAuthority],
+    arriving: TemporalIntent[StateObserved],
     key_name: str,
 ) -> ComposedTemporalWrite:
-    """``held``, one observed intent, with ``arriving`` composed into it as
-    that same intent: an observed write of the identical observation over the
-    same window, which the claim algebra coalesces, supersedes, or
-    deduplicates.
+    """``held``, one observed intent, with ``item`` composed into it as that
+    same intent: an observed write, keeping ``arriving``, of the identical
+    observation over the same window, which the claim algebra coalesces,
+    supersedes, or deduplicates.
 
     The one intent states the arriving write's kind, which only a superseding
     destruction changes, and keeps every source's Read Evidence by identity,
     first authored first; the transform takes the arriving write as usual.
     """
     (only,) = held.intents
-    assert isinstance(only, StateObservedIntent)  # only an observed run compacts
-    evidence = distinct_evidence((only.source_evidence, intent.source_evidence))
-    if evidence is not only.source_evidence or only.intent != intent.intent:
-        only = StateObservedIntent(intent.intent, only.retained_observation, evidence)
+    assert is_licensed_by(only, StateObserved)  # only an observed run compacts
+    authority = only.authority
+    evidence = distinct_evidence((authority.source_evidence, arriving.authority.source_evidence))
+    if evidence is not authority.source_evidence:
+        only = TemporalIntent(arriving.write_intent, replace(authority, source_evidence=evidence))
+    elif only.write_intent != arriving.write_intent:
+        only = TemporalIntent(arriving.write_intent, authority)
     return ComposedTemporalWrite(
         target=held.target,
         object_key=held.object_key,
         intents=(only,),
-        transform=_transformed(held.transform, arriving.instruction, key_name),
+        transform=_transformed(held.transform, item.instruction, key_name),
         selection=held.selection,
     )
 
