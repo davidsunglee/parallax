@@ -90,7 +90,7 @@ class TypedWireProjection:
             source.wire,
             source.includes,
             operation=_EAGER,
-            new_memo=InstanceIdentityMemo[object],
+            new_memo=InstanceIdentityMemo,
         )
 
     @classmethod
@@ -100,9 +100,7 @@ class TypedWireProjection:
         wire: WireModelFacts,
         includes: read_planning.IncludeTree,
     ) -> TypedWireProjection:
-        return cls(
-            construction, wire, includes, operation=_STREAMED, new_memo=WeakIdentityMemo[object]
-        )
+        return cls(construction, wire, includes, operation=_STREAMED, new_memo=WeakIdentityMemo)
 
     def project(
         self, value: object, at: IncludePath[Entity, Any] | None
