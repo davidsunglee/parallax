@@ -86,6 +86,11 @@ class ConcurrencyFacet(Protocol):
         self, entity: EntityIdentity, preference: ConcurrencyPreference
     ) -> ConcurrencyStrategy: ...
 
+    def gates(self, entity: EntityIdentity, preference: ConcurrencyPreference) -> bool:
+        """Whether a write of ``entity``'s existing rows gates: exactly where
+        its Effective Concurrency Strategy is Optimistic."""
+        ...
+
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None: ...
 
     def settles_against(self, entity: EntityIdentity) -> EvidenceKind: ...
@@ -119,6 +124,9 @@ class _CompiledConcurrencyFacet:
         self, entity: EntityIdentity, preference: ConcurrencyPreference
     ) -> ConcurrencyStrategy:
         return preference if entity in self._versioned else "locking"
+
+    def gates(self, entity: EntityIdentity, preference: ConcurrencyPreference) -> bool:
+        return preference == "optimistic" and entity in self._versioned
 
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
         return self._attributes.get(entity)

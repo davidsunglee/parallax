@@ -124,9 +124,10 @@ def _codes(*declarations: UnresolvedEntityDeclaration) -> list[IssueCode]:
 # --------------------------------------------------------------------------
 
 
-def test_the_facet_offers_only_its_four_questions() -> None:
+def test_the_facet_offers_only_its_five_questions() -> None:
     assert {name for name in dir(_facet("account")) if not name.startswith("_")} == {
         "effective_strategy",
+        "gates",
         "settles_against",
         "version_attribute",
         "version_source",

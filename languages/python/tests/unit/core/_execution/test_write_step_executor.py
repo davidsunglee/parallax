@@ -231,7 +231,12 @@ def test_a_run_of_openings_never_reaches_into_a_later_groups_steps() -> None:
     first = (close(1), opening(1), opening(2), opening(3))
     second = (opening(5),)
     port = ScriptedAdapter(Write(), Write(affected=3), Write())
-    plan = WritePlan((WriteGroup((SettledWrite(),), first), WriteGroup((SettledWrite(),), second)))
+    plan = WritePlan(
+        (
+            WriteGroup((SettledWrite(steps=first),), first),
+            WriteGroup((SettledWrite(steps=second),), second),
+        )
+    )
     completed: list[int] = []
     with open_flush() as flush:
         run_plan(port, plan, flush, completed=completed)
@@ -250,7 +255,12 @@ def test_a_group_whose_grouped_statement_fails_completes_nothing_and_prepares_no
     first = (close(1), opening(1), opening(2), opening(3))
     second = (opening(5),)
     preparer = RecordingPreparer(port, (*first, *second))
-    plan = WritePlan((WriteGroup((SettledWrite(),), first), WriteGroup((SettledWrite(),), second)))
+    plan = WritePlan(
+        (
+            WriteGroup((SettledWrite(steps=first),), first),
+            WriteGroup((SettledWrite(steps=second),), second),
+        )
+    )
     completed: list[int] = []
     with pytest.raises(DatabaseError) as raised, open_flush() as flush:
         run_plan(port, plan, flush, payloads=preparer, completed=completed)

@@ -106,6 +106,16 @@ def test_a_locking_preference_locks_every_family_and_an_optimistic_one_falls_bac
 
 
 @pytest.mark.parametrize(("stem", "entity", "variant"), _SOURCES)
+def test_a_write_gates_exactly_where_its_effective_strategy_is_optimistic(
+    stem: str, entity: str, variant: type[object]
+) -> None:
+    facet = _facet(stem)
+    assert {
+        preference: facet.gates(_entity(entity), preference) for preference in _PREFERENCES
+    } == {"locking": False, "optimistic": variant is not Unversioned}
+
+
+@pytest.mark.parametrize(("stem", "entity", "variant"), _SOURCES)
 def test_a_family_settles_against_its_observation_exactly_when_it_is_versioned(
     stem: str, entity: str, variant: type[object]
 ) -> None:
@@ -154,6 +164,7 @@ def test_an_entity_the_model_lacks_answers_each_question_the_safe_way() -> None:
     missing = EntityIdentity("elsewhere", "Account")
     for preference in _PREFERENCES:
         assert facet.effective_strategy(missing, preference) == "locking"
+        assert not facet.gates(missing, preference)
     assert facet.version_attribute(missing) is None
     assert facet.version_source(missing) is None
     with pytest.raises(KeyError, match="no Entity this model declares"):

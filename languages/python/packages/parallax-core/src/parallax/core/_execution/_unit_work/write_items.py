@@ -51,12 +51,14 @@ __all__ = [
     "KeyedInsert",
     "LicensedWrite",
     "MutationPhase",
+    "NonTemporalOrderedWrite",
     "OrderedWrite",
     "PostRemovalInsert",
     "StateObserved",
     "TemporalCoverageAuthority",
     "TemporalCoverageWrite",
     "TemporalIntent",
+    "TemporalOrderedWrite",
     "TxStartConditioned",
     "UnversionedLocked",
     "UnversionedWriteBatch",
@@ -131,6 +133,11 @@ class KeyedInsert:
     @property
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
         return ()
+
+    @property
+    def selection(self) -> RowSelection:
+        """The row selection its one row is of."""
+        return self.instruction.rows[0].selection
 
 
 @dataclass(frozen=True, slots=True)
@@ -709,6 +716,11 @@ class ComposedBitemporalOpening:
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
         return ()
 
+    @property
+    def selection(self) -> RowSelection:
+        """The row selection the insert's row, and every part it opens, is of."""
+        return self.insert.selection
+
     def followed_by(
         self, instruction: PreparedKeyedInstruction, key_name: str
     ) -> ComposedBitemporalOpening:
@@ -813,6 +825,21 @@ Batching joins inserts into an :class:`InsertBatch` and writes of unversioned
 objects into an :class:`UnversionedWriteBatch`, and ordering consumes every
 :class:`PostRemovalInsert`.
 """
+
+type TemporalOrderedWrite = TemporalCoverageWrite | ComposedBitemporalOpening | KeyedInsert
+"""An ordered write of a temporal object: a range over its existing
+coverage, a pending Bitemporal opening, or a keyed insert, which batching
+never joins on a temporal target."""
+
+type NonTemporalOrderedWrite = (
+    KeyedInsert
+    | InsertBatch
+    | UnversionedWriteBatch
+    | LicensedWrite[StateObserved | UnversionedLocked | InsertionAuthorized | VersionConditioned]
+)
+"""An ordered write of a Non-Temporal object: an insert, a batch, or a
+licensed write of an existing row under any authority but a stated
+Transaction-Time start."""
 
 type MutationPhase = tuple[OrderedWrite, ...]
 """A region's ordered writes of one mutation kind: its inserts, its updates,

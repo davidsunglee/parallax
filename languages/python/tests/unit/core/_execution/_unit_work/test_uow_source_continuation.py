@@ -490,13 +490,18 @@ def _position_rows() -> list[dict[str, object]]:
     ]
 
 
-def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as() -> None:
-    # The source observed the row ending in September and the write reaches
-    # the stored row past it, so the plan defers its range to execution, after
-    # the buffer has drained.
+def _deferred_write(
+    *, failure: BaseException | None = None
+) -> tuple[UnitOfWork, AdmittedWrite, weakref.ref[ReadEvidence], list[bool]]:
+    """A unit of work buffering one write of WherePosition 1 its plan defers,
+    with the write, a weak reference to its source, and whether that source
+    was alive as each group executed, where ``failure`` fails the first.
+
+    The source observed the row ending in September and the write reaches the
+    stored row past it, so the plan defers its range to execution, after the
+    buffer has drained."""
     rows = _position_rows()
     entity = _entity(_POSITION, "WherePosition")
-    failure = RuntimeError("the deferred group failed")
     simulated = SimulatedWriteSteps(
         build_write_planner(bound_model(_POSITION)).payloads,
         bound_model(_POSITION),
@@ -514,7 +519,9 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         lifetime=TxnAttemptLifetime(),
         clock=FixedClock(dt.datetime(2024, 6, 15, tzinfo=dt.UTC)),
         meta=_POSITION,
-        execute_write_steps=ObservedSteps(simulated, observe=observe, failing=0, failure=failure),
+        execute_write_steps=ObservedSteps(
+            simulated, observe=observe, failing=None if failure is None else 0, failure=failure
+        ),
         execute_counted_step=NO_COUNTED_STEPS,
         acquire_rows=HeldRows(
             _POSITION, [PredecessorRow(members=row) for row in rows], overlapping=True
@@ -543,23 +550,39 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     assert resolved is not None  # a write of existing state settles against something
     write = admitted_write(prepared, resolved, key, source=source)
     uow.buffer(write)
-    del source, observation, resolved
+    return uow, write, held[0], alive
+
+
+def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as() -> None:
+    failure = RuntimeError("the deferred group failed")
+    uow, write, held, alive = _deferred_write(failure=failure)
     with pytest.raises(RuntimeError) as raised:
         _flush(uow)
     assert raised.value is failure
     assert alive == [True]
     owned = frames(raised.value.__traceback__, module=uow_module.__file__)
-    assert reaches(owned, held[0](), depth=_PLANNED_EVIDENCE_DEPTH)
+    assert reaches(owned, held(), depth=_PLANNED_EVIDENCE_DEPTH)
     assert not reaches(owned, write, depth=_PLANNED_EVIDENCE_DEPTH)
     del write, owned
     gc.collect()
-    assert held[0]() is not None
+    assert held() is not None
     traceback: Any = raised.value.__traceback__
     assert traceback is not None
     raised.value.__traceback__ = None
     del raised, traceback
     gc.collect()
-    assert held[0]() is None
+    assert held() is None
+
+
+def test_a_deferred_writes_source_lives_through_its_execution_and_ends_with_the_flush() -> None:
+    uow, write, held, alive = _deferred_write()
+    del write
+    _flush(uow)
+    # The bound write's group and the plan's deferred range both carried it
+    # while the group executed; once the flush returns, neither remains.
+    assert alive == [True]
+    gc.collect()
+    assert held() is None
 
 
 def test_discarding_the_attempt_forgets_what_an_escaped_source_was_judged_by() -> None:

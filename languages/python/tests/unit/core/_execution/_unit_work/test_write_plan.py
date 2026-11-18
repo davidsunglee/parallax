@@ -1,18 +1,21 @@
 """The Write Plan's own contract (`m-unit-work` *Write Plan and Planned Steps*).
 
-A Write Group holds at least one write. A group laid out from its members runs
-every non-insert step before any insert.
+A settled write carries its steps and every effect it publishes. A Write Group
+holds at least one write, and one laid out from several runs every non-insert
+step before any insert.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterator, Mapping
+from typing import cast
 
 import pytest
 
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup
 from parallax.core.internal.metamodel import AttributeIdentity
 from parallax.core.internal.planned_step import PlannedInsert
+from parallax.core.internal.planned_step.keys import ObjectKey, VersionedObjectStateKey
 from parallax.core.internal.planned_step.steps import (
     MISSING_TARGET,
     NEW_LINEAGE,
@@ -25,8 +28,11 @@ from parallax.core.internal.planned_step.steps import (
 )
 from parallax.core.internal.planned_step.write_effects import (
     BoundRange,
+    CurrentRowOutput,
+    Derivation,
     EffectSpan,
-    WriteEffects,
+    Openings,
+    TemporalRowCoordinates,
 )
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
@@ -53,7 +59,38 @@ def test_a_write_group_holds_at_least_one_settled_write() -> None:
     with pytest.raises(ValueError, match="at least one write"):
         WriteGroup((), (_insert(1),))
     with pytest.raises(ValueError, match="at least one write"):
-        WriteGroup.from_members((), effect_shape=_unshaped)
+        WriteGroup.from_writes((), effect_shape=_unshaped)
+
+
+def test_a_settled_write_from_its_bound_range_keeps_every_effect_and_its_steps() -> None:
+    key = ObjectKey(_ACCOUNT, (("id", 1),))
+    state = VersionedObjectStateKey(key, 3)
+    bound = BoundRange(
+        steps=(_delete(1),),
+        changed=(state,),
+        advanced=(state,),
+        destroyed=(key,),
+        # Settling carries each effect as it is, so opaque ones stand in.
+        removed=cast("tuple[TemporalRowCoordinates, ...]", (object(),)),
+        opened=Openings(fresh=cast("tuple[TemporalRowCoordinates, ...]", (object(),))),
+        derived=cast("tuple[Derivation, ...]", (object(),)),
+        current_outputs=cast("tuple[CurrentRowOutput, ...]", (object(),)),
+    )
+    evidence = (object(),)
+    write = SettledWrite.from_bound(bound, source_evidence=evidence)
+    assert write.steps is bound.steps
+    assert write.source_evidence is evidence
+    for name in (
+        "changed",
+        "advanced",
+        "destroyed",
+        "removed",
+        "opened",
+        "derived",
+        "current_outputs",
+    ):
+        assert getattr(write, name) is getattr(bound, name), name
+    assert type(write) is SettledWrite
 
 
 def _delete(key: int) -> PlannedDelete:
@@ -65,22 +102,20 @@ def _delete(key: int) -> PlannedDelete:
     )
 
 
-def test_one_member_keeps_its_own_steps_tuple() -> None:
-    write = BoundRange(steps=(_delete(1), _insert(1)))
-    group = WriteGroup.from_members(iter([(write, write.steps)]), effect_shape=_unshaped)
+def test_one_write_keeps_its_own_steps_tuple() -> None:
+    write = SettledWrite(steps=(_delete(1), _insert(1)))
+    group = WriteGroup.from_writes(iter([write]), effect_shape=_unshaped)
     assert group.writes == (write,)
     assert group.steps is write.steps
 
 
-def test_members_run_every_non_insert_step_before_any_insert_each_in_member_order() -> None:
+def test_writes_run_every_non_insert_step_before_any_insert_each_in_write_order() -> None:
     first = (_delete(1), _insert(1), _insert(2))
     second = (_delete(2), _delete(3), _insert(3))
     third = (_insert(4),)
-    writes = (SettledWrite(), BoundRange(steps=second), SettledWrite())
-    group = WriteGroup.from_members(
-        zip(writes, (first, second, third), strict=True), effect_shape=_unshaped
-    )
-    assert group.writes == writes
+    writes = tuple(SettledWrite(steps=steps) for steps in (first, second, third))
+    group = WriteGroup.from_writes(writes, effect_shape=_unshaped)
+    assert all(laid is write for laid, write in zip(group.writes, writes, strict=True))
     assert group.steps == (
         first[0],
         second[0],
@@ -98,11 +133,9 @@ def test_members_run_every_non_insert_step_before_any_insert_each_in_member_orde
     )
 
 
-def test_a_member_without_steps_completes_with_its_group() -> None:
-    writes = (SettledWrite(), SettledWrite())
-    group = WriteGroup.from_members(
-        zip(writes, ((), (_insert(1),)), strict=True), effect_shape=_unshaped
-    )
+def test_a_write_without_steps_completes_with_its_group() -> None:
+    writes = (SettledWrite(steps=()), SettledWrite(steps=(_insert(1),)))
+    group = WriteGroup.from_writes(writes, effect_shape=_unshaped)
     assert group.writes == writes
     assert len(group.steps) == 1
 
@@ -111,16 +144,16 @@ class _Refused(Exception):
     pass
 
 
-def test_a_second_member_is_asked_for_only_once_the_first_is_taken() -> None:
+def test_a_second_write_is_asked_for_only_once_the_first_is_taken() -> None:
     asked: list[int] = []
 
-    def members() -> Iterator[tuple[WriteEffects, tuple[PlannedStep, ...]]]:
+    def writes() -> Iterator[SettledWrite]:
         for key in (1, 2):
             asked.append(key)
-            yield SettledWrite(), (_insert(key),)
+            yield SettledWrite(steps=(_insert(key),))
             assert asked == [1, 2][: len(asked)]
 
-    group = WriteGroup.from_members(members(), effect_shape=_unshaped)
+    group = WriteGroup.from_writes(writes(), effect_shape=_unshaped)
     assert asked == [1, 2]
     assert len(group.writes) == 2
 
@@ -128,29 +161,29 @@ def test_a_second_member_is_asked_for_only_once_the_first_is_taken() -> None:
 def test_a_failing_producer_leaves_no_group_and_its_failure_intact() -> None:
     failure = _Refused()
 
-    def members() -> Iterator[tuple[WriteEffects, tuple[PlannedStep, ...]]]:
-        yield SettledWrite(), (_insert(1),)
-        yield SettledWrite(), (_insert(2),)
+    def writes() -> Iterator[SettledWrite]:
+        yield SettledWrite(steps=(_insert(1),))
+        yield SettledWrite(steps=(_insert(2),))
         raise failure
 
     with pytest.raises(_Refused) as raised:
-        WriteGroup.from_members(members(), effect_shape=_unshaped)
+        WriteGroup.from_writes(writes(), effect_shape=_unshaped)
     assert raised.value is failure
 
 
-def test_a_failure_taking_a_member_closes_the_suspended_producer() -> None:
+def test_a_failure_taking_a_write_closes_the_suspended_producer() -> None:
     closed: list[bool] = []
 
-    def members() -> Iterator[tuple[WriteEffects, tuple[PlannedStep, ...]]]:
+    def writes() -> Iterator[SettledWrite]:
         try:
-            yield SettledWrite(), (_insert(1),)
-            yield SettledWrite(), 0  # type: ignore[misc] - a member whose steps cannot be laid out
-            yield SettledWrite(), (_insert(3),)
+            yield SettledWrite(steps=(_insert(1),))
+            yield SettledWrite(steps=cast("tuple[PlannedStep, ...]", 0))  # steps no layout reads
+            yield SettledWrite(steps=(_insert(3),))
         finally:
             closed.append(True)
 
     with pytest.raises(TypeError):
-        WriteGroup.from_members(members(), effect_shape=_unshaped)
+        WriteGroup.from_writes(writes(), effect_shape=_unshaped)
     assert closed == [True]
 
 
@@ -175,9 +208,8 @@ def _keys(steps: tuple[PlannedStep, ...]) -> list[object]:
 
 def test_interleaved_effects_lay_out_shape_by_shape_in_first_appearance_order() -> None:
     effects = [_delete(key) for key in (1, 2, 3, 4, 5)]
-    writes = tuple(SettledWrite() for _ in effects)
-    group = WriteGroup.from_members(
-        zip(writes, ((effect,) for effect in effects), strict=True),
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=(effect,)) for effect in effects),
         effect_shape=_shaped({1: "X", 2: "X", 3: "Y", 4: "X", 5: "Y"}),
     )
     assert _keys(group.steps) == [1, 2, 4, 3, 5]
@@ -186,8 +218,8 @@ def test_interleaved_effects_lay_out_shape_by_shape_in_first_appearance_order() 
 
 def test_an_unshaped_effect_is_a_barrier_no_later_effect_joins_across() -> None:
     effects = [_delete(key) for key in (1, 2, 3)]
-    group = WriteGroup.from_members(
-        zip((SettledWrite(), SettledWrite(), SettledWrite()), ((e,) for e in effects), strict=True),
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=(effect,)) for effect in effects),
         effect_shape=_shaped({1: "X", 3: "X"}),
     )
     assert _keys(group.steps) == [1, 2, 3]
@@ -198,8 +230,8 @@ def test_an_effect_never_runs_ahead_of_its_own_writes_earlier_effect() -> None:
     first = (_delete(1),)
     second = (_delete(2), _delete(3))
     third = (_delete(4),)
-    group = WriteGroup.from_members(
-        zip((SettledWrite(), SettledWrite(), SettledWrite()), (first, second, third), strict=True),
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=steps) for steps in (first, second, third)),
         effect_shape=_shaped({1: "X", 2: "Y", 3: "X", 4: "X"}),
     )
     assert _keys(group.steps) == [1, 2, 3, 4]
@@ -209,28 +241,26 @@ def test_an_effect_never_runs_ahead_of_its_own_writes_earlier_effect() -> None:
 def test_one_write_may_join_one_block_with_several_effects_of_its_shape() -> None:
     first = (_delete(1),)
     second = (_delete(2), _delete(3))
-    group = WriteGroup.from_members(
-        zip((SettledWrite(), SettledWrite()), (first, second), strict=True),
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=steps) for steps in (first, second)),
         effect_shape=_shaped({1: "X", 2: "X", 3: "X"}),
     )
     assert _keys(group.steps) == [1, 2, 3]
     assert group.effect_spans == (EffectSpan(0, 3, "X"),)
 
 
-def test_a_single_member_keeps_its_steps_and_forms_no_effect_span() -> None:
-    write = BoundRange(steps=(_delete(1), _delete(2)))
-    group = WriteGroup.from_members(
-        iter([(write, write.steps)]), effect_shape=_shaped({1: "X", 2: "X"})
-    )
+def test_a_single_write_keeps_its_steps_and_forms_no_effect_span() -> None:
+    write = SettledWrite(steps=(_delete(1), _delete(2)))
+    group = WriteGroup.from_writes(iter([write]), effect_shape=_shaped({1: "X", 2: "X"}))
     assert group.steps is write.steps
     assert group.effect_spans == ()
 
 
-def test_inserts_follow_every_grouped_effect_in_member_order() -> None:
+def test_inserts_follow_every_grouped_effect_in_write_order() -> None:
     first = (_delete(1), _insert(1))
     second = (_delete(2), _insert(2))
-    group = WriteGroup.from_members(
-        zip((SettledWrite(), SettledWrite()), (first, second), strict=True),
+    group = WriteGroup.from_writes(
+        (SettledWrite(steps=steps) for steps in (first, second)),
         effect_shape=_shaped({1: "X", 2: "X"}),
     )
     assert group.steps == (first[0], second[0], first[1], second[1])
@@ -244,16 +274,16 @@ def test_a_failing_effect_shape_closes_the_suspended_producer() -> None:
     def shape(step: PlannedStep) -> Hashable | None:
         raise failure
 
-    def members() -> Iterator[tuple[WriteEffects, tuple[PlannedStep, ...]]]:
+    def writes() -> Iterator[SettledWrite]:
         try:
-            yield SettledWrite(), (_delete(1),)
-            yield SettledWrite(), (_delete(2),)
-            yield SettledWrite(), (_delete(3),)
+            yield SettledWrite(steps=(_delete(1),))
+            yield SettledWrite(steps=(_delete(2),))
+            yield SettledWrite(steps=(_delete(3),))
         finally:
             closed.append(True)
 
     with pytest.raises(_Refused) as raised:
-        WriteGroup.from_members(members(), effect_shape=shape)
+        WriteGroup.from_writes(writes(), effect_shape=shape)
     assert raised.value is failure
     assert closed == [True]
 
@@ -272,4 +302,4 @@ def test_effect_spans_hold_two_or_more_steps_in_order_without_overlap(
 ) -> None:
     steps = (_delete(1), _delete(2), _delete(3))
     with pytest.raises(ValueError, match="effect spans"):
-        WriteGroup((SettledWrite(),), steps, spans)
+        WriteGroup((SettledWrite(steps=steps),), steps, spans)

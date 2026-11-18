@@ -11,14 +11,14 @@ import pytest
 
 from parallax.core import Bitemporal
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work import write_settlement as settlement
+from parallax.core._execution._unit_work import write_planner as planner_module
 from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -123,17 +123,17 @@ def _plan(
 
 
 def _sizes(plan: WritePlan) -> list[int | str]:
-    """Each turn's write count: a Write Group's as a number, an acquisition
+    """Each entry's write count: a Write Group's as a number, an acquisition
     span's as ``"span of n"``."""
     return [
-        len(turn.writes) if isinstance(turn, WriteGroup) else f"span of {len(turn.ranges)}"
-        for turn in plan.turns
+        len(entry.writes) if isinstance(entry, WriteGroup) else f"span of {len(entry.ranges)}"
+        for entry in plan.entries
     ]
 
 
 def _groups(plan: WritePlan) -> list[WriteGroup]:
-    groups = [turn for turn in plan.turns if isinstance(turn, WriteGroup)]
-    assert len(groups) == len(plan.turns)
+    groups = [entry for entry in plan.entries if isinstance(entry, WriteGroup)]
+    assert len(groups) == len(plan.entries)
     return groups
 
 
@@ -206,7 +206,7 @@ def _observed(
     return observations
 
 
-_LIMIT = settlement._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
+_LIMIT = planner_module._WRITES_PER_GROUP  # pyright: ignore[reportPrivateUsage] - the group bound
 
 
 @pytest.mark.parametrize(
@@ -234,6 +234,12 @@ def test_writes_of_distinct_objects_share_groups_of_at_most_the_group_bound(
         assert len(group.steps) == len(group.writes)
         spans = [(span.start, span.stop) for span in group.effect_spans]
         assert spans == ([] if len(group.writes) == 1 else [(0, len(group.writes))])
+        # Every write carries its own step, laid out in write order; a group
+        # of one executes its write's own steps.
+        assert all(type(write) is SettledWrite for write in group.writes)
+        assert group.steps == tuple(step for write in group.writes for step in write.steps)
+        if len(group.writes) == 1:
+            assert group.steps is group.writes[0].steps
 
 
 def test_a_repeated_object_starts_the_next_group_however_far_below_the_bound() -> None:
@@ -372,7 +378,9 @@ def test_a_write_with_no_step_joins_its_group_and_completes_with_it() -> None:
         concurrency="locking",
     )
     (group,) = _groups(plan)
-    assert len(group.writes) == 2
+    unchanged, changed = group.writes
+    assert unchanged.steps == ()
+    assert [_keys(step) for step in changed.steps] == [(2,), (2,)]
     assert [_keys(step) for step in group.steps] == [(2,), (2,)]
 
 
@@ -603,7 +611,7 @@ def test_a_target_needing_its_predecessors_cells_or_lock_still_defers(
 
 
 @pytest.mark.parametrize(("concurrency", "shared_lock"), [("optimistic", False), ("locking", True)])
-def test_the_ranges_of_one_entity_and_lock_share_one_read_key_in_their_compilation(
+def test_the_ranges_of_one_entity_and_lock_share_one_read_key_in_their_flush(
     concurrency: ConcurrencyPreference, shared_lock: bool
 ) -> None:
     # A planned write breaks the run, so the ranges fall in separate spans.
@@ -617,7 +625,7 @@ def test_the_ranges_of_one_entity_and_lock_share_one_read_key_in_their_compilati
     assert first.read_key.key_attribute.name == "id"
     assert first.read_key.shared_lock is shared_lock
     assert other.read_key.entity.identity == ShareDoc.identity
-    # Another compilation's key reads alike without being the same.
+    # Another finalization's key reads alike without being the same.
     (again,) = deferred_ranges(shared_plan(_fragmented(5), concurrency=concurrency))
     assert again.read_key == first.read_key
     assert again.read_key is not first.read_key

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from parallax.core._execution._unit_work.write_settlement import require_observed_version
+from parallax.core._execution._unit_work.non_temporal_settlement import require_observed_version
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.planned_step import (

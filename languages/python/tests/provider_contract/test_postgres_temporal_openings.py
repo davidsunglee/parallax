@@ -38,7 +38,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core._execution._unit_work import write_settlement
+from parallax.core._execution._unit_work import write_planner
 from parallax.core.execution_lifecycle import (
     AttemptRolledBack,
     DatabaseCallFailed,
@@ -466,7 +466,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     # read, so its close matches nothing.
     with monkeypatch.context() as patched:
         if not grouped:
-            patched.setattr(write_settlement, "_WRITES_PER_GROUP", 1)
+            patched.setattr(write_planner, "_WRITES_PER_GROUP", 1)
         with pytest.raises((ConflictError, DatabaseError)) as escaped:
             db.transact(
                 _amend_ledgers({1: 150, 2: 160}, advance_two), retry=RetryPolicy(max_retries=0)

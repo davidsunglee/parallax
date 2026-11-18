@@ -298,26 +298,24 @@ def _settled(
 def plan_steps(plan: WritePlan) -> tuple[PlannedStep, ...]:
     """Every Planned Step of ``plan``'s Write Groups, in execution order; a
     deferred write plans none."""
-    return tuple(step for turn in plan.turns if isinstance(turn, WriteGroup) for step in turn.steps)
+    return tuple(
+        step for entry in plan.entries if isinstance(entry, WriteGroup) for step in entry.steps
+    )
 
 
 def settled_writes(plan: WritePlan) -> tuple[SettledWrite, ...]:
     """Every settled write of ``plan``'s Write Groups, in completion order; a
     deferred write is none until it binds."""
-    writes: list[SettledWrite] = []
-    for turn in plan.turns:
-        if isinstance(turn, WriteGroup):
-            for write in turn.writes:
-                assert isinstance(write, SettledWrite)  # planning groups settled writes
-                writes.append(write)
-    return tuple(writes)
+    return tuple(
+        write for entry in plan.entries if isinstance(entry, WriteGroup) for write in entry.writes
+    )
 
 
 def deferred_ranges(plan: WritePlan) -> tuple[DeferredRange, ...]:
     """Every deferred write of ``plan``'s acquisition spans, in order."""
     return tuple(
         deferred
-        for turn in plan.turns
-        if isinstance(turn, AcquisitionSpan)
-        for deferred in turn.ranges
+        for entry in plan.entries
+        if isinstance(entry, AcquisitionSpan)
+        for deferred in entry.ranges
     )

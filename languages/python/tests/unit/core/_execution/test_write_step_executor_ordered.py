@@ -239,7 +239,7 @@ def _lowering_recorded(
 
 
 def _plan(*groups: tuple[PlannedStep, ...]) -> WritePlan:
-    return WritePlan(tuple(WriteGroup((SettledWrite(),), steps) for steps in groups))
+    return WritePlan(tuple(WriteGroup((SettledWrite(steps=steps),), steps) for steps in groups))
 
 
 def test_a_run_never_reaches_into_a_later_groups_steps() -> None:

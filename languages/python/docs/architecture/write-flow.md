@@ -140,8 +140,9 @@ judgment once. `source_evidence` is a lifetime edge: it keeps the Read Evidence 
 source whose write composed into this one reachable while the write is pending or
 planned, and nothing reads it for a decision. Neither an insertion nor a
 Transaction-Time start holds any. Planning carries it onto every `SettledWrite` and
-`DeferredRange`, so the sources stay published while the plan holding the write is
-reachable. `starting_row` is the starting row a Locking temporal target write's
+`DeferredRange`, and binding carries a deferred range's onto the `SettledWrite` it
+binds, so the sources stay published while the plan, or the Write Group running the
+write, is reachable. `starting_row` is the starting row a Locking temporal target write's
 admission read whole, which its range may reuse (`RetainedStartingRow`). Neither field
 takes part in equality. Where the whole write, or a temporal intent holding its authority, must move on to a
 signature taking only some licences, `is_licensed_by` narrows it, one authority class at
@@ -421,41 +422,45 @@ removed and reinserted this way.
    SourceRegistry.planning_ownership(concluding: a pre_commit flush) → ownership
    WritePlanner.finalize(WritePlanningRequest(actor_identity, transaction_instant,   write_planner
                          concurrency, composed_writes, ownership, ...))
+     FlushFacts           what every write this finalization settles shares: the    flush_facts
+                          preference, instant, ownership, audit, guards, read keys
      _without_noop_rows   drop known no-op work
      collapse_writes      KeyedInsert runs → InsertBatch, LicensedWrite[UnversionedLocked]
                           runs → UnversionedWriteBatch; a PostRemovalInsert closes any
                           batch
-     _order               per region: inserts by referential rank, updates in authored
+     _mutation_phases     per region: inserts by referential rank, updates in authored
                           order, deletes by reverse rank; a PostRemovalInsert starts a
                           new region and is unwrapped
+                          → MutationPhase = tuple[OrderedWrite, ...], in flush order
+     each OrderedWrite, by its target's temporal shape, settles once:
+       TemporalSettlement.settle                                                   temporal_settlement
+         temporal write or composition → settle_range                              ranges
+         pending Bitemporal opening    → settle_opening
+         keyed insert                  → its opening, directly
+       NonTemporalSettlement.settle                                                non_temporal_settlement
+         insert, or update or delete of existing rows → its Planned Steps
+       → SettledWrite (steps, effects, source_evidence) | DeferredRange (no step yet)
+     _WritePlanBuilder
+       add_settled    consecutive SettledWrites of one phase over distinct objects,
+                      up to the group bound → WriteGroup.from_writes; effects before
+                      inserts
+       add_deferred   each unbroken run → form_spans → AcquisitionSpans          acquisition_spans
+                      reading alike, each object once, up to the span bound
+       close_phase    no group or span crosses a mutation phase
               ▼
- ORDERED    list[MutationPhase], MutationPhase = tuple[OrderedWrite, ...]
-            OrderedWrite = AdmittedWrite | ComposedTemporalWrite
-              | ComposedBitemporalOpening | InsertBatch | UnversionedWriteBatch
-              │
-              │ WritePlanCompiler.compile: settle each write once, carrying       write_settlement
-              │   its sources' source_evidence
-              │   insert or Non-Temporal write  → its Planned Steps now
-              │   temporal write or composition → settle_range                   ranges
-              │   pending Bitemporal opening    → settle_opening
-              │       → BoundRange (steps now) | DeferredRange (no step yet)
-              │   group: consecutive SettledWrites of one phase over distinct
-              │     objects, up to the group bound; effects before inserts
-              │   deferred: each unbroken run → form_spans → AcquisitionSpans    acquisition_spans
-              │     of at most 32 ranges reading alike, each object once
-              ▼
- WritePlan(turns: WriteGroup | AcquisitionSpan)                                    write_plan
+ WritePlan(entries: WriteGroup | AcquisitionSpan)                                  write_plan
               │
               │ WriteAdmission.drain_planned: the buffer empties, and the          admission
               │   insertions it held are stored or retired
               │   (SourceRegistry.finish_insertion_planning)
               │
-              │ UnitOfWork._run_write_plan, turn by turn, in order                 uow
+              │ UnitOfWork._run_write_plan, entry by entry, in order               uow
               │   WriteGroup        → _execute_write_group
               │   AcquisitionSpan   → write_groups: complete reusable            acquisition_spans
               │                       starting rows, read uncovered coverage
               │                       through acquire_rows, bind each ready
-              │                       range → WriteGroup
+              │                       range → SettledWrite.from_bound
+              │                       → WriteGroup.from_writes
               │                       → _execute_write_group; repeat
               │
               │ _execute_write_group
@@ -485,8 +490,24 @@ Planning is pure: `finalize` performs no I/O and reads no clock, and the
 `TransactionInstant` it threads is captured only when settlement reaches a surviving
 temporal write. `UnitOfWork` hands the planner the buffer as admission composed it, so
 the planner indexes nothing again and starts by dropping known no-op work in
-`_without_noop_rows`. `compile` performs Write Settlement and returns the `WritePlan`
-that `finalize` returns unchanged.
+`_without_noop_rows`. Write Settlement is one module per temporal profile, each built
+once when the planner is wired over only the facets it reads. Every value one flush
+shares reaches settlement in that finalization's `FlushFacts`, which no plan reaches.
+`ConcurrencyFacet.gates` alone decides whether a write gates, for both settlement
+modules and for `SourceRegistry.resolve_read_evidence`. Every settled write, whether
+planned or bound at execution, is built by `SettledWrite.from_bound` from the
+`BoundRange` binding answered, which is not kept.
+
+```text
+WritePlan
+└ entries: WriteGroup | AcquisitionSpan        in execution order
+   ├ WriteGroup       writes: SettledWrite …   one per ordered item, a batch included;
+   │                                           each carries its own steps and effects
+   │                  steps:  PlannedStep …    laid out across its writes; like effects
+   │                                           share a statement
+   └ AcquisitionSpan  ranges: DeferredRange …  a run's deferred writes, bound into
+                                               WriteGroups at execution
+```
 
 A deferred write is the one write whose steps are not known at planning: its window
 reaches coverage no planning input held. Its meaning, read key, gates, instant and
@@ -542,15 +563,24 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.write_planner:WritePlanner.finalize`
 - `parallax.core._execution._unit_work.write_planner:WritePlanner.predicate_step`
 - `parallax.core._execution._unit_work.write_collapse:collapse_writes`
-- `parallax.core._execution._unit_work.write_planner:WritePlanner._order`
+- `parallax.core._execution._unit_work.write_planner:WritePlanner._mutation_phases`
 - `parallax.core._execution._unit_work.write_planner:WritePlanningRequest`
 - `parallax.core._execution._unit_work.write_planner:_without_noop_rows`
 - `parallax.core._execution._unit_work.write_items:InsertBatch`
 - `parallax.core._execution._unit_work.write_items:UnversionedWriteBatch`
 - `parallax.core._execution._unit_work.write_items:MutationPhase`
 - `parallax.core._execution._unit_work.write_items:OrderedWrite`
-- `parallax.core._execution._unit_work.write_settlement:WritePlanCompiler`
-- `parallax.core._execution._unit_work.write_settlement:WritePlanCompiler.compile`
+- `parallax.core._execution._unit_work.flush_facts:FlushFacts`
+- `parallax.core._execution._unit_work.flush_facts:FlushFacts.coverage_read_key`
+- `parallax.core._execution._unit_work.temporal_settlement:TemporalSettlement`
+- `parallax.core._execution._unit_work.temporal_settlement:TemporalSettlement.settle`
+- `parallax.core._execution._unit_work.non_temporal_settlement:NonTemporalSettlement`
+- `parallax.core._execution._unit_work.non_temporal_settlement:NonTemporalSettlement.settle`
+- `parallax.core.internal.concurrency._facet:ConcurrencyFacet.gates`
+- `parallax.core._execution._unit_work.write_planner:_WritePlanBuilder`
+- `parallax.core._execution._unit_work.write_planner:_WritePlanBuilder.add_settled`
+- `parallax.core._execution._unit_work.write_planner:_WritePlanBuilder.add_deferred`
+- `parallax.core._execution._unit_work.write_planner:_WritePlanBuilder.close_phase`
 - `parallax.core._execution._unit_work.ranges:settle_range`
 - `parallax.core._execution._unit_work.ranges:settle_opening`
 - `parallax.core._execution._unit_work.ranges:DeferredRange`
@@ -564,11 +594,15 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.row_acquisition:CoverageReadKey`
 - `parallax.core.internal.planned_step.write_effects:BoundRange`
 - `parallax.core._execution._unit_work.write_plan:SettledWrite`
+- `parallax.core._execution._unit_work.write_plan:SettledWrite.steps`
+- `parallax.core._execution._unit_work.write_plan:SettledWrite.from_bound`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup.writes`
 - `parallax.core._execution._unit_work.write_plan:WriteGroup.steps`
+- `parallax.core._execution._unit_work.write_plan:WriteGroup.from_writes`
 - `parallax.core._execution._unit_work.write_plan:WritePlan`
-- `parallax.core._execution._unit_work.write_plan:WritePlan.turns`
+- `parallax.core._execution._unit_work.write_plan:WritePlan.entries`
+- `parallax.core._execution._unit_work.write_plan:PlanEntry`
 - `parallax.core.internal.planned_step.steps:PlannedStep`
 - `parallax.core._execution._unit_work.clock:TransactionInstant`
 - `parallax.core._execution._write_step_executor:WriteStepExecutor`

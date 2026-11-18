@@ -4,34 +4,61 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.internal.concurrency import next_version
-from parallax.core.internal.inheritance import InheritanceEntityView
-from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity
+from parallax.core._execution._unit_work._errors import VERSION_UNOBSERVED
+from parallax.core._execution._unit_work.flush_facts import FlushFacts
+from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
+from parallax.core._execution._unit_work.strategy import AuditDecoration
+from parallax.core._execution._unit_work.write_items import (
+    InsertBatch,
+    InsertionAuthorized,
+    KeyedInsert,
+    LicensedWrite,
+    NonTemporalOrderedWrite,
+    StateObserved,
+    UnversionedLocked,
+    UnversionedWriteBatch,
+    VersionConditioned,
+)
+from parallax.core._execution._unit_work.write_plan import SettledWrite
+from parallax.core.internal.base import InternalError, UsageError
+from parallax.core.internal.concurrency import INITIAL_VERSION, ConcurrencyFacet, next_version
+from parallax.core.internal.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.internal.metamodel import AttributeIdentity, CompiledEntity, EntityIdentity
+from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
 from parallax.core.internal.planned_step.managed_row import ManagedRow
-from parallax.core.internal.planned_step.planned_rows import key_target
+from parallax.core.internal.planned_step.observe import StateObservation, VersionObservation
+from parallax.core.internal.planned_step.planned_rows import (
+    WRITE_PLANNING_FAILED,
+    entity_view,
+    key_target,
+    planned_assignments,
+    planned_row,
+)
 from parallax.core.internal.planned_step.steps import (
+    FAILED_PRECONDITION,
+    NEW_LINEAGE,
     UNGATED,
     UNVERSIONED,
     AffectedRows,
+    ExactCount,
     NonTemporalConcurrency,
     PlannedAssignments,
     PlannedDelete,
+    PlannedInsert,
     PlannedStep,
     PlannedUpdate,
     Shortfall,
     Versioned,
     VersionGate,
+    WriteRow,
     adopt_planned_assignments,
+    shortfall_classification,
 )
+from parallax.core.internal.planned_step.write_effects import BoundRange
 
 __all__ = [
-    "DELETION",
-    "AddressedFacts",
-    "Deletion",
-    "NonTemporalEmission",
-    "NonTemporalFacts",
-    "Revision",
-    "non_temporal_step",
+    "NonTemporalSettlement",
+    "require_observed_version",
 ]
 
 
@@ -179,3 +206,261 @@ def _non_temporal_concurrency(
         return UNVERSIONED
     gate = VersionGate(observed_version=observed_version) if gated else UNGATED
     return Versioned(attribute=version_attr, gate=gate)
+
+
+type _AddressedWrite = (
+    UnversionedWriteBatch
+    | LicensedWrite[StateObserved | UnversionedLocked | InsertionAuthorized | VersionConditioned]
+)
+"""A Non-Temporal write of rows that already exist."""
+
+
+class NonTemporalSettlement:
+    """Write Settlement of every ordered write of a Non-Temporal object
+    (`m-unit-work`): an insert opens new lineages, and any other write
+    revises or deletes existing rows.
+
+    Built once per accepted Metamodel by the Write Planner, over the
+    Inheritance and Concurrency facets it reads. What one flush shares
+    arrives with each write it settles.
+    """
+
+    __slots__ = ("_families", "_versioning")
+
+    def __init__(self, families: InheritanceFacet, versioning: ConcurrencyFacet) -> None:
+        self._families = families
+        self._versioning = versioning
+
+    def settle(self, item: NonTemporalOrderedWrite, flush: FlushFacts) -> SettledWrite:
+        """``item``'s settled steps and completion.
+
+        Its target's facts are settled once, whichever representation the
+        write arrived as: which members the family makes applicable, and
+        which Attribute (if any) carries the optimistic version. What only a
+        write of existing rows settles is added by :meth:`_addressed`.
+        """
+        entity = item.target
+        facts = NonTemporalFacts(
+            entity=entity,
+            view=entity_view(self._families, entity),
+            version_attribute=self._versioning.version_attribute(entity.identity),
+        )
+        if isinstance(item, KeyedInsert | InsertBatch):
+            return SettledWrite.from_bound(
+                BoundRange(steps=(_insert(facts, item.instruction, flush.audit),)),
+                source_evidence=item.source_evidence,
+            )
+        return self._addressed(item, facts, flush)
+
+    def _addressed(
+        self, item: _AddressedWrite, facts: NonTemporalFacts, flush: FlushFacts
+    ) -> SettledWrite:
+        """One ordered write of existing objects, one per row: its steps and
+        completion.
+
+        A write advances from the version its source observed, or, in place
+        of it, from the protected state its source's authority reaches, the
+        version this attempt's own writes left a row it inserted at, or the
+        version a caller's condition requires; a gate binding that caller's
+        condition classifies its shortfall as the condition failing. A
+        versioned update advances the state it starts from and a deletion
+        destroys every object it addresses; an unversioned write changes each
+        object it addresses without advancing anything.
+        """
+        instruction = item.instruction
+        entity = instruction.target
+        own_version: int | None = None
+        conditioned = False
+        observation: StateObservation | None = None
+        if isinstance(item, UnversionedWriteBatch):
+            objects = item.object_keys
+        else:
+            objects = (item.object_key,)
+            authority = item.authority
+            if isinstance(authority, StateObserved):
+                observation = authority.retained_observation.evidence
+            scope = item.claim_scope
+            if isinstance(scope, VersionedObjectStateKey):
+                own_version = scope.version
+            conditioned = isinstance(authority, VersionConditioned)
+        gated = self._versioning.gates(entity.identity, flush.preference)
+        addressed = AddressedFacts(
+            key_attributes=(facts.view.primary_key.identity,),
+            gated=gated,
+            shortfall=(
+                FAILED_PRECONDITION
+                if conditioned and gated
+                else shortfall_classification(
+                    observing=facts.version_attribute is not None, gated=gated
+                )
+            ),
+        )
+        observed_version = (
+            _observed_version(entity, instruction, facts.version_attribute, observation)
+            if observation is not None or own_version is None
+            else None
+        )
+        if own_version is not None:
+            observed_version = own_version
+        step = _decorated(
+            flush.audit,
+            non_temporal_step(
+                facts,
+                addressed,
+                emission=(
+                    DELETION
+                    if instruction.mutation == "delete"
+                    else Revision(
+                        _addressed_assignments(addressed, instruction.rows[0]),
+                        facts.version_attribute,
+                    )
+                ),
+                key_rows=instruction.rows,
+                observed_version=observed_version,
+                # One addressed instruction is ONE step however many keys it
+                # addresses, so its expectation is the whole batch's (ADR 0044)
+                # rather than a per-row one.
+                affected_rows=ExactCount(
+                    expected=len(instruction.rows), on_shortfall=addressed.shortfall
+                ),
+            ),
+        )
+        destroyed = objects if instruction.mutation == "delete" else ()
+        if observed_version is None:
+            bound = BoundRange(steps=(step,), changed=objects, destroyed=destroyed)
+        else:
+            (target,) = objects  # an observed version addresses exactly one row
+            state = VersionedObjectStateKey(target, observed_version)
+            bound = BoundRange(
+                steps=(step,),
+                changed=(state,),
+                advanced=() if destroyed else (state,),
+                destroyed=destroyed,
+            )
+        return SettledWrite.from_bound(bound, source_evidence=item.source_evidence)
+
+
+def _insert(
+    facts: NonTemporalFacts, instruction: PreparedKeyedInstruction, audit: AuditDecoration
+) -> PlannedInsert:
+    """One keyed insert as its rows, each opening a new lineage.
+
+    An insert observes nothing, gates on nothing, and addresses nothing, so
+    the only fact it takes from the mutation beyond its target is the
+    version a new lineage opens at — and an unversioned target opens at no
+    version, so it asks the strategy for no arithmetic either.
+    """
+    version = (
+        None if facts.version_attribute is None else (facts.version_attribute, INITIAL_VERSION)
+    )
+    entries = tuple(
+        audit.finalize_row(WriteRow(row=planned_row(row, version), origin=NEW_LINEAGE))
+        for row in instruction.rows
+    )
+    return PlannedInsert(entity=facts.entity.identity, entries=entries)
+
+
+def _addressed_assignments(addressed: AddressedFacts, row: ManagedRow) -> PlannedAssignments:
+    """The replacement values an addressed update writes, before its version
+    overlay.
+
+    Key members address the write rather than change it, so they never appear
+    among the assignments. A multi-row update reaching here is one the batching
+    strategy collapsed, and it collapses only a run assigning identical values to
+    every key (`m-batch-write` keeps incompatible writes in separate steps), so
+    the first row settles the whole step's assignments. Every admitted write
+    is single-row, so no multi-row update arrives here any other way.
+    """
+    index = row.selection.members.index
+    keys = 0
+    for attribute in addressed.key_attributes:
+        keys |= 1 << index[attribute]
+    return planned_assignments(row, without=keys)
+
+
+def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
+    """An addressed Non-Temporal step as audit leaves it: an update decorated
+    once, a delete as it is."""
+    return audit.decorate_update(step) if isinstance(step, PlannedUpdate) else step
+
+
+def _observed_version(
+    entity: CompiledEntity,
+    instruction: PreparedKeyedInstruction,
+    version_attr: AttributeIdentity | None,
+    observation: StateObservation | None,
+) -> int | None:
+    """The version an addressed write against a versioned row advances
+    from, or ``None`` for an unversioned target.
+
+    The observation is required under both strategies, because the
+    framework never issues a resolving read on behalf of a keyed write.
+
+    A returned version therefore came off an observed write, which
+    wraps exactly one row — so the Key Target the caller builds from
+    ``instruction.rows`` is a singleton whenever this returns a version to
+    advance from or gate on (`m-unit-work`: a Version Gate requires a
+    singleton Key Target). The alternative — one row's observed version
+    licensing every key a merged statement addresses — is unconstructable
+    rather than merely unreached.
+
+    An unversioned target has no version to advance from AND is entitled to
+    no observation at all, so an observation arriving for one is refused
+    rather than dropped: this is the model-aware half of the rule
+    :class:`~parallax.core._execution._unit_work.write_items.StateObserved`
+    delegates here, and discarding the evidence instead would be the
+    silently-unobserved mode `m-unit-work` forbids.
+    """
+    if version_attr is None:
+        _require_unobserved(entity, instruction.mutation, observation)
+        return None
+    return require_observed_version(entity.identity, observation)
+
+
+def require_observed_version(entity: EntityIdentity, observation: StateObservation | None) -> int:
+    """The version a keyed update or delete of an explicitly versioned row of
+    ``entity`` advances from; refused with :data:`VERSION_UNOBSERVED` where the
+    write reached settlement observing none."""
+    if not isinstance(observation, VersionObservation):
+        raise UsageError(
+            VERSION_UNOBSERVED,
+            f"{entity.name}: a keyed update/delete of a versioned row requires the version its "
+            "source observed (a prior find) — the framework never issues an implicit "
+            "resolving read on behalf of a keyed write",
+        )
+    return observation.observed_version
+
+
+def _require_unobserved(
+    entity: CompiledEntity, mutation: str, observation: StateObservation | None
+) -> None:
+    """Refuse ``observation`` when the target it arrived for is entitled to none.
+
+    Reached only once the caller has established that the target is neither
+    temporal nor versioned, which is the one shape `m-unit-work` declares
+    observationless ("unversioned Non-Temporal writes have no observation",
+    absence structural). Whether a write may hold evidence at all needs the
+    model, so the admitted write, a keyed
+    :class:`~parallax.core._execution._unit_work.write_items.StateObserved`
+    write, can only refuse the instruction-local half and
+    delegate this half to the model-aware settlement. This is that delegation:
+    every write that IS settled crosses it, whatever produced it, so a
+    producer that resolves evidence a target cannot carry is told rather than
+    quietly stripped.
+
+    Settled is the whole reach of that guarantee. Coalescing and no-op
+    elimination run first, and a write they retire — folded into a pending
+    insert, cancelled against one, or eliminated as a key-only no-op — is never
+    settled at all. Nothing is
+    stripped there either: the write itself is gone, so its observation gates,
+    advances, and attributes nothing.
+    """
+    if observation is None:
+        return
+    raise InternalError(
+        WRITE_PLANNING_FAILED,
+        f"{entity.identity.name!r}: an unversioned Non-Temporal {mutation!r} carries no Write "
+        "Observation, yet one was resolved for it — absence is structural (m-unit-work "
+        "'unversioned Non-Temporal writes have no observation'), and settling this write "
+        "would discard the evidence rather than gate or advance anything with it",
+    )

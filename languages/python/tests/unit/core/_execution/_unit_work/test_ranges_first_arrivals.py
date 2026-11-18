@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WritePlan
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.metamodel import AttributeIdentity, EntityIdentity, Metamodel
@@ -57,7 +57,6 @@ from parallax.core.internal.planned_step.write_effects import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     TRANSACTION_TIME_ENDS,
-    BoundRange,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
@@ -141,7 +140,7 @@ def _planned(meta: Metamodel, *writes: AdmittedWrite) -> WritePlan:
     return _plan(admission, meta)
 
 
-def _bound(meta: Metamodel, settled: DeferredRange, rows: Sequence[PredecessorRow]) -> BoundRange:
+def _bound(meta: Metamodel, settled: DeferredRange, rows: Sequence[PredecessorRow]) -> SettledWrite:
     return bind_held(meta, alone(settled), rows, transaction_instant=_instant())
 
 

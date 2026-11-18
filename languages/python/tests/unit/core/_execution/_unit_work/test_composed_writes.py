@@ -546,7 +546,7 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         _observed_balance("terminate", observed),
     ):
         admit(admission, write)
-    removal, reinsertion, termination = _admitted_plan(admission, registry).turns
+    removal, reinsertion, termination = _admitted_plan(admission, registry).entries
     assert isinstance(removal, AcquisitionSpan)
     assert isinstance(reinsertion, WriteGroup)
     assert [type(step) for step in reinsertion.steps] == [PlannedInsert]

@@ -280,9 +280,9 @@ def test_a_seeded_duplicate_plan_registry_trips_the_deferred_plan_retention_gate
         _REGISTRY.keep(
             [
                 {field.name: getattr(deferred, field.name) for field in fields(deferred)}
-                for turn in plan.turns
-                if isinstance(turn, AcquisitionSpan)
-                for deferred in turn.ranges
+                for entry in plan.entries
+                if isinstance(entry, AcquisitionSpan)
+                for deferred in entry.ranges
             ]
         )
         return plan

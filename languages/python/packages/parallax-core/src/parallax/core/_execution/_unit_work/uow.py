@@ -38,7 +38,7 @@ from parallax.core._execution._unit_work.write_items import (
     WriteAuthority,
     target_write,
 )
-from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
+from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._unit_work.write_runner import (
     ExecuteCountedStep,
@@ -60,7 +60,6 @@ from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.planned_step.write_effects import (
     CurrentRowOutput,
     TemporalWriteOwnership,
-    WriteEffects,
 )
 from parallax.core.internal.temporal_read import (
     Bitemporal,
@@ -458,10 +457,7 @@ class UnitOfWork:
 
     def _locks(self, target: CompiledEntity) -> bool:
         """Whether ``target``'s Effective Concurrency Strategy is Locking."""
-        return (
-            self._versioning.effective_strategy(target.identity, self.settings.preference)
-            == "locking"
-        )
+        return not self._versioning.gates(target.identity, self.settings.preference)
 
     def _stored_target(
         self,
@@ -592,7 +588,7 @@ class UnitOfWork:
     def _run_write_plan(
         self, plan: WritePlan, *, ownership: TemporalWriteOwnership, captures: bool
     ) -> None:
-        """Execute ``plan``'s turns in order, completing each write of a
+        """Execute ``plan``'s entries in order, completing each write of a
         Write Group, in order, as soon as the group's steps succeeded and before
         any step of a later group executes.
 
@@ -609,15 +605,15 @@ class UnitOfWork:
         as their payloads are demanded and published with its completion.
         """
         audit: AuditDecoration | None = None
-        for turn in plan.turns:
-            match turn:
+        for entry in plan.entries:
+            match entry:
                 case WriteGroup():
-                    self._execute_write_group(turn, captures=captures)
+                    self._execute_write_group(entry, captures=captures)
                 case AcquisitionSpan():
                     if audit is None:
                         audit = self._audit_decoration()
                     with write_groups(
-                        turn,
+                        entry,
                         acquire_rows=self.acquire_rows,
                         current=self.source_registry.is_unchanged_since,
                         ownership=ownership,
@@ -645,7 +641,7 @@ class UnitOfWork:
         writes = group.writes
         steps = group.steps
         capture = _CurrentRowCapture.for_writes(writes) if captures else None
-        write: WriteEffects | None = None
+        write: SettledWrite | None = None
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = ()
         try:
             if capture is None:
