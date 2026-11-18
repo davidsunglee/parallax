@@ -360,9 +360,9 @@ A reader known to be unreachable — its latest establishment outcome is that it
 could not be reached (*Acquisition and readiness failures*), and it holds no idle
 connection that could serve regardless — delays at most one preferred acquisition
 at a time: that one tries it within its share of the budget, and every other moves
-to the writer at once without waiting on the reader. The share it spends is
-*unavailable* only under the same evidence rule as any wait's; outage known before
-the wait does not explain it. Any connection the route hands over ends that
+to the writer at once without waiting on the reader. If the probing
+acquisition's checkout budget expires with the outage still on record, its
+checkout fails as *unavailable*. Any connection the route hands over ends that
 knowledge. No route is skipped for good, and a `reader-only` acquisition always
 waits on the reader for its whole budget and recovers as soon as the reader does.
 
@@ -513,15 +513,15 @@ where it selected one: **timeout**, **queue rejected**, **closed**,
 **authentication refused**, or **credentials refused**. An implementation
 classifies every attempt to establish a physical connection on a route, on
 whichever thread made it, and keeps that route's latest outcome so a caller
-waiting on a pool learns what its establishment met.
+waiting on a pool learns what its establishment met. An expired checkout reports
+the latest failure still on record, regardless of when it was recorded. Only a
+usable connection clears the record.
 
 Unavailable means the route could not be reached: a dial that met no server or
 a server not yet accepting connections, a connection lost while the lease was
-being set up, or a spent budget while a dial failure recorded DURING that wait
-remained the route's latest outcome. A failure recorded before the wait began
-does not make a later timeout an outage, because a saturated, healthy route
-must never read as an unreachable one. Timeout is a spent budget with no such
-failure on record, including a native success that arrived after it.
+being set up, or a spent budget with an unreachable dial still on record.
+Timeout is a spent budget with no failure on record, including a native success
+that arrived after it.
 Preparation failure covers establishing or preparing execution access
 otherwise: a dial the server refused for any reason not classified here, a
 session configuration the codecs cannot execute under, a checkout that handed

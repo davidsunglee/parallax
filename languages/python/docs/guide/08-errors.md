@@ -594,10 +594,12 @@ The other failures around the database fall outside the categories, and each als
 reaches you as itself:
 
 - **No connection.** `ConnectionAcquisitionError` means Parallax couldn't get a
-  connection, and its `reason` says why, such as `"timeout"`, `"closed"` or
-  `"credentials_refused"`. It isn't retried, because no attempt began. The
-  [PostgreSQL lifecycle guide](../postgresql-lifecycle.md#timeouts) covers the pool and
-  the timeouts behind it.
+  connection, and its `reason` says why. When checkout runs out of time, an
+  unreachable dial still on record reports `"unavailable"` even if the dial
+  failed before checkout began. A wait for busy connections with no failure on
+  record reports `"timeout"`. Acquisition failures aren't retried because no
+  attempt began. See the pool's timeouts in the
+  [PostgreSQL lifecycle guide](../postgresql-lifecycle.md#timeouts).
 - **No database to start with.** `connect` raises `DatabaseStartupError` when the
   database doesn't become ready to serve. Its `route` identifies the failed route.
   The `acquire` phase covers obtaining the connection for the startup probe. When

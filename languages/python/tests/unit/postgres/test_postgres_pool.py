@@ -3066,19 +3066,17 @@ def test_every_establishment_failure_classifies_to_one_reason(
     assert dial_reason(failure) == reason
 
 
-def test_a_timed_out_wait_is_an_outage_only_when_a_dial_failed_during_it() -> None:
-    # A failure already history when the wait began says nothing about why it
-    # ran out: a healthy saturated pool must not read as an unreachable one.
+def test_a_spent_checkout_reports_the_latest_dial_failure() -> None:
     establishment = _establishment()
-    historic = _lost("connection refused")
-    establishment.failed(historic)
+    earlier = _lost("earlier connection refusal")
+    establishment.failed(earlier)
     pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
     route = PostgresRoute("reader", pool, establishment)
 
-    with pytest.raises(ConnectionAcquisitionError) as saturated:
+    with pytest.raises(ConnectionAcquisitionError) as before_wait:
         checkout(route, monotonic() + 5.0)
 
-    fresh = _lost("connection refused")
+    fresh = _lost("later connection refusal")
 
     def dial_during_the_wait(timeout: float | None = None) -> Any:
         del timeout
@@ -3086,12 +3084,12 @@ def test_a_timed_out_wait_is_an_outage_only_when_a_dial_failed_during_it() -> No
         raise psycopg_pool.PoolTimeout("waited")
 
     pool.getconn = dial_during_the_wait
-    with pytest.raises(ConnectionAcquisitionError) as unavailable:
+    with pytest.raises(ConnectionAcquisitionError) as during_wait:
         checkout(route, monotonic() + 5.0)
 
-    assert saturated.value.reason == "timeout"
-    assert unavailable.value.reason == "unavailable"
-    assert unavailable.value.__cause__ is fresh
+    assert before_wait.value.reason == during_wait.value.reason == "unavailable"
+    assert before_wait.value.__cause__ is earlier
+    assert during_wait.value.__cause__ is fresh
 
 
 @pytest.mark.parametrize(
@@ -3248,8 +3246,7 @@ def test_a_reader_share_spent_while_its_dials_failed_falls_back_at_the_share_bou
 def test_a_reader_that_is_busy_refused_or_closed_ends_a_preferred_acquisition(
     failure: BaseException, reason: str
 ) -> None:
-    # None of these is something the writer would fix, and a busy reader is
-    # never mistaken for one that cannot be reached.
+    # No failed dial is on record for the busy reader.
     writer_pool = _pool()
     resource = _preferred(_routed(writer_pool, _pool(checkout_error=failure)))
 
@@ -3416,20 +3413,19 @@ def test_a_reader_whose_pool_cannot_be_measured_is_taken_to_hold_no_idle_connect
     assert resource.selection == RouteSelection("writer", "unavailable")
 
 
-def test_a_probe_holder_whose_wait_saw_no_fresh_failure_times_out_rather_than_falling_back() -> (
-    None
-):
-    # Historical evidence lets the holder try the reader, but says nothing
-    # about why its own wait ran out: that is a saturated or slow route.
+def test_a_probe_holder_falls_back_on_an_outage_recorded_before_its_wait() -> None:
     writer_pool = _pool()
-    runtime = _routed(writer_pool, _pool(checkout_error=psycopg_pool.PoolTimeout("waited")))
+    reader_pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
+    runtime = _routed(writer_pool, reader_pool)
     reader = _known_unreachable(runtime)
+    resource = _preferred(runtime)
 
-    with pytest.raises(ConnectionAcquisitionError) as refused:
-        _preferred(runtime).__enter__()
+    with resource as scoped:
+        scoped.execute("select 1", [])
 
-    assert refused.value.reason == "timeout"
-    assert writer_pool.checkouts == []
+    assert len(reader_pool.checkouts) == 1
+    assert writer_pool.returned[0].statements == ["select 1"]
+    assert resource.selection == RouteSelection("writer", "unavailable")
     assert reader.claim_probe()
     reader.release_probe()
 

@@ -15,12 +15,13 @@ from __future__ import annotations
 import socket
 from contextlib import closing, contextmanager
 from dataclasses import replace
-from time import monotonic
+from time import monotonic, sleep
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
     Committed,
     ConnectionAcquisitionError,
@@ -37,7 +38,10 @@ from tests.provider_contract.tcp_forwarder import TcpForwarder
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from parallax.core.internal.db_port import PoolMetricsSource
+
 _WHERE = "select current_setting('application_name') as route, session_user as login"
+_RECOVERING_READER = PoolOptions(reconnect_timeout=2.0)
 
 
 class _Counting:
@@ -204,8 +208,10 @@ def test_an_unreachable_reader_fails_the_open_when_it_is_required(profile_run: A
 
 
 @contextmanager
-def _forwarded_reader(profile_run: Any) -> Generator[tuple[PostgresEndpoint, TcpForwarder]]:
-    reader = _reader(profile_run, pool=PoolOptions(reconnect_timeout=2.0))
+def _forwarded_reader(
+    profile_run: Any, *, pool: PoolOptions = _RECOVERING_READER
+) -> Generator[tuple[PostgresEndpoint, TcpForwarder]]:
+    reader = _reader(profile_run, pool=pool)
     conninfo = conninfo_to_dict(reader.connection_string)
     host, port = conninfo["host"], conninfo["port"]
     assert isinstance(host, str) and isinstance(port, str | int)
@@ -259,7 +265,76 @@ def test_an_unreachable_required_retaining_reader_fails_at_acquire(profile_run: 
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
     cause = failed.value.__cause__
     assert isinstance(cause, ConnectionAcquisitionError)
-    assert cause.reason in {"unavailable", "timeout"}
+    assert cause.reason == "unavailable"
+
+
+def _wait_for_failed_dial(source: PoolMetricsSource, previous_errors: int) -> None:
+    deadline = monotonic() + 5.0
+    while True:
+        sample = source.sample()
+        assert isinstance(sample, PoolAvailable)
+        if sample.measurements.connections_errors > previous_errors:
+            return
+        if monotonic() >= deadline:
+            pytest.fail("the reader pool did not record a failed dial after severing")
+        sleep(0.01)
+
+
+def _preferred_where(runtime: Any) -> tuple[Row, RouteSelection]:
+    resource = runtime.login_source().new_context("reader_preferred")
+    with resource as connection:
+        (row,) = connection.execute(_WHERE, [], read_only=True)
+    assert resource.selection is not None
+    return row, resource.selection
+
+
+@pytest.mark.adapter_smoke
+def test_a_retaining_reader_falls_back_during_an_outage_and_serves_again(
+    profile_run: Any,
+) -> None:
+    with _forwarded_reader(profile_run, pool=replace(_RECOVERING_READER, max_size=1)) as (
+        reader,
+        forwarder,
+    ):
+        forwarder.restore()
+        runtime = _routed(
+            profile_run, reader, pool=PoolOptions(max_size=1), acquire_timeout=0.5
+        ).open()
+        try:
+            reader_row = ("parallax-test-reader", runtime.login_identity)
+            writer_row = ("parallax-test-writer", runtime.login_identity)
+            fallback = (writer_row, RouteSelection("writer", "unavailable"))
+            recovered = (reader_row, RouteSelection("reader"))
+            assert _preferred_where(runtime) == recovered
+
+            _, reader_metrics, _ = runtime.pool_metrics
+            healthy = reader_metrics.sample()
+            assert isinstance(healthy, PoolAvailable)
+
+            # A designated read's replacement stays on the route that began serving it.
+            lost = runtime.login_source().new_context("reader_preferred")
+            with lost as connection:
+                forwarder.sever()
+                with pytest.raises(DatabaseError):
+                    connection.execute(_WHERE, [], read_only=True)
+            assert lost.selection == RouteSelection("reader")
+            _wait_for_failed_dial(reader_metrics, healthy.measurements.connections_errors)
+
+            for _ in range(4):
+                assert _preferred_where(runtime) == fallback
+            with pytest.raises(ConnectionAcquisitionError) as unavailable:
+                _where(runtime, "reader_only")
+            assert unavailable.value.reason == "unavailable"
+            assert unavailable.value.selection == RouteSelection("reader")
+
+            forwarder.restore()
+            deadline = monotonic() + 5.0
+            while (result := _preferred_where(runtime)) != recovered:
+                assert result == fallback
+                if monotonic() >= deadline:
+                    pytest.fail("a preferred read never returned to the restored reader")
+        finally:
+            runtime.close()
 
 
 def _missing_database(endpoint: PostgresEndpoint) -> PostgresEndpoint:

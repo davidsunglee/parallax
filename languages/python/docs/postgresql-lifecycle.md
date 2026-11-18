@@ -517,23 +517,27 @@ the writer instead; a request that loses its connection after something else
 was already sent on it, and a read's own resend, are not fallbacks. Nothing is
 replayed that would not have been, and an active transaction never moves.
 
-Everything else ends the acquisition instead: a reader that is merely busy until
-its half runs out (`timeout`), a full queue, a closed root, a refused credential
-or login, a role the reader denies, a reader whose verification refused it, and
-a connection whose disposal could not be confirmed. A busy reader is never
-mistaken for an unreachable one: a spent half reads as unreachable only where a
-connection the reader tried to open during that same wait failed to reach its
-server. A retaining reader opens connections on its own threads and cannot wake
-a waiting caller when one fails, so that is noticed at the half; an on-demand
-reader opens them on the caller's thread, so it is noticed at once.
+Other failures end the acquisition, including `timeout` for a busy reader
+with no failed dial on record, a full queue, a closed root, a refused
+credential or login, a role the reader denies, a reader whose verification
+refused it, and a connection whose disposal could not be confirmed. A
+retaining reader opens connections on its own threads. When checkout runs out
+of time, it reports the latest dial failure still on record. An unreachable
+dial can therefore lead to fallback even if it failed before checkout began
+or the pool has other connections in use. An on-demand reader reports a dial
+failure on the caller's thread.
 
-Once the reader is known to be unreachable and holds no idle connection, one
-preferred acquisition at a time tries it again within its half — which is what
-re-dials it, since nothing probes it in the background — and every other one
-goes straight to the writer. The first connection it hands over clears that
-knowledge and every acquisition returns to the reader. Strict `reader_only`
-reads always wait on the reader for their whole budget, so they recover as soon
-as it does. After a fallback, the rest of that operation stays on the writer:
+When the reader is known to be unreachable and has no idle connection, one
+preferred acquisition at a time tries it within its half and concurrent
+preferred acquisitions go straight to the writer. A retaining pool backs off
+between reconnect attempts. Until it has a usable connection, each sequential
+preferred read can spend its whole reader share before falling back, even if
+the server is already reachable again. If the pool gives up after
+`reconnect_timeout`, demand can start a new dial. The next successful checkout
+clears the outage. A strict `reader_only` read gives the reader its whole
+budget and reports `unavailable` if checkout expires with the outage on record.
+
+After a fallback, the rest of that operation stays on the writer:
 every later page of a standalone delivery and every permitted retry of a
 `read_only` transaction requests `writer_only`. A transaction attempt reports
 the route its boundary actually opened on, so its Acquisition finishes only once
@@ -572,11 +576,9 @@ the reader's readiness pending, unless the adapter says `reader_startup="require
 a refused credential, an unusable session, or another login fails the open
 either way. While the reader is pending, every connection it hands over is
 proved before any of your work runs on it, and the first proof that succeeds
-makes the reader serve. For a retaining reader, recovery can wait until the
-pool's next reconnect attempt. A strict reader read meanwhile can spend its
-`acquire_timeout` waiting for a connection. A deferral, the reader becoming
-verified, and the reader being refused are each reported once
-on `parallax.resources`, and each pool sample carries its route's readiness.
+makes the reader serve. A deferral, the reader becoming verified, and the
+reader being refused are each reported once on `parallax.resources`, and each
+pool sample carries its route's readiness.
 
 The driver reports a refusal the server sent while connecting with no
 SQLSTATE. Where the endpoint's login sends a password — a configured credential
