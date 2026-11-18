@@ -1,0 +1,52 @@
+model: models/account.yaml
+tags: [m-concurrency, m-unit-work, scenario, target-write, refusal, slice-snapshot-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: whether each Locking target write is refused depends on the revision its acquisition reads, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: refused
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.Account
+          row: { id: 2, balance: "200.00" }
+          ifVersion: 1
+        - mutation: amend
+          entity: parallax.compatibility.Account
+          row: { id: 1, owner: Mallory }
+          ifVersion: 2
+          expectError: write-precondition-failed
+      note: "account 1 stands at version 1, so the acquisition refuses the stated version 2 at the call; this caller does not survive the refusal and abandons its unit of work, so account 2's pending amendment never stands"
+    - uow: continued
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.Account
+          row: { id: 2, balance: "200.00" }
+          ifVersion: 1
+        - mutation: amend
+          entity: parallax.compatibility.Account
+          row: { id: 1, owner: Mallory }
+          ifVersion: 2
+          expectError: write-precondition-failed
+        - mutation: amend
+          entity: parallax.compatibility.Account
+          row: { id: 1, balance: "90.00" }
+          ifVersion: 1
+      note: "this caller catches the refusal and continues: account 2's amendment is still pending, nothing of the refused write was buffered, and account 1's stored version still admits the amendment stating it"
+then:
+  units:
+    refused: { outcome: rolledBack }
+    continued: { outcome: committed }
+  tableState:
+    px:
+      account:
+        - { id: 1, owner: Ada, balance: "90.00", version: 2 }
+        - { id: 2, owner: Linus, balance: "200.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }

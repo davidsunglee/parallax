@@ -238,7 +238,8 @@
             "write-evidence-unavailable",
             "write-evidence-already-claimed",
             "write-evidence-inserted",
-            "write-evidence-consumed"
+            "write-evidence-consumed",
+            "write-precondition-failed"
           ]
         },
         "native": {}
