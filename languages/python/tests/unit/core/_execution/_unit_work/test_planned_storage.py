@@ -73,6 +73,7 @@ _PRODUCER_CLASSES = (
     TransactionInstant,
     FixedClock,
     SystemClock,
+    CountingClock,
     WritePlanner,
     TemporalSettlement,
     NonTemporalSettlement,

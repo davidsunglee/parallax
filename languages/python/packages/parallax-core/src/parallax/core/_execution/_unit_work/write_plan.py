@@ -154,22 +154,28 @@ class _Layout:
         self.writes.append(write)
         blocks, shapes, opened = self._blocks, self._shapes, self._open
         previous = -1
-        for step in write.steps:
-            if isinstance(step, PlannedInsert):
-                self._inserts.append(step)
-                continue
-            shape = self._effect_shape(step)
-            block = None if shape is None else opened.get(shape)
-            if block is None or block < previous:
-                block = len(blocks)
-                blocks.append([])
-                shapes.append(shape)
-                if shape is None:
-                    opened.clear()
-                else:
-                    opened[shape] = block
-            blocks[block].append(step)
-            previous = block
+        try:
+            for step in write.steps:
+                if isinstance(step, PlannedInsert):
+                    self._inserts.append(step)
+                    continue
+                shape = self._effect_shape(step)
+                block = None if shape is None else opened.get(shape)
+                if block is None or block < previous:
+                    block = len(blocks)
+                    blocks.append([])
+                    shapes.append(shape)
+                    if shape is None:
+                        opened.clear()
+                    else:
+                        opened[shape] = block
+                blocks[block].append(step)
+                previous = block
+        except BaseException:
+            # A failure's traceback keeps this frame, which must not keep the
+            # write and its source evidence once the group releases it.
+            del write
+            raise
 
     def finish(self) -> tuple[tuple[PlannedStep, ...], tuple[EffectSpan, ...]]:
         steps: list[PlannedStep] = []

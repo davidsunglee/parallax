@@ -78,9 +78,10 @@ _WRITES_PER_GROUP: Final = 1024
 deletes every insert waits behind every non-insert step of the group, so this
 bounds how many settled writes' non-insert steps a failing insert wastes,
 whatever the flush's size; a batch counts once however many rows it covers. It
-is not the executor's per-call statement or row cap. Each effect shape of a
-group is one statement, so a group this large applies a thousand like
-amendments as one statement where a smaller one would cut them into several."""
+is not the executor's per-call statement or row cap. Like effects of one group
+can apply as one grouped statement (`m-unit-work` *Write Group formation*), so a
+group this large can apply a thousand like amendments as one statement where a
+smaller one would cut them into several."""
 
 type _FamilyKey = tuple[AttributeIdentity, object]
 """One object a settled write writes: its family's primary-key Attribute and the
@@ -285,7 +286,7 @@ class WritePlanner:
     ) -> AuditDecoration:
         """The configured audit applied with ``actor_identity`` and
         ``transaction_instant``. Building it invokes no hook and resolves no
-        instant, so one serves every write a flush settles or binds."""
+        instant."""
         return AuditDecoration(self._audit, actor_identity, transaction_instant, self._reserved)
 
     def predicate_step(
