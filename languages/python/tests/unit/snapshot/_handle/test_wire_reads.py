@@ -31,6 +31,8 @@ from parallax.conformance import class_models, models
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
+from parallax.core._execution._planning import prepare_model
+from parallax.core._execution._publication import read_projection
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import (
     INFINITY,
@@ -88,8 +90,8 @@ from parallax.snapshot import (
     edge_of,
     pin_of,
 )
-from parallax.snapshot._handle._read import wire_publication
-from parallax.snapshot._handle._wire import WireDatabaseView, wire_read_query
+from parallax.snapshot._handle._read import WIRE, wire_read_query
+from parallax.snapshot._handle._wire import WireDatabaseView
 from parallax.snapshot._publication import (
     _wire as wire_materialize,
 )
@@ -307,8 +309,8 @@ def test_an_eager_wire_publication_releases_its_encoder(
 
 
 def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
-    cataloged = CatalogedModel(CUSTOMER_META, TEST_BINDING)
-    publication = wire_publication(cataloged, wire_facts_for(cataloged), "edition")
+    selected = read_projection(prepare_model(CUSTOMER, edition="edition", binding=TEST_BINDING))
+    publication = WIRE.publication_for(selected)
     publication.release()
     publication.release()
     empty = PageBuilder(ViewSchema.of()).finish((), Pin())

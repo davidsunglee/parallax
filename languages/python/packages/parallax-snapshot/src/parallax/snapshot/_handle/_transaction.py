@@ -7,11 +7,11 @@ from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptio
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.internal.entity import AttributeAssignment
 from parallax.core.internal.entity import Entity as EntityBase
-from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.object_query._fluent import ObjectQuery
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
-    typed_publication_builder,
+    TypedRepresentation,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
@@ -415,11 +415,7 @@ class TxnContext:
         retains no evidence at all: its roots stand at coordinates no keyed
         write may address.
         """
-        return self._attempt.read(
-            query,
-            convert_query=typed_read_query,
-            build_publication=typed_publication_builder(sharing_scope),
-        )
+        return self._attempt.read(query, representation=TypedRepresentation.at(sharing_scope))
 
     @property
     def wire(self) -> WireTransactionView:
@@ -465,8 +461,7 @@ class TxnContext:
             self._attempt,
             query,
             batch_size,
-            convert_query=typed_read_query,
-            build_publication=typed_publication_builder(sharing_scope),
+            representation=TypedRepresentation.at(sharing_scope),
         )
 
     def amend_where[E: EntityBase](
@@ -558,11 +553,7 @@ class ReadOnlyTxnContext:
         """Run ``query`` inside this transaction and return ``Snapshot[S]``,
         taking no participation lock and retaining no Read Evidence. Otherwise
         identical to :meth:`TxnContext.find`."""
-        return self._attempt.read(
-            query,
-            convert_query=typed_read_query,
-            build_publication=typed_publication_builder(sharing_scope),
-        )
+        return self._attempt.read(query, representation=TypedRepresentation.at(sharing_scope))
 
     def stream[S](
         self,
@@ -581,8 +572,7 @@ class ReadOnlyTxnContext:
             self._attempt,
             query,
             batch_size,
-            convert_query=typed_read_query,
-            build_publication=typed_publication_builder(sharing_scope),
+            representation=TypedRepresentation.at(sharing_scope),
         )
 
     @property

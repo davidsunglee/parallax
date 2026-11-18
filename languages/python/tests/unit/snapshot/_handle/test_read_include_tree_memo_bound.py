@@ -41,7 +41,7 @@ def _tree_after_projecting(roots: int) -> Closure:
             control_support.guarded_query(control_support.GUARD_WIDTHS[-1])
         )
         result.wire()
-        return closure(cast("Any", result)._includes, ())
+        return closure(cast("Any", result)._source.includes, ())
     finally:
         root.close()
 

@@ -22,6 +22,7 @@ from parallax.core._execution._publication import SelectedReadModel, SelectedWri
 from parallax.core._execution._read_pipeline import (
     ReadInputs,
     ReadQuery,
+    ReadRepresentation,
     plan_stream,
     read_graph,
     read_page,
@@ -271,11 +272,9 @@ class _TxnAttemptBase:
         query: Q,
         /,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], Publication[ReadEvidence, Eager]],
+        representation: ReadRepresentation[Q, Publication[ReadEvidence, Eager]],
     ) -> Eager:
-        """One participating whole-result read, published through
-        ``build_publication``.
+        """One participating whole-result read, published in ``representation``.
 
         Re-entry is refused first, then the publication is built over this
         attempt's selection — where a selection that cannot publish the
@@ -284,8 +283,8 @@ class _TxnAttemptBase:
         admitted.
         """
         refuse_reentry(self._lifecycle)
-        publication = build_publication(self._read)
-        return read_graph(self, convert_query(query), publication, self._planner)
+        publication = representation.publication_for(self._read)
+        return read_graph(self, representation.convert_query(query), publication, self._planner)
 
     def stream[Q, P: Publication[ReadEvidence, Any]](
         self,
@@ -293,10 +292,7 @@ class _TxnAttemptBase:
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], P],
-        on_page_start: Callable[[read_planning.IncludeTree], None],
-        on_release: Callable[[], None],
+        representation: ReadRepresentation[Q, P],
     ) -> StreamDelivery[Self, ReadQuery, P]:
         """One participating streamed delivery, constructed and not yet entered.
 
@@ -306,15 +302,10 @@ class _TxnAttemptBase:
         reads nothing more.
         """
         refuse_reentry(self._lifecycle)
-        read_query = convert_query(query)
+        read_query = representation.convert_query(query)
         check_batch_size(batch_size)
         return StreamDelivery(
-            read_query,
-            self,
-            build_publication,
-            batch_size=batch_size,
-            on_page_start=on_page_start,
-            on_release=on_release,
+            read_query, self, representation.publication_for, batch_size=batch_size
         )
 
     def begin(self) -> Self:

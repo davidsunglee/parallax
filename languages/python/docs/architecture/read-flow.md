@@ -41,15 +41,19 @@ Database (root) — owns, through RootResources, the runtime, the Serving Model,
 rtx.find / rtx.stream / rtx.wire.* → the ReadOnlyTxnAttempt
  tx.find /  tx.stream /  tx.wire.* → the TxnAttempt
 
-public spelling     captured as (convert_query)                publication           graph execution
+public spelling     captured as (convert_query)                representation        graph execution
 ──────────────────  ─────────────────────────────────────────  ────────────────────  ───────────────────────
-Typed find/stream   ObjectQuery → typed_read_query             typed_publication_    read_graph /
-                      → AuthoredQuery                          builder(scope)        StreamDelivery
-Wire find/stream    mapping → deserialize → ObjectQueryNode    wire_publication_     read_graph /
-                    ObjectQueryNode → itself                   builder(scope)        StreamDelivery
+Typed find/stream   ObjectQuery → typed_read_query             TypedRepresentation   read_graph /
+                      → AuthoredQuery                          .at(scope)            StreamDelivery
+Wire find/stream    mapping → deserialize → ObjectQueryNode    WireRepresentation    read_graph /
+                    ObjectQueryNode → itself                   .at(scope)            StreamDelivery
                     ObjectQuery → typed_read_query
                       → AuthoredQuery
 ```
+
+Each call site passes one `ReadRepresentation` value: its `convert_query` captures the
+spelling, and its `publication_for` builds the delivery's publication once a selection
+is adopted.
 
 The root selects authority and derives option aliases; it runs no read itself. The
 runner constructs each attempt inside the port's transaction callback and only then
@@ -101,14 +105,15 @@ caches its preparation, while acquisition keeps its activity and consumption bra
 - `parallax.snapshot._handle._wire:WireDatabaseView.find`
 - `parallax.snapshot._handle._wire:WireDatabaseView.stream`
 - `parallax.snapshot._handle._wire:WireTransactionView`
-- `parallax.snapshot._handle._wire:wire_read_query`
+- `parallax.snapshot._handle._read:wire_read_query`
 - `parallax.core.internal.object_query._fluent:ObjectQuery`
 - `parallax.core.internal.object_query._fluent:typed_read_query`
 - `parallax.core.internal.entity._expressions:AuthoredQuery`
 - `parallax.core.internal.object_query._nodes:ObjectQueryNode`
 - `parallax.core.internal.object_query.serde:deserialize`
-- `parallax.snapshot._handle._read:typed_publication_for`
-- `parallax.snapshot._handle._read:wire_publication_for`
+- `parallax.core._execution._read_pipeline:ReadRepresentation`
+- `parallax.snapshot._handle._read:TypedRepresentation.at`
+- `parallax.snapshot._handle._read:WireRepresentation.at`
 - `parallax.core._execution._read_pipeline:read_graph`
 - `parallax.core.internal.read_delivery._acquired_rows:publishable_member_rows`
 - `parallax.core.internal.read_delivery._stream:StreamDelivery`
@@ -122,9 +127,9 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │ refuse_reentry
    │ the read's selection: ExecutionScope.begin adopts one (AdoptedExecution)
    │   → SelectedReadModel; an attempt reuses the one it adopted at open
-   │ build_publication(selected) → SnapshotPublication
-   │   (typed_publication_for refuses a selection with no EntityGraphConstruction)
-   │ convert_query(query) → ReadQuery: AuthoredQuery | ObjectQueryNode
+   │ representation.publication_for(selected) → TypedPublication | WirePublication
+   │   (the Typed one refuses a selection with no EntityGraphConstruction)
+   │ representation.convert_query(query) → ReadQuery: AuthoredQuery | ObjectQueryNode
    ▼
  read_graph(read, query, publication, planner)                        _read_pipeline
    │ interpreted(selected, query)
@@ -238,7 +243,11 @@ raw documents for acquisition. Validation and read admission stay outside the ca
 - `parallax.core.execution_lifecycle._activity:refuse_reentry`
 - `parallax.core._execution._adoption:AdoptedExecution`
 - `parallax.core._execution._publication:SelectedReadModel`
-- `parallax.snapshot._handle._read:SnapshotPublication`
+- `parallax.core._execution._read_pipeline:ReadRepresentation.publication_for`
+- `parallax.core._execution._read_pipeline:ReadRepresentation.convert_query`
+- `parallax.snapshot._handle._read:TypedRepresentation.publication_for`
+- `parallax.snapshot._handle._read:TypedPublication`
+- `parallax.snapshot._handle._read:WirePublication`
 - `parallax.core.internal.entity._graph_construction:EntityGraphConstruction`
 - `parallax.core._execution._read_pipeline:ReadQuery`
 - `parallax.core._execution._read_pipeline:interpreted`
@@ -315,7 +324,8 @@ raw documents for acquisition. Validation and read admission stay outside the ca
  PageResult / HistoryPageResult (Page + IncludeTree; publication origins where eligible)
               │
               ▼
- SnapshotPublication.roots_of(page, includes, atomic, origins, milestones)  _handle/_read
+ TypedPublication | WirePublication
+   .roots_of(page, includes, atomic, origins, milestones)                _handle/_read
               │   a milestone root's pin comes from its own edge
               ▼
  publish_roots: one pass per Page                                       _root_publication
@@ -373,15 +383,21 @@ renders through the same plans. The Wire publication holds one scalar encoder fo
 delivery and drops it when the delivery releases the publication.
 
 `Snapshot.wire()` and a paused Typed stream's `SnapshotStream.wire` project values that
-are already published into Wire form in memory, with no further read.
+are already published into Wire form in memory, with no further read, through one
+`TypedWireProjection`: a call-scoped one for the eager result, and for a stream one
+its `TypedPublication` owns, which answers only while that publication is publishing a
+Page.
 
 ### Symbols
 
 - `parallax.core.internal.read_delivery._page_reader:HistoryPageResult`
 - `parallax.core.internal.read_delivery._page_reader:PageResult`
-- `parallax.snapshot._handle._read:SnapshotPublication.roots_of`
-- `parallax.snapshot._handle._read:SnapshotPublication.from_find`
-- `parallax.snapshot._handle._read:SnapshotPublication.from_history`
+- `parallax.snapshot._handle._read:TypedPublication.roots_of`
+- `parallax.snapshot._handle._read:WirePublication.roots_of`
+- `parallax.snapshot._handle._read:TypedPublication.from_find`
+- `parallax.snapshot._handle._read:TypedPublication.from_history`
+- `parallax.snapshot._handle._read:WirePublication.from_find`
+- `parallax.snapshot._handle._read:WirePublication.from_history`
 - `parallax.snapshot._publication._root_publication:publish_roots`
 - `parallax.snapshot._publication._root_publication:publish_shared_roots`
 - `parallax.core.internal.read_delivery._page._rows:page_schedule`
@@ -406,6 +422,8 @@ are already published into Wire form in memory, with no further read.
 - `parallax.snapshot._handle._stream:SnapshotStream`
 - `parallax.snapshot._handle._stream:SnapshotStream.checked`
 - `parallax.snapshot._handle._stream:SnapshotStream.wire`
+- `parallax.snapshot._handle._wire_projection:TypedWireProjection`
+- `parallax.snapshot._handle._read:TypedPublication.project`
 
 ## Where eager, milestone-set and streamed delivery diverge
 
@@ -414,19 +432,19 @@ are already published into Wire form in memory, with no further read.
         │
         ├ eager, one instant
         │     ReadPlanner.plan → ReadPlan + PageReadContext → deliver_find
-        │     → read_page → PageResult → SnapshotPublication.from_find
+        │     → read_page → PageResult → TypedPublication / WirePublication.from_find
         │     → Snapshot at the plan's current Pin
         │
         ├ eager milestone set (history / as_of_range)
         │     ReadPlanner.plan: decide kind → continuation.ordered
         │     → ReadPlan + PageReadContext → deliver_history → read_page
-        │     → root-only Page → HistoryPageResult → SnapshotPublication.from_history
+        │     → root-only Page → HistoryPageResult → the publication's from_history
         │     → Snapshot with an empty Pin; each root at its own milestone edge
         │
         └ stream
               construct  SnapshotStream → ExecutionScope.stream or the attempt's stream:
-                         capture the query, check_batch_size; no read begins
-              enter      StreamDelivery.enter: begin → build_publication → resolved
+                         convert_query, check_batch_size; no read begins
+              enter      StreamDelivery.enter: begin → publication_for → resolved
                          (the shared gate) → planned → ReadPlan with kind, Pin and
                          continuation.plan; SQL preparation deferred → Stream activity
               each page  read_page, inside the lane's BegunRead.paged bracket and a

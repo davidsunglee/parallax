@@ -12,6 +12,7 @@ from typing import Any, cast
 from parallax.core.internal.read_planning._include_tree import build_include_tree
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot import Snapshot, WireEntity
+from parallax.snapshot._handle._wire_projection import TypedWireSource
 from parallax.snapshot._publication import _wire_render
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario
@@ -34,9 +35,7 @@ def _snapshot(scenario: Scenario, count: int = 1) -> Snapshot[Any]:
         cast("tuple[Any, ...]", roots),
         Pin(),
         "retention",
-        includes,
-        scenario.construction,
-        scenario.wire,
+        TypedWireSource(scenario.construction, scenario.wire, includes),
     )
 
 

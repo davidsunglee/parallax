@@ -1296,15 +1296,17 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
     # The read and the conversion both succeed; what fails is building one
     # node's state. State attachment and root publication are atomic, so the
     # whole result is refused rather than partly published.
-    def refuse_materialization(*args: object, **kwargs: object) -> object:
-        del args, kwargs
-        raise ValueError("no state for Balance[id=1]")
+    class RefusingPublisher:
+        def __init__(self, *args: object) -> None:
+            del args
 
-    def refusing_publisher(*args: object) -> object:
-        del args
-        return refuse_materialization
+        def __call__(self, *args: object) -> object:
+            del args
+            raise ValueError("no state for Balance[id=1]")
 
-    monkeypatch.setattr(_read, "TypedRootPublisher", refusing_publisher)
+        publish_shared_graph = __call__
+
+    monkeypatch.setattr(_read, "TypedRootPublisher", RefusingPublisher)
     port = QueuePort(
         [
             [

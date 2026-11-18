@@ -6,12 +6,12 @@ from typing import Any
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import (
-    SelectedReadModel,
     ServingModel,
     read_projection,
 )
 from parallax.core._execution._read_pipeline import (
     ReadQuery,
+    ReadRepresentation,
     StandaloneRead,
     plan_stream,
     read_graph,
@@ -27,7 +27,6 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
     refuse_reentry,
 )
-from parallax.core.internal import read_planning
 from parallax.core.internal.auto_retry import RetryPolicy
 from parallax.core.internal.concurrency import ConcurrencyPreference
 from parallax.core.internal.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
@@ -49,10 +48,10 @@ class ExecutionScope:
     policy, and the standalone reads and transactions run under them.
 
     Every operation refuses re-entry on its own first line. A lifecycle supplies
-    two stable functions per read — the converter that captures its query
+    one :class:`ReadRepresentation` per read — which captures its query
     spelling as the unresolved input the read resolves once it has adopted its
-    selection, and the builder of the Publication its result is stated through —
-    and a factory per transaction that turns each fully constructed
+    selection, and builds the Publication its result is stated through — and a
+    factory per transaction that turns each fully constructed
     :class:`TxnAttempt` or :class:`ReadOnlyTxnAttempt` into the context its
     callback is handed.
 
@@ -148,11 +147,9 @@ class ExecutionScope:
         query: Q,
         /,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], Publication[ReadEvidence, Eager]],
+        representation: ReadRepresentation[Q, Publication[ReadEvidence, Eager]],
     ) -> Eager:
-        """One standalone whole-result read, published through
-        ``build_publication``.
+        """One standalone whole-result read, published in ``representation``.
 
         Re-entry is refused first of all: a call that arrived from inside one of
         this root's own lifecycle contexts is refused before the model it would
@@ -164,8 +161,8 @@ class ExecutionScope:
         """
         refuse_reentry(self._lifecycle)
         read = self.begin()
-        publication = build_publication(read.selected)
-        return read_graph(read, convert_query(query), publication, self._planner)
+        publication = representation.publication_for(read.selected)
+        return read_graph(read, representation.convert_query(query), publication, self._planner)
 
     def stream[Q, P: Publication[ReadEvidence, Any]](
         self,
@@ -173,10 +170,7 @@ class ExecutionScope:
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], P],
-        on_page_start: Callable[[read_planning.IncludeTree], None],
-        on_release: Callable[[], None],
+        representation: ReadRepresentation[Q, P],
     ) -> StreamDelivery[StandaloneRead, ReadQuery, P]:
         """One standalone streamed delivery, constructed and not yet entered.
 
@@ -187,15 +181,10 @@ class ExecutionScope:
         a delivery begins no read, opens no activity, and reaches no executor.
         """
         refuse_reentry(self._lifecycle)
-        read_query = convert_query(query)
+        read_query = representation.convert_query(query)
         check_batch_size(batch_size)
         return StreamDelivery(
-            read_query,
-            self,
-            build_publication,
-            batch_size=batch_size,
-            on_page_start=on_page_start,
-            on_release=on_release,
+            read_query, self, representation.publication_for, batch_size=batch_size
         )
 
     def begin(self) -> StandaloneRead:
