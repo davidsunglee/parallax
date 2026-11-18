@@ -546,9 +546,11 @@ def test_a_retained_runtime_whose_source_refuses_fails_startup_naming_the_refusa
     ):
         configured.open()
 
-    assert failed.value.phase == "minimum_ready"
-    assert "authenticated" in str(failed.value)
-    refusal = failed.value.__cause__
+    assert failed.value.phase == "acquire"
+    acquisition = failed.value.__cause__
+    assert isinstance(acquisition, ConnectionAcquisitionError)
+    assert acquisition.reason == "credentials_refused"
+    refusal = acquisition.__cause__
     assert isinstance(refusal, CredentialResolutionError)
     assert str(refusal) == (
         "credential-resolution-failed: the credential source could not produce a password"
@@ -997,8 +999,11 @@ def test_a_session_refused_on_a_pool_worker_is_what_startup_names(profile_run: A
     with pytest.raises(DatabaseStartupError) as failed:
         configured.open()
 
-    assert failed.value.phase == "minimum_ready"
-    assert isinstance(failed.value.__cause__, IncompatibleSessionError)
+    assert failed.value.phase == "acquire"
+    acquisition = failed.value.__cause__
+    assert isinstance(acquisition, ConnectionAcquisitionError)
+    assert acquisition.reason == "preparation_failed"
+    assert isinstance(acquisition.__cause__, IncompatibleSessionError)
 
 
 @pytest.mark.parametrize("order", ["ISO,MDY", "ISO,DMY", "ISO,YMD"])
@@ -1394,11 +1399,12 @@ def _check_footprint(mode: Mode, checkpoints: dict[str, dict[str, object]]) -> N
     # The reservation pool holds nothing until a reservation needs it, and a
     # local handout takes no further connection.
     assert started_reservation["pool_size"] == 0
-    assert started["serverSessions"] == 1
+    application = cast("int", started["serverSessions"])
+    assert _FOOTPRINT_POOL.min_size <= application <= _FOOTPRINT_POOL.min_size + 1
     reserved = 0 if mode == "assigned" else 1
     assert first_reservation["requests_num"] == second_reservation["requests_num"] == reserved
     assert first_reservation["pool_size"] == second_reservation["pool_size"] == reserved
-    assert first["serverSessions"] == second["serverSessions"] == 1 + reserved
+    assert first["serverSessions"] == second["serverSessions"] == application + reserved
     assert closed["serverSessions"] == 0
     assert [pool["state"] for pool in pools(closed)] == ["PoolDetached", "PoolDetached"]
 

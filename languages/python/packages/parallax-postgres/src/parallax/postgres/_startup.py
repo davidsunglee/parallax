@@ -12,8 +12,7 @@ from parallax.core.internal.db_port import (
     StartupPhase,
     report_resource_issues,
 )
-from parallax.postgres._connection import DialFailure, session_lost
-from parallax.postgres._options import PoolOptions
+from parallax.postgres._connection import session_lost
 from parallax.postgres._route import (
     PROBE_SQL,
     PostgresRoute,
@@ -102,7 +101,7 @@ def open_runtime(
             acquire_timeout=acquire_timeout,
         )
         try:
-            login = _prove(runtime, writer_route, writer, deadline, None)
+            login = _probe(runtime, writer_route, deadline, None)
         except _ReadinessFailure as failure:
             raise failure.error from failure.error.__cause__
         writer_route.proved_at_startup()
@@ -110,8 +109,8 @@ def open_runtime(
         # endpoint with the same credentials.
         reservation_route.proved_at_startup()
         runtime._complete_startup(login)  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
-        if reader is not None and reader_route is not None:
-            _start_reader(runtime, reader_route, reader, deadline, login, reader_startup)
+        if reader_route is not None:
+            _start_reader(runtime, reader_route, deadline, login, reader_startup)
     except BaseException:
         _abandon(opened)
         raise
@@ -135,75 +134,18 @@ def _abandon(opened: list[PostgresRoute]) -> None:
 def _start_reader(
     runtime: PostgresRuntime,
     route: PostgresRoute,
-    endpoint: PostgresEndpoint,
     deadline: float,
     login: str,
     reader_startup: ReaderStartup,
 ) -> None:
     try:
-        _prove(runtime, route, endpoint, deadline, login)
+        _probe(runtime, route, deadline, login)
     except _ReadinessFailure as failure:
         if failure.outage and reader_startup == "deferrable":
             route.defer_verification()
             return
         raise failure.error from failure.error.__cause__
     route.proved_at_startup()
-
-
-def _prove(
-    runtime: PostgresRuntime,
-    route: PostgresRoute,
-    endpoint: PostgresEndpoint,
-    deadline: float,
-    expected_login: str | None,
-) -> str:
-    """Prove ``route`` ready within ``deadline``, answering the login it authenticated."""
-    _await_minimum(route, endpoint, deadline)
-    return _probe(runtime, route, deadline, expected_login)
-
-
-def _await_minimum(route: PostgresRoute, endpoint: PostgresEndpoint, deadline: float) -> None:
-    """Wait for the retained minimum, where there is one to wait for.
-
-    Skipped for a zero minimum and for on-demand retention, because neither has
-    retained capacity: the native wait would either return immediately having
-    proved nothing, or establish a connection of its own that is then thrown
-    away. The probe below is what proves readiness in every mode, so nothing is
-    lost by skipping this one.
-
-    Filling happens on the route's own background path, where an establishment
-    failure is retried rather than reported, so all this wait can see is that
-    time ran out. Where a failure is on record it is stated as the failure
-    instead: a configuration every connection is refused under is what an
-    operator has to fix, and "timed out" names none of it.
-    """
-    options = endpoint.pool
-    if not isinstance(options, PoolOptions) or options.min_size <= 0:
-        return
-    remaining = _remaining(route, deadline, "minimum_ready")
-    try:
-        route.pool.wait(timeout=remaining)
-    except Exception as exc:
-        failure = route.establishment.last_failure
-        error = DatabaseStartupError(
-            _minimum_failure(failure), route=route.route, phase="minimum_ready"
-        )
-        error.__cause__ = exc if failure is None else failure.cause
-        raise _ReadinessFailure(
-            error, outage=failure is None or failure.reason == "unavailable"
-        ) from None
-
-
-def _minimum_failure(failure: DialFailure | None) -> str:
-    if failure is None:
-        return "the database runtime did not reach its minimum number of connections in time"
-    if failure.reason == "credentials_refused":
-        return "no database connection this runtime opened could be authenticated"
-    if failure.reason == "unavailable":
-        return "no database connection this runtime tried to open could reach its server"
-    if failure.reason == "authentication_refused":
-        return "no database connection this runtime opened was accepted once its login was offered"
-    return "no database connection this runtime opened became usable"
 
 
 def _probe(

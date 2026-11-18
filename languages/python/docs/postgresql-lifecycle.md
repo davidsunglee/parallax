@@ -207,18 +207,15 @@ connection:
 
 | Where | What you get |
 |---|---|
-| A retained pool, at startup | `DatabaseStartupError` (`phase="minimum_ready"`), after `startup_timeout`: *no database connection this runtime opened could be authenticated* |
-| A retained pool, once it is running | `ConnectionAcquisitionError` (`reason="credentials_refused"`), after `acquire_timeout`: *no database connection could be authenticated within the acquisition timeout* |
-| An on-demand pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) on your own thread, with no wait: *a database connection could not be authenticated* |
-| A startup probe over an on-demand pool, or over a zero minimum | `DatabaseStartupError` (`phase="acquire"`) wrapping the acquisition failure above |
+| A retaining pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) when the acquisition budget expires. Startup uses the remaining `startup_timeout`; ordinary acquisitions use `acquire_timeout`. |
+| An on-demand pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) on your own thread when the source fails. |
 
-The `CredentialResolutionError` is the `__cause__` in every row, and whatever
-the source itself raised is the cause beneath that. Startup does not fail fast
-on one: the pool retries with backoff exactly as it does for a session it cannot
-execute under, so a transient token or metadata-service failure costs a retry
-rather than a process. That backoff is also why the fixed text matters —
-`psycopg.pool` logs the exception's own text on every failed attempt, under the
-driver's disclosure policy rather than Parallax's.
+If the startup acquisition fails, `DatabaseStartupError` reports
+`phase="acquire"` and chains the acquisition error. The acquisition error
+chains the `CredentialResolutionError`, which carries the original exception
+if the source raised a different type. A retaining pool retries with backoff
+and logs each failed attempt through `psycopg.pool`. The fixed text keeps the
+source's exception message out of that log.
 
 ### RDS and Aurora, authenticated by IAM
 
@@ -561,6 +558,12 @@ relying on `reader_preferred` to ride out a reader outage moves that reader's
 load onto the writer for the duration, so the writer's `max_size` and the
 server's limit decide whether it can absorb it.
 
+Each route proves readiness by acquiring, probing, and returning one
+connection. The retaining pool fills toward `min_size` in the background and
+can finish filling after startup returns. If the probe has to wait for the
+initial fill, the pool can grow to `min_size + 1` at startup, bounded by
+`max_size`. The extra connection can retire after `max_idle`.
+
 Readiness proves the writer first and then the reader, within what remains of
 the one `startup_timeout`, and the reader must authenticate the same login as
 the writer however its credentials differ — an endpoint-specific IAM token
@@ -569,9 +572,10 @@ the reader's readiness pending, unless the adapter says `reader_startup="require
 a refused credential, an unusable session, or another login fails the open
 either way. While the reader is pending, every connection it hands over is
 proved before any of your work runs on it, and the first proof that succeeds
-makes the reader serve. A reader read meanwhile waits up to its
-`acquire_timeout` and then fails with `reason="unavailable"`. A deferral, the
-reader becoming verified, and the reader being refused are each reported once
+makes the reader serve. For a retaining reader, recovery can wait until the
+pool's next reconnect attempt. A strict reader read meanwhile can spend its
+`acquire_timeout` waiting for a connection. A deferral, the reader becoming
+verified, and the reader being refused are each reported once
 on `parallax.resources`, and each pool sample carries its route's readiness.
 
 The driver reports a refusal the server sent while connecting with no
@@ -599,7 +603,7 @@ Five controls are often confused and are genuinely distinct:
 | Control | Bounds |
 |---|---|
 | `acquire_timeout` (the adapter's) | ONE caller's wait for a connection |
-| `startup_timeout` (the adapter's) | Becoming ready before `connect` returns — the whole of it, shared across opening, waiting, probing and releasing, never restarted between them |
+| `startup_timeout` (the adapter's) | Becoming ready before `connect` returns — the whole of it, shared across opening, acquiring, probing and releasing, never restarted between them |
 | `reconnect_timeout` | The driver's own background retrying to restore capacity |
 | `statement_timeout` (a session setting) | The server's execution of one statement |
 | Your application's own limits | Transaction duration, request deadlines |

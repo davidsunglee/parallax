@@ -221,13 +221,12 @@ AUTHORIZATION_INVALID: Final = "authorization-invalid"
 the shape of a resource-free authorization value it refuses."""
 
 
-type StartupPhase = Literal["open", "minimum_ready", "acquire", "probe", "release"]
+type StartupPhase = Literal["open", "acquire", "probe", "release"]
 """Which readiness phase failed to complete.
 
-``open`` creates the native resource, ``minimum_ready`` waits for a positive
-retained minimum where one applies, ``acquire`` takes the startup connection,
+``open`` creates the native resource, ``acquire`` takes the startup connection,
 ``probe`` proves connectivity and decoding through it, and ``release`` gives it
-back. All five share one budget, which is never restarted between them.
+back. All four share one budget, which is never restarted between them.
 """
 
 

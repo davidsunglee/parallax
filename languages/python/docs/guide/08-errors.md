@@ -599,11 +599,12 @@ reaches you as itself:
   [PostgreSQL lifecycle guide](../postgresql-lifecycle.md#timeouts) covers the pool and
   the timeouts behind it.
 - **No database to start with.** `connect` raises `DatabaseStartupError` when the
-  database doesn't become ready to serve, and its `route` and `phase` say which route
-  failed and where.
+  database doesn't become ready to serve. Its `route` identifies the failed route.
+  The `acquire` phase covers obtaining the connection for the startup probe. When
+  that checkout raises a `ConnectionAcquisitionError`, `__cause__` carries it.
 - **No credential.** A [credential source](06-execution-authority.md) that can't
-  produce a credential raises `CredentialResolutionError`. You meet it as the cause of
-  the `ConnectionAcquisitionError` or `DatabaseStartupError` it led to, as
+  produce a credential raises `CredentialResolutionError`. It appears in the cause
+  chain of the acquisition or startup error it led to, as
   [the PostgreSQL lifecycle guide](../postgresql-lifecycle.md#where-the-password-lives)
   tabulates.
 - **A failed rollback.** When rolling back after a failure fails too, you get
