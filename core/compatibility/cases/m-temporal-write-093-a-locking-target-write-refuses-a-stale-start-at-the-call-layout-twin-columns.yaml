@@ -1,0 +1,123 @@
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-temporal-write, m-unit-work, m-concurrency, m-storage-layout, m-sql, scenario, target-write, refusal, layout-twin, columns, slice-snapshot-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: whether each Locking target write is refused depends on the start its acquisition reads, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: refused
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2, amount: 120 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 4, label: z }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+          expectError: write-precondition-failed
+      note: "span 4's current milestone at its own Valid-Time start was known from 2023-12-15, so the acquisition refuses the stated start at the call; this caller does not survive the refusal and abandons its unit of work, so span 2's pending amendment never stands"
+    - uow: continued
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2, amount: 120 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 4, label: z }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+          expectError: write-precondition-failed
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 4, amount: 110 }
+          ifTxStart: "2023-12-15T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "this caller catches the refusal and continues: span 2's amendment is still pending, nothing of the refused write was buffered, and span 4's stored start still admits the amendment stating it"
+then:
+  units:
+    refused: { outcome: rolledBack }
+    continued: { outcome: committed }
+  tableState:
+    px:
+      sequence_span:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+        - id: 2
+          amount: 100
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2024-11-02T00:00:00.000000Z"
+        - id: 2
+          amount: 120
+          label: b
+          memo: { note: n2 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity
+        - id: 3
+          amount: 100
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: "2024-06-01T00:00:00.000000Z"
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+        - id: 3
+          amount: 200
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: infinity
+        - id: 4
+          amount: 90
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: "2023-12-15T00:00:00.000000Z"
+        - id: 4
+          amount: 100
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-15T00:00:00.000000Z"
+          out_z: "2024-11-02T00:00:00.000000Z"
+        - id: 4
+          amount: 110
+          label: d
+          memo: { note: n4 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity

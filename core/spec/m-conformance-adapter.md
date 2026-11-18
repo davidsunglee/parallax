@@ -578,7 +578,8 @@ declaring `expectError`, and one per buffered submission declaring it, each
   `write-value-not-stored` / `write-value-already-stored` /
   `write-value-foreign-lifecycle` / `write-evidence-unavailable`, and for a
   submission `write-evidence-already-claimed` /
-  `write-evidence-inserted` / `write-evidence-consumed` — `m-temporal-write` /
+  `write-evidence-inserted` / `write-evidence-consumed` /
+  `write-precondition-failed` — `m-temporal-write` /
   `m-unit-work`, **distinct** from the
   `m-db-error` taxonomy), and an optional `native` witness carrying the raw
   implementation error. A refused submission is one its verb refused at the call,

@@ -1826,7 +1826,7 @@ that catches the refusal and continues in the same unit of work, which keeps
 every earlier submission. A refusal the caller did not catch would end the
 callback and roll the unit of work back, and a flush failure dooms the unit of
 work whether caught or not (`m-unit-work` *Abort*). The refusals a submission may
-declare are the closed vocabulary `m-unit-work` owns:
+declare are a closed vocabulary naming refusals `m-unit-work` owns:
 
 - `write-evidence-already-claimed` — the write cannot join the pending writes of
   its object (`m-unit-work` *Observed-State Coalescing*);
@@ -1835,7 +1835,11 @@ declare are the closed vocabulary `m-unit-work` owns:
 - `write-evidence-consumed` — a source-backed write whose source reaches no
   state its unit of work still protects, such as one whose object an earlier
   flush of that unit of work deleted (`m-unit-work` *Observation ownership and
-  lifetime*).
+  lifetime*);
+- `write-precondition-failed` — a target write under Locking whose stated
+  revision the row its acquisition holds does not stand at, or for which no row
+  stands: a failed precondition refused at the call (`m-unit-work` *Target
+  writes*).
 
 The harness grades that a state-graded case is **consistent**, not that SQL
 produces it: it provisions, reads back the rows the case starts from, and proves
