@@ -252,33 +252,25 @@ class _FakeConnection:
 
 
 class _FakePool:
-    """The native pool, scripted at the four calls the runtime makes of it."""
+    """A native pool with scripted checkout, release, and close."""
 
     def __init__(
         self,
         *connections: _FakeConnection,
         checkout_error: BaseException | None = None,
         putconn_error: Exception | None = None,
-        wait_error: Exception | None = None,
         close_error: BaseException | None = None,
     ) -> None:
         self._connections = list(connections) or [_FakeConnection()]
         self.checkout_error = checkout_error
         self.putconn_error = putconn_error
-        self.wait_error = wait_error
         self.close_error = close_error
         self.checkouts: list[float | None] = []
         self.returned: list[_FakeConnection] = []
         self.handoffs = 0
-        self.waits: list[float] = []
         self.closes = 0
         self.late_by: float = 0.0
         self.available = 0
-
-    def wait(self, timeout: float = 30.0) -> None:
-        self.waits.append(timeout)
-        if self.wait_error is not None:
-            raise self.wait_error
 
     def getconn(self, timeout: float | None = None) -> _FakeConnection:
         self.checkouts.append(timeout)
@@ -412,17 +404,22 @@ def test_the_startup_probe_is_submitted_as_a_designated_read(
     assert intents == [True]
 
 
-def test_a_zero_minimum_and_on_demand_wait_for_nothing_and_still_probe(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "options", [PoolOptions(min_size=2), PoolOptions(min_size=0), OnDemandOptions()]
+)
+def test_startup_proves_and_returns_one_connection_in_each_retention_mode(
+    monkeypatch: pytest.MonkeyPatch, options: PoolOptions | OnDemandOptions
 ) -> None:
-    # Neither retains capacity, so a native wait would either return having
-    # proved nothing or establish a connection of its own and throw it away.
-    for options in (PoolOptions(min_size=0), OnDemandOptions()):
-        pool = _opened(monkeypatch, _pool())
-        _open_runtime(options)
-        assert pool.waits == []
+    connection = _FakeConnection()
+    pool = _opened(monkeypatch, _pool(connection))
+
+    runtime = _open_runtime(options)
+    try:
         assert len(pool.checkouts) == 1
-        assert pool.returned
+        assert connection.statements == [PROBE_SQL]
+        assert pool.returned == [connection]
+    finally:
+        runtime.close()
 
 
 def test_a_pool_that_will_not_open_fails_startup_at_the_open_phase(
@@ -447,72 +444,36 @@ def test_a_pool_that_will_not_open_fails_startup_at_the_open_phase(
     assert isinstance(failed.value.__cause__, psycopg_pool.PoolTimeout)
 
 
-def test_a_minimum_that_is_not_reached_fails_at_its_own_phase(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("refusal", "reason"),
+    [
+        (CredentialResolutionError("RDS IAM token could not be generated"), "credentials_refused"),
+        (psycopg.errors.InvalidPassword(), "authentication_refused"),
+        (
+            IncompatibleSessionError("this connection's client encoding is 'LATIN1'"),
+            "preparation_failed",
+        ),
+    ],
+)
+def test_startup_reports_the_recorded_dial_refusal(
+    monkeypatch: pytest.MonkeyPatch, refusal: Exception, reason: str
 ) -> None:
-    pool = _opened(monkeypatch, _pool(wait_error=psycopg_pool.PoolTimeout("not filled")))
+    from parallax.postgres import _route as route_module
+
+    establishment = _establishment()
+    establishment.failed(refusal)
+    pool = _opened(monkeypatch, _pool(checkout_error=psycopg_pool.PoolTimeout("waited")))
+    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
 
     with pytest.raises(DatabaseStartupError) as failed:
-        _open_runtime(PoolOptions(min_size=2))
+        _open_runtime(PoolOptions())
 
-    assert failed.value.phase == "minimum_ready"
+    assert (failed.value.route, failed.value.phase) == ("writer", "acquire")
+    cause = failed.value.__cause__
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert cause.reason == reason
+    assert cause.__cause__ is refusal
     assert pool.closes == 1
-
-
-def test_a_configuration_every_connection_is_refused_under_is_named_rather_than_timed_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Filling happens on the pool's own background path, where an initialization
-    # refusal is retried and logged where the waiting caller never sees it. A
-    # bare "timed out" names nothing an operator can fix.
-    from parallax.postgres import _route as route_module
-
-    establishment = _establishment()
-    refusal = IncompatibleSessionError("this connection's client encoding is 'LATIN1'")
-    establishment.failed(refusal)
-    pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
-
-    def build(*_args: object, purpose: str = "application", **_kwargs: object) -> Any:
-        return pool if purpose == "application" else _pool()
-
-    monkeypatch.setattr(route_module, "_build_pool", build)
-    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
-
-    with pytest.raises(DatabaseStartupError) as failed:
-        _open_runtime(PoolOptions(min_size=1))
-
-    assert failed.value.phase == "minimum_ready"
-    assert failed.value.__cause__ is refusal
-    assert "usable" in str(failed.value)
-
-
-def test_a_source_that_authenticates_nothing_is_named_rather_than_timed_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The same recorded-refusal channel carrying the other kind, and the wait
-    # says which one it found: a credential no source would produce and a
-    # session the codecs cannot run under are different things to fix. Startup
-    # still spends its whole budget first — a refusal here is retried with
-    # backoff rather than ending readiness on the spot.
-    from parallax.postgres import _route as route_module
-
-    establishment = _establishment()
-    refusal = CredentialResolutionError("RDS IAM token could not be generated")
-    establishment.failed(refusal)
-    pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
-
-    def build(*_args: object, purpose: str = "application", **_kwargs: object) -> Any:
-        return pool if purpose == "application" else _pool()
-
-    monkeypatch.setattr(route_module, "_build_pool", build)
-    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
-
-    with pytest.raises(DatabaseStartupError) as failed:
-        _open_runtime(PoolOptions(min_size=1), Password("hunter2"))
-
-    assert failed.value.phase == "minimum_ready"
-    assert failed.value.__cause__ is refusal
-    assert "authenticated" in str(failed.value)
 
 
 def test_a_startup_acquisition_that_fails_carries_its_phase_and_cleanup(
@@ -605,14 +566,15 @@ def test_readiness_shares_one_budget_that_is_never_restarted(
     # native call in flight, and it does not begin a phase it cannot finish.
     from parallax.postgres import _startup as startup_module
 
-    clock = iter([0.0, 0.0, 0.5, 99.0, 99.0, 99.0, 99.0])
+    clock = iter([0.0, 99.0])
     monkeypatch.setattr(startup_module, "monotonic", lambda: next(clock))
-    _opened(monkeypatch, _pool())
+    pool = _opened(monkeypatch, _pool())
 
     with pytest.raises(DatabaseStartupError) as failed:
         _open_runtime(PoolOptions(min_size=1))
 
-    assert failed.value.phase in {"acquire", "minimum_ready"}
+    assert failed.value.phase == "acquire"
+    assert pool.checkouts == []
 
 
 def test_a_broken_startup_probe_is_replaced_within_the_one_startup_budget(
@@ -2438,15 +2400,19 @@ def test_routed_startup_opens_both_pools_before_proving_the_writer_then_the_read
 ) -> None:
     # Opening both first is what lets a retaining reader's workers dial while
     # the writer is being proved, so the two share the one budget's wall time.
-    writer_pool, reader_pool = _pool(), _pool()
     order: list[str] = []
-    writer_pool.wait = lambda timeout=30.0: order.append("writer waited")
+
+    def writer_probe(_sql: str) -> None:
+        assert [route for route, _endpoint in built] == ["writer", "reader"]
+        order.append("writer")
+
+    writer_pool = _pool(_Hooked(writer_probe))
+    reader_pool = _pool(_Hooked(lambda _sql: order.append("reader")))
     built = _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
 
     runtime = _open_routed(PoolOptions(min_size=1), OnDemandOptions(max_size=20))
 
-    assert [route for route, _endpoint in built] == ["writer", "reader"]
-    assert order == ["writer waited"]
+    assert order == ["writer", "reader"]
     assert writer_pool.returned[0].statements == reader_pool.returned[0].statements == [PROBE_SQL]
     assert runtime.login_identity == "runtime-login"
     assert [sample.readiness for sample in _available_samples(runtime)] == [
@@ -2661,23 +2627,28 @@ def test_a_reader_whose_budget_ran_out_with_a_refusal_on_record_fails_deferrable
 
 
 @pytest.mark.parametrize(
-    "refusal",
+    ("refusal", "reason"),
     [
-        pytest.param(CredentialResolutionError("RDS IAM token could not be generated"), id="creds"),
         pytest.param(
-            IncompatibleSessionError("this connection's DateStyle is 'German'"), id="codec"
+            CredentialResolutionError("RDS IAM token could not be generated"),
+            "credentials_refused",
+            id="creds",
+        ),
+        pytest.param(psycopg.errors.InvalidPassword(), "authentication_refused", id="login"),
+        pytest.param(
+            IncompatibleSessionError("this connection's DateStyle is 'German'"),
+            "preparation_failed",
+            id="codec",
         ),
     ],
 )
 def test_a_reader_refused_rather_than_unreachable_fails_even_deferrable_startup(
-    monkeypatch: pytest.MonkeyPatch, refusal: Exception
+    monkeypatch: pytest.MonkeyPatch, refusal: Exception, reason: str
 ) -> None:
-    # A retaining reader's minimum fills on its own background path, so what
-    # its wait meets is read off the reader's own record.
     from parallax.postgres import _route as route_module
 
     writer_pool = _pool()
-    reader_pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
+    reader_pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
     establishments = iter(
         [_establishment(), reader_establishment := _establishment(), _establishment()]
     )
@@ -2688,51 +2659,12 @@ def test_a_reader_refused_rather_than_unreachable_fails_even_deferrable_startup(
     with pytest.raises(DatabaseStartupError) as failed:
         _open_routed(reader=PoolOptions(min_size=1))
 
-    assert (failed.value.route, failed.value.phase) == ("reader", "minimum_ready")
-    assert failed.value.__cause__ is refusal
+    assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
+    cause = failed.value.__cause__
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert cause.reason == reason
+    assert cause.__cause__ is refusal
     assert (writer_pool.closes, reader_pool.closes) == (1, 1)
-
-
-def test_a_reader_minimum_that_met_only_an_unreachable_server_is_left_pending(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from parallax.postgres import _route as route_module
-
-    reader_pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
-    establishments = iter(
-        [_establishment(), reader_establishment := _establishment(), _establishment()]
-    )
-    reader_establishment.failed(_lost("connection refused"))
-    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: next(establishments))
-    _opened_routes(monkeypatch, writer=_pool(), reader=reader_pool)
-
-    runtime = _open_routed(reader=PoolOptions(min_size=1))
-
-    assert _reader_route(runtime).readiness() == "pending"
-
-
-@pytest.mark.parametrize(
-    ("failure", "message"),
-    [
-        (_lost("connection refused"), "could reach its server"),
-        (_Stated("28P01"), "accepted once its login was offered"),
-    ],
-)
-def test_a_minimum_wait_names_the_dial_failure_on_record(
-    monkeypatch: pytest.MonkeyPatch, failure: psycopg.OperationalError, message: str
-) -> None:
-    from parallax.postgres import _route as route_module
-
-    establishment = _establishment()
-    establishment.failed(failure)
-    _opened(monkeypatch, _pool(wait_error=psycopg_pool.PoolTimeout("not filled")))
-    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: establishment)
-
-    with pytest.raises(DatabaseStartupError) as failed:
-        _open_runtime(PoolOptions(min_size=1))
-
-    assert (failed.value.route, failed.value.phase) == ("writer", "minimum_ready")
-    assert message in str(failed.value)
 
 
 def test_a_reader_probe_lost_with_no_replacement_is_left_pending(

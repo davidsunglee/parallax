@@ -6,20 +6,20 @@ asked, which login authenticated, and what readiness the open established. Each
 endpoint names itself through ``application_name``, so the server, not the
 adapter's own diagnostics, says where a lease landed. What a reader route
 observes about the writer's changes needs a real standby and is proved apart
-from this. Refusal and recovery of a pending reader, a reader authenticating
-another login, concurrent proofs, the probe slot, and a connection lost while
-it is being set up are ``tests/unit/postgres``'s, because a server will not
-produce them on demand.
+from this. Concurrent readiness proofs, the probe slot, and races during
+connection setup are exercised with scripted faults in ``tests/unit/postgres``.
 """
 
 from __future__ import annotations
 
 import socket
-from contextlib import closing
-from typing import Any
+from contextlib import closing, contextmanager
+from dataclasses import replace
+from time import monotonic
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from parallax.core.internal.db_port import (
     Committed,
@@ -32,6 +32,10 @@ from parallax.core.internal.db_port import (
     Row,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint
+from tests.provider_contract.tcp_forwarder import TcpForwarder
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 _WHERE = "select current_setting('application_name') as route, session_user as login"
 
@@ -197,6 +201,65 @@ def test_an_unreachable_reader_fails_the_open_when_it_is_required(profile_run: A
         adapter.open()
 
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
+
+
+@contextmanager
+def _forwarded_reader(profile_run: Any) -> Generator[tuple[PostgresEndpoint, TcpForwarder]]:
+    reader = _reader(profile_run, pool=PoolOptions(reconnect_timeout=2.0))
+    conninfo = conninfo_to_dict(reader.connection_string)
+    host, port = conninfo["host"], conninfo["port"]
+    assert isinstance(host, str) and isinstance(port, str | int)
+    with TcpForwarder.open((host, int(port))) as forwarder:
+        yield (
+            replace(
+                reader,
+                connection_string=make_conninfo(
+                    reader.connection_string, host="127.0.0.1", port=forwarder.port
+                ),
+            ),
+            forwarder,
+        )
+
+
+@pytest.mark.adapter_smoke
+def test_a_deferred_retaining_reader_serves_after_its_endpoint_recovers(profile_run: Any) -> None:
+    with _forwarded_reader(profile_run) as (reader, forwarder):
+        runtime = _routed(profile_run, reader, acquire_timeout=0.25, startup_timeout=1.0).open()
+        try:
+            _, source, _ = runtime.pool_metrics
+            pending = source.sample()
+            assert isinstance(pending, PoolAvailable) and pending.readiness == "pending"
+
+            forwarder.restore()
+            deadline = monotonic() + 5.0
+            while True:
+                try:
+                    row = _where(runtime, "reader_only")
+                except ConnectionAcquisitionError as error:
+                    assert error.reason in {"timeout", "unavailable"}
+                    if monotonic() >= deadline:
+                        raise AssertionError("the retaining reader did not recover") from error
+                else:
+                    break
+
+            assert row == ("parallax-test-reader", runtime.login_identity)
+            verified = source.sample()
+            assert isinstance(verified, PoolAvailable) and verified.readiness == "verified"
+        finally:
+            runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_an_unreachable_required_retaining_reader_fails_at_acquire(profile_run: Any) -> None:
+    with _forwarded_reader(profile_run) as (reader, _forwarder):
+        adapter = _routed(profile_run, reader, startup_timeout=1.0, reader_startup="required")
+        with pytest.raises(DatabaseStartupError) as failed:
+            adapter.open()
+
+    assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
+    cause = failed.value.__cause__
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert cause.reason in {"unavailable", "timeout"}
 
 
 def _missing_database(endpoint: PostgresEndpoint) -> PostgresEndpoint:
