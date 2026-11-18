@@ -24,9 +24,14 @@ from parallax.core.internal.base import INFINITY, UsageError
 from parallax.core.internal.db_port import ArrayBind, MappingRow
 from parallax.core.internal.execution import RetryPolicy, ServingModel, prepare_model
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.internal.unit_work import KeyedWriteInstruction
+from parallax.core.internal.unit_work import (
+    WRITE_PRECONDITION_FAILED,
+    KeyedWriteInstruction,
+    WritePreconditionError,
+)
 from parallax.snapshot import Database, TxnContext
 from tests._support.bindings import TEST_BINDING
+from tests._support.errors import raises_code
 from tests._support.retry import fast_retry
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -266,6 +271,40 @@ def test_only_the_declared_evidence_error_is_a_refused_outcome(
         with pytest.raises(UsageError):
             _run("account", port, body)
     assert port.writes == []
+
+
+@pytest.mark.parametrize(
+    "expected", [WRITE_PRECONDITION_FAILED, "write-evidence-already-claimed", None]
+)
+def test_a_declared_refusal_is_matched_by_its_code_whatever_its_error_class(
+    expected: str | None,
+) -> None:
+    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
+    stale: dict[str, object] = {
+        "mutation": "amend",
+        "entity": "Account",
+        "row": {"id": 1, "owner": "Grace"},
+        "ifVersion": 2,
+    }
+    if expected is not None:
+        stale["expectError"] = expected
+    held = {"mutation": "amend", "entity": "Account", "row": {"id": 1, "balance": "90.00"}}
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> object:
+        refused = submitter.submit(_one(model, stale))
+        return refused, submitter.submit(_one(model, held | {"ifVersion": 1}, step=2))
+
+    if expected == WRITE_PRECONDITION_FAILED:
+        assert _run("account", port, body, concurrency="locking") == (
+            Refused("/scenario/1/write/0", WRITE_PRECONDITION_FAILED),
+            Buffered(),
+        )
+        ((sql, binds),) = port.writes
+        assert sql.startswith("update") and "Grace" not in binds
+    else:
+        with raises_code(WritePreconditionError, WRITE_PRECONDITION_FAILED):
+            _run("account", port, body, concurrency="locking")
+        assert port.writes == []
 
 
 @pytest.mark.parametrize("unit", [False, True])
