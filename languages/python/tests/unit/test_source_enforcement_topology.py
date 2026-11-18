@@ -247,9 +247,12 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_entity"): frozenset(
         {"DetachedLifecycleState", "attach_lifecycle_state"}
     ),
-    ("parallax.snapshot._handle._read", "_authored_resolver"): frozenset({"include_path_node"}),
-    ("parallax.snapshot._handle._read", "_expressions"): frozenset({"authored_include_path"}),
-    ("parallax.snapshot._handle._read", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot._handle._wire_projection", "_authored_resolver"): frozenset(
+        {"include_path_node"}
+    ),
+    ("parallax.snapshot._handle._wire_projection", "_expressions"): frozenset(
+        {"authored_include_path"}
+    ),
     ("parallax.snapshot._handle._typed_writes", "_authored_resolver"): frozenset(
         {"typed_predicate_interpretation"}
     ),

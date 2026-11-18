@@ -10,7 +10,6 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.execution_lifecycle._events import ResultRepresentation
-from parallax.core.internal import read_planning
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import Metamodel
 from parallax.core.internal.object_query import QueryClauses
@@ -49,7 +48,7 @@ class StreamRead[Selection](Protocol):
     A stream begins its read at entry and retains it through every page, so the
     selection it was opened under, whose activity the stream is, and how a
     failure escaping the delivery reaches the caller are one answer given once.
-    ``selected`` is opaque here: delivery hands it to the publication builder it
+    ``selected`` is opaque here: delivery hands it to the publication factory it
     was constructed with and reads nothing off it. ``meta`` and ``edition`` are
     the model and Model Edition that selection serves.
 
@@ -180,29 +179,21 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
     It owns the delivery's whole state machine: entry, the one selected view,
     advancement page after page, continuation, the bounded current Page, the
     pause at a yielded root, failure retention, and terminal cleanup. A
-    lifecycle composes it rather than inheriting it, and supplies two callbacks
-    once: ``on_page_start`` receives each Page's include tree before its first
-    root is published, including a Page that yields nothing or fails during
-    publication, and ``on_release`` runs where the delivery releases its
-    lifecycle projection state, before the remaining roots and the publication
-    are released. A delivery that settles and then closes releases twice, so
-    ``on_release`` is idempotent; a failure it raises still leaves the roots and
-    the publication released and the delivery's verdict recorded.
+    lifecycle composes it rather than inheriting it, and supplies only the
+    factory of the Publication it builds at entry from the begun read's
+    selection.
     """
 
     __slots__ = (
         "_activity",
         "_batch_size",
-        "_build_publication",
         "_failure",
         "_milestones",
-        "_on_page_start",
-        "_on_release",
         "_pages",
         "_paging",
-        "_paused_includes",
         "_pin",
         "_publication",
+        "_publication_for",
         "_query",
         "_read",
         "_scope",
@@ -213,18 +204,14 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         self,
         query: Q,
         scope: StreamScope[R, Q, Any],
-        build_publication: Callable[[Any], P],
+        publication_for: Callable[[Any], P],
         *,
         batch_size: int,
-        on_page_start: Callable[[read_planning.IncludeTree], None],
-        on_release: Callable[[], None],
     ) -> None:
         self._query = query
         self._scope = scope
-        self._build_publication = build_publication
+        self._publication_for = publication_for
         self._batch_size = batch_size
-        self._on_page_start = on_page_start
-        self._on_release = on_release
         self._state: _State = _CREATED
         self._read: R | None = None
         self._publication: P | None = None
@@ -234,7 +221,6 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         self._milestones: TemporalShape | None = None
         self._activity: StreamActivity = INERT
         self._failure: BaseException | None = None
-        self._paused_includes: read_planning.IncludeTree | None = None
 
     def enter(self) -> P:
         """Open the delivery's scope: begin its read, build its publication,
@@ -254,7 +240,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         """
         self._require(_ENTER_ONCE, _CREATED)
         read = self._scope.begin()
-        publication = self._build_publication(read.selected)
+        publication = self._publication_for(read.selected)
         self._publication = publication
         try:
             resolved = self._scope.resolved(read, self._query)
@@ -323,12 +309,6 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
     @property
     def target(self) -> str:
         return self._query.target.canonical
-
-    @property
-    def paused_includes(self) -> read_planning.IncludeTree | None:
-        """The current Page's include tree while the delivery is paused at a
-        root it yielded, and ``None`` at every other moment."""
-        return self._paused_includes
 
     @property
     def pin(self) -> Pin:
@@ -419,16 +399,11 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 self._activity.exhausted()
 
     def _release_delivery(self) -> None:
-        """Release the lifecycle's projection state, then the remaining roots,
-        then the publication, each even when an earlier one fails."""
-        self._paused_includes = None
+        """Release the remaining roots, then the publication even when that fails."""
         try:
-            self._on_release()
+            self._release_pages()
         finally:
-            try:
-                self._release_pages()
-            finally:
-                self._release_publication()
+            self._release_publication()
 
     def _release_publication(self) -> None:
         publication = self._publication
@@ -473,11 +448,9 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                 At(coordinate, emitted),
                 self._activity.batch(),
             )
-            includes = page.includes
-            self._on_page_start(includes)
             roots = publication.roots_of(
                 page.page,
-                includes,
+                page.includes,
                 ordinal_offset=emitted,
                 origins=page.origins,
                 milestones=self._milestones,
@@ -487,9 +460,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
                     raise invalid_result_refusal(
                         (cast("InvalidData[object]", root),), edition=publication.edition
                     )
-                self._paused_includes = includes
                 yield root
-                self._paused_includes = None
             outcome = page.continuation
             assert outcome is not None
             delivered = outcome.delivered

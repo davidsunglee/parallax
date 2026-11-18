@@ -35,6 +35,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core.internal import temporal_read
@@ -75,7 +76,7 @@ from parallax.core.internal.unit_work import (
 from parallax.core.internal.write_payload import LayoutPayloadPreparer
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, edge_of, pin_of
-from parallax.snapshot._handle._read import typed_publication, wire_publication
+from parallax.snapshot._handle._read import TYPED, WIRE
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from tests._support.bindings import TEST_BINDING, bound_model
 from tests._support.clock_probes import inert_instant, instant_at
@@ -435,8 +436,14 @@ class _PreparedPage:
         fixture = PageFixture(domain, model=meta)
         self.page = fixture.page(fixture.node(entity, conforming), fixture.node(entity, invalid))
         self.cataloged = CatalogedModel(meta, TEST_BINDING)
-        self.construction = graph_construction_for(domain)
-        self.view_keys = prepared_view_keys_for(domain)
+        self.selected = SelectedReadModel(
+            "owned",
+            self.cataloged,
+            graph_construction_for(domain),
+            None,
+            wire_facts_for(self.cataloged),
+            prepared_view_keys_for(domain),
+        )
         self.identity = identity_of(meta, entity)
         self.includes = build_include_tree(
             queried=self.identity, root=(self.identity,), positions=()
@@ -457,19 +464,11 @@ class _PreparedPage:
                     ),
                 )
             )
-        selected = (
-            typed_publication(
-                self.cataloged,
-                self.construction,
-                wire_facts_for(self.cataloged),
-                self.view_keys,
-                "owned",
-            )
-            if publication == "typed"
-            else wire_publication(self.cataloged, wire_facts_for(self.cataloged), "owned")
-        )
+        representation = TYPED if publication == "typed" else WIRE
         return tuple(
-            selected.roots_of(self.page, self.includes, atomic=True, milestones=self.milestones)
+            representation.publication_for(self.selected).roots_of(
+                self.page, self.includes, atomic=True, milestones=self.milestones
+            )
         )
 
 

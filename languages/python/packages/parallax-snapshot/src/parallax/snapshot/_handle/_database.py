@@ -24,7 +24,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.dialect import Dialect
 from parallax.core.internal.entity import DomainModel
-from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.object_query._fluent import ObjectQuery
 from parallax.core.internal.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
     check_read_plan_cache_capacity,
@@ -33,7 +33,7 @@ from parallax.snapshot._handle._errors import SNAPSHOT_CLASS_BACKED_MODEL_REQUIR
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
-    typed_publication_builder,
+    TypedRepresentation,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._transaction import (
@@ -153,11 +153,7 @@ class ScopedDatabase:
     ) -> Snapshot[S]:
         return cast(
             "Snapshot[S]",
-            self._execution.read(
-                query,
-                convert_query=typed_read_query,
-                build_publication=typed_publication_builder(sharing_scope),
-            ),
+            self._execution.read(query, representation=TypedRepresentation.at(sharing_scope)),
         )
 
     def stream[S](
@@ -171,8 +167,7 @@ class ScopedDatabase:
             self._execution,
             query,
             batch_size,
-            convert_query=typed_read_query,
-            build_publication=typed_publication_builder(sharing_scope),
+            representation=TypedRepresentation.at(sharing_scope),
         )
 
     @property

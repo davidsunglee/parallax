@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
@@ -48,6 +48,7 @@ __all__ = [
     "BegunRead",
     "ReadInputs",
     "ReadQuery",
+    "ReadRepresentation",
     "StandaloneRead",
     "interpreted",
     "plan_stream",
@@ -59,6 +60,21 @@ __all__ = [
 type ReadQuery = ObjectQueryNode | AuthoredQuery
 """What a read is handed to resolve once it has adopted its selection: a
 canonical Object Query, or a Typed query's authored state."""
+
+
+class ReadRepresentation[Q, P: Publication[ReadEvidence, Any]](Protocol):
+    """The two steps a lifecycle supplies one read in one representation.
+
+    :meth:`convert_query` captures the caller's query spelling before any
+    selection is adopted, judging nothing model-dependent. :meth:`publication_for`
+    builds the fresh delivery-scoped Publication once the selection is adopted,
+    and is where a selection that cannot publish the representation refuses: an
+    eager read asks it before converting the query, and a stream at entry.
+    """
+
+    def convert_query(self, query: Q, /) -> ReadQuery: ...
+
+    def publication_for(self, selected: SelectedReadModel, /) -> P: ...
 
 
 def interpreted(selected: SelectedReadModel, query: ReadQuery) -> QueryInput:

@@ -42,6 +42,7 @@ from parallax.core.internal.read_delivery._page import ROOT_LEVEL, PageBuilder, 
 from parallax.core.internal.read_planning._include_tree import build_include_tree
 from parallax.core.internal.temporal_read import Pin
 from parallax.snapshot import Snapshot
+from parallax.snapshot._handle._wire_projection import TypedWireSource
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import wire_scalar_cache
 from parallax.snapshot._publication._wire_render import WireRootPublisher
@@ -264,21 +265,18 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         root=(scenario.entity,),
         positions=(),
     )
+    source = TypedWireSource(construction, scenario.wire, includes)
     one = Snapshot(
         (cast("Any", COMPACT.node(scenario, scenario.state())),),
         Pin(),
         "instance-state",
-        includes,
-        construction,
-        scenario.wire,
+        source,
     )
     many = Snapshot(
         cast("Any", COMPACT.graph(scenario, MARGINAL_NODES)),
         Pin(),
         "instance-state",
-        includes,
-        construction,
-        scenario.wire,
+        source,
     )
     layout = scenario.layout
     values = scenario.values

@@ -1,44 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import replace
+from collections.abc import Iterator
 from typing import Any, Final, Protocol, cast, overload
 
-from parallax.core._execution._publication import SelectedReadModel
-from parallax.core._execution._read_pipeline import ReadQuery
-from parallax.core.internal import read_planning
-from parallax.core.internal.base import ManagedValue, NeutralType, UsageError
-from parallax.core.internal.entity import Entity, EntityGraphConstruction, IncludePath
+from parallax.core._execution._read_pipeline import ReadRepresentation
+from parallax.core.internal.base import UsageError
+from parallax.core.internal.entity import Entity, IncludePath
 from parallax.core.internal.read_delivery import STREAM_STATE_INVALID, InvalidData
 from parallax.core.internal.read_delivery._stream import StreamDelivery
 from parallax.core.internal.temporal_read import Pin
-from parallax.core.internal.wire._facts import WireModelFacts
-from parallax.snapshot._handle._read import SnapshotPublication, wire_position
-from parallax.snapshot._publication import _wire as wire_materialize
-from parallax.snapshot._publication._wire import InstanceReader, WireEntity
-from parallax.snapshot._publication._wire_memo import WeakIdentityMemo
-from parallax.snapshot._publication._wire_render import WireRenderer
+from parallax.snapshot._handle._read import AT_PAUSED_ROOT, SnapshotPublication
+from parallax.snapshot._publication._wire import WireEntity
 
 __all__ = ["DEFAULT_BATCH_SIZE", "SnapshotStream", "StreamExecution"]
 
 DEFAULT_BATCH_SIZE: Final = 1024
 
 
-class _PageWireEncoder(Protocol):
-    def begin_page(self) -> None: ...
-
-    def __call__(self, neutral_type: NeutralType, value: ManagedValue) -> object: ...
-
-    def release(self) -> None: ...
-
-
 class StreamExecution(Protocol):
     """The read execution a Snapshot Stream obtains its one delivery from.
 
-    It refuses re-entry, captures ``query`` with ``convert_query``, and judges the
-    page size before the delivery exists; the delivery builds its publication
-    with ``build_publication`` at entry and reports each Page and its release to
-    the two callbacks.
+    It refuses re-entry, captures ``query`` through ``representation``, and
+    judges the page size before the delivery exists; the delivery builds its
+    publication through ``representation`` at entry.
     """
 
     def stream[Q](
@@ -47,111 +31,8 @@ class StreamExecution(Protocol):
         batch_size: int,
         /,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], SnapshotPublication],
-        on_page_start: Callable[[read_planning.IncludeTree], None],
-        on_release: Callable[[], None],
+        representation: ReadRepresentation[Q, SnapshotPublication],
     ) -> StreamDelivery[Any, Any, SnapshotPublication]: ...
-
-
-_CURRENT_PROJECTION_PAGE: Final = (
-    "SnapshotStream.wire answers only while delivery is paused at a root of its current Page"
-)
-
-
-class _StreamWireProjection:
-    __slots__ = ("_construction", "_encoder", "_includes", "_reader", "_renderer", "_wire")
-
-    def __init__(
-        self,
-        construction: EntityGraphConstruction,
-        wire: WireModelFacts,
-        includes: read_planning.IncludeTree,
-    ) -> None:
-        self._construction = construction
-        self._wire = wire
-        self._includes = includes
-        self._reader: InstanceReader | None = None
-        self._renderer: WireRenderer[object] | None = None
-        self._encoder: _PageWireEncoder | None = None
-
-    def begin_page(self, includes: read_planning.IncludeTree) -> None:
-        self._clear_entities()
-        self._includes = includes
-        if self._encoder is not None:
-            self._encoder.begin_page()
-
-    def project(
-        self,
-        value: object,
-        at: IncludePath[Entity, Any] | None,
-    ) -> WireEntity | InvalidData[WireEntity]:
-        record: InvalidData[object] | None = (
-            cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
-        )
-        node: object | None = record.data if record is not None else cast("object", value)
-        concrete = None
-        reader = self._reader
-        if node is not None:
-            if reader is None:
-                reader = InstanceReader(self._construction, operation="SnapshotStream.wire")
-            concrete = reader.concrete(node)
-        position = wire_position(
-            self._includes,
-            self._construction,
-            at,
-            operation="SnapshotStream.wire",
-        )
-        if node is None:
-            return cast("InvalidData[WireEntity]", record)
-        assert concrete is not None
-        if not self._includes.admits(position, concrete):
-            from parallax.snapshot._inspection import (
-                SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
-                inspection_refusal,
-            )
-
-            raise inspection_refusal(
-                SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
-                "SnapshotStream.wire",
-                f"{concrete.canonical} is not admitted at requested position {position}",
-            )
-        if self._reader is None:
-            assert reader is not None
-            self._reader = reader
-        if self._renderer is None:
-            if self._encoder is None:
-                self._encoder = wire_materialize.wire_scalar_cache()
-                self._encoder.begin_page()
-            reader = self._reader
-            assert reader is not None
-            self._renderer = WireRenderer(
-                reader,
-                self._includes,
-                self._wire,
-                self._encoder,
-                memo=WeakIdentityMemo(),
-            )
-        rendered = cast("WireEntity", self._renderer.render_at(node, position))
-        return (
-            rendered
-            if record is None
-            else cast("InvalidData[WireEntity]", replace(record, data=rendered))
-        )
-
-    def release(self) -> None:
-        self._clear_entities()
-        if self._encoder is not None:
-            self._encoder.release()
-            self._encoder = None
-
-    def _clear_entities(self) -> None:
-        if self._renderer is not None:
-            self._renderer.clear()
-            self._renderer = None
-        if self._reader is not None:
-            self._reader.clear()
-            self._reader = None
 
 
 class SnapshotStream[T]:
@@ -169,7 +50,7 @@ class SnapshotStream[T]:
     objects two roots share and what a shared Typed instance incidentally loaded.
     """
 
-    __slots__ = ("_delivery", "_projection_publication", "_projection_state")
+    __slots__ = ("_delivery", "_publication")
 
     def __init__[Q](
         self,
@@ -177,26 +58,16 @@ class SnapshotStream[T]:
         query: Q,
         batch_size: int,
         *,
-        convert_query: Callable[[Q], ReadQuery],
-        build_publication: Callable[[SelectedReadModel], SnapshotPublication],
+        representation: ReadRepresentation[Q, SnapshotPublication],
     ) -> None:
-        self._projection_publication: SnapshotPublication | None = None
-        self._projection_state: _StreamWireProjection | None = None
-        self._delivery = execution.stream(
-            query,
-            batch_size,
-            convert_query=convert_query,
-            build_publication=build_publication,
-            on_page_start=self._begin_projection_page,
-            on_release=self._release_projection,
-        )
+        self._publication: SnapshotPublication | None = None
+        self._delivery = execution.stream(query, batch_size, representation=representation)
 
     def __enter__(self) -> SnapshotStream[T]:
         """Open the stream's scope: the delivery begins its read, builds this
         stream's publication, gates the query, plans its pages, and starts
         observing it. Nothing reaches the database."""
-        publication = self._delivery.enter()
-        self._projection_publication = publication
+        self._publication = self._delivery.enter()
         return self
 
     def __exit__(
@@ -248,30 +119,10 @@ class SnapshotStream[T]:
         at: IncludePath[Entity, Any] | None = None,
     ) -> WireEntity | InvalidData[WireEntity]:
         """Publish one eligible node under the current delivery Page's request shape."""
-        publication = self._projection_publication
-        construction = None if publication is None else publication.construction
-        wire = None if publication is None else publication.wire
-        if construction is None or wire is None:
-            if self._delivery.entered:
-                from parallax.snapshot._inspection import (
-                    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
-                    inspection_refusal,
-                )
-
-                raise inspection_refusal(
-                    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
-                    "SnapshotStream.wire",
-                    "Wire projection is available only on a Typed Snapshot Stream",
-                )
-            raise UsageError(STREAM_STATE_INVALID, _CURRENT_PROJECTION_PAGE)
-        includes = self._delivery.paused_includes
-        if includes is None:
-            raise UsageError(STREAM_STATE_INVALID, _CURRENT_PROJECTION_PAGE)
-        projection = self._projection_state
-        if projection is None:
-            projection = _StreamWireProjection(construction, wire, includes)
-            self._projection_state = projection
-        return projection.project(value, at)
+        publication = self._publication
+        if publication is None:
+            raise UsageError(STREAM_STATE_INVALID, AT_PAUSED_ROOT)
+        return publication.project(value, at)
 
     @property
     def pin(self) -> Pin:
@@ -300,13 +151,3 @@ class SnapshotStream[T]:
 
     def __repr__(self) -> str:
         return f"SnapshotStream(target={self._delivery.target!r}, state={self._delivery.state!r})"
-
-    def _begin_projection_page(self, includes: read_planning.IncludeTree) -> None:
-        if self._projection_state is not None:
-            self._projection_state.begin_page(includes)
-
-    def _release_projection(self) -> None:
-        projection = self._projection_state
-        self._projection_state = None
-        if projection is not None:
-            projection.release()

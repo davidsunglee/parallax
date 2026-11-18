@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
-from typing import Any
 
 from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._read_pipeline import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
-from parallax.core.internal.object_query import ObjectQueryNode, deserialize
-from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import (
     SharingScope,
     Snapshot,
-    wire_publication_builder,
+    WireQuery,
+    WireRepresentation,
 )
 from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
@@ -31,39 +28,7 @@ __all__ = [
     "WireDatabaseView",
     "WireQuery",
     "WireTransactionView",
-    "wire_read_query",
 ]
-
-type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
-"""What a Wire read accepts: a canonical query mapping or node, or a Typed query.
-
-What a Wire read accepts: the canonical Object Query mapping, the canonical
-node itself, or — on a class-backed model — the Typed authoring value.
-"""
-
-
-def wire_read_query(query: WireQuery) -> ReadQuery:
-    """``query`` as the unresolved input the shared read gate resolves.
-
-    Accepting three spellings adds no query semantics: the mapping goes through
-    `m-object-query`'s own deserializer and a node passes as itself, while the
-    Typed value stays authored exactly as ``db.find`` hands it over, so it keeps
-    the Typed operand policy rather than being encoded and decoded again.
-    Nothing here validates the query — the shared read gate does, after the read
-    adopts its selection and before any I/O — so all three spellings meet the
-    same refusals.
-
-    It is a stable converter a read is handed rather than a step the read
-    performs first: a Wire read refuses re-entry before it looks at what it was
-    handed, so a mapping no deserializer could accept is refused as re-entry
-    when it arrives from inside a lifecycle context, exactly as an unusable Typed
-    query is.
-    """
-    if isinstance(query, ObjectQueryNode):
-        return query
-    if isinstance(query, Mapping):
-        return deserialize(query)
-    return typed_read_query(query)
 
 
 class WireDatabaseView:
@@ -98,11 +63,7 @@ class WireDatabaseView:
         re-entry, then the read begun, then the spelling it was handed captured
         and resolved under the read's selection.
         """
-        return self._reads.read(
-            query,
-            convert_query=wire_read_query,
-            build_publication=wire_publication_builder(sharing_scope),
-        )
+        return self._reads.read(query, representation=WireRepresentation.at(sharing_scope))
 
     def stream(
         self,
@@ -129,8 +90,7 @@ class WireDatabaseView:
             self._reads,
             query,
             batch_size,
-            convert_query=wire_read_query,
-            build_publication=wire_publication_builder(sharing_scope),
+            representation=WireRepresentation.at(sharing_scope),
         )
 
     def __repr__(self) -> str:

@@ -190,6 +190,7 @@ def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) 
         "parallax/snapshot/_handle/_transaction.py",
         "parallax/snapshot/_handle/_typed_writes.py",
         "parallax/snapshot/_handle/_wire.py",
+        "parallax/snapshot/_handle/_wire_projection.py",
         "parallax/snapshot/_handle/_wire_writes.py",
     }
     assert _modules_directly_in(

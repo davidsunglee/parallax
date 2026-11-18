@@ -367,20 +367,21 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     root = Database(port.open(), control_support.GUARDED_MODEL, binding=TEST_BINDING)
     scope = root.using_database_login()
     result = scope.find(control_support.guarded_query(control_support.GUARD_WIDTHS[-1]))
-    held = cast("Any", result)
-    construction = held._construction
-    includes = held._includes
-    wire = held._wire
+    source = cast("Any", result)._source
+    construction = source.construction
+    includes = source.includes
+    wire = source.wire
     root.close()
     del root, scope
     gc.collect()
     gc.collect()
 
     assert construction is not None and includes is not None and wire is not None
-    direct = gc.get_referents(result)
-    assert any(value is construction for value in direct)
-    assert any(value is includes for value in direct)
-    assert any(value is wire for value in direct)
+    assert any(value is source for value in gc.get_referents(result))
+    retained = gc.get_referents(source)
+    assert any(value is construction for value in retained)
+    assert any(value is includes for value in retained)
+    assert any(value is wire for value in retained)
 
     reached = reachable_objects(result, boundaries=(construction, includes, wire))
     kinds: tuple[tuple[type, str], ...] = (
@@ -407,6 +408,8 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     }
 
     def category(value: object) -> str:
+        if value is source:
+            return "projection-source"
         if value is construction:
             return "construction"
         if value is includes:
@@ -430,6 +433,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     assert unexpected == {}
     assert inventory == {
         "snapshot": 1,
+        "projection-source": 1,
         "construction": 1,
         "includes": 1,
         "wire-facts": 1,

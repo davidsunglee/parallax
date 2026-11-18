@@ -28,6 +28,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core import DomainModel
+from parallax.core._execution._publication import SelectedReadModel
 from parallax.core.internal.base import (
     SQL_NULL,
     DocumentValue,
@@ -66,7 +67,7 @@ from parallax.core.internal.read_planning._include_tree import PositionSeed, bui
 from parallax.core.internal.sql_gen._compile import CompiledRead
 from parallax.core.internal.temporal_read import Pin
 from parallax.core.internal.wire import WireValue, decode_canonical_wire
-from parallax.snapshot._handle._read import typed_publication, wire_publication
+from parallax.snapshot._handle._read import TYPED, WIRE
 from tests._support.bindings import TEST_BINDING
 from tests._support.model_capabilities import (
     graph_construction_for,
@@ -438,17 +439,21 @@ class PageFixture:
     ) -> Iterator[object | InvalidData[object]]:
         """:meth:`materialize`'s roots as the publication hands them over."""
         page = self.page(*roots, pin=pin)
-        publication = typed_publication(
-            self._cataloged,
-            graph_construction_for(self._domain),
-            wire_facts_for(self._cataloged),
-            prepared_view_keys_for(self._domain),
-            "fixture",
-        )
+        publication = TYPED.publication_for(self._selected())
         queried = self._model.entities[0].identity
         includes = build_include_tree(queried=queried, root=(queried,), positions=())
         return publication.roots_of(
             page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)
+        )
+
+    def _selected(self) -> SelectedReadModel:
+        return SelectedReadModel(
+            "fixture",
+            self._cataloged,
+            graph_construction_for(self._domain),
+            None,
+            wire_facts_for(self._cataloged),
+            prepared_view_keys_for(self._domain),
         )
 
     def include_tree(
@@ -512,7 +517,7 @@ class PageFixture:
         if includes is None:
             queried = self._model.entities[0].identity
             includes = build_include_tree(queried=queried, root=(queried,), positions=())
-        publication = wire_publication(self._cataloged, wire_facts_for(self._cataloged), "fixture")
+        publication = WIRE.publication_for(self._selected())
         try:
             yield from publication.roots_of(
                 page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)

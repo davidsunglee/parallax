@@ -24,6 +24,7 @@ from parallax.core.internal.wire._facts import (
     WireOccurrenceFacts,
 )
 from parallax.snapshot import Snapshot
+from parallax.snapshot._handle._wire_projection import TypedWireSource
 from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire_render import (
@@ -161,9 +162,7 @@ def test_direct_reads_and_typed_projection_render_through_the_same_plans(
         cast("Any", typed),
         Pin(),
         "fixture",
-        includes,
-        graph_construction_for(ENCODED_ORDERS),
-        facts,
+        TypedWireSource(graph_construction_for(ENCODED_ORDERS), facts, includes),
     )
     assert snapshot.wire().results() == list(direct)
 

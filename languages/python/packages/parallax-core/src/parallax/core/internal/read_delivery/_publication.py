@@ -43,7 +43,10 @@ class Publication[Origin, Eager](Protocol):
     Delivery-scoped: an eager read uses it once and a stream reuses it across
     every bounded Page, then :attr:`release` drops any representation-specific
     reuse state. Delivery invokes it inside the read or stream activity that
-    owns the Page, so no Page outlives the operation that read it.
+    owns the Page, so no Page outlives the operation that read it. Delivery
+    releases it before any terminal failure reaches the consumer, including a
+    refused root, so a :attr:`roots_of` iterator may still be suspended at the
+    root it last published when :attr:`release` runs.
     :meth:`from_find` and :meth:`from_history` compose :attr:`roots_of` into an
     eager envelope, so neither is a conversion that could drift from the
     streamed one. ``representation`` is the purpose the activity reports,

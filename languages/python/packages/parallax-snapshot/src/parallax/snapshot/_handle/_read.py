@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
+from typing import Any, Final, Literal, NoReturn, cast, overload
 
+from parallax.core._execution._publication import SelectedReadModel
+from parallax.core._execution._read_pipeline import ReadQuery
 from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.execution_lifecycle._events import ResultRepresentation
 from parallax.core.internal import read_planning
@@ -15,32 +17,20 @@ from parallax.core.internal.base import (
     UsageError,
 )
 from parallax.core.internal.entity import Entity, EntityGraphConstruction, IncludePath
-from parallax.core.internal.entity._authored_resolver import include_path_node
-from parallax.core.internal.entity._expressions import authored_include_path
-from parallax.core.internal.entity._layout import CatalogedModel
-from parallax.core.internal.object_query.validate import validate_include_path
-from parallax.core.internal.predicate import root_position
-from parallax.core.internal.read_delivery import InvalidData
+from parallax.core.internal.metamodel import Metamodel
+from parallax.core.internal.object_query import ObjectQueryNode, deserialize
+from parallax.core.internal.object_query._fluent import ObjectQuery, typed_read_query
+from parallax.core.internal.read_delivery import STREAM_STATE_INVALID, InvalidData
 from parallax.core.internal.read_delivery._page import Page, invalid_result_refusal
 from parallax.core.internal.read_delivery._page_reader import EagerPageResult, HistoryPageResult
-from parallax.core.internal.read_delivery._publication import RootsOf
 from parallax.core.internal.temporal_read import Pin, TemporalShape
-from parallax.core.internal.wire._facts import WireModelFacts
-
-if TYPE_CHECKING:
-    from parallax.snapshot._publication._wire import InstanceReader
-
-from parallax.core._execution._publication import SelectedReadModel
 from parallax.snapshot._handle._errors import (
     SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
     SNAPSHOT_MATERIALIZATION_FAILED,
 )
-from parallax.snapshot._inspection import (
-    SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
-    SNAPSHOT_WIRE_AT_UNREQUESTED,
-    SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
-    inspection_refusal,
-)
+from parallax.snapshot._handle._wire_projection import TypedWireProjection, TypedWireSource
+from parallax.snapshot._inspection import SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE, inspection_refusal
+from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._graph_view import GraphView
 from parallax.snapshot._publication._root_publication import publish_roots, publish_shared_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
@@ -48,19 +38,22 @@ from parallax.snapshot._publication._wire import WireEntity
 from parallax.snapshot._publication._wire_render import WireRootPublisher
 
 __all__ = [
+    "AT_PAUSED_ROOT",
+    "TYPED",
+    "TYPED_PAGE_SHARED",
+    "WIRE",
+    "WIRE_PAGE_SHARED",
     "CheckedSnapshot",
-    "PublicationBuilder",
     "SharingScope",
     "Snapshot",
     "SnapshotPublication",
+    "TypedPublication",
+    "TypedRepresentation",
+    "WirePublication",
+    "WireQuery",
+    "WireRepresentation",
     "check_sharing_scope",
-    "typed_publication",
-    "typed_publication_builder",
-    "typed_publication_for",
-    "typed_shared_publication_for",
-    "wire_position",
-    "wire_publication",
-    "wire_publication_for",
+    "wire_read_query",
 ]
 
 
@@ -135,32 +128,26 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_construction", "_edition", "_includes", "_invalid", "_pin", "_roots", "_wire")
+    __slots__ = ("_edition", "_invalid", "_pin", "_roots", "_source")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
     _edition: str
-    _includes: read_planning.IncludeTree | None
-    _construction: EntityGraphConstruction | None
-    _wire: WireModelFacts | None
+    _source: TypedWireSource | None
 
     def __init__(
         self,
         roots: tuple[T | InvalidData[T], ...],
         pin: Pin,
         edition: str,
-        includes: read_planning.IncludeTree | None = None,
-        construction: EntityGraphConstruction | None = None,
-        wire: WireModelFacts | None = None,
+        source: TypedWireSource | None = None,
     ) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
         self._pin = pin
         self._edition = edition
-        self._includes = includes
-        self._construction = construction
-        self._wire = wire
+        self._source = source
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -220,10 +207,8 @@ class Snapshot[T]:
         at: IncludePath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
     ) -> Snapshot[WireEntity] | WireEntity | InvalidData[WireEntity]:
         """Publish this Typed result, or one eligible node, in canonical Wire form."""
-        projection = self._construction
-        includes = self._includes
-        wire = self._wire
-        if projection is None or includes is None or wire is None:
+        source = self._source
+        if source is None:
             raise inspection_refusal(
                 SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
                 "Snapshot.wire",
@@ -232,25 +217,25 @@ class Snapshot[T]:
         if value is _WIRE_ALL:
             if at is not _WIRE_AT_OMITTED:
                 raise TypeError("whole-result Snapshot.wire() accepts no at= position")
-            values = self._roots
+            roots = cast("tuple[object, ...]", self._roots)
             pin = self._pin
             edition = self._edition
             del self
+            projection = TypedWireProjection.for_call(source)
             try:
-                projected = _project_eager_values(values, includes, projection, wire, includes.root)
-                return Snapshot(projected, pin, edition)
+                return Snapshot(projection.project_roots(roots), pin, edition)
             finally:
-                values = ()
+                roots = ()
+                projection.release()
         del self
-        reader = _require_projection_inputs((value,), projection)
-        position = wire_position(
-            includes,
-            projection,
-            None if at is _WIRE_AT_OMITTED else cast("IncludePath[Entity, Any] | None", at),
-        )
-        return _project_eager_values((value,), includes, projection, wire, position, reader=reader)[
-            0
-        ]
+        projection = TypedWireProjection.for_call(source)
+        try:
+            return projection.project(
+                value,
+                None if at is _WIRE_AT_OMITTED else cast("IncludePath[Entity, Any] | None", at),
+            )
+        finally:
+            projection.release()
 
     @property
     def pin(self) -> Pin:
@@ -283,132 +268,6 @@ class Snapshot[T]:
         """
         if self._invalid:
             raise invalid_result_refusal(self._invalid, edition=self._edition)
-
-
-def _require_projection_inputs(
-    values: tuple[object, ...],
-    projection: EntityGraphConstruction,
-    *,
-    operation: str = "Snapshot.wire",
-) -> InstanceReader:
-    """Validate explicit inputs before resolving a separately supplied position."""
-    from parallax.snapshot._publication._wire import InstanceReader
-
-    reader = InstanceReader(projection, operation=operation)
-    for value in values:
-        record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
-        node: object | None = record.data if record is not None else cast("object", value)
-        if node is None:
-            continue
-        reader.concrete(node)
-    return reader
-
-
-def wire_position(
-    includes: read_planning.IncludeTree,
-    construction: EntityGraphConstruction,
-    path: IncludePath[Entity, Any] | None,
-    *,
-    operation: str = "Snapshot.wire",
-) -> read_planning.PositionId:
-    if path is None:
-        return includes.root
-    meta = construction.cataloged.meta
-    root = meta.entity(includes.queried)
-    if root is None:  # pragma: no cover - the tree came from this exact model
-        raise inspection_refusal(
-            SNAPSHOT_WIRE_AT_UNREQUESTED,
-            operation,
-            f"the retained model declares no query root {includes.queried.canonical}",
-        )
-    try:
-        bound = include_path_node(
-            authored_include_path(path), includes.queried, meta, construction.classes
-        )
-        resolved = validate_include_path(bound, meta, root_position(meta, root))
-        position = includes.requested_position(resolved)
-    except Exception as error:
-        raise inspection_refusal(
-            SNAPSHOT_WIRE_AT_UNREQUESTED,
-            operation,
-            f"the requested projection position is not part of this read: {error}",
-        ) from error
-    if position is None:
-        raise inspection_refusal(
-            SNAPSHOT_WIRE_AT_UNREQUESTED,
-            operation,
-            "the requested projection position is not an exact prefix of this read",
-        )
-    return position
-
-
-def _project_eager_values(
-    values: tuple[object, ...],
-    includes: read_planning.IncludeTree,
-    projection: EntityGraphConstruction,
-    wire: WireModelFacts,
-    position: read_planning.PositionId,
-    *,
-    reader: InstanceReader | None = None,
-) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    from parallax.snapshot._publication._wire import InstanceReader, wire_scalar_cache
-    from parallax.snapshot._publication._wire_memo import InstanceIdentityMemo
-    from parallax.snapshot._publication._wire_render import WireRenderer
-
-    renderer: WireRenderer[object] | None = None
-    encoder: _DeliveryWireEncoder | None = None
-    projected: list[WireEntity | InvalidData[WireEntity]] = []
-    value: object | None = None
-    record: InvalidData[object] | None = None
-    node: object | None = None
-    rendered: WireEntity | None = None
-    try:
-        for index in range(len(values)):
-            value = values[index]
-            record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
-            node = record.data if record is not None else cast("object", value)
-            if node is None:
-                projected.append(cast("InvalidData[WireEntity]", record))
-                continue
-            if reader is None:
-                reader = InstanceReader(projection)
-            concrete = reader.concrete(node)
-            if not includes.admits(position, concrete):
-                raise inspection_refusal(
-                    SNAPSHOT_WIRE_AT_CONCRETE_MISMATCH,
-                    "Snapshot.wire",
-                    f"{concrete.canonical} is not admitted at requested position {position}",
-                )
-            if renderer is None:
-                encoder = wire_scalar_cache()
-                encoder.begin_page()
-                renderer = WireRenderer(
-                    reader,
-                    includes,
-                    wire,
-                    encoder,
-                    memo=InstanceIdentityMemo(),
-                )
-            rendered = renderer.render_at(node, position)
-            projected.append(
-                rendered
-                if record is None
-                else cast("InvalidData[WireEntity]", replace(record, data=rendered))
-            )
-        return tuple(projected)
-    finally:
-        if renderer is not None:
-            renderer.clear()
-        if reader is not None:
-            reader.clear()
-        projected.clear()
-        values = ()
-        value = None
-        record = None
-        node = None
-        rendered = None
-        if encoder is not None:
-            encoder.release()
 
 
 class CheckedSnapshot[T]:
@@ -459,190 +318,60 @@ class CheckedSnapshot[T]:
         return f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r})"
 
 
-class _DeliveryWireEncoder(Protocol):
-    def __call__(self, neutral_type: Any, value: Any, /) -> object: ...
-
-    def begin_page(self) -> None: ...
-
-    def release(self) -> None: ...
+AT_PAUSED_ROOT: Final = (
+    "SnapshotStream.wire answers only while delivery is paused at a root of its current Page"
+)
 
 
-@dataclass(frozen=True, slots=True)
-class SnapshotPublication:
-    """Which materializer a read publishes through, as the ONE conversion every
-    read reaches it by: the Snapshot lifecycle's Publication.
+type SnapshotPublication = TypedPublication | WirePublication
+"""The Snapshot lifecycle's Publication of one delivery, Typed or Wire.
 
-    Read execution and delivery are the same whichever materializer runs — the
-    shared gate, the milestone-set dispatch, the Page read, the activity, and
-    inside a transaction the lock derivation and the observation record.
-    Passing the publication in is what lets that orchestration exist once
-    instead of once per result form, so the equivalence the Typed and Wire
-    interfaces promise is structural rather than maintained by inspection.
+:attr:`roots_of` is per Page rather than per result. Each Page's one Root View
+is re-pointed at every root in turn, which keeps result scope a property of the
+root being published rather than a mode the materializer is told about; a
+page-scope publication may instead resolve a Page's roots together, and
+otherwise ends in that same per-root pass. Every envelope it publishes is
+stamped with the edition of the selection it was built over.
+"""
 
-    :attr:`roots_of` is deliberately per-Page rather than per-result. The
-    publication itself is delivery-scoped: an eager read uses it once and a
-    stream reuses it across every bounded Page, then :attr:`release` drops any
-    representation-specific reuse state. An eager
-    find and a milestone-set find each publish one Page, while a streamed read
-    publishes one bounded Page at a time. Each Page's one Root View is re-pointed
-    at every root in turn, which keeps result scope a property of the root being
-    published rather than a mode the materializer is told about; a page-scope
-    publication may instead resolve a Page's roots together, and otherwise ends
-    in that same per-root pass.
-    :meth:`from_find` and :meth:`from_history` are the two eager
-    compositions over it, so neither is an independent conversion that could
-    drift from the streamed one.
 
-    ``representation`` is the same choice named for the Read activity that
-    orchestration opens: which materializer publishes IS which purpose the
-    activity reports, so the two are one value rather than two that could disagree.
-    ``edition`` is the Model Edition of the selection the publication was
-    built over, and every envelope it publishes is stamped with it — the one
-    place the stamp is applied, so no result form can be published without
-    one.
+class TypedPublication:
+    """The Typed Publication of one delivery: frozen Entity instances, each node
+    with a narrowed view retaining the selection's view keys to find it by.
+
+    :meth:`project` answers only while :meth:`roots_of` is publishing a Page and
+    the publication is unreleased. A caller runs only while that iterator is
+    suspended at a root it yielded, and delivery releases the publication before
+    any terminal failure reaches the caller, possibly with the iterator still
+    suspended, so release withdraws availability itself rather than leaving it
+    to the iterator's cleanup. The projection is allocated at the first
+    :meth:`project`, so a delivery that never projects allocates none.
     """
 
-    representation: ResultRepresentation
-    roots_of: RootsOf[ReadEvidence]
-    edition: str
-    release: Callable[[], None]
-    construction: EntityGraphConstruction | None = None
-    wire: WireModelFacts | None = None
+    __slots__ = ("_construction", "_open_page", "_projection", "_selected", "_sharing_scope")
 
-    def from_find(self, result: EagerPageResult[ReadEvidence]) -> Snapshot[Any]:
-        """``result``'s Page as a Snapshot at that read's own pin."""
-        try:
-            return Snapshot(
-                tuple(
-                    self.roots_of(
-                        result.page,
-                        result.includes,
-                        atomic=True,
-                        origins=result.origins,
-                    )
-                ),
-                result.page.pin,
-                self.edition,
-                result.includes if self.construction is not None else None,
-                self.construction,
-                self.wire,
-            )
-        finally:
-            self.release()
+    def __init__(
+        self,
+        selected: SelectedReadModel,
+        construction: EntityGraphConstruction,
+        sharing_scope: SharingScope,
+    ) -> None:
+        self._selected = selected
+        self._construction = construction
+        self._sharing_scope: SharingScope = sharing_scope
+        self._open_page: read_planning.IncludeTree | None = None
+        self._projection: TypedWireProjection | None = None
 
-    def from_history(self, result: HistoryPageResult) -> Snapshot[Any]:
-        """Every milestone's roots as ONE ordered result.
+    @property
+    def representation(self) -> ResultRepresentation:
+        return "typed"
 
-        Each milestone root is classified on its own, at its own milestone's
-        edge, while a classified root's ordinal names its position in the flat
-        published result. A milestone-set read carries no Include Path (`m-case-format`),
-        so every root publishes root-only, and the outer pin
-        is empty because a scan is not a pin.
-        """
-        try:
-            return Snapshot(
-                tuple(
-                    self.roots_of(
-                        result.page,
-                        result.includes,
-                        atomic=True,
-                        milestones=result.milestones,
-                    )
-                ),
-                Pin(),
-                self.edition,
-                result.includes if self.construction is not None else None,
-                self.construction,
-                self.wire,
-            )
-        finally:
-            self.release()
-
-
-def _release_nothing() -> None:
-    pass
-
-
-type PublicationBuilder = Callable[[SelectedReadModel], SnapshotPublication]
-"""What an entrypoint hands read execution to build its one publication."""
-
-
-def typed_publication_builder(sharing_scope: SharingScope) -> PublicationBuilder:
-    """The builder of a Typed read at ``sharing_scope``, refusing any other value."""
-    check_sharing_scope(sharing_scope)
-    return typed_publication_for if sharing_scope == "root" else typed_shared_publication_for
-
-
-def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
-    """The Typed publication of a read served under ``selected``."""
-    return _typed_publication_at(selected, "root")
-
-
-def typed_shared_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
-    """:func:`typed_publication_for` at page scope."""
-    return _typed_publication_at(selected, "page")
-
-
-def _typed_publication_at(
-    selected: SelectedReadModel, sharing_scope: SharingScope
-) -> SnapshotPublication:
-    """A Typed publication needs the graph construction, so this is where a
-    selection that can materialize no Snapshot at all refuses a Typed read —
-    before the query is judged, before a participating read's force-flush, and
-    before any I/O. The publication carries the selection's edition, so every
-    envelope it publishes is stamped with what the read was served under.
-    """
-    construction = selected.construction
-    if construction is None:
-        raise UsageError(
-            SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
-            "this read is served under a model that composed no Entity Class, so it "
-            "cannot materialize a Snapshot",
-        )
-    return typed_publication(
-        selected.model,
-        construction,
-        selected.wire,
-        selected.narrowed_view_keys,
-        selected.edition,
-        sharing_scope=sharing_scope,
-    )
-
-
-def wire_publication_builder(sharing_scope: SharingScope) -> PublicationBuilder:
-    """The builder of a Wire read at ``sharing_scope``, refusing any other value."""
-    check_sharing_scope(sharing_scope)
-    return wire_publication_for if sharing_scope == "root" else wire_shared_publication_for
-
-
-def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
-    """The Wire publication of a read served under ``selected``.
-
-    A Wire node is no Entity Class instance, so no materializer is required and
-    no classless refusal applies.
-    """
-    return wire_publication(selected.model, selected.wire, selected.edition)
-
-
-def wire_shared_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
-    """:func:`wire_publication_for` at page scope."""
-    return wire_publication(selected.model, selected.wire, selected.edition, sharing_scope="page")
-
-
-def typed_publication(
-    model: CatalogedModel,
-    construction: EntityGraphConstruction,
-    wire: WireModelFacts,
-    view_keys: read_planning.NarrowedViewKeys,
-    edition: str,
-    *,
-    sharing_scope: SharingScope = "root",
-) -> SnapshotPublication:
-    """Publish through the typed materializer: frozen Entity instances, each
-    result retaining ``wire`` for its later Wire projection and each node with
-    a narrowed view retaining ``view_keys`` to find it by."""
+    @property
+    def edition(self) -> str:
+        return self._selected.edition
 
     def roots_of(
+        self,
         page: Page,
         includes: read_planning.IncludeTree,
         /,
@@ -652,8 +381,12 @@ def typed_publication(
         origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
-        del includes
-        publisher = TypedRootPublisher(model.meta, construction, view_keys)
+        self._open_page = includes
+        projection = self._projection
+        if projection is not None:
+            projection.begin_page(includes)
+        meta = self._selected.model.meta
+        publisher = TypedRootPublisher(meta, self._construction, self._selected.narrowed_view_keys)
 
         def publish_root(root: GraphView, ordinal: int) -> tuple[object, ...]:
             # Stored state contradicting the model is no failure here: it was
@@ -668,60 +401,99 @@ def typed_publication(
                     "the read succeeded but its Entity graph could not be built",
                 ) from exc
 
-        if sharing_scope == "page":
-            yield from publish_shared_roots(
+        try:
+            yield from _publish_in_scope(
                 page,
                 publish_root,
                 publisher.publish_shared_graph,
-                model.meta,
+                meta,
+                self._sharing_scope,
                 atomic=atomic,
                 ordinal_offset=ordinal_offset,
+                origins=origins,
                 milestones=milestones,
-                read_evidence=origins,
             )
-            return
-        yield from publish_roots(
-            page,
-            publish_root,
-            model.meta,
-            atomic=atomic,
-            ordinal_offset=ordinal_offset,
-            milestones=milestones,
-            read_evidence=origins,
+        finally:
+            self._open_page = None
+
+    def project(
+        self, value: object, at: IncludePath[Entity, Any] | None
+    ) -> WireEntity | InvalidData[WireEntity]:
+        """``value`` projected as Wire under the open Page's include shape."""
+        includes = self._open_page
+        if includes is None:
+            raise UsageError(STREAM_STATE_INVALID, AT_PAUSED_ROOT)
+        projection = self._projection
+        if projection is None:
+            projection = TypedWireProjection.for_delivery(
+                self._construction, self._selected.wire, includes
+            )
+            self._projection = projection
+        return projection.project(value, at)
+
+    def release(self) -> None:
+        self._open_page = None
+        projection = self._projection
+        self._projection = None
+        if projection is not None:
+            projection.release()
+
+    def from_find(self, result: EagerPageResult[ReadEvidence], /) -> Snapshot[Any]:
+        """``result``'s Page as a Snapshot at that read's own pin."""
+        return _eager_snapshot(
+            self,
+            result.page,
+            result.includes,
+            result.page.pin,
+            TypedWireSource(self._construction, self._selected.wire, result.includes),
+            origins=result.origins,
         )
 
-    return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction, wire)
+    def from_history(self, result: HistoryPageResult, /) -> Snapshot[Any]:
+        """Every milestone's roots as ONE ordered result.
+
+        Each milestone root is classified on its own, at its own milestone's
+        edge, while a classified root's ordinal names its position in the flat
+        published result. A milestone-set read carries no Include Path (`m-case-format`),
+        so every root publishes root-only, and the outer pin
+        is empty because a scan is not a pin.
+        """
+        return _eager_snapshot(
+            self,
+            result.page,
+            result.includes,
+            Pin(),
+            TypedWireSource(self._construction, self._selected.wire, result.includes),
+            milestones=result.milestones,
+        )
 
 
-def wire_publication(
-    model: CatalogedModel,
-    wire: WireModelFacts,
-    edition: str,
-    *,
-    sharing_scope: SharingScope = "root",
-) -> SnapshotPublication:
-    """Publish through the wire materializer: frozen declared-name value trees.
+class WirePublication:
+    """The Wire Publication of one delivery: frozen declared-name value trees,
+    rendered through the selection's prepared Wire facts.
 
-    ``model`` is the selection's cataloged model and ``wire`` the facts its
-    preparation derived, which every node renders through, so the
-    publication's one delivery-scoped reuse state is the scalar encoder.
+    Its one delivery-scoped reuse state is the scalar encoder, created with the
+    publication, rotated at each Page, and dropped at release, after which it
+    publishes no further Page.
     """
 
-    from parallax.snapshot._publication._wire import wire_scalar_cache
+    __slots__ = ("_encoder", "_selected", "_sharing_scope")
 
-    encode: _DeliveryWireEncoder | None = wire_scalar_cache()
-    released = False
+    def __init__(self, selected: SelectedReadModel, sharing_scope: SharingScope) -> None:
+        self._selected = selected
+        self._sharing_scope: SharingScope = sharing_scope
+        self._encoder = wire_materialize.wire_scalar_cache()
 
-    def release() -> None:
-        nonlocal encode, released
-        if released:
-            return
-        released = True
-        if encode is not None:
-            encode.release()
-            encode = None
+    @property
+    def representation(self) -> ResultRepresentation:
+        return "wire"
+
+    @property
+    def edition(self) -> str:
+        return self._selected.edition
 
     def roots_of(
+        self,
         page: Page,
         includes: read_planning.IncludeTree,
         /,
@@ -731,32 +503,200 @@ def wire_publication(
         origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
-        nonlocal encode
-        current = encode
-        if released or current is None:
+        encoder = self._encoder
+        if encoder is None:
             raise RuntimeError("a released Wire publication cannot publish another Page")
-        current.begin_page()
-        publisher = WireRootPublisher(model.meta, wire, includes, current)
-        if sharing_scope == "page":
-            yield from publish_shared_roots(
-                page,
-                publisher,
-                publisher.publish_shared_graph,
-                model.meta,
-                atomic=atomic,
-                ordinal_offset=ordinal_offset,
-                milestones=milestones,
-                read_evidence=origins,
-            )
-            return
-        yield from publish_roots(
+        encoder.begin_page()
+        meta = self._selected.model.meta
+        publisher = WireRootPublisher(meta, self._selected.wire, includes, encoder)
+        yield from _publish_in_scope(
             page,
             publisher,
-            model.meta,
+            publisher.publish_shared_graph,
+            meta,
+            self._sharing_scope,
+            atomic=atomic,
+            ordinal_offset=ordinal_offset,
+            origins=origins,
+            milestones=milestones,
+        )
+
+    def project(self, value: object, at: IncludePath[Entity, Any] | None) -> NoReturn:
+        """Refuse: a Wire envelope is no Typed value to project."""
+        del value, at
+        raise inspection_refusal(
+            SNAPSHOT_WIRE_ENVELOPE_INELIGIBLE,
+            "SnapshotStream.wire",
+            "Wire projection is available only on a Typed Snapshot Stream",
+        )
+
+    def release(self) -> None:
+        encoder = self._encoder
+        self._encoder = None
+        if encoder is not None:
+            encoder.release()
+
+    def from_find(self, result: EagerPageResult[ReadEvidence], /) -> Snapshot[Any]:
+        """``result``'s Page as a Snapshot at that read's own pin."""
+        return _eager_snapshot(
+            self, result.page, result.includes, result.page.pin, None, origins=result.origins
+        )
+
+    def from_history(self, result: HistoryPageResult, /) -> Snapshot[Any]:
+        """Every milestone's roots as ONE ordered result, at the empty pin."""
+        return _eager_snapshot(
+            self, result.page, result.includes, Pin(), None, milestones=result.milestones
+        )
+
+
+def _publish_in_scope[T](
+    page: Page,
+    publish_root: Callable[[GraphView, int], tuple[T, ...]],
+    publish_shared_graph: Callable[[GraphView, Sequence[int]], tuple[T, ...]],
+    meta: Metamodel,
+    sharing_scope: SharingScope,
+    *,
+    atomic: bool,
+    ordinal_offset: int,
+    origins: Mapping[int, ReadEvidence],
+    milestones: TemporalShape | None,
+) -> Iterator[T]:
+    if sharing_scope == "page":
+        return publish_shared_roots(
+            page,
+            publish_root,
+            publish_shared_graph,
+            meta,
             atomic=atomic,
             ordinal_offset=ordinal_offset,
             milestones=milestones,
             read_evidence=origins,
         )
+    return publish_roots(
+        page,
+        publish_root,
+        meta,
+        atomic=atomic,
+        ordinal_offset=ordinal_offset,
+        milestones=milestones,
+        read_evidence=origins,
+    )
 
-    return SnapshotPublication("wire", roots_of, edition, release)
+
+def _eager_snapshot(
+    publication: SnapshotPublication,
+    page: Page,
+    includes: read_planning.IncludeTree,
+    pin: Pin,
+    source: TypedWireSource | None,
+    *,
+    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
+    milestones: TemporalShape | None = None,
+) -> Snapshot[Any]:
+    """``publication``'s one atomic publication of ``page``, released however it ends."""
+    try:
+        return Snapshot(
+            tuple(
+                publication.roots_of(
+                    page, includes, atomic=True, origins=origins, milestones=milestones
+                )
+            ),
+            pin,
+            publication.edition,
+            source,
+        )
+    finally:
+        publication.release()
+
+
+type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
+"""What a Wire read accepts: a canonical query mapping or node, or a Typed query.
+
+What a Wire read accepts: the canonical Object Query mapping, the canonical
+node itself, or — on a class-backed model — the Typed authoring value.
+"""
+
+
+def wire_read_query(query: WireQuery) -> ReadQuery:
+    """``query`` as the unresolved input the shared read gate resolves.
+
+    Accepting three spellings adds no query semantics: the mapping goes through
+    `m-object-query`'s own deserializer and a node passes as itself, while the
+    Typed value stays authored exactly as ``db.find`` hands it over, so it keeps
+    the Typed operand policy rather than being encoded and decoded again.
+    Nothing here validates the query — the shared read gate does, after the read
+    adopts its selection and before any I/O — so all three spellings meet the
+    same refusals.
+
+    It is a stable converter a read is handed rather than a step the read
+    performs first: a Wire read refuses re-entry before it looks at what it was
+    handed, so a mapping no deserializer could accept is refused as re-entry
+    when it arrives from inside a lifecycle context, exactly as an unusable Typed
+    query is.
+    """
+    if isinstance(query, ObjectQueryNode):
+        return query
+    if isinstance(query, Mapping):
+        return deserialize(query)
+    return typed_read_query(query)
+
+
+@dataclass(frozen=True, slots=True)
+class TypedRepresentation:
+    """A Typed read at one sharing scope."""
+
+    sharing_scope: SharingScope
+
+    @classmethod
+    def at(cls, sharing_scope: SharingScope) -> TypedRepresentation:
+        """The Typed representation at ``sharing_scope``, refusing any other value."""
+        check_sharing_scope(sharing_scope)
+        return TYPED if sharing_scope == "root" else TYPED_PAGE_SHARED
+
+    def convert_query(self, query: ObjectQuery[Any, Any], /) -> ReadQuery:
+        return typed_read_query(query)
+
+    def publication_for(self, selected: SelectedReadModel, /) -> TypedPublication:
+        """A Typed publication over ``selected``.
+
+        It needs the graph construction, so this is where a selection that can
+        materialize no Snapshot at all refuses a Typed read — before the query
+        is judged, before a participating read's force-flush, and before any I/O.
+        """
+        construction = selected.construction
+        if construction is None:
+            raise UsageError(
+                SNAPSHOT_CLASS_BACKED_MODEL_REQUIRED,
+                "this read is served under a model that composed no Entity Class, so it "
+                "cannot materialize a Snapshot",
+            )
+        return TypedPublication(selected, construction, self.sharing_scope)
+
+
+@dataclass(frozen=True, slots=True)
+class WireRepresentation:
+    """A Wire read at one sharing scope.
+
+    A Wire node is no Entity Class instance, so no materializer is required and
+    no classless refusal applies.
+    """
+
+    sharing_scope: SharingScope
+
+    @classmethod
+    def at(cls, sharing_scope: SharingScope) -> WireRepresentation:
+        """The Wire representation at ``sharing_scope``, refusing any other value."""
+        check_sharing_scope(sharing_scope)
+        return WIRE if sharing_scope == "root" else WIRE_PAGE_SHARED
+
+    def convert_query(self, query: WireQuery, /) -> ReadQuery:
+        return wire_read_query(query)
+
+    def publication_for(self, selected: SelectedReadModel, /) -> WirePublication:
+        return WirePublication(selected, self.sharing_scope)
+
+
+TYPED: Final = TypedRepresentation("root")
+TYPED_PAGE_SHARED: Final = TypedRepresentation("page")
+WIRE: Final = WireRepresentation("root")
+WIRE_PAGE_SHARED: Final = WireRepresentation("page")

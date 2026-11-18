@@ -756,6 +756,59 @@ def test_an_invalid_root_on_a_later_page_keeps_its_place_in_the_result(profile_r
     assert _purchase_nodes(_valid(at_root[_ROOTS:])) == _NODES_ON_THE_LATER_PAGE_AT_ROOT_SCOPE
 
 
+_EITHER_SCOPE: Final = pytest.mark.parametrize("sharing_scope", ["root", "page"])
+
+
+@_EITHER_SCOPE
+def test_a_typed_stream_projects_nothing_before_its_first_root(
+    profile_run: Any, sharing_scope: SharingScope
+) -> None:
+    db = _db(profile_run)
+    published = db.find(_REPEATED, sharing_scope=sharing_scope).results()[0]
+
+    with db.stream(_REPEATED, sharing_scope=sharing_scope) as stream:
+        roots = iter(stream)
+        with raises_code(UsageError, "stream-state-invalid", match="paused at a root"):
+            stream.wire(published)
+        next(roots)
+        assert stream.wire(published)["id"] == published.id
+
+
+@_EITHER_SCOPE
+def test_a_typed_stream_projects_nothing_once_an_invalid_root_refused_it(
+    profile_run: Any, sharing_scope: SharingScope
+) -> None:
+    db = _db_with_an_invalid_root(profile_run)
+    refused = False
+
+    with db.stream(_BESIDE_AN_INVALID_ROOT, sharing_scope=sharing_scope) as stream:
+        roots = iter(stream)
+        first = next(roots)
+        assert stream.wire(first)["id"] == first.id
+        try:
+            next(roots)
+        except InvalidDataError:
+            refused = True
+            with raises_code(UsageError, "stream-state-invalid", match="paused at a root"):
+                stream.wire(first)
+
+    assert refused
+
+
+@_EITHER_SCOPE
+def test_a_typed_stream_projects_nothing_once_it_closed_early(
+    profile_run: Any, sharing_scope: SharingScope
+) -> None:
+    db = _db(profile_run)
+
+    with db.stream(_REPEATED, sharing_scope=sharing_scope) as stream:
+        first = next(iter(stream))
+        assert stream.wire(first)["id"] == first.id
+
+    with raises_code(UsageError, "stream-state-invalid", match="paused at a root"):
+        stream.wire(first)
+
+
 def test_a_write_inside_a_stream_loop_is_admitted_on_a_shared_node(profile_run: Any) -> None:
     db = _db(profile_run)
 

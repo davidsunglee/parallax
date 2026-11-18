@@ -1,11 +1,9 @@
-"""The neutral stream delivery's lifecycle callbacks, against a scripted scope.
+"""The neutral stream delivery's views of an invalid root, against a scripted scope.
 
-A lifecycle composing :class:`StreamDelivery` learns each Page's include tree
-before that Page publishes anything, and releases its projection state where the
-delivery ends. Whether that happens for a Page that publishes nothing, and
-whether a failing release callback still leaves the remaining roots, the
-publication, and the read released, are properties of the delivery alone, so
-they are graded here with no lifecycle, port, or SQL under it.
+Whether the default view refuses an invalid root only after the prefix before
+it, having released the publication first, and whether the checked view
+publishes it in band, are properties of the delivery alone, so they are graded
+here with no lifecycle, port, or SQL under it.
 """
 
 from __future__ import annotations
@@ -48,10 +46,6 @@ from tests.unit._corpus_model_support import target as entity_of
 
 ORDERS: Metamodel = accepted_model("orders")
 _INCLUDES = cast("read_planning.IncludeTree", object())
-
-
-class _CallbackFailed(Exception):
-    pass
 
 
 class _Stream:
@@ -215,8 +209,6 @@ def _node() -> ObjectQueryNode:
 def _delivery(
     pages: list[int],
     *,
-    on_page_start: Callable[[read_planning.IncludeTree], None],
-    on_release: Callable[[], None],
     invalid: Mapping[int, object] | None = None,
 ) -> tuple[StreamDelivery[Any, ObjectQueryNode, _Publication], _Read, _Publication]:
     read = _Read()
@@ -226,96 +218,8 @@ def _delivery(
         cast("Any", _Scope(read, *pages)),
         lambda _selected: publication,
         batch_size=2,
-        on_page_start=on_page_start,
-        on_release=on_release,
     )
     return delivery, read, publication
-
-
-def test_every_page_starts_before_it_publishes_including_one_that_publishes_nothing() -> None:
-    events: list[object] = []
-
-    def on_page_start(includes: read_planning.IncludeTree) -> None:
-        assert includes is _INCLUDES
-        events.append("page")
-
-    delivery, _read, publication = _delivery(
-        [2, 0], on_page_start=on_page_start, on_release=lambda: events.append("release")
-    )
-    assert delivery.enter() is publication
-    for root in delivery.view(checked=True):
-        assert delivery.paused_includes is _INCLUDES
-        events.append(root)
-    assert delivery.paused_includes is None
-    delivery.close()
-
-    # Exhaustion releases the projection where it is discovered, and the scope
-    # exit releases it again: the lifecycle's release is idempotent.
-    assert events == ["page", 0, 1, "page", "release", "release"]
-    assert publication.released == 1
-
-
-def test_a_failing_release_callback_still_releases_the_rest_of_an_early_closed_delivery() -> None:
-    def failing_release() -> None:
-        raise _CallbackFailed
-
-    delivery, read, publication = _delivery(
-        [2, 1], on_page_start=lambda _includes: None, on_release=failing_release
-    )
-    delivery.enter()
-    view = delivery.view(checked=False)
-    assert next(view) == 0
-
-    with pytest.raises(_CallbackFailed):
-        delivery.close()
-
-    assert publication.released == 1
-    assert read.released == [None]
-    assert delivery.state == "closed"
-
-
-def test_a_failing_release_callback_still_releases_the_publication_at_exhaustion() -> None:
-    def failing_release() -> None:
-        raise _CallbackFailed
-
-    delivery, read, publication = _delivery(
-        [1], on_page_start=lambda _includes: None, on_release=failing_release
-    )
-    delivery.enter()
-    view = delivery.view(checked=False)
-    assert next(view) == 0
-
-    with pytest.raises(_CallbackFailed):
-        next(view)
-
-    assert publication.released == 1
-    assert read.stream.endings == ["exhausted"]
-
-
-def test_a_failing_release_callback_still_retains_the_failure_the_delivery_announces() -> None:
-    def failing_release() -> None:
-        raise _CallbackFailed
-
-    delivery, read, publication = _delivery(
-        [3],
-        on_page_start=lambda _includes: None,
-        on_release=failing_release,
-        invalid={1: _invalid_root(1)},
-    )
-    delivery.enter()
-    view = delivery.view(checked=False)
-    assert next(view) == 0
-
-    with pytest.raises(_CallbackFailed) as settling:
-        next(view)
-    refusal = settling.value.__context__
-    assert isinstance(refusal, InvalidDataError)
-
-    with pytest.raises(_CallbackFailed):
-        delivery.close()
-
-    assert publication.released == 1
-    assert read.stream.endings == [("closed", refusal)]
 
 
 def _invalid_root(ordinal: int) -> InvalidData[object]:
@@ -341,9 +245,7 @@ def _invalid_root(ordinal: int) -> InvalidData[object]:
 
 def test_an_unchecked_view_refuses_an_invalid_root_after_the_prefix_before_it() -> None:
     invalid = _invalid_root(1)
-    delivery, _read, publication = _delivery(
-        [3], on_page_start=lambda _includes: None, on_release=lambda: None, invalid={1: invalid}
-    )
+    delivery, _read, publication = _delivery([3], invalid={1: invalid})
     delivery.enter()
     view = delivery.view(checked=False)
     assert next(view) == 0
@@ -358,9 +260,7 @@ def test_an_unchecked_view_refuses_an_invalid_root_after_the_prefix_before_it() 
 
 def test_a_checked_view_publishes_an_invalid_root_in_band() -> None:
     invalid = _invalid_root(1)
-    delivery, _read, _publication = _delivery(
-        [3], on_page_start=lambda _includes: None, on_release=lambda: None, invalid={1: invalid}
-    )
+    delivery, _read, _publication = _delivery([3], invalid={1: invalid})
     delivery.enter()
     assert list(delivery.view(checked=True)) == [0, invalid, 2]
     delivery.close()
