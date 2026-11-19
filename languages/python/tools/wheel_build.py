@@ -327,8 +327,6 @@ def build(
             output / "setup.log",
         )
         with ExitStack() as lifetime:
-            # Reuse the C driver only across installs using this cell's libpq.
-            driver_cache = Path(lifetime.enter_context(TemporaryDirectory(dir=output)))
             postgres = lifetime.enter_context(provision(postgres_version, output / "postgres"))
             env = {**os.environ, **postgres.env}
             if companions is None:
@@ -343,6 +341,14 @@ def build(
                 if target["platform"] == "linux"
                 else None
             )
+            if container is None:
+                driver_cache = Path(lifetime.enter_context(TemporaryDirectory(dir=output)))
+            else:
+                # Pip running as root disables caches owned by the runner user.
+                cache = subprocess.check_output(
+                    ["docker", "exec", container, "mktemp", "-d"], env=env, text=True
+                )
+                driver_cache = Path(cache.strip())
             record["postgres"] = postgres.observations
             record["timings"]["setup_seconds"] = time.monotonic() - start
             started = time.monotonic()
