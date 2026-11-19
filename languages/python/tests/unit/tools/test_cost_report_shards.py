@@ -57,7 +57,11 @@ from snapshot_delivery_overhead import (
     workload_names,
     workload_selection,
 )
-from tests.unit.tools._cost_report_support import complete_snapshot, member_envelopes
+from tests.unit.tools._cost_report_support import (
+    complete_snapshot,
+    member_envelopes,
+    stub_capture_interpreters,
+)
 
 SNAPSHOT = next(member for member in MEMBERS if member.subject == "snapshot-delivery")
 OTHERS = tuple(member for member in MEMBERS if member is not SNAPSHOT)
@@ -527,6 +531,7 @@ def test_sequential_all_and_independent_shards_write_identical_coverage(
     plan = SHARDS
     run, invoked = _member_runner(contract, envelopes)
     monkeypatch.setattr(cost_report, "run_member", run)
+    stub_capture_interpreters(monkeypatch)
     everything = tmp_path / "all"
     assert cost_report.main(["--shard", ALL_SHARDS, "--out", str(everything)]) == 0
     capsys.readouterr()
@@ -578,6 +583,7 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole
 ) -> None:
     run, invoked = _member_runner(contract, envelopes)
     monkeypatch.setattr(cost_report, "run_member", run)
+    stub_capture_interpreters(monkeypatch)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
@@ -611,6 +617,7 @@ def test_a_failed_required_head_exits_non_zero_after_writing_every_shard(
 
     run, invoked = _member_runner(contract, envelopes, failing=failing)
     monkeypatch.setattr(cost_report, "run_member", run)
+    stub_capture_interpreters(monkeypatch)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
     out = tmp_path / "reports"
     assert cost_report.main(["--shard", ALL_SHARDS, "--out", str(out)]) == 1
@@ -662,6 +669,7 @@ def test_fresh_captures_require_valid_feature_boundary_evidence(
 
     run, invoked = _member_runner(contract, envelopes, failing=failing)
     monkeypatch.setattr(cost_report, "run_member", run)
+    stub_capture_interpreters(monkeypatch)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
     arguments = ["--out", str(tmp_path)]
     if sharded:

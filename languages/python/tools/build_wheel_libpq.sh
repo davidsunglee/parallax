@@ -52,8 +52,8 @@ sha256sum -c "$archive.sha256"
 tar -xjf "$archive"
 cd "postgresql-$version"
 ./configure --prefix="$prefix" --without-icu --without-readline --without-zlib
-make -j2
-make install
-make -C contrib/btree_gist -j2
-make -C contrib/btree_gist install
+# Wheel validation connects to a separate PostgreSQL server.
+make -j2 -C src/interfaces/libpq install
+make -j2 -C src/bin/pg_config install
+make -j2 -C src/include install
 "$prefix/bin/pg_config" --version

@@ -5,8 +5,9 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from parallax.conformance import adapter, case_format, sweep
+from parallax.conformance import adapter, sweep
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
+from tests._support.case_corpus import cases
 from tests._support.repo import canonical_snapshot_claim
 
 
@@ -29,9 +30,10 @@ def test_a_libpq_without_pipelines_excludes_ordered_write_transport_cases(
         "include": ["slice-snapshot-1"],
         "exclude": ["ordered-write-transport"],
     }
-    tagged = [case for case in case_format.load_cases() if "ordered-write-transport" in case.tags]
+    corpus = cases()
+    tagged = [case for case in corpus if "ordered-write-transport" in case.tags]
     assert tagged
-    reachable = {case.case_id for case in sweep.reachable_cases()}
+    reachable = {case.case_id for case in sweep.reachable_cases(cases=corpus)}
     assert not reachable & {case.case_id for case in tagged}
     for case in tagged:
         diagnostic = adapter.classify("compile", "postgres", case)

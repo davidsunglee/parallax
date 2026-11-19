@@ -12,6 +12,7 @@ from parallax.conformance import api_suite, case_format
 from parallax.conformance.api_suite import Example, Skip
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
+from tests._support.case_corpus import cases
 
 # A leading-underscore identifier (never a legitimate public-API token): the
 # Usage Guide's rendered read/graph story snippets must never expose one (the
@@ -33,7 +34,7 @@ def _case(case_id: str, module: str) -> case_format.Case:
 
 
 def test_active_slice_is_non_empty_and_all_snapshot_tagged() -> None:
-    active = api_suite.active_slice()
+    active = api_suite.active_slice(cases=cases())
     assert len(active) > 100
     assert all("slice-snapshot-1" in case.tags for case in active)
 
@@ -44,7 +45,7 @@ def test_build_skips_covers_cases_without_examples() -> None:
     # the case-scoped registry does not name: a bucket-free module's cases are
     # covered only by a real example or their own case-scoped skip, never a
     # generic module reason.
-    active = api_suite.active_slice()
+    active = api_suite.active_slice(cases=cases())
     examples = [Example(active[0].case_id, "t", "snippet")]
     skips = api_suite.build_skips(active, examples)
     skipped_ids = {skip.case_id for skip in skips}
@@ -68,9 +69,10 @@ def test_a_libpq_without_pipelines_partitions_the_narrowed_slice_cleanly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: False)
-    report = api_suite.partition_report()
+    corpus = cases()
+    report = api_suite.partition_report(cases=corpus)
     assert report.ok, report.errors
-    narrowed = {case.case_id for case in api_suite.authored_slice()} - report.active
+    narrowed = {case.case_id for case in api_suite.authored_slice(cases=corpus)} - report.active
     assert narrowed
     assert narrowed <= api_suite.CASE_SKIP_REASONS.keys()
 
@@ -145,7 +147,7 @@ def test_registry_classifies_every_active_module_without_stale_entries() -> None
     # The committed registries are reconciled against the live corpus: every
     # active module is covered by the module registry except the bucket-free
     # modules above, and no entry names nothing.
-    active = api_suite.authored_slice()
+    active = api_suite.authored_slice(cases=cases())
     modules = {case.primary_module for case in active}
     assert modules - set(api_suite.SKIP_REASONS) == _BUCKET_FREE_MODULES
     exercised = {example.case_id for example in api_suite.EXAMPLES}
@@ -162,7 +164,7 @@ def test_partition_report_surfaces_stale_registry_entries(
 ) -> None:
     tampered = {**api_suite.SKIP_REASONS, "m-not-in-slice": "bogus reason"}
     monkeypatch.setattr(api_suite, "SKIP_REASONS", tampered)
-    report = api_suite.partition_report()
+    report = api_suite.partition_report(cases=cases())
     assert not report.ok
     assert any("m-not-in-slice" in error for error in report.errors)
 
@@ -233,7 +235,7 @@ def test_dropping_a_write_example_fails_the_partition() -> None:
     # carries no CASE_SKIP_REASONS entry of its own, so dropping IT is the
     # honest regression probe.
     slimmed = [example for example in api_suite.EXAMPLES if example.case_id != "m-unit-work-001"]
-    report = api_suite.partition_report(examples=slimmed)
+    report = api_suite.partition_report(cases=cases(), examples=slimmed)
     assert not report.ok
     assert any(
         "covered by neither" in error and "m-unit-work-001" in error for error in report.errors

@@ -14,6 +14,7 @@ from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
 from parallax.core.internal.base import UsageError
 from parallax.snapshot import connect, pin_of
 from tests._support.bindings import TEST_BINDING
+from tests._support.case_corpus import cases
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 
@@ -25,7 +26,7 @@ def _origin(case: case_format.Case) -> object:
     return source["origin"]
 
 
-_CASES = edit_runner.reachable_edit_cases()
+_CASES = edit_runner.reachable_edit_cases(cases=cases())
 _CONSTRUCTED_CASES = [case for case in _CASES if _origin(case) == "constructed"]
 _READ_CASES = [case for case in _CASES if _origin(case) == "read"]
 
