@@ -3,7 +3,7 @@ step execution runs each step a flush hands it."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
@@ -13,7 +13,6 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.metamodel import AttributeIdentity, Metamodel
 from parallax.core.internal.planned_step import PredecessorRow
-from parallax.core.internal.planned_step.payload import DocumentPatches
 from parallax.core.internal.planned_step.steps import (
     Finite,
     MilestoneTarget,
@@ -22,9 +21,8 @@ from parallax.core.internal.planned_step.steps import (
     PlannedStep,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
-    WriteRow,
 )
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from tests._support.bindings import bound_model
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
@@ -57,16 +55,9 @@ class StoredPositions:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
-        self.simulated(
-            steps,
-            effect_spans=effect_spans,
-            capture_insert=capture_insert,
-            capture_revision=capture_revision,
-        )
+        self.simulated(steps, effect_spans=effect_spans, capture=capture)
         for step in steps:
             self._apply(step)
 

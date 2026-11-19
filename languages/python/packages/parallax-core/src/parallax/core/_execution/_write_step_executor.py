@@ -28,16 +28,14 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.diagnostics import qualified_type
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.planned_step.payload import DocumentPatches, WritePayloadPreparer
+from parallax.core.internal.planned_step.payload import WritePayloadPreparer
 from parallax.core.internal.planned_step.steps import (
     PlannedDelete,
     PlannedInsert,
     PlannedStep,
-    PlannedTemporalRevision,
     PlannedUpdate,
-    WriteRow,
 )
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["WriteStepExecutor"]
@@ -88,15 +86,12 @@ class WriteStepExecutor:
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
         flush: FlushActivity,
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
         """Lower, execute, and enforce each of ``steps`` in order as calls of
-        ``flush``. The payloads lowering demands are
-        handed to ``capture_insert`` and ``capture_revision`` as
+        ``flush``. The payloads lowering demands are handed to ``capture`` as
         :class:`~parallax.core._execution._write_lowering.LoweringCursor`
-        describes, where they are given; executing decides nothing of them.
+        describes, where it is given; executing decides nothing of them.
 
         Each statement stores the payload the preparer prepares for it when its
         turn comes. A temporal mutation's effect on its predecessor precedes the
@@ -131,8 +126,7 @@ class WriteStepExecutor:
             self._resolved,
             self._connection.dialect,
             effect_spans=effect_spans,
-            capture_insert=capture_insert,
-            capture_revision=capture_revision,
+            capture=capture,
         )
         step = cursor.take()
         while step is not None:

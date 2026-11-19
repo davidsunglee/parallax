@@ -43,7 +43,7 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner, Writ
 from parallax.core._execution._unit_work.write_runner import (
     ExecuteCountedStep,
     ExecuteWriteSteps,
-    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
+    _GroupRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
 from parallax.core.internal import concurrency, inheritance, temporal_read
 from parallax.core.internal.base import normalize_instant
@@ -640,14 +640,14 @@ class UnitOfWork:
         nothing here keeps the group or a write's captured rows."""
         writes = group.writes
         steps = group.steps
-        capture = _CurrentRowCapture.for_writes(writes) if captures else None
+        capture = _GroupRowCapture.for_writes(writes) if captures else None
         write: SettledWrite | None = None
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = ()
         try:
             if capture is None:
                 self.execute_write_steps(steps, effect_spans=group.effect_spans)
             else:
-                capture.execute(self.execute_write_steps, steps, effect_spans=group.effect_spans)
+                self.execute_write_steps(steps, effect_spans=group.effect_spans, capture=capture)
             for write in writes:
                 if capture is not None:
                     captured = capture.take_rows(write.current_outputs)

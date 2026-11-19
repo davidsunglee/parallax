@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
 from parallax.core._execution._write_lowering import stream_physical
 from parallax.core.internal.database_binding import ResolvedBinding
 from parallax.core.internal.dialect import Dialect
-from parallax.core.internal.planned_step.payload import DocumentPatches, WritePayloadPreparer
+from parallax.core.internal.planned_step.payload import WritePayloadPreparer
 from parallax.core.internal.planned_step.steps import (
     PlannedDelete,
     PlannedStep,
-    PlannedTemporalRevision,
     PlannedUpdate,
-    WriteRow,
 )
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["SimulatedWriteSteps"]
@@ -31,7 +29,7 @@ class SimulatedWriteSteps:
     for its count (:meth:`counted`) answers the next of ``counts``, or zero
     once none is left: no simulated row is matched. Database gates and
     affected-row enforcement are not simulated. Lowering hands the payloads it
-    lowers to the capture hooks a unit of work gives, as execution does.
+    lowers to the current-row capture a unit of work gives, as execution does.
     """
 
     __slots__ = (
@@ -67,9 +65,7 @@ class SimulatedWriteSteps:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
         lowered = tuple(
             stream_physical(
@@ -78,8 +74,7 @@ class SimulatedWriteSteps:
                 self._resolved,
                 self._dialect,
                 effect_spans=effect_spans,
-                capture_insert=capture_insert,
-                capture_revision=capture_revision,
+                capture=capture,
             )
         )
         self._statements.extend(lowered)

@@ -4,7 +4,7 @@ execution stored; what a group captures is graded at the unit of work's seam."""
 from __future__ import annotations
 
 from parallax.core._execution._unit_work.write_runner import (
-    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
+    _GroupRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
 from parallax.core.internal.planned_step.steps import PlannedTemporalRevision, WriteRow
 from parallax.core.internal.planned_step.write_effects import (
@@ -29,7 +29,7 @@ def _output(key: int, emitter: WriteRow | PlannedTemporalRevision) -> CurrentRow
 def test_a_write_takes_each_row_once_with_the_document_its_execution_stored() -> None:
     described = revision(1)
     output = _output(1, described)
-    capture = _CurrentRowCapture((output,))
-    capture.capture_revision(described, None)
+    capture = _GroupRowCapture((output,))
+    capture.revised(described, None)
     assert capture.take_rows((output,)) == ((output, {"key": 1}),)
     assert capture.take_rows((output,)) == ()

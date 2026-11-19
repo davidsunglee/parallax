@@ -1,5 +1,5 @@
-"""What execution's lowering hands the current-row capture hooks as each
-payload is demanded (execution's lowering seam, `m-unit-work` *Write Groups
+"""What execution's lowering hands a current-row capture as each payload is
+demanded (execution's lowering seam, `m-unit-work` *Write Groups
 complete before later work runs*).
 
 Each insert entry is handed over with the document its payload stores as that
@@ -64,11 +64,11 @@ class _Captures:
     def _prepared(self) -> int:
         return -1 if self.preparer is None else len(self.preparer.prepared)
 
-    def insert(self, entry: WriteRow, document: object | None) -> None:
+    def inserted(self, entry: WriteRow, document: object | None, /) -> None:
         self.seen.append(("insert", entry, document, self._prepared()))
 
-    def revision(self, step: PlannedTemporalRevision, patched: DocumentPatches | None) -> None:
-        self.seen.append(("revision", step, patched, self._prepared()))
+    def revised(self, step: PlannedTemporalRevision, patches: DocumentPatches | None, /) -> None:
+        self.seen.append(("revision", step, patches, self._prepared()))
 
 
 def _streamed(
@@ -76,15 +76,10 @@ def _streamed(
     preparer: Any,
     captures: _Captures | None,
     meta: Metamodel = POSITION_META,
-    *,
-    inserts: bool = True,
 ) -> int:
-    hooks: dict[str, Any] = {}
-    if captures is not None:
-        hooks["capture_revision"] = captures.revision
-        if inserts:
-            hooks["capture_insert"] = captures.insert
-    return sum(1 for _ in stream_physical(steps, preparer, bound_model(meta), POSTGRES, **hooks))
+    return sum(
+        1 for _ in stream_physical(steps, preparer, bound_model(meta), POSTGRES, capture=captures)
+    )
 
 
 def test_each_grouped_insert_entry_is_handed_over_as_its_payload_is_prepared() -> None:
@@ -136,16 +131,16 @@ def test_a_payload_that_fails_to_prepare_is_never_handed_over() -> None:
     assert [subject for _kind, subject, _payload, _ in captures.seen] == [steps[0].entries[0]]
 
 
-def test_lowering_without_hooks_prepares_exactly_what_it_did_with_them() -> None:
+def test_lowering_without_a_capture_prepares_exactly_what_it_did_with_one() -> None:
     steps = (close(1), revision(2), insert(3), insert(4))
     without = RecordingPreparer(ScriptedAdapter(), steps)
-    with_hooks = RecordingPreparer(ScriptedAdapter(), steps)
+    with_capture = RecordingPreparer(ScriptedAdapter(), steps)
     _streamed(steps, without, None)
-    _streamed(steps, with_hooks, _Captures(with_hooks))
-    assert without.positions == with_hooks.positions
+    _streamed(steps, with_capture, _Captures(with_capture))
+    assert without.positions == with_capture.positions
 
 
-def test_the_executor_relays_the_hooks_to_the_statements_it_executes() -> None:
+def test_the_executor_relays_the_capture_to_the_statements_it_executes() -> None:
     steps = (revision(2), insert(3))
     port = ScriptedAdapter(Write(), Write())
     captures = _Captures()
@@ -156,12 +151,7 @@ def test_the_executor_relays_the_hooks_to_the_statements_it_executes() -> None:
         recoverable=lambda _: None,
     )
     with open_flush() as flush:
-        executor.execute(
-            steps,
-            flush=flush,
-            capture_insert=captures.insert,
-            capture_revision=captures.revision,
-        )
+        executor.execute(steps, flush=flush, capture=captures)
     assert [(kind, subject) for kind, subject, _payload, _ in captures.seen] == [
         ("revision", steps[0]),
         ("insert", steps[1].entries[0]),
@@ -174,17 +164,6 @@ def test_every_entry_of_an_insert_lowered_alone_is_handed_over() -> None:
     captures = _Captures()
     assert _streamed(steps, build_write_planner(bound_model(POSITION_META)).payloads, captures) == 1
     assert [subject for _kind, subject, _payload, _ in captures.seen] == list(entries)
-
-
-def test_inserts_are_not_handed_over_where_only_revisions_are_captured() -> None:
-    steps = (insert(1), revision(3))
-    captures = _Captures()
-    _streamed(
-        steps, build_write_planner(bound_model(POSITION_META)).payloads, captures, inserts=False
-    )
-    assert [(kind, subject) for kind, subject, _payload, _ in captures.seen] == [
-        ("revision", steps[1])
-    ]
 
 
 class Note(Bitemporal, table="capture_note", namespace="parallax.capture", layout=Document()):

@@ -78,15 +78,12 @@ from parallax.core.internal.db_port import DatabaseConnection
 from parallax.core.internal.entity._layout import CatalogedModel
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel
 from parallax.core.internal.object_query._resolved import ResolvedObjectQuery
-from parallax.core.internal.planned_step.payload import DocumentPatches
 from parallax.core.internal.planned_step.steps import (
     PlannedDelete,
     PlannedStep,
-    PlannedTemporalRevision,
     PlannedUpdate,
-    WriteRow,
 )
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from parallax.core.internal.read_delivery._acquired_rows import (
     admitted_member_rows,
     completed_member_rows,
@@ -860,21 +857,11 @@ class TxnAttempt(_TxnAttemptBase):
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
         """Execute ``steps`` as calls of the current flush's Flush activity,
         presenting ``effect_spans`` as grouped effects and handing their
-        demanded payloads to the capture hooks the unit of work gives."""
-        executor = self._step_executor
-        if capture_insert is None and capture_revision is None:
-            executor.execute(steps, effect_spans=effect_spans, flush=self._flush)
-            return
-        executor.execute(
-            steps,
-            effect_spans=effect_spans,
-            flush=self._flush,
-            capture_insert=capture_insert,
-            capture_revision=capture_revision,
+        demanded payloads to the capture the unit of work gives."""
+        self._step_executor.execute(
+            steps, effect_spans=effect_spans, flush=self._flush, capture=capture
         )

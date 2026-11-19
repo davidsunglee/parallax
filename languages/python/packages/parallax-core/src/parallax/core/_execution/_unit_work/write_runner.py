@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from typing import Protocol
 
 from parallax.core.internal.document_codec import apply_prepared_patches
@@ -13,6 +13,7 @@ from parallax.core.internal.planned_step.steps import (
     WriteRow,
 )
 from parallax.core.internal.planned_step.write_effects import (
+    CurrentRowCapture,
     CurrentRowOutput,
     EffectSpan,
     WriteEffects,
@@ -28,14 +29,8 @@ class ExecuteWriteSteps(Protocol):
 
     A normal return means every step executed and its effect was enforced, in
     order; it completes no settled write and commits nothing. Nothing of the
-    steps stays reachable from it once the call returns.
-
-    Where they are given, each insert entry's lowering hands
-    ``capture_insert`` the entry and the Structured Column document its payload
-    stores, ``None`` where it stores none, and each temporal revision's
-    lowering hands ``capture_revision`` the revision and the patches its
-    payload applies to that document, ``None`` where it applies none, as the
-    payloads are demanded.
+    steps stays reachable from it once the call returns. Where ``capture`` is
+    given, it receives each demanded payload as lowering demands it.
     """
 
     def __call__(
@@ -44,9 +39,7 @@ class ExecuteWriteSteps(Protocol):
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None: ...
 
 
@@ -58,7 +51,7 @@ class ExecuteCountedStep(Protocol):
     def __call__(self, step: PlannedUpdate | PlannedDelete, /) -> int: ...
 
 
-class _CurrentRowCapture:
+class _GroupRowCapture:
     """The current rows the writes of one running Write Group describe
     (:attr:`~parallax.core.internal.planned_step.write_effects.WriteEffects.current_outputs`),
     each staged with the document its emitter's payload stores as normal
@@ -76,26 +69,26 @@ class _CurrentRowCapture:
         self._staged: dict[int, object | None] = {}
 
     @classmethod
-    def for_writes(cls, writes: Iterable[WriteEffects]) -> _CurrentRowCapture | None:
+    def for_writes(cls, writes: Iterable[WriteEffects]) -> _GroupRowCapture | None:
         """The capture of every output ``writes`` describe, or ``None`` where
         they describe none."""
         outputs = [output for write in writes for output in write.current_outputs]
         return cls(outputs) if outputs else None
 
-    def capture_insert(self, entry: WriteRow, document: object | None) -> None:
+    def inserted(self, entry: WriteRow, document: object | None, /) -> None:
         output = self._outputs.get(id(entry))
         if output is not None and output.emitter is entry:
             self._staged[id(output)] = document
 
-    def capture_revision(
-        self, revision: PlannedTemporalRevision, patched: DocumentPatches | None
+    def revised(
+        self, revision: PlannedTemporalRevision, patches: DocumentPatches | None, /
     ) -> None:
         output = self._outputs.get(id(revision))
         if output is None or output.emitter is not revision:
             return
         document = output.predecessor_document
         self._staged[id(output)] = (
-            document if patched is None else apply_prepared_patches(document, patched.patches)
+            document if patches is None else apply_prepared_patches(document, patches.patches)
         )
 
     def take_rows(
@@ -119,17 +112,3 @@ class _CurrentRowCapture:
         holds, whether or not its writes completed."""
         self._outputs.clear()
         self._staged.clear()
-
-    def execute(
-        self,
-        execute: ExecuteWriteSteps,
-        steps: tuple[PlannedStep, ...],
-        *,
-        effect_spans: tuple[EffectSpan, ...],
-    ) -> None:
-        execute(
-            steps,
-            effect_spans=effect_spans,
-            capture_insert=self.capture_insert,
-            capture_revision=self.capture_revision,
-        )

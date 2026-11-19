@@ -464,10 +464,13 @@ removed and reinserted this way.
               │                       → _execute_write_group; repeat
               │
               │ _execute_write_group
-              │   execute_write_steps → WriteStepExecutor.execute                  _write_step_executor
+              │   _GroupRowCapture where its writes describe current rows, unless  write_runner
+              │     the flush is pre_commit
+              │   execute_write_steps(capture) → WriteStepExecutor.execute       _write_step_executor
               │     per step, at its turn: LayoutPayloadPreparer prepares the payload,
               │     compile_write_step lowers it, the connection executes it,
-              │     enforce_affected_rows checks its count
+              │     enforce_affected_rows checks its count; lowering hands the
+              │     capture each demanded payload's stored document or patches
               │   then, for each write in order,                                   source_registry
               │     SourceRegistry.complete_write → WriteOwnership.complete
               ▼
@@ -555,6 +558,7 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.source_registry:SourceRegistry.finish_insertion_planning`
 - `parallax.core._execution._unit_work.write_runner:ExecuteWriteSteps`
 - `parallax.core._execution._unit_work.write_runner:ExecuteCountedStep`
+- `parallax.core.internal.planned_step.write_effects:CurrentRowCapture`
 - `parallax.core._execution._unit_work.row_acquisition:AcquireRows`
 - `parallax.core._execution._transaction._attempt:TxnAttempt._execute_write_steps`
 - `parallax.core._execution._transaction._attempt:TxnAttempt._execute_counted_step`
