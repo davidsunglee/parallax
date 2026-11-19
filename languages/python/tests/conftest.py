@@ -405,6 +405,8 @@ def connection_limit_server(profile_run: Any) -> Iterator[tuple[DriverControl, P
             reason = (
                 f"Testcontainers connection-limit Postgres unavailable: {type(exc).__name__}: {exc}"
             )
+            if os.environ.get("PARALLAX_REQUIRE_DB") == "1":
+                pytest.fail(reason)
             record_db_skip(reason)
             pytest.skip(reason)
         yield admin, endpoint
