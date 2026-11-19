@@ -30,7 +30,7 @@ def test_driver_resolution_uses_the_candidate_metadata_constraint(tmp_path: Path
 
 
 @pytest.mark.parametrize("use_cell_cache", [False, True])
-def test_only_c_driver_installs_with_a_cell_cache_reuse_locally_built_wheels(
+def test_only_the_c_driver_install_command_enables_a_supplied_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_cell_cache: bool
 ) -> None:
     wheel = _wheel(
