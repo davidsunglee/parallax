@@ -1,4 +1,4 @@
-"""Scripted adapters at the DB-port's native seams, for the lifecycle policy suites.
+"""Scripted adapters at the DB-port's native seams, for the shared runtime's suites.
 
 What a real pool or driver will not produce on demand — a checkout that fails
 for a chosen reason, a hand-back or close that raises, a reading that cannot be
@@ -365,9 +365,9 @@ class Clock:
     """A monotonic clock a proof moves by hand, read by every module that keeps time."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, now: float = 0.0) -> None:
-        from parallax.postgres import _context as context_module
-        from parallax.postgres import _runtime as runtime_module
-        from parallax.postgres import _startup as startup_module
+        from parallax.core.internal.db_port._runtime import _context as context_module
+        from parallax.core.internal.db_port._runtime import _pooled_runtime as runtime_module
+        from parallax.core.internal.db_port._runtime import _startup as startup_module
 
         self.now = now
         for module in (context_module, runtime_module, startup_module):

@@ -29,8 +29,7 @@ if TYPE_CHECKING:
     from psycopg.rows import TupleRow
 
     from parallax.conformance._database_control import DriverControl
-    from parallax.core.internal.db_port import Row
-    from parallax.postgres._runtime import PostgresRuntime
+    from parallax.core.internal.db_port import DatabaseRuntime, Row
 
 
 def _endpoint(endpoint: PostgresEndpoint, **options: str) -> PostgresEndpoint:
@@ -159,7 +158,7 @@ def test_each_server_dial_message_has_a_real_server_canary(
             assert dial_reason(failure) == reason
 
 
-def _preferred_read(runtime: PostgresRuntime[Any, Any]) -> tuple[Row, RouteSelection | None]:
+def _preferred_read(runtime: DatabaseRuntime[Any]) -> tuple[Row, RouteSelection | None]:
     resource = runtime.login_source().new_context("reader_preferred")
     with resource as connection:
         (row,) = connection.execute(

@@ -4,7 +4,7 @@ The source owns a sample's outcome and its own lifetime: a reading the pool
 gave is reported as it stands, a reading the pool could not give is an
 unavailable sample rather than a substituted one, and a source the runtime
 detached reaches nothing. What a native reading must carry to count as one is
-the pool's own mapping, pinned with it.
+the adapter's own pool mapping, pinned with it.
 """
 
 from __future__ import annotations
@@ -24,12 +24,11 @@ from parallax.core.internal.db_port import (
     RouteReadiness,
 )
 from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.core.internal.db_port._runtime._pooled_route import PooledRoute
+from parallax.core.internal.db_port._runtime._pooled_runtime import PooledRuntime
+from parallax.core.internal.db_port._runtime._route_metrics import PooledRouteMetricsSource
 from parallax.core.internal.dialect import POSTGRES
-from parallax.postgres._pool import PostgresPool
-from parallax.postgres._pool_metrics import PostgresPoolMetrics
-from parallax.postgres._route import PostgresRoute
-from parallax.postgres._runtime import PostgresRuntime
-from tests.unit._scripted_native import ScriptedDriver
+from tests.unit.core.db_port._runtime._scripted_native import ScriptedDriver
 
 
 def _metrics(**counters: int) -> PoolMetrics:
@@ -62,8 +61,10 @@ class _MeasuredPool:
         self.closes += 1
 
 
-def _source(pool: _MeasuredPool, readiness: RouteReadiness = "verified") -> PostgresPoolMetrics:
-    return PostgresPoolMetrics(pool, "writer", lambda: readiness)
+def _source(
+    pool: _MeasuredPool, readiness: RouteReadiness = "verified"
+) -> PooledRouteMetricsSource:
+    return PooledRouteMetricsSource(pool, "writer", lambda: readiness)
 
 
 @pytest.mark.parametrize("readiness", ["verified", "pending", "refused"])
@@ -113,31 +114,6 @@ def test_a_pool_that_raises_answers_unavailable_with_a_detached_diagnostic() -> 
     )
 
 
-class _NativeStatistics:
-    def __init__(self, stats: dict[str, object]) -> None:
-        self._stats = stats
-
-    def get_stats(self) -> dict[str, object]:
-        return self._stats
-
-
-def test_a_native_reading_that_cannot_be_believed_is_unavailable_and_names_nothing_it_read() -> (
-    None
-):
-    # What a pool answered is the pool's. The diagnostic says a reading did not
-    # carry what a sample reports, which is the whole of what an exporter may
-    # be handed about a mapping nobody audited.
-    native = _NativeStatistics({"pool_size": "enormous"})
-    source = PostgresPoolMetrics(PostgresPool(cast("Any", native)), "writer", lambda: "verified")
-
-    sample = source.sample()
-
-    assert isinstance(sample, PoolUnavailable)
-    assert sample.diagnostic.qualified_type.endswith("_MalformedStatistics")
-    assert "enormous" not in sample.diagnostic.message
-    assert "pool_size" not in sample.diagnostic.message
-
-
 def test_an_unavailable_source_is_still_attached_and_samples_again() -> None:
     # Unavailable is not detachment and not a terminal state: the runtime is
     # alive, so the next sample an exporter chooses to take is a live one.
@@ -182,7 +158,7 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
     # The handshake is the pool itself: detachment happens INSIDE the read this
     # sample is in the middle of, which is the exact interleaving a
     # thread-timing test would be trying to arrange.
-    holder: list[PostgresPoolMetrics] = []
+    holder: list[PooledRouteMetricsSource] = []
     source = _source(_MeasuredPool(on_read=lambda: holder[0].detach()))
     holder.append(source)
 
@@ -197,13 +173,13 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _runtime(pool: _MeasuredPool) -> PostgresRuntime[Any, object]:
-    return PostgresRuntime(
+def _runtime(pool: _MeasuredPool) -> PooledRuntime[Any, object]:
+    return PooledRuntime(
         cast("Any", ScriptedDriver()),
         dialect=POSTGRES,
         routes={"writer": RouteCapabilities.every_level()},
-        writer=PostgresRoute("writer", cast("Any", pool), DialLedger()),
-        reservation=PostgresRoute(
+        writer=PooledRoute("writer", cast("Any", pool), DialLedger()),
+        reservation=PooledRoute(
             "writer", cast("Any", _MeasuredPool()), DialLedger(), "reservation"
         ),
         acquire_timeout=15.0,
@@ -223,7 +199,7 @@ def test_the_source_detaches_before_the_pool_closes_even_when_that_close_fails()
             seen.append(runtime_holder[0].pool_metrics[0].sample())
             raise RuntimeError("the pool would not close")
 
-    runtime_holder: list[PostgresRuntime[Any, object]] = []
+    runtime_holder: list[PooledRuntime[Any, object]] = []
     pool = _ClosingPool()
     runtime = _runtime(pool)
     runtime_holder.append(runtime)

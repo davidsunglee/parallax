@@ -1,11 +1,12 @@
-"""The owned Postgres runtime against a real server (`database-provider-test-contract`).
+"""The Postgres adapter's runtime against a real server (`database-provider-test-contract`).
 
 What a fake pool cannot establish is here: that a connection really is reused,
 that capacity really is bounded, that a queue really refuses, that a runtime that
 closed really admits nothing more, and that every connection a pool creates —
 initial, grown, replacement, or on-demand — really decodes what the read path
 depends on. The deterministic failure paths a server will not produce on demand
-are ``tests/unit/postgres/test_postgres_pool.py``'s.
+are the shared runtime's, in ``tests/unit/core/db_port/_runtime/``, and the native
+pool's, in ``tests/unit/postgres/test_pool.py``.
 
 Every configuration here names the database this run opened, and every runtime
 it opens is closed by the scope that opened it.
@@ -219,7 +220,7 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     # therefore does not get one — the acquisition budget is the control that
     # matters here, and the two do not compose as independent limits. What the
     # override IS, exactly, is pinned against the installed pool release in
-    # `tests/unit/postgres/test_postgres_pool.py`; here it is proven not to prevent an
+    # `tests/unit/postgres/test_pool.py`; here it is proven not to prevent an
     # establishment against a real server.
     from psycopg.conninfo import conninfo_to_dict
 

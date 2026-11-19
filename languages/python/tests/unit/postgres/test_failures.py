@@ -14,9 +14,9 @@ import psycopg
 import pytest
 
 from parallax.core.internal.db_port import CredentialResolutionError
+from parallax.core.internal.db_port._runtime._route_plan import RoutePlan
 from parallax.postgres._connection import IncompatibleSessionError
 from parallax.postgres._failures import dial_reason, is_session_broken, is_session_lost
-from parallax.postgres._route_plan import RoutePlan
 
 
 class _Stated(psycopg.OperationalError):

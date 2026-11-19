@@ -2,27 +2,27 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from parallax.core.internal.db_port import (
-    ConnectionPool,
-    DatabaseStartupError,
-    NativeDriver,
-    PoolPurpose,
-    ProbeMismatch,
-    Route,
-    RouteReadiness,
-    report_route_readiness,
-)
-from parallax.core.internal.db_port._runtime._dial_record import DialLedger
-from parallax.postgres._pool_metrics import PostgresPoolMetrics
+from parallax.core.internal.db_port import report_route_readiness
+from parallax.core.internal.db_port._runtime._route_metrics import PooledRouteMetricsSource
 
-__all__ = ["PostgresRoute", "open_route"]
+if TYPE_CHECKING:
+    from parallax.core.internal.db_port import (
+        ConnectionPool,
+        PoolPurpose,
+        ProbeMismatch,
+        Route,
+        RouteReadiness,
+    )
+    from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+
+__all__ = ["PooledRoute"]
 
 type _State = Literal["unproven", "verified", "pending", "refused"]
 
 
-class PostgresRoute[C]:
+class PooledRoute[C]:
     """One declared route's pool, the latest failure establishing its
     connections, its metrics source, and whether it has proved it can serve.
 
@@ -61,7 +61,7 @@ class PostgresRoute[C]:
         self._refusal: ProbeMismatch | None = None
         self._lock = threading.Lock()
         self._probe_slot = threading.Lock()
-        self.metrics = PostgresPoolMetrics(pool, route, self.readiness, purpose)
+        self.metrics = PooledRouteMetricsSource(pool, route, self.readiness, purpose)
 
     def known_unreachable(self) -> bool:
         """Whether this route's latest dial failed as unavailable and it holds
@@ -113,14 +113,14 @@ class PostgresRoute[C]:
         """The mismatch that refused this route, once one has."""
         return self._refusal
 
-    def proved_at_startup(self) -> None:
+    def start_verified(self) -> None:
         self._state = "verified"
 
-    def defer_verification(self) -> None:
+    def start_pending(self) -> None:
         self._state = "pending"
         report_route_readiness(self.route, "pending")
 
-    def verified(self) -> ProbeMismatch | None:
+    def mark_verified(self) -> ProbeMismatch | None:
         """Record a successful proof, answering the refusal that already stands
         in its way, if another proof refused the route first."""
         with self._lock:
@@ -133,7 +133,7 @@ class PostgresRoute[C]:
             report_route_readiness(self.route, "verified")
         return None
 
-    def refuse(self, mismatch: ProbeMismatch) -> None:
+    def mark_refused(self, mismatch: ProbeMismatch) -> None:
         """Record a positive mismatch, which refuses a route that was still pending.
 
         A route already verified stays verified: one connection that read
@@ -152,24 +152,3 @@ class PostgresRoute[C]:
         self.metrics.detach()
         with contextlib.suppress(Exception):
             self.pool.close()
-
-
-def open_route[C, A](
-    driver: NativeDriver[C, A], route: Route, purpose: PoolPurpose
-) -> PostgresRoute[C]:
-    """Open ``route``'s pool for ``purpose`` through ``driver``, unproven.
-
-    The driver releases whatever it built before raising, so a pool that would
-    not open has nothing left to close.
-    """
-    dial_ledger = DialLedger()
-    try:
-        pool = driver.open_pool(route, purpose, dial_ledger)
-    except Exception as exc:
-        name = route if purpose == "application" else f"{route}-{purpose}"
-        raise DatabaseStartupError(
-            f"the database runtime's {name} connection pool could not be opened",
-            route=route,
-            phase="open",
-        ) from exc
-    return PostgresRoute(route, pool, dial_ledger, purpose)

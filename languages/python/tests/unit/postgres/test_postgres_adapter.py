@@ -7,8 +7,8 @@ neutral ``StructuredDocument`` carrier becoming a psycopg ``Jsonb`` at the adapt
 boundary — the `m-db-error` port-boundary re-raise (every psycopg exception
 translated to a neutral ``DatabaseError``), and the transaction phases are all
 provable over a fake connection here; the end-to-end deadlock witness and the
-session refusals live in the provider lane and the resource lifetimes in
-``test_postgres_pool.py``.
+session refusals live in the provider lane and the resource lifetimes in the
+shared runtime's suites under ``tests/unit/core/db_port/_runtime/``.
 """
 
 from __future__ import annotations
@@ -1442,8 +1442,8 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
 
 # --------------------------------------------------------------------------- #
 # Where a lease's first submission starts and ends. What replacement does with #
-# it is test_postgres_pool.py's; these pin the boundaries the facade marks and #
-# what it hands a lease to repeat.                                             #
+# it is the shared runtime's lease suite's; these pin the boundaries the       #
+# facade marks and what it hands a lease to repeat.                            #
 # --------------------------------------------------------------------------- #
 
 

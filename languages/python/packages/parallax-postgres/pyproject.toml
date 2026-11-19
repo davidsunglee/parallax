@@ -1,7 +1,7 @@
 [project]
 name = "parallax-postgres"
 version = "0.2.0"
-description = "Parallax Postgres database adapter: the concrete database runtime over psycopg and its companion pool."
+description = "Parallax Postgres database adapter: the native pool, driver, and execution the shared database runtime serves Postgres through, over psycopg and its companion pool."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "Apache-2.0"
@@ -15,8 +15,8 @@ dependencies = [
     # extend psycopg's private C loader layout, so a new minor release is a
     # reviewed change rather than an automatic one.
     "psycopg[binary]>=3.3.6,<3.4",
-    # The companion pool the runtime owns: the same project, released
-    # separately.
+    # The companion pool both native pool modes run on: the same project,
+    # released separately.
     "psycopg-pool>=3.3.1",
     # Reads and writes YAML binding documents; imported only by those calls.
     "pyyaml>=6.0",
