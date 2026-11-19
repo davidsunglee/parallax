@@ -38,12 +38,14 @@ ReaderStartup = Literal["deferrable", "required"]
 class _ReadinessFailure(Exception):
     """A route's readiness failed, and whether that failure was only an outage.
 
-    An outage is an unavailable route, or one whose share of the
-    budget ran out with no other failure on record. Anything else — a refused
-    credential or login, a session the codecs cannot run under, a probe that
-    read back the wrong thing or another login, an unconfirmed release, a full
-    queue — says more than that the route could not yet be reached, which is
-    the one failure deferral waits out.
+    An outage is a failure whose only finding is that no usable connection was
+    obtained within the budget: the route was unreachable, its session was lost
+    with no replacement refused as anything worse, a connection arrived only
+    after the budget, or the budget ran out with no refusal on record. Anything
+    else — a refused credential or login, a session the codecs cannot run
+    under, a probe that read back the wrong thing or another login, an
+    unconfirmed release, a full queue — says more than that, and deferral waits
+    out nothing more.
     """
 
     def __init__(self, error: DatabaseStartupError, *, outage: bool) -> None:
@@ -63,7 +65,7 @@ def open_runtime[C, A](
     reader_startup: ReaderStartup,
 ) -> DatabaseRuntime[A]:
     """Open one ready runtime serving ``routes`` through ``driver``, or raise
-    :class:`DatabaseStartupError` having released what it took.
+    :class:`DatabaseStartupError` having attempted to release what it took.
 
     ``routes`` is the declaration the runtime publishes: it always names the
     writer, and a reader pool opens only where it names a reader. Every pool
@@ -75,8 +77,8 @@ def open_runtime[C, A](
     pending until a connection proves it. The writer's reservation pool opens
     beside them holding no connection, and the writer's proof stands for it.
 
-    Every failure below publishes no runtime: every pool opened so far is closed
-    on the way out, and a startup connection that was already acquired is
+    Every failure below publishes no runtime: every pool opened so far has its
+    close attempted on the way out, and a startup connection that was already acquired is
     released through the same cleanup path an ordinary operation uses — which
     reports what it established, so a disposal or handoff that itself failed is
     stated rather than assumed away.
@@ -284,8 +286,8 @@ def _remaining_budget[C](
     Checked between phases rather than inside them: the budget stops the next
     step from starting and makes no claim about interrupting one already
     running. Running out is an outage's symptom only where the route has no
-    refusal on record: a route whose own dials were refused would be refused
-    again, however long it were given.
+    refusal on record; otherwise that refusal is the failure, and deferral
+    does not wait it out.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:

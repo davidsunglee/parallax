@@ -145,7 +145,8 @@ class PostgresAdapter:
         object.__setattr__(self, "prepare_threshold", _prepare_threshold(self.prepare_threshold))
 
     def open(self) -> DatabaseRuntime[PostgresRole]:
-        """Open one independent ready runtime, or raise having released what it took.
+        """Open one independent ready runtime, or raise having attempted to release
+        what it took.
 
         Ready means proved: each route's pool exists, a real connection was
         acquired from it, initialized, and made to decode an integer, an
@@ -153,8 +154,8 @@ class PostgresAdapter:
         exactly, and it was given back — the reader's having authenticated the
         writer's login — unless an unavailable reader was deferred. A failure at
         any of those raises :class:`~parallax.core.internal.db_port.DatabaseStartupError`
-        naming the route and the phase, and publishes no runtime: every pool is
-        closed and a startup connection already acquired goes through the
+        naming the route and the phase, and publishes no runtime: every pool's
+        close is attempted and a startup connection already acquired goes through the
         ordinary cleanup path, which reports what it established rather than
         promising reclamation.
         """

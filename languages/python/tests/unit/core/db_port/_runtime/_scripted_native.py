@@ -165,6 +165,8 @@ class ScriptedPool[C]:
     calls. ``on_check_out`` runs with the budget at the start of every checkout,
     before its outcome is decided: where a dial failure is reported to
     :attr:`dial_record` while a caller waits, or the clock moves during the wait.
+    ``on_close`` runs at the start of every close, before its outcome is decided:
+    where a test observes what the runtime has already done during teardown.
 
     Every budget asked for, every connection handed back and by which method,
     and every close are recorded.
@@ -184,6 +186,7 @@ class ScriptedPool[C]:
         self.close_failure = close_failure
         self.metrics_failure = metrics_failure
         self.on_check_out: Callable[[float], None] | None = None
+        self.on_close: Callable[[], None] | None = None
         self.dial_record: DialRecord | None = None
         self.available = 0
         self.budgets: list[float] = []
@@ -228,6 +231,8 @@ class ScriptedPool[C]:
 
     def close(self) -> None:
         self.closes += 1
+        if self.on_close is not None:
+            self.on_close()
         if self.close_failure is not None:
             raise self.close_failure
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -19,7 +19,9 @@ from parallax.core.internal.db_port import (
     RESOURCE_LOGGER_NAME,
     ConnectionAcquisitionError,
     CredentialResolutionError,
+    DatabaseRuntime,
     DatabaseStartupError,
+    PoolAvailable,
     ProbeMismatch,
     ReleaseUnconfirmed,
     Returned,
@@ -27,7 +29,6 @@ from parallax.core.internal.db_port import (
     RouteCapabilities,
     open_runtime,
 )
-from parallax.core.internal.db_port._runtime._pooled_runtime import PooledRuntime
 from parallax.core.internal.dialect import POSTGRES
 from tests.unit.core.db_port._runtime._composition import (
     ROUTED,
@@ -37,7 +38,6 @@ from tests.unit.core.db_port._runtime._composition import (
     issues_of,
     lost_session,
     pool_of,
-    reader_route_of,
     resource_records,
     whatever_budget,
 )
@@ -56,8 +56,8 @@ def _open_runtime(
     routes: Mapping[Route, RouteCapabilities] = WRITER_ONLY,
     *,
     reader_startup: Any = "deferrable",
-) -> PooledRuntime[ScriptedConnection, object]:
-    runtime = open_runtime(
+) -> DatabaseRuntime:
+    return open_runtime(
         driver,
         dialect=POSTGRES,
         routes=routes,
@@ -65,7 +65,6 @@ def _open_runtime(
         startup_timeout=30.0,
         reader_startup=reader_startup,
     )
-    return cast("PooledRuntime[ScriptedConnection, object]", runtime)
 
 
 def _opened(pool: Pool) -> ScriptedDriver:
@@ -73,9 +72,14 @@ def _opened(pool: Pool) -> ScriptedDriver:
     return ScriptedDriver(pools={"writer": pool})
 
 
-def _open_routed(
-    driver: ScriptedDriver, *, reader_startup: Any = "deferrable"
-) -> PooledRuntime[ScriptedConnection, object]:
+def _reader_readiness(runtime: DatabaseRuntime) -> str:
+    (reader,) = (source for source in runtime.pool_metrics if source.route == "reader")
+    sample = reader.sample()
+    assert isinstance(sample, PoolAvailable), sample
+    return sample.readiness
+
+
+def _open_routed(driver: ScriptedDriver, *, reader_startup: Any = "deferrable") -> DatabaseRuntime:
     return _open_runtime(driver, ROUTED, reader_startup=reader_startup)
 
 
@@ -322,17 +326,36 @@ def test_a_budget_already_spent_refuses_to_begin_the_next_phase(
 # --------------------------------------------------------------------------- #
 
 
+def test_a_failed_startup_abandons_every_opened_pool_the_latest_first() -> None:
+    closed: list[str] = []
+    pools = {
+        "writer": pool_of(checkout_failure=checkout_failed("timeout")),
+        "reader": pool_of(),
+        "reservation": pool_of(),
+    }
+    for name, pool in pools.items():
+        pool.on_close = lambda name=name: closed.append(name)
+
+    with pytest.raises(DatabaseStartupError):
+        _open_routed(ScriptedDriver(pools=pools))
+
+    assert closed == ["reservation", "reader", "writer"]
+
+
 def test_an_interrupted_abandonment_still_abandons_every_other_opened_pool() -> None:
     interrupt = KeyboardInterrupt()
-    writer_pool = pool_of()
+    writer_pool, reservation_pool = pool_of(), pool_of()
     reader_pool = pool_of(ScriptedConnection(login="other"), close_failure=interrupt)
+    driver = ScriptedDriver(
+        pools={"writer": writer_pool, "reader": reader_pool, "reservation": reservation_pool}
+    )
 
     with pytest.raises(KeyboardInterrupt) as raised:
-        _open_routed(ScriptedDriver(pools={"writer": writer_pool, "reader": reader_pool}))
+        _open_routed(driver)
 
     assert raised.value is interrupt
     assert isinstance(raised.value.__context__, DatabaseStartupError)
-    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+    assert (writer_pool.closes, reader_pool.closes, reservation_pool.closes) == (1, 1, 1)
 
 
 def test_a_pool_whose_open_is_interrupted_propagates_the_interrupt_and_closes_the_others() -> None:
@@ -473,7 +496,6 @@ def test_an_unreachable_reader_is_left_pending_under_deferrable_startup(
     with caplog.at_level(logging.INFO, logger=RESOURCE_LOGGER_NAME):
         runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
 
-    assert reader_route_of(runtime).readiness() == "pending"
     assert [sample.readiness for sample in available_samples(runtime)] == [
         "verified",
         "pending",
@@ -517,7 +539,7 @@ def test_a_reader_whose_budget_ran_out_between_phases_is_left_pending(
 
     runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
 
-    assert reader_route_of(runtime).readiness() == "pending"
+    assert _reader_readiness(runtime) == "pending"
     assert reader_pool.budgets == []
 
 
@@ -605,7 +627,7 @@ def test_a_reader_probe_lost_with_no_replacement_is_left_pending() -> None:
 
     runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
 
-    assert reader_route_of(runtime).readiness() == "pending"
+    assert _reader_readiness(runtime) == "pending"
 
 
 def test_a_reader_probe_whose_replacement_arrives_past_the_budget_is_left_pending_unproved(
@@ -625,7 +647,7 @@ def test_a_reader_probe_whose_replacement_arrives_past_the_budget_is_left_pendin
 
     runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
 
-    assert reader_route_of(runtime).readiness() == "pending"
+    assert _reader_readiness(runtime) == "pending"
     assert late.submitted == []
     assert reader_pool.check_ins == [late]
     runtime.close()
@@ -719,7 +741,7 @@ def test_a_reader_probe_whose_raw_failure_the_driver_calls_a_lost_session_is_lef
 
     runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
 
-    assert reader_route_of(runtime).readiness() == "pending"
+    assert _reader_readiness(runtime) == "pending"
     assert len(reader_pool.budgets) == 1
 
 
