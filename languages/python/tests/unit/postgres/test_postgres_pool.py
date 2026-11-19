@@ -1228,6 +1228,53 @@ def test_a_replaced_role_installation_that_is_refused_reports_its_own_refusal() 
     assert RESTORE not in refusing.submitted
 
 
+def _set_up_on(setup: str, pool: _Pool) -> Any:
+    """Run the setup named ``setup`` as the first submission of a lease over ``pool``."""
+    if setup == "proof":
+        resource = _reader_context(_routed(_pool(), pool, reader_readiness="pending"))
+        resource.__enter__()
+    elif setup == "role":
+        _context(pool, authorization="tenant_reader").__enter__()
+    elif setup == "statement-bound":
+        _runtime(_pool(), reservation=pool).reservation_source().new_context(
+            monotonic() + 5.0
+        ).__enter__()
+    else:
+        with _context(pool) as scoped:
+            scoped.submit("BEGIN", replay_safe=True, setup=True)
+
+
+@pytest.mark.parametrize("setup", ["proof", "role", "statement-bound", "outer-begin"])
+@pytest.mark.parametrize(
+    "refusal",
+    ["credentials_refused", "authentication_refused", "preparation_failed", "not-idle"],
+)
+def test_setup_whose_replacement_was_refused_reports_that_refusal_rather_than_the_loss(
+    setup: str, refusal: Any
+) -> None:
+    cause = RuntimeError("the replacement was refused")
+    broken = ScriptedConnection(lost=_lost())
+    if refusal == "not-idle":
+        pool = _pool(broken, ScriptedConnection(idle=NotIdle("INTRANS")))
+    else:
+        pool = _pool(broken, ScriptedConnection())
+        broken.when_lost = lambda: setattr(
+            pool, "checkout_failure", checkout_failed(refusal, cause)
+        )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        _set_up_on(setup, pool)
+
+    if refusal == "not-idle":
+        assert refused.value.reason == "preparation_failed"
+        assert "INTRANS" in str(refused.value)
+    else:
+        assert refused.value.reason == refusal
+        assert refused.value.__cause__ is cause
+    route = "reader" if setup == "proof" else "writer"
+    assert refused.value.selection == RouteSelection(route)
+
+
 def test_a_role_refused_on_a_healthy_connection_is_not_replaced() -> None:
     connection = ScriptedConnection(failure=RuntimeError("permission denied to set role"))
     pool = _pool(connection, ScriptedConnection())

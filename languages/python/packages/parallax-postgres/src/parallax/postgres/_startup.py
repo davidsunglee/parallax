@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import monotonic
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Literal
 
 from parallax.core.internal.db_port import (
     CleanupResult,
@@ -13,6 +13,7 @@ from parallax.core.internal.db_port import (
     StartupPhase,
     report_resource_issues,
 )
+from parallax.postgres._context import OUTAGE_REASONS
 from parallax.postgres._route import PostgresRoute, open_route
 from parallax.postgres._runtime import PostgresRuntime
 
@@ -26,8 +27,6 @@ __all__ = ["ReaderStartup", "open_runtime"]
 
 ReaderStartup = Literal["deferrable", "required"]
 """Whether an unavailable reader may leave startup to finish its proof later."""
-
-_OUTAGES: Final = frozenset({"unavailable", "timeout"})
 
 
 class _ReadinessFailure(Exception):
@@ -198,7 +197,7 @@ def _probe[C, A](
         raise _ReadinessFailure(
             error,
             outage=driver.is_session_lost(exc)
-            and (refusal is None or refusal.reason in _OUTAGES)
+            and (refusal is None or refusal.reason in OUTAGE_REASONS)
             and _confirmed(resource.cleanup_result),
         ) from None
     resource.__exit__(None, None, None)
@@ -233,7 +232,7 @@ def _unacquired[C](
     error.__cause__ = refused
     return _ReadinessFailure(
         error,
-        outage=refused.reason in _OUTAGES and _confirmed(cleanup_result),
+        outage=refused.reason in OUTAGE_REASONS and _confirmed(cleanup_result),
     )
 
 
