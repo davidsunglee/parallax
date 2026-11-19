@@ -270,7 +270,9 @@ def test_a_reading_that_cannot_be_believed_samples_unavailable_and_names_nothing
     # carry what a sample reports, which is the whole of what an exporter may
     # be handed about a mapping nobody audited.
     source = PooledRouteMetricsSource(
-        _wrapped(_Native({"pool_size": "enormous"})), "writer", lambda: "verified"
+        _wrapped(_Native({**_GAUGES, **_COUNTERS, "pool_size": "enormous"})),
+        "writer",
+        lambda: "verified",
     )
 
     sample = source.sample()

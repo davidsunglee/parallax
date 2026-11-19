@@ -120,13 +120,13 @@ def test_an_authorization_the_driver_refuses_binds_nothing_and_acquires_nothing(
 
 
 def test_close_is_idempotent_and_permanent() -> None:
-    pool = pool_of()
-    runtime = pooled_runtime(pool)
+    pool, reservation = pool_of(), pool_of()
+    runtime = pooled_runtime(pool, reservation=reservation)
 
     runtime.close()
     runtime.close()
 
-    assert pool.closes == 1
+    assert (pool.closes, reservation.closes) == (1, 1)
     with pytest.raises(ConnectionAcquisitionError) as refused:
         login_context(runtime).__enter__()
     assert refused.value.reason == "closed"
@@ -234,20 +234,25 @@ def test_a_reader_lease_s_refusal_reports_the_reader() -> None:
     )
 
 
-def test_closing_detaches_both_sources_then_closes_both_pools_whatever_one_raises(
+def test_closing_detaches_every_source_then_closes_every_pool_whatever_one_raises(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # The first native close samples every source, so what it records is what
+    # a sample begun during the teardown would see.
     writer_pool = pool_of(close_failure=RuntimeError("the writer would not close"))
-    reader_pool = pool_of()
-    runtime = routed(writer_pool, reader_pool)
+    reader_pool, reservation_pool = pool_of(), pool_of()
+    runtime = routed(writer_pool, reader_pool, reservation=reservation_pool)
     sources = runtime.pool_metrics
+    during_first_close: list[object] = []
+    writer_pool.on_close = lambda: during_first_close.extend(s.sample() for s in sources)
 
     with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME):
         runtime.close()
         runtime.close()
 
-    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
-    assert all(isinstance(source.sample(), PoolDetached) for source in sources)
+    assert (writer_pool.closes, reader_pool.closes, reservation_pool.closes) == (1, 1, 1)
+    assert len(during_first_close) == 3
+    assert all(isinstance(sample, PoolDetached) for sample in during_first_close)
     assert len(resource_records(caplog)) == 1
     # One admission decision serves both routes.
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -257,11 +262,15 @@ def test_closing_detaches_both_sources_then_closes_both_pools_whatever_one_raise
 
 def test_an_interrupted_close_still_closes_every_later_pool() -> None:
     interrupt = KeyboardInterrupt()
-    writer_pool, reader_pool = pool_of(close_failure=interrupt), pool_of()
-    runtime = routed(writer_pool, reader_pool)
+    writer_pool, reader_pool, reservation_pool = (
+        pool_of(close_failure=interrupt),
+        pool_of(),
+        pool_of(),
+    )
+    runtime = routed(writer_pool, reader_pool, reservation=reservation_pool)
 
     with pytest.raises(KeyboardInterrupt) as raised:
         runtime.close()
 
     assert raised.value is interrupt
-    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+    assert (writer_pool.closes, reader_pool.closes, reservation_pool.closes) == (1, 1, 1)

@@ -40,9 +40,11 @@ if TYPE_CHECKING:
 __all__ = ["OUTAGE_REASONS", "PooledConnectionContext", "Step", "check_out_within", "release"]
 
 OUTAGE_REASONS: Final = frozenset({"unavailable", "timeout"})
-"""The acquisition refusals that say only that no connection was reached in
-time. Every other refusal names something more specific than an outage: a
-refused credential, login, or session, a full queue, or a closed runtime."""
+"""The acquisition refusals that say only that no usable connection was
+obtained in time: none was reached, one was lost before it could serve, or one
+arrived after the budget. Every other refusal names something more specific
+than an outage: a refused credential, login, or session, a full queue, or a
+closed runtime."""
 
 type Admit = Callable[[float], None]
 """The runtime's atomic admission check, raising when work may not proceed.

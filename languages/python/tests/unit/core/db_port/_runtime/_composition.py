@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from parallax.core.internal.db_port import (
     RESOURCE_LOGGER_NAME,
+    DatabaseRuntime,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
@@ -110,6 +111,7 @@ def routed(
     *,
     reader_readiness: str = "verified",
     acquire_timeout: float = 15.0,
+    reservation: Pool | None = None,
 ) -> PooledRuntime[ScriptedConnection, object]:
     """A started runtime over two scripted pools, its reader verified or pending."""
     reader = PooledRoute("reader", reader_pool, DialLedger())
@@ -119,7 +121,9 @@ def routed(
         routes=ROUTED,
         writer=PooledRoute("writer", writer_pool, DialLedger()),
         reader=reader,
-        reservation=PooledRoute("writer", pool_of(), DialLedger(), "reservation"),
+        reservation=PooledRoute(
+            "writer", pool_of() if reservation is None else reservation, DialLedger(), "reservation"
+        ),
         acquire_timeout=acquire_timeout,
     )
     runtime._complete_startup("runtime-login")  # pyright: ignore[reportPrivateUsage] - the startup transition this harness stands in for
@@ -165,7 +169,7 @@ def resource_records(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if record.name == RESOURCE_LOGGER_NAME]
 
 
-def available_samples(runtime: PooledRuntime[ScriptedConnection, object]) -> list[Any]:
+def available_samples(runtime: DatabaseRuntime) -> list[Any]:
     samples = [
         source.sample() for source in runtime.pool_metrics if source.purpose == "application"
     ]
