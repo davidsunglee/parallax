@@ -423,7 +423,7 @@ def _temporal_write(item: OrderedWrite) -> TemporalOrderedWrite:
     # Batching joins no temporal write, and only an observation, an insertion,
     # or a caller's stated start licenses one of existing coverage.
     assert (
-        isinstance(item, ComposedTemporalWrite | ComposedBitemporalOpening | KeyedInsert)
+        isinstance(item, (ComposedTemporalWrite, ComposedBitemporalOpening, KeyedInsert))
         or is_licensed_by(item, StateObserved)
         or is_licensed_by(item, InsertionAuthorized)
         or is_licensed_by(item, TxStartConditioned)
@@ -436,7 +436,7 @@ def _non_temporal_write(item: OrderedWrite) -> NonTemporalOrderedWrite:
     reads it."""
     # Only a temporal object's writes compose or state a Transaction-Time start.
     assert (
-        isinstance(item, KeyedInsert | InsertBatch | UnversionedWriteBatch)
+        isinstance(item, (KeyedInsert, InsertBatch, UnversionedWriteBatch))
         or is_licensed_by(item, StateObserved)
         or is_licensed_by(item, UnversionedLocked)
         or is_licensed_by(item, VersionConditioned)

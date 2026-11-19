@@ -171,7 +171,7 @@ def _range_intents(
 ) -> tuple[TemporalIntent[TemporalCoverageAuthority], ...] | None:
     """The intents ``item`` answers where it settles as a range over existing
     coverage, or ``None`` for an opening or an insert."""
-    if isinstance(item, ComposedBitemporalOpening | KeyedInsert):
+    if isinstance(item, (ComposedBitemporalOpening, KeyedInsert)):
         return None
     intents = item.intents
     if any(
