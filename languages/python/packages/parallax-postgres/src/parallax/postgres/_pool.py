@@ -46,10 +46,12 @@ _CREDENTIAL_REFUSAL = "the credential source could not produce a password"
 class PostgresPool:
     """One native pool, in either retention mode, as the runtime's connection pool.
 
-    An on-demand pool dials on the checking-out thread, so its dial failure
-    comes out of :meth:`check_out` itself and is classified there; a retaining
-    pool dials on its own workers, whose failures reach the runtime only
-    through the pool's dial record.
+    An on-demand pool with capacity to spare dials on the checking-out thread,
+    so that dial's failure comes out of :meth:`check_out` itself and is
+    classified there. Every other dial runs on the pool's own workers — all of
+    a retaining pool's, and an on-demand pool's replacement for a connection
+    handed back broken or expired while a caller waits — and its failure
+    reaches the runtime only through the pool's dial record.
 
     Both accounting methods are the native return. The native pool already
     tells the two apart by the connection's state: a closed connection is
@@ -99,9 +101,11 @@ class DialObserver:
     stops the attempt, so no failure is reported twice, and only
     initialization reports a connection usable.
 
-    Every hook runs on the thread making the attempt: a retaining pool's
-    worker, or the caller an on-demand pool dials for. Classification happens
-    before the report, so the record holds nothing while a failure is read.
+    Every hook runs on the thread making the attempt: a pool worker, or the
+    caller an on-demand pool dials for. Classification happens before the
+    report, so the record holds nothing while a failure is read. A connection
+    whose initialization is refused is closed here, because the native pool
+    neither keeps nor closes one its ``configure`` refused.
     """
 
     __slots__ = ("_dial_record", "connection_class")
@@ -118,6 +122,8 @@ class DialObserver:
             initialize_connection(connection)
         except Exception as refusal:
             self._report(refusal)
+            with contextlib.suppress(Exception):
+                connection.close()
             raise
         self._dial_record.report_usable()
 

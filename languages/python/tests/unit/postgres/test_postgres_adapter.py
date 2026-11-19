@@ -1448,8 +1448,8 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
 
 
 class _RecordingLease:
-    """A lease over ``connections`` in turn, recording the progress each
-    operation it runs reported.
+    """A lease over ``connections`` in turn, recording what each operation it
+    runs was handed as — replay-safe, setup — and the progress it reported.
 
     With ``replace``, it repeats once, on the next connection, an operation
     that was replay-safe and failed after starting and before its answer —
@@ -1464,6 +1464,7 @@ class _RecordingLease:
         self._connections = connections
         self._replace = replace
         self.held = 0
+        self.intents: list[tuple[bool, bool]] = []
         self.progress: list[SubmissionProgress] = []
         self._suspect = False
 
@@ -1475,7 +1476,7 @@ class _RecordingLease:
         replay_safe: bool,
         setup: bool = False,
     ) -> T:
-        del setup
+        self.intents.append((replay_safe, setup))
         submission = SubmissionProgress()
         self.progress.append(submission)
         try:
@@ -1589,6 +1590,18 @@ def test_a_boundary_has_answered_before_its_callback_runs() -> None:
     PostgresConnection(lease).transaction(lambda _port: seen.append(_marks(lease)))
 
     assert seen == [[(True, True)]]
+
+
+def test_a_boundary_hands_its_begin_to_the_lease_as_setup_repeatable_only_when_outer() -> None:
+    # Setup is what lets a lease admit a boundary that opened after entry and
+    # move a lost one to the next route; only an outer BEGIN may be repeated.
+    lease = _RecordingLease(_FakeConnection())
+    execution = PostgresConnection(lease)
+
+    outcome = execution.transaction(lambda port: port.transaction(lambda _inner: None))
+
+    assert outcome == Committed(Committed(None))
+    assert lease.intents == [(True, True), (False, True)]
 
 
 def test_a_begin_the_server_refuses_has_started_and_is_unanswered() -> None:

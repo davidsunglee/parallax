@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     import psycopg
     from psycopg.rows import TupleRow
 
-__all__ = ["PostgresRole", "install_role", "restore_role", "statement_timeout"]
+__all__ = ["PostgresRole", "install_setup", "restore_role", "role_statement", "statement_timeout"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,7 @@ class PostgresRole:
             raise UsageError(AUTHORIZATION_INVALID, "a PostgreSQL role name must not be empty")
 
 
-def _role_statement(role: PostgresRole) -> Composed:
+def role_statement(role: PostgresRole) -> Composed:
     return SQL("SET ROLE {}").format(Identifier(role.name))
 
 
@@ -36,7 +36,7 @@ def statement_timeout(milliseconds: int) -> Composed:
     return SQL("SET statement_timeout = {}").format(Literal(milliseconds))
 
 
-def _install_setup(
+def install_setup(
     connection: psycopg.Connection[TupleRow],
     submission: SubmissionProgress,
     statement: Composed,
@@ -46,10 +46,6 @@ def _install_setup(
         submission.started = True
         cursor.execute(statement)
         submission.answered = True
-
-
-def install_role(connection: Any, role: PostgresRole) -> None:
-    _install_setup(connection, SubmissionProgress(), _role_statement(role))
 
 
 def restore_role(connection: Any) -> None:

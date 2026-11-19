@@ -21,9 +21,9 @@ from parallax.core.internal.db_port import (
 from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres._authorization import (
     PostgresRole,
-    _install_setup,  # pyright: ignore[reportPrivateUsage] - the one session setup submission
-    _role_statement,  # pyright: ignore[reportPrivateUsage] - the one role installation
+    install_setup,
     restore_role,
+    role_statement,
     statement_timeout,
 )
 from parallax.postgres._connection import (
@@ -37,7 +37,7 @@ from parallax.postgres._pool import PostgresPool, open_pool
 if TYPE_CHECKING:
     from parallax.postgres._adapter import PostgresAdapter
 
-__all__ = ["PROBE_SQL", "PostgresDriver", "check_probe"]
+__all__ = ["PROBE_SQL", "PostgresDriver"]
 
 PROBE_SQL: Final = """SELECT
     1 AS ready,
@@ -76,7 +76,7 @@ _OTHER_LOGIN = "the reader route authenticated a different database login than t
 _NOT_A_ROLE = "PostgreSQL principal execution requires a PostgresRole"
 
 
-def check_probe(rows: list[Row], expected_login: str | None) -> str:
+def _check_probe(rows: list[Row], expected_login: str | None) -> str:
     """The login the probe's ``rows`` authenticated, or :class:`ProbeMismatch`.
 
     ``expected_login``, where given, is the login every route must share.
@@ -171,7 +171,7 @@ class PostgresDriver:
     ) -> str:
         no_binds: list[object] = []
         rows = _execute_rows(connection, submission, POSTGRES, _PROBE, no_binds, ())
-        return check_probe(rows, expected_login)
+        return _check_probe(rows, expected_login)
 
     def install_authorization(
         self,
@@ -179,7 +179,7 @@ class PostgresDriver:
         submission: SubmissionProgress,
         authorization: PostgresRole,
     ) -> None:
-        _install_setup(connection, submission, _role_statement(authorization))
+        install_setup(connection, submission, role_statement(authorization))
 
     def restore_authorization(self, connection: NativeConnection) -> None:
         restore_role(connection)
@@ -191,4 +191,4 @@ class PostgresDriver:
         to whole milliseconds and never below one, because zero is the
         setting's spelling of no limit at all."""
         milliseconds = max(1, math.ceil(seconds * 1000))
-        _install_setup(connection, submission, statement_timeout(milliseconds))
+        install_setup(connection, submission, statement_timeout(milliseconds))
