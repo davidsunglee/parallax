@@ -28,11 +28,12 @@ from parallax.core.internal.execution import prepare_model
 from parallax.core.internal.read_delivery import InvalidData
 from parallax.snapshot import TxnContext, connect
 from tests._support.bindings import TEST_BINDING
+from tests._support.case_corpus import cases
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
 
-_CASES = write_value_runner.reachable_write_value_cases()
+_CASES = write_value_runner.reachable_write_value_cases(cases=cases())
 _CASE_IDS = [case.case_id for case in _CASES]
 
 

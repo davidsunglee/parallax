@@ -63,7 +63,11 @@ from snapshot_delivery_overhead import (
     scalar_cells,
     unit,
 )
-from tests.unit.tools._cost_report_support import complete_instance_state, lifecycle_document
+from tests.unit.tools._cost_report_support import (
+    complete_instance_state,
+    lifecycle_document,
+    stub_capture_interpreters,
+)
 
 
 def _just_report_recipes() -> frozenset[str]:
@@ -483,6 +487,7 @@ def test_written_output_keeps_one_portfolio_with_conditions_and_durations(
 
     monkeypatch.setattr(cost_report, "run_member", run)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
+    stub_capture_interpreters(monkeypatch)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     assert {path.name for path in out.iterdir()} - {"checkpoints"} == {
@@ -520,6 +525,7 @@ def test_a_failed_required_member_still_leaves_every_output_and_its_attribution(
 
     monkeypatch.setattr(cost_report, "run_member", run)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
+    stub_capture_interpreters(monkeypatch)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 1
     durations = Spans.load(out / DURATIONS_FILE)
@@ -1906,6 +1912,7 @@ def test_collection_writes_the_conditions_it_recorded_beside_the_portfolio(
 
     monkeypatch.setattr(cost_report, "run_member", run)
     monkeypatch.setattr(cost_report, "preflight", lambda: None)
+    stub_capture_interpreters(monkeypatch)
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     capsys.readouterr()

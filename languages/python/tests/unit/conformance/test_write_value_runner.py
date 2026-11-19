@@ -27,6 +27,7 @@ from parallax.core.internal.entity import DomainModel, Entity
 from parallax.core.internal.execution import prepare_model
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.bindings import TEST_BINDING
+from tests._support.case_corpus import cases
 from tests._support.db_port import (
     Read,
     ReadCall,
@@ -39,7 +40,7 @@ from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
 from tests.unit._transact_support import FIXED
 
-_CASES = write_value_runner.reachable_write_value_cases()
+_CASES = write_value_runner.reachable_write_value_cases(cases=cases())
 _CASE_IDS = [case.case_id for case in _CASES]
 
 _TARGET_ROW: MappingRow = {

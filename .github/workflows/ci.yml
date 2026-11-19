@@ -270,7 +270,7 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
       # Python 3.14 proves runtime compatibility without the slower branch
       # tracer; the latest interpreter owns coverage, here and in python-check-db.
-      PYTEST_ADDOPTS: ${{ matrix.python-version != '3.15.2' && '--no-cov' || '' }}
+      PYTEST_ADDOPTS: "--durations=25 ${{ matrix.python-version != '3.15.2' && '--no-cov' || '' }}"
     steps:
       - uses: actions/checkout@v7
         with:

@@ -12,6 +12,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
+import cost_report
 import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import lifecycle_overhead
@@ -51,6 +54,17 @@ from snapshot_delivery_overhead import (
 from tests.unit._instance_state_support import REPORTED, Scenario
 
 type Document = dict[str, Any]
+
+
+def stub_capture_interpreters(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cost_report, "run_probe", lambda _command, _environment: (0, "", ""))
+    monkeypatch.setattr(
+        cost_report,
+        "probe_runtime",
+        lambda runtime, _namespace: RuntimeIdentity(
+            "CPython", f"{runtime}.1", "/interpreters/python"
+        ),
+    )
 
 
 def canary_provenance(contract: BudgetContract) -> Provenance:

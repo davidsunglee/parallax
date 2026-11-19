@@ -29,7 +29,7 @@ import yaml
 from check_resource_access import RESOURCE_CLASSES
 from tests._support import committed_evidence, shards
 from tests._support.repo import PY_ROOT, REPO_ROOT
-from tests.unit._session_selection_support import WHOLE_CLASS, selection
+from tests.unit._session_selection_support import selection
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cloud", "cost"})
@@ -157,28 +157,31 @@ def _deployed_cells(job: str) -> list[str]:
     return [str(cell) for cell in workflow["jobs"][job]["strategy"]["matrix"]["shard"]]
 
 
-def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole() -> None:
+def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PARALLAX_CLOUD_PROVIDERS", raising=False)
     variants = (
         ("cost", _deployed_cells(COST_JOB), "--shard", shards.COST_DURATIONS),
         ("db", _deployed_cells("python-check-db"), "--db-shard", shards.DB_DURATIONS),
     )
-    with ThreadPoolExecutor(max_workers=3) as sessions:
-        unsharded = sessions.submit(selection, None, WHOLE_CLASS)
+    with ThreadPoolExecutor(max_workers=len(variants)) as sessions:
         narrowed = {
             scheduling_class: sessions.submit(
                 selection, None, cells[len(cells) // 2], option=option
             )
             for scheduling_class, cells, option, _path in variants
         }
-        whole = unsharded.result()
-        selected = {name: future.result().selected for name, future in narrowed.items()}
+        snapshots = {name: future.result() for name, future in narrowed.items()}
     for scheduling_class, cells, option, path in variants:
         parsed = [shards.index_and_count(cell, option=option) for cell in cells]
         assert sorted(parsed) == [(index, len(cells)) for index in range(1, len(cells) + 1)]
-        members = [item for item in whole.selected if whole.classes[item] == scheduling_class]
+        snapshot = snapshots[scheduling_class]
+        whole = [item for item in snapshot.collected if snapshot.classes[item] != "cloud"]
+        members = [item for item in whole if snapshot.classes[item] == scheduling_class]
         known = shards.known(path)
         if scheduling_class == "db":
-            assignment = shards.shard_of_groups(members, whole.groups, known, len(cells))
+            assignment = shards.shard_of_groups(members, snapshot.groups, known, len(cells))
         else:
             assignment = shards.shard_of_each(shards.weights(members, known), len(cells))
         predicted = {
@@ -188,18 +191,18 @@ def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole() -> N
         assert all(predicted.values())
         assert sorted(item for part in predicted.values() for item in part) == sorted(members)
         spot_checked = cells[len(cells) // 2]
-        actual = selected[scheduling_class]
-        assert [item for item in actual if whole.classes[item] == scheduling_class] == predicted[
+        actual = snapshot.selected
+        assert [item for item in actual if snapshot.classes[item] == scheduling_class] == predicted[
             spot_checked
         ]
-        assert [item for item in actual if whole.classes[item] != scheduling_class] == [
-            item for item in whole.selected if whole.classes[item] != scheduling_class
+        assert [item for item in actual if snapshot.classes[item] != scheduling_class] == [
+            item for item in whole if snapshot.classes[item] != scheduling_class
         ]
         if scheduling_class == "db":
             placement = dict(zip(members, assignment, strict=True))
-            for group in set(whole.groups.values()):
+            for group in set(snapshot.groups.values()):
                 assert (
-                    len({placement[item] for item in members if whole.groups.get(item) == group})
+                    len({placement[item] for item in members if snapshot.groups.get(item) == group})
                     <= 1
                 )
 
