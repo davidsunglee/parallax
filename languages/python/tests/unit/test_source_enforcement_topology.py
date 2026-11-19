@@ -696,7 +696,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._postgres_control",
         "parallax.postgres._connection",
-    ): frozenset({"PostgresConnection", "initialize_connection"}),
+    ): frozenset({"DirectLease", "PostgresConnection", "initialize_connection"}),
 }
 
 

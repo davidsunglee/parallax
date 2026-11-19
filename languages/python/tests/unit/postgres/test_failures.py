@@ -15,7 +15,7 @@ import pytest
 
 from parallax.core.internal.db_port import CredentialResolutionError
 from parallax.postgres._connection import IncompatibleSessionError
-from parallax.postgres._failures import dial_reason, session_lost
+from parallax.postgres._failures import dial_reason, is_session_broken, is_session_lost
 from parallax.postgres._route_plan import RoutePlan
 
 
@@ -255,7 +255,27 @@ def test_a_connect_failure_whose_attempt_cannot_be_read_reads_as_unreachable() -
 def test_a_lost_established_session_is_lost_whatever_password_opened_it() -> None:
     lost = _ConnectFailed(_Attempt(used_password=True))
 
-    assert session_lost(lost)
-    assert session_lost(_Stated("57P01"))
-    assert not session_lost(_Stated("42501"))
-    assert not session_lost(RuntimeError("not a driver failure"))
+    assert is_session_lost(lost)
+    assert is_session_lost(_Stated("57P01"))
+    assert not is_session_lost(_Stated("42501"))
+    assert not is_session_lost(RuntimeError("not a driver failure"))
+
+
+class _Session:
+    def __init__(self, *, closed: bool) -> None:
+        self.closed = closed
+
+
+@pytest.mark.parametrize(
+    ("failure", "closed", "broken"),
+    [
+        (psycopg.OperationalError("server closed the connection unexpectedly"), True, True),
+        # Even a connection-loss SQLSTATE grants nothing on a session still open.
+        (psycopg.errors.AdminShutdown("terminating connection"), False, False),
+        (RuntimeError("not a driver failure"), True, False),
+    ],
+)
+def test_only_a_driver_failure_that_left_its_connection_closed_breaks_the_session(
+    failure: BaseException, closed: bool, broken: bool
+) -> None:
+    assert is_session_broken(cast("Any", _Session(closed=closed)), failure) is broken

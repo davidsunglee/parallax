@@ -5,15 +5,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING
 
-from parallax.core.internal.base import UsageError
 from parallax.core.internal.db_port import (
-    AUTHORIZATION_INVALID,
     CleanupIssue,
     ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
+    NativeDriver,
     PoolMetricsSource,
     ReleaseUnconfirmed,
     ReservationContextSource,
@@ -23,63 +22,60 @@ from parallax.core.internal.db_port import (
     report_resource_issues,
 )
 from parallax.core.internal.diagnostics import diagnostic_for
-from parallax.core.internal.dialect import POSTGRES, Dialect
-from parallax.postgres._authorization import PostgresRole
 from parallax.postgres._context import PostgresConnectionContext, Step
 from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
+    from parallax.core.internal.dialect import Dialect
     from parallax.postgres._route import PostgresRoute
 
 __all__ = ["PostgresRuntime"]
 
 _CLOSED = "this Database is closed, so it opens no new database connection"
 
-_WRITER: Final = RouteCapabilities.every_level()
-_READER: Final = RouteCapabilities(frozenset({"read_committed", "repeatable_read"}))
-"""A hot standby begins a read-only transaction at these levels and refuses
-``serializable``, so a reader route never declares it."""
 
-
-class PostgresRuntime:
-    """One independent running Postgres resource, owned by one connected handle.
+class PostgresRuntime[C, A]:
+    """One independent running database resource, owned by one connected handle.
 
     Two runtimes built from one configuration share nothing: closing either
     leaves the other working, which is what makes reusing configuration safe.
-    It serves its writer route through one pool and, where one is configured,
+    It serves its writer route through one pool and, where one is declared,
     its reader route through another; key reservations borrow a third, lazy
     pool of one writer connection. All share one admission decision and one
-    close.
+    close. Its native work, authorization checking included, is its driver's.
     """
-
-    dialect: Dialect = POSTGRES
 
     __slots__ = (
         "_acquire_timeout",
         "_admission",
         "_closed",
+        "_driver",
         "_login_identity",
         "_reader",
         "_reservation",
         "_routes",
         "_writer",
+        "dialect",
     )
 
     def __init__(
         self,
-        writer: PostgresRoute,
-        reader: PostgresRoute | None = None,
+        driver: NativeDriver[C, A],
         *,
-        reservation: PostgresRoute,
+        dialect: Dialect,
+        routes: Mapping[Route, RouteCapabilities],
+        writer: PostgresRoute[C],
+        reader: PostgresRoute[C] | None = None,
+        reservation: PostgresRoute[C],
         acquire_timeout: float,
     ) -> None:
+        self._driver = driver
+        self.dialect = dialect
         self._writer = writer
         self._reader = reader
         self._reservation = reservation
         self._acquire_timeout = acquire_timeout
-        self._routes: Mapping[Route, RouteCapabilities] = MappingProxyType(
-            {"writer": _WRITER} if reader is None else {"writer": _WRITER, "reader": _READER}
-        )
+        self._routes: Mapping[Route, RouteCapabilities] = MappingProxyType(dict(routes))
         self._closed = False
         self._login_identity: str | None = None
         # Held only across the two field reads that decide admission, never
@@ -121,31 +117,31 @@ class PostgresRuntime:
         """Bind execution under the authenticated login without acquiring."""
         return _PostgresContextSource(self, None)
 
-    def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
-        """Bind execution under ``authorization`` without acquiring."""
-        if not isinstance(cast("object", authorization), PostgresRole):
-            raise UsageError(
-                AUTHORIZATION_INVALID, "PostgreSQL principal execution requires a PostgresRole"
-            )
-        return _PostgresContextSource(self, authorization)
+    def principal_source(self, authorization: A) -> ConnectionContextSource:
+        """Bind execution under ``authorization`` without acquiring, once the
+        driver has checked it."""
+        return _PostgresContextSource(self, self._driver.authorization(authorization))
 
     def reservation_source(self) -> ReservationContextSource:
         """The lazy writer capacity key reservations borrow, under the login."""
         return _PostgresReservationSource(self, self._acquire_timeout)
 
-    def _reservation_context(self, deadline: float) -> PostgresConnectionContext:
+    def _reservation_context(self, deadline: float) -> PostgresConnectionContext[C, A]:
         """A reservation's acquisition on the reservation pool, bounded by
-        ``deadline``, which its setup carries into the session as the
-        statement timeout."""
+        ``deadline``, which its setup carries into the session as its
+        statement time limit."""
         return PostgresConnectionContext(
             ((self._reservation, deadline),),
             self._admit,
+            self._driver,
             None,
             expected_login=self._login_identity,
             statement_deadline=deadline,
         )
 
-    def acquisition(self, route: PostgresRoute, deadline: float) -> PostgresConnectionContext:
+    def acquisition(
+        self, route: PostgresRoute[C], deadline: float
+    ) -> PostgresConnectionContext[C, A]:
         """A fresh acquisition on ``route`` bounded by ``deadline`` rather than by
         the ordinary budget.
 
@@ -155,10 +151,12 @@ class PostgresRuntime:
         lease runs no proof of its own: startup's probe is that proof.
         """
         return PostgresConnectionContext(
-            ((route, deadline),), self._admit, None, expected_login=None
+            ((route, deadline),), self._admit, self._driver, None, expected_login=None
         )
 
-    def _context(self, role: PostgresRole | None, policy: RoutePolicy) -> PostgresConnectionContext:
+    def _context(
+        self, authorization: A | None, policy: RoutePolicy
+    ) -> PostgresConnectionContext[C, A]:
         """An acquisition serving ``policy`` within one acquisition budget from now.
 
         Each step of the policy's plan must have served it by its own share of
@@ -170,7 +168,7 @@ class PostgresRuntime:
         budget = self._acquire_timeout
         started = monotonic()
         deadline = started + budget
-        steps: tuple[Step, ...] = tuple(
+        steps: tuple[Step[C], ...] = tuple(
             (
                 self._writer if step.route == "writer" or reader is None else reader,
                 deadline if step.share >= 1.0 else started + budget * step.share,
@@ -178,16 +176,16 @@ class PostgresRuntime:
             for step in plan.steps
         )
         return PostgresConnectionContext(
-            steps, self._admit, role, expected_login=self._login_identity
+            steps, self._admit, self._driver, authorization, expected_login=self._login_identity
         )
 
-    def _pools(self) -> tuple[PostgresRoute, ...]:
+    def _pools(self) -> tuple[PostgresRoute[C], ...]:
         reader = self._reader
         writer, reservation = self._writer, self._reservation
         return (writer, reservation) if reader is None else (writer, reader, reservation)
 
     def close(self) -> None:
-        """Stop admitting work and close every route's native pool. Idempotent and permanent.
+        """Stop admitting work and close every route's pool. Idempotent and permanent.
 
         Admission stops first, so nothing is admitted on any route while the
         pools are being torn down. Each native close then refuses waiting and
@@ -251,17 +249,17 @@ class PostgresRuntime:
 
 
 @dataclass(frozen=True, slots=True)
-class _PostgresContextSource:
-    runtime: PostgresRuntime
-    role: PostgresRole | None
+class _PostgresContextSource[C, A]:
+    runtime: PostgresRuntime[C, A]
+    authorization: A | None
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
-        return self.runtime._context(self.role, policy)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
+        return self.runtime._context(self.authorization, policy)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
 
 
 @dataclass(frozen=True, slots=True)
-class _PostgresReservationSource:
-    runtime: PostgresRuntime
+class _PostgresReservationSource[C, A]:
+    runtime: PostgresRuntime[C, A]
     reservation_timeout: float
 
     def new_context(self, deadline: float, /) -> ConnectionContext:

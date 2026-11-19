@@ -2,114 +2,27 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from typing import TYPE_CHECKING, Final, Literal
+from typing import Literal
 
-from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_port import (
     ConnectionPool,
     DatabaseStartupError,
+    NativeDriver,
     PoolPurpose,
+    ProbeMismatch,
     Route,
     RouteReadiness,
-    Row,
     report_route_readiness,
 )
 from parallax.core.internal.db_port._runtime._dial_record import DialLedger
-from parallax.postgres._pool import NativeConnection, open_pool
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 
-if TYPE_CHECKING:
-    from parallax.postgres._endpoint import PostgresEndpoint
-
-__all__ = [
-    "PROBE_SQL",
-    "PostgresRoute",
-    "ProbeMismatch",
-    "check_probe",
-    "open_reservation_route",
-    "open_route",
-]
-
-PROBE_SQL: Final = """SELECT
-    1 AS ready,
-    'infinity'::timestamptz AS temporal_bound,
-    '{"ready": true}'::jsonb AS document,
-    '7.038530691851209e-26'::float8::real AS float32_witness,
-    0.30000000000000004::float8 AS float64_witness,
-    session_user AS login_identity"""
-"""The one statement that proves a route can serve.
-
-It proves the decodings the read path cannot work without and that a bare
-connectivity check does not exercise: an ordinary integer, the neutral sentinel a
-temporal interval's open upper bound reads back as, a structured document
-decoded to a mapping, and two floats that come back exactly only when the server
-spells floats without rounding them. It also captures the authenticated
-``session_user`` that database-login execution projects as its identity, and
-that every other route must match. It reads no model, opens no explicit
-transaction, and registers nothing — the connection it runs on was already
-initialized like every other. It is a smoke probe, not a substitute for the
-codec suites.
-
-The Float64 witness needs all 17 significant digits. The Float32 witness is one
-whose shortest spelling, parsed to the nearest binary64 and then narrowed, lands
-on the adjacent binary32 value, so it also reads back exactly only through the
-adapter's own Float32 loader.
-"""
-
-_FLOAT32_WITNESS: Final = 7.038530691851209e-26
-_FLOAT64_WITNESS: Final = 0.30000000000000004
-_ROUNDED_FLOATS = (
-    "the session's extra_float_digits is at or below zero, so the server rounds float "
-    "output, which no loader can recover; set it to 1 or more"
-)
-_OTHER_LOGIN = "the reader route authenticated a different database login than the writer"
-
-
-class ProbeMismatch(Exception):
-    """The probe ran but read back something other than what it asked for.
-
-    That is a positive incompatibility rather than an outage: the same route
-    would read the same thing back next time.
-    """
-
-
-def check_probe(rows: list[Row], expected_login: str | None) -> str:
-    """The login the probe's ``rows`` authenticated, or :class:`ProbeMismatch`.
-
-    ``expected_login``, where given, is the login every route must share.
-    """
-    if len(rows) != 1:
-        raise ProbeMismatch(f"the startup probe returned {len(rows)} rows rather than one")
-    (row,) = rows
-    if len(row) != 6:
-        raise ProbeMismatch(f"the startup probe returned {len(row)} columns rather than six")
-    if row[0] != 1:
-        raise ProbeMismatch("the startup probe did not read its integer back")
-    if row[1] is not INFINITY:
-        raise ProbeMismatch("the startup probe did not read an unbounded instant back")
-    if row[2] != {"ready": True}:
-        raise ProbeMismatch("the startup probe did not read its structured document back")
-    if row[4] != _FLOAT64_WITNESS:
-        raise ProbeMismatch(
-            f"the startup probe did not read its Float64 back exactly: {_ROUNDED_FLOATS}"
-        )
-    if row[3] != _FLOAT32_WITNESS:
-        raise ProbeMismatch(
-            f"the startup probe did not read its Float32 back exactly: either the adapter's "
-            f"Float32 loader is not installed, or {_ROUNDED_FLOATS}"
-        )
-    login = row[5]
-    if not isinstance(login, str) or not login:
-        raise ProbeMismatch("the startup probe did not read a nonempty session_user")
-    if expected_login is not None and login != expected_login:
-        raise ProbeMismatch(_OTHER_LOGIN)
-    return login
-
+__all__ = ["PostgresRoute", "open_route"]
 
 type _State = Literal["unproven", "verified", "pending", "refused"]
 
 
-class PostgresRoute:
+class PostgresRoute[C]:
     """One declared route's pool, the latest failure establishing its
     connections, its metrics source, and whether it has proved it can serve.
 
@@ -137,7 +50,7 @@ class PostgresRoute:
     def __init__(
         self,
         route: Route,
-        pool: ConnectionPool[NativeConnection],
+        pool: ConnectionPool[C],
         dial_ledger: DialLedger,
         purpose: PoolPurpose = "application",
     ) -> None:
@@ -241,58 +154,17 @@ class PostgresRoute:
             self.pool.close()
 
 
-def open_route(
-    endpoint: PostgresEndpoint,
-    route: Route,
-    *,
-    acquire_timeout: float,
-    prepare_threshold: int | None,
-) -> PostgresRoute:
-    """Create and open ``route``'s pool over ``endpoint``, unproven."""
-    return _opened(
-        endpoint,
-        route,
-        "application",
-        acquire_timeout=acquire_timeout,
-        prepare_threshold=prepare_threshold,
-    )
+def open_route[C, A](
+    driver: NativeDriver[C, A], route: Route, purpose: PoolPurpose
+) -> PostgresRoute[C]:
+    """Open ``route``'s pool for ``purpose`` through ``driver``, unproven.
 
-
-def open_reservation_route(
-    writer: PostgresEndpoint, *, acquire_timeout: float, prepare_threshold: int | None
-) -> PostgresRoute:
-    """Create and open the writer capacity key reservations borrow, unproven.
-
-    It serves the writer route under the ``reservation`` purpose, which no
-    application Route Policy selects.
+    The driver releases whatever it built before raising, so a pool that would
+    not open has nothing left to close.
     """
-    return _opened(
-        writer,
-        "writer",
-        "reservation",
-        acquire_timeout=acquire_timeout,
-        prepare_threshold=prepare_threshold,
-    )
-
-
-def _opened(
-    endpoint: PostgresEndpoint,
-    route: Route,
-    purpose: PoolPurpose,
-    *,
-    acquire_timeout: float,
-    prepare_threshold: int | None,
-) -> PostgresRoute:
     dial_ledger = DialLedger()
     try:
-        pool = open_pool(
-            endpoint,
-            route,
-            purpose,
-            dial_ledger,
-            acquire_timeout=acquire_timeout,
-            prepare_threshold=prepare_threshold,
-        )
+        pool = driver.open_pool(route, purpose, dial_ledger)
     except Exception as exc:
         name = route if purpose == "application" else f"{route}-{purpose}"
         raise DatabaseStartupError(

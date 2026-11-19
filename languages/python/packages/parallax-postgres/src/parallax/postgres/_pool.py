@@ -20,7 +20,7 @@ from parallax.core.internal.db_port import (
     PoolPurpose,
     Route,
 )
-from parallax.postgres._connection import CONNECT_KWARGS, initialize_connection
+from parallax.postgres._connection import CONNECT_KWARGS, NativeConnection, initialize_connection
 from parallax.postgres._failures import dial_reason
 from parallax.postgres._options import PoolOptions, reservation_retention
 
@@ -31,14 +31,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DialObserver",
-    "NativeConnection",
     "NativePool",
     "PostgresPool",
     "open_pool",
     "reservation_socket_options",
 ]
-
-type NativeConnection = psycopg.Connection[TupleRow]
 
 type NativePool = psycopg_pool.ConnectionPool[NativeConnection]
 """Either native pool this adapter builds; the null pool is a subclass of it."""

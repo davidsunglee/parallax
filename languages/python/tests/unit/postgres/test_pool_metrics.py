@@ -20,13 +20,16 @@ from parallax.core.internal.db_port import (
     PoolDetached,
     PoolMetrics,
     PoolUnavailable,
+    RouteCapabilities,
     RouteReadiness,
 )
 from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres._pool import PostgresPool
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 from parallax.postgres._route import PostgresRoute
 from parallax.postgres._runtime import PostgresRuntime
+from tests.unit._scripted_native import ScriptedDriver
 
 
 def _metrics(**counters: int) -> PoolMetrics:
@@ -194,9 +197,12 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _runtime(pool: _MeasuredPool) -> PostgresRuntime:
+def _runtime(pool: _MeasuredPool) -> PostgresRuntime[Any, object]:
     return PostgresRuntime(
-        PostgresRoute("writer", cast("Any", pool), DialLedger()),
+        cast("Any", ScriptedDriver()),
+        dialect=POSTGRES,
+        routes={"writer": RouteCapabilities.every_level()},
+        writer=PostgresRoute("writer", cast("Any", pool), DialLedger()),
         reservation=PostgresRoute(
             "writer", cast("Any", _MeasuredPool()), DialLedger(), "reservation"
         ),
@@ -217,7 +223,7 @@ def test_the_source_detaches_before_the_pool_closes_even_when_that_close_fails()
             seen.append(runtime_holder[0].pool_metrics[0].sample())
             raise RuntimeError("the pool would not close")
 
-    runtime_holder: list[PostgresRuntime] = []
+    runtime_holder: list[PostgresRuntime[Any, object]] = []
     pool = _ClosingPool()
     runtime = _runtime(pool)
     runtime_holder.append(runtime)

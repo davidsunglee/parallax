@@ -21,7 +21,6 @@ import operator
 import struct
 import uuid
 from collections.abc import Callable, Iterator, Sequence
-from time import monotonic
 from types import FrameType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
@@ -79,23 +78,22 @@ from parallax.core.internal.db_port import (
     RolledBack,
     StatementFailed,
     StatementNotExecuted,
+    SubmissionProgress,
     isolation_level,
 )
-from parallax.core.internal.db_port._runtime._dial_record import DialLedger
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._connection import (
+    DirectLease,
+    NativeConnection,
     PostgresConnection,
     adapt_binds,
     initialize_connection,
     translate_driver_error,
     translating_driver_errors,
 )
-from parallax.postgres._context import PostgresConnectionContext
-from parallax.postgres._route import PostgresRoute
 from tests._support.errors import raises_code
-from tests.unit._scripted_native import ScriptedPool
 from tests.unit.postgres._native_pipeline_support import (
     Result,
     Server,
@@ -450,7 +448,7 @@ def _direct_execution(connection: _FakeConnection) -> PostgresConnection:
     """
     native = cast("psycopg.Connection[TupleRow]", connection)
     initialize_connection(native)
-    return PostgresConnection(native)
+    return PostgresConnection(DirectLease(native))
 
 
 def _sent_sql(connection: _FakeConnection) -> list[str]:
@@ -1053,7 +1051,7 @@ def _written(
     statements: Sequence[CanonicalWriteStatement] = _WRITES,
 ) -> tuple[OrderedWriteResult, PostgresConnection]:
     with native_session(monkeypatch, server) as native:
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         return _ordered_writes(facade, statements), facade
 
 
@@ -1158,7 +1156,7 @@ def test_a_statement_failure_keeps_neither_its_connection_nor_its_statements_rea
 ) -> None:
     server = Server(script([failed("23505", "duplicate key")]))
     with native_session(monkeypatch, server) as native:
-        result = _ordered_writes(PostgresConnection(native))
+        result = _ordered_writes(PostgresConnection(DirectLease(native)))
 
         assert isinstance(result, OrderedWriteResultComplete)
         failure = result.outcomes[0]
@@ -1207,7 +1205,7 @@ def test_a_result_no_count_only_statement_produces_is_an_integrity_failure(
 ) -> None:
     server = Server(script([counted(1)], answered, [counted(1)]))
     with native_session(monkeypatch, server) as native:
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         with raises_code(InternalError, WRITE_RESULT_INTEGRITY_VIOLATED) as refused:
             _ordered_writes(facade)
 
@@ -1349,7 +1347,7 @@ def test_control_flow_propagates_as_itself_and_leaves_the_scope_suspect(
     else:
         server.on_fetch = _raising(KeyboardInterrupt, "", at=1)
     with native_session(monkeypatch, server) as native:
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         with pytest.raises(KeyboardInterrupt):
             _ordered_writes(facade)
 
@@ -1385,7 +1383,7 @@ def test_an_interrupt_psycopg_cancels_propagates_past_failed_maintenance_behind_
     with native_session(monkeypatch, server) as native:
         _owing_deallocation(native)
         server.transaction_status = TransactionStatus.ACTIVE
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         with pytest.raises(interrupt) as propagated:
             _ordered_writes(facade)
         server.transaction_status = TransactionStatus.IDLE
@@ -1401,7 +1399,7 @@ def test_an_interrupt_already_being_handled_is_not_the_writes_own(
     server = Server(script([failed("23505", "duplicate key")]))
     with native_session(monkeypatch, server) as native:
         _owing_deallocation(native)
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         try:
             raise KeyboardInterrupt
         except KeyboardInterrupt:
@@ -1418,7 +1416,7 @@ def test_a_connection_that_cannot_open_a_pipeline_sends_nothing(
 ) -> None:
     server = Server()
     with native_session(monkeypatch, server) as native:
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         server.finish()
         result = _ordered_writes(facade)
 
@@ -1433,7 +1431,7 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
 ) -> None:
     server = Server()
     with native_session(monkeypatch, server) as native:
-        facade = PostgresConnection(native)
+        facade = PostgresConnection(DirectLease(native))
         saved = facade._ordered_writes  # pyright: ignore[reportPrivateUsage] - a reference kept past its scope
         facade.revoke()
         with pytest.raises(RuntimeError, match="scope has ended"):
@@ -1444,30 +1442,66 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
 
 # --------------------------------------------------------------------------- #
 # Where a lease's first submission starts and ends. What replacement does with #
-# it is test_postgres_pool.py's; these pin the boundaries the facade marks.    #
+# it is test_postgres_pool.py's; these pin the boundaries the facade marks and #
+# what it hands a lease to repeat.                                             #
 # --------------------------------------------------------------------------- #
 
 
-def _admitted(_deadline: float) -> None:
-    return
+class _RecordingLease:
+    """A lease over ``connections`` in turn, recording the progress each
+    operation it runs reported.
+
+    With ``replace``, it repeats once, on the next connection, an operation
+    that was replay-safe and failed after starting and before its answer —
+    standing in for the runtime's replacement, so a test can see exactly what
+    the facade hands a repetition.
+    """
+
+    def __init__(self, *connections: object, replace: bool = False) -> None:
+        for connection in connections:
+            if isinstance(connection, _FakeConnection):
+                initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
+        self._connections = connections
+        self._replace = replace
+        self.held = 0
+        self.progress: list[SubmissionProgress] = []
+        self._suspect = False
+
+    def run[T, *P](
+        self,
+        operation: Callable[[NativeConnection, SubmissionProgress, *P], T],
+        /,
+        *prepared: *P,
+        replay_safe: bool,
+        setup: bool = False,
+    ) -> T:
+        del setup
+        submission = SubmissionProgress()
+        self.progress.append(submission)
+        try:
+            return operation(self.current_connection(), submission, *prepared)
+        except Exception:
+            repeatable = replay_safe and submission.started and not submission.answered
+            if not (self._replace and repeatable and self.held == 0):
+                raise
+        self.held += 1
+        again = SubmissionProgress()
+        self.progress.append(again)
+        return operation(self.current_connection(), again, *prepared)
+
+    def current_connection(self) -> NativeConnection:
+        return cast("NativeConnection", self._connections[self.held])
+
+    @property
+    def suspect(self) -> bool:
+        return self._suspect
+
+    def mark_suspect(self) -> None:
+        self._suspect = True
 
 
-def _leased(
-    *connections: _FakeConnection,
-) -> tuple[PostgresConnectionContext, ScriptedPool[_FakeConnection]]:
-    """A connection context over ``connections``, each initialized as a pool
-    initializes every connection it creates."""
-    for connection in connections:
-        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
-    pool = ScriptedPool(*connections)
-    route = PostgresRoute("writer", cast("Any", pool), DialLedger())
-    context = PostgresConnectionContext(
-        ((route, monotonic() + 5.0),),
-        _admitted,
-        None,
-        expected_login=None,
-    )
-    return context, pool
+def _marks(lease: _RecordingLease) -> list[tuple[bool, bool]]:
+    return [(submission.started, submission.answered) for submission in lease.progress]
 
 
 def _break(connection: _FakeConnection) -> None:
@@ -1478,10 +1512,6 @@ def _break(connection: _FakeConnection) -> None:
     connection.begin_error = lost
     connection.sync_error = lost
     connection.closed = True
-
-
-def _first_send(context: PostgresConnectionContext) -> str:
-    return context._first_send_state  # pyright: ignore[reportPrivateUsage] - the lease's opportunity is what these boundaries decide
 
 
 def test_direct_execution_never_replaces_a_broken_connection() -> None:
@@ -1495,6 +1525,43 @@ def test_direct_execution_never_replaces_a_broken_connection() -> None:
     assert _sent_sql(connection) == ["select 1"]
 
 
+def test_a_direct_lease_runs_each_operation_once_with_fresh_progress() -> None:
+    native = cast("NativeConnection", _FakeConnection())
+    lease = DirectLease(native)
+    seen: list[tuple[NativeConnection, SubmissionProgress, bool, bool]] = []
+
+    def operation(connection: NativeConnection, submission: SubmissionProgress, mark: bool) -> int:
+        seen.append((connection, submission, submission.started, submission.answered))
+        submission.started = submission.answered = mark
+        if not mark:
+            raise RuntimeError("the operation failed")
+        return len(seen)
+
+    assert lease.run(operation, True, replay_safe=True, setup=True) == 1
+    with pytest.raises(RuntimeError):
+        lease.run(operation, False, replay_safe=True)
+
+    (first_on, first, *first_marks), (second_on, second, *second_marks) = seen
+    assert first_on is second_on is native is lease.current_connection()
+    assert first is not second
+    assert first_marks == second_marks == [False, False]
+
+
+def test_a_direct_lease_keeps_its_own_suspect_mark_and_the_facade_reports_it_once_revoked() -> None:
+    lease = DirectLease(cast("NativeConnection", _FakeConnection()))
+    execution = PostgresConnection(lease)
+
+    assert not execution.suspect
+    lease.mark_suspect()
+
+    assert lease.suspect and execution.suspect
+    assert execution.revoke()
+    assert execution.revoke()
+    assert execution.suspect
+    with pytest.raises(RuntimeError, match="scope has ended"):
+        execution.execute("select 1", [])
+
+
 def test_a_refused_assignment_before_begin_leaves_the_opportunity_open() -> None:
     # Assigning characteristics is local setup: nothing was submitted, so the
     # lease's first submission is still to come, and it is the one protected.
@@ -1502,40 +1569,67 @@ def test_a_refused_assignment_before_begin_leaves_the_opportunity_open() -> None
     refusing.refuse_assignment = lambda _name, value: (
         errors.ProgrammingError("refused") if value is not None else None
     )
-    context, pool = _leased(refusing, healthy)
+    lease = _RecordingLease(refusing, healthy, replace=True)
+    execution = PostgresConnection(lease)
 
-    with context as scoped:
-        outcome = scoped.transaction(lambda _port: None, isolation="serializable")
-        assert _first_send(context) == "available"
-        _break(refusing)
-        assert scoped.execute("select 1", [], read_only=True) == []
+    outcome = execution.transaction(lambda _port: None, isolation="serializable")
+    assert _marks(lease) == [(False, False)]
+    _break(refusing)
+    assert execution.execute("select 1", [], read_only=True) == []
 
     assert isinstance(outcome, BeginFailed)
-    assert len(pool.budgets) == 2
+    assert _marks(lease) == [(False, False), (True, False), (True, True)]
     assert _sent_sql(healthy) == ["select 1"]
 
 
-def test_a_boundary_has_spent_the_opportunity_before_its_callback_runs() -> None:
-    context, _pool = _leased(_FakeConnection())
-    seen: list[str] = []
+def test_a_boundary_has_answered_before_its_callback_runs() -> None:
+    lease = _RecordingLease(_FakeConnection())
+    seen: list[list[tuple[bool, bool]]] = []
 
-    with context as scoped:
-        scoped.transaction(lambda _port: seen.append(_first_send(context)))
+    PostgresConnection(lease).transaction(lambda _port: seen.append(_marks(lease)))
 
-    assert seen == ["spent"]
+    assert seen == [[(True, True)]]
 
 
-def test_a_read_whose_rows_fail_after_it_was_answered_has_spent_the_opportunity() -> None:
+def test_a_begin_the_server_refuses_has_started_and_is_unanswered() -> None:
+    connection = _FakeConnection(begin_error=errors.SyntaxError("syntax error"))
+    lease = _RecordingLease(connection)
+
+    outcome = PostgresConnection(lease).transaction(lambda _port: None)
+
+    assert isinstance(outcome, BeginFailed)
+    assert _marks(lease) == [(True, False)]
+    assert lease.suspect
+
+
+def test_a_read_whose_rows_fail_after_it_was_answered_reports_its_answer() -> None:
     # Fetching and decoding come after the submission answered, so their
     # failure is never one a replacement could repair.
-    context, pool = _leased(_ResultConnection(_Result(3, [(True, True, True)])))
+    lease = _RecordingLease(_ResultConnection(_Result(3, [(True, True, True)])), replace=True)
 
-    with context as scoped:
-        with pytest.raises(ValueError, match="adjacent, zero-based"):
-            scoped.execute("select", [], ((0, 2),), read_only=True)
-        assert _first_send(context) == "spent"
+    with pytest.raises(ValueError, match="adjacent, zero-based"):
+        PostgresConnection(lease).execute("select", [], ((0, 2),), read_only=True)
 
-    assert len(pool.budgets) == 1
+    assert _marks(lease) == [(True, True)]
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_a_statement_marks_its_submission_and_hands_its_intent_to_the_lease(
+    read_only: bool,
+) -> None:
+    connection = _FakeConnection()
+    _break(connection)
+    lease = _RecordingLease(connection, _FakeConnection(), replace=True)
+    execution = PostgresConnection(lease)
+
+    if read_only:
+        assert execution.execute("select 1", [], read_only=True) == []
+    else:
+        with pytest.raises(DatabaseError):
+            execution.execute_write("update t set v = 1", [])
+
+    assert _marks(lease)[0] == (True, False)
+    assert lease.held == (1 if read_only else 0)
 
 
 def _document_batch() -> tuple[_Result, _Result]:
@@ -1557,18 +1651,15 @@ def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_r
     # and binds prepared once, through cursors and document-read state made
     # for the replacement. The broken session's results are never fetched.
     broken, fresh = _ResultConnection(*_document_batch()), _ResultConnection(*_document_batch())
-    context, pool = _leased(broken, fresh)
+    lease = _RecordingLease(broken, fresh, replace=True)
+    _break(broken)
+    if failing == "synchronization":
+        broken.cursor_error = None
 
-    with context as scoped:
-        _break(broken)
-        if failing == "synchronization":
-            broken.cursor_error = None
-        rows = scoped.execute_pipeline(_DOCUMENT_BATCH, read_only=True)
-        assert _first_send(context) == "spent"
+    rows = PostgresConnection(lease).execute_pipeline(_DOCUMENT_BATCH, read_only=True)
 
     assert rows == [[(StructuredDocument({"a": 1}),), (SQL_NULL,)], [(7,)]]
-    assert len(pool.budgets) == 2
-    assert pool.returned == [broken, fresh]
+    assert _marks(lease) == [(True, False), (True, True)]
     assert not any(event.endswith(("-attach", "-fetch")) for event in broken.pipeline_events)
     assert [event for event in fresh.pipeline_events if "-execute:" not in event] == [
         "pipeline-enter",
@@ -1590,22 +1681,20 @@ def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_r
     assert fresh.result_cursors[0].row_factory is not broken.result_cursors[0].row_factory
 
 
-def test_a_read_pipeline_refused_on_a_healthy_connection_is_not_resubmitted() -> None:
+def test_a_read_pipeline_refused_at_synchronization_has_started_and_is_unanswered() -> None:
     connection = _ResultConnection(*_document_batch())
     connection.sync_error = errors.SyntaxError("syntax error at or near")
-    context, pool = _leased(connection, _ResultConnection(*_document_batch()))
+    lease = _RecordingLease(connection)
 
-    with context as scoped:
-        with pytest.raises(DatabaseError) as failed:
-            scoped.execute_pipeline(_DOCUMENT_BATCH, read_only=True)
-        assert _first_send(context) == "spent"
+    with pytest.raises(DatabaseError) as failed:
+        PostgresConnection(lease).execute_pipeline(_DOCUMENT_BATCH, read_only=True)
 
     assert failed.value.native_code == "42601"
-    assert len(pool.budgets) == 1
+    assert _marks(lease) == [(True, False)]
 
 
 @pytest.mark.parametrize("failing", ["decoding", "driver"])
-def test_a_read_pipeline_whose_rows_fail_after_it_synchronized_is_not_resubmitted(
+def test_a_read_pipeline_whose_rows_fail_after_it_synchronized_reports_its_answer(
     failing: str,
 ) -> None:
     # Synchronization answered the batch, so what fetching meets afterwards —
@@ -1619,30 +1708,68 @@ def test_a_read_pipeline_whose_rows_fail_after_it_synchronized_is_not_resubmitte
     else:
         connection.fetch_error = errors.OperationalError("server closed the connection")
         connection.closed = True
-    context, pool = _leased(connection, _ResultConnection(*_document_batch()))
+    lease = _RecordingLease(connection, _ResultConnection(*_document_batch()), replace=True)
 
-    with context as scoped:
-        with pytest.raises(ValueError if failing == "decoding" else DatabaseError):
-            scoped.execute_pipeline(batch, read_only=True)
-        assert _first_send(context) == "spent"
+    with pytest.raises(ValueError if failing == "decoding" else DatabaseError):
+        PostgresConnection(lease).execute_pipeline(batch, read_only=True)
 
-    assert len(pool.budgets) == 1
+    assert _marks(lease) == [(True, True)]
+
+
+@pytest.mark.parametrize("ending", ["completed", "lost", "interrupted"])
+def test_an_ordered_write_marks_its_submission_however_it_ends(
+    monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    server = Server()
+    if ending == "lost":
+        server.on_fetch = _raising(psycopg.OperationalError, "consuming input failed", at=1)
+    elif ending == "interrupted":
+        server.on_fetch = _raising(KeyboardInterrupt, "", at=1)
+    with native_session(monkeypatch, server) as native:
+        lease = _RecordingLease(native)
+        facade = PostgresConnection(lease)
+        if ending == "interrupted":
+            with pytest.raises(KeyboardInterrupt):
+                _ordered_writes(facade, (Statement("update a set v = 1"),))
+        else:
+            _ordered_writes(facade, (Statement("update a set v = 1"),))
+
+    (submission,) = lease.progress
+    assert submission.started
+    assert submission.answered is (ending == "completed")
+    assert lease.suspect is (ending != "completed")
+
+
+def test_empty_ordered_work_hands_the_lease_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The port's ordered-write contract takes nonempty input; an empty batch
+    # here is the adapter's private no-submission guard, answering complete.
+    server = Server()
+    with native_session(monkeypatch, server) as native:
+        facade = PostgresConnection(DirectLease(native))
+        assert _ordered_writes(facade, ()) == OrderedWriteResultComplete(())
+        assert facade.execute_pipeline(()) == []
+        facade.revoke()
+    assert server.sent == []
+    with pytest.raises(RuntimeError, match="scope has ended"):
+        _ordered_writes(facade, ())
+    with pytest.raises(RuntimeError, match="scope has ended"):
+        facade.execute_pipeline(())
 
 
 def test_a_saved_scope_reaches_nothing_its_lease_held_once_revoked() -> None:
-    # The context and the facade it yielded refer to each other while the
-    # lease lasts; leaving breaks both references without waiting for a
-    # collector, so neither a saved facade nor its saved ordered-write
-    # operation keeps the context, its pool, or the connection alive.
+    # The facade refers to its lease while the scope lasts; revocation breaks
+    # that reference without waiting for a collector, so neither a saved
+    # facade nor its saved ordered-write operation keeps the lease or the
+    # connection alive.
     connection = _FakeConnection()
-    context, pool = _leased(connection)
+    lease = _RecordingLease(connection)
+    scoped = PostgresConnection(lease)
+    transport = scoped.ordered_write_transport
 
-    with context as scoped:
-        transport = scoped.ordered_write_transport
+    scoped.revoke()
 
     for saved in (scoped, transport):
-        assert not any(_reaches(saved, held) for held in (context, pool, connection))
-    assert not _reaches(context, scoped)
+        assert not any(_reaches(saved, held) for held in (lease, connection))
     with pytest.raises(RuntimeError, match="scope has ended"):
         scoped.execute("select 1", [])
 

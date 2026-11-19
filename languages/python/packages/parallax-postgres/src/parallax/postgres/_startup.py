@@ -3,28 +3,24 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
-from parallax.core.internal.db_error import DatabaseError
 from parallax.core.internal.db_port import (
     CleanupResult,
     ConnectionAcquisitionError,
     DatabaseStartupError,
+    NativeDriver,
+    ProbeMismatch,
     ReleaseUnconfirmed,
     StartupPhase,
     report_resource_issues,
 )
-from parallax.postgres._failures import session_lost
-from parallax.postgres._route import (
-    PROBE_SQL,
-    PostgresRoute,
-    ProbeMismatch,
-    check_probe,
-    open_reservation_route,
-    open_route,
-)
+from parallax.postgres._route import PostgresRoute, open_route
 from parallax.postgres._runtime import PostgresRuntime
 
 if TYPE_CHECKING:
-    from parallax.postgres._endpoint import PostgresEndpoint
+    from collections.abc import Mapping
+
+    from parallax.core.internal.db_port import Route, RouteCapabilities
+    from parallax.core.internal.dialect import Dialect
 
 __all__ = ["ReaderStartup", "open_runtime"]
 
@@ -48,25 +44,27 @@ class _ReadinessFailure(Exception):
         self.outage = outage
 
 
-def open_runtime(
-    writer: PostgresEndpoint,
-    reader: PostgresEndpoint | None,
+def open_runtime[C, A](
+    driver: NativeDriver[C, A],
+    /,
     *,
+    dialect: Dialect,
+    routes: Mapping[Route, RouteCapabilities],
     acquire_timeout: float,
     startup_timeout: float,
     reader_startup: ReaderStartup,
-    prepare_threshold: int | None,
-) -> PostgresRuntime:
-    """Open one ready runtime over ``writer`` and an optional ``reader``, or raise
+) -> PostgresRuntime[C, A]:
+    """Open one ready runtime serving ``routes`` through ``driver``, or raise
     having released what it took.
 
-    Both pools open before either is proved, so a retaining reader's workers
-    dial while the writer is being proved and the two share the one budget's
-    wall-clock time. The writer must prove itself; the reader then proves the
-    same login within what remains. Where ``reader_startup`` permits, an
-    unavailable reader stays pending until a connection proves it. The writer's
-    reservation pool opens beside them holding no connection, and the writer's
-    proof stands for it.
+    ``routes`` is the declaration the runtime publishes: it always names the
+    writer, and a reader pool opens only where it names a reader. Every pool
+    opens before any is proved, so a retaining reader's workers dial while the
+    writer is being proved and the two share the one budget's wall-clock time.
+    The writer must prove itself; the reader then proves the same login within
+    what remains. Where ``reader_startup`` permits, an unavailable reader stays
+    pending until a connection proves it. The writer's reservation pool opens
+    beside them holding no connection, and the writer's proof stands for it.
 
     Every failure below publishes no runtime: every pool opened so far is closed
     on the way out, and a startup connection that was already acquired is
@@ -75,28 +73,22 @@ def open_runtime(
     stated rather than assumed away.
     """
     deadline = monotonic() + startup_timeout
-    opened: list[PostgresRoute] = []
+    opened: list[PostgresRoute[C]] = []
     try:
-        writer_route = open_route(
-            writer, "writer", acquire_timeout=acquire_timeout, prepare_threshold=prepare_threshold
-        )
+        writer_route = open_route(driver, "writer", "application")
         opened.append(writer_route)
         reader_route = None
-        if reader is not None:
-            reader_route = open_route(
-                reader,
-                "reader",
-                acquire_timeout=acquire_timeout,
-                prepare_threshold=prepare_threshold,
-            )
+        if "reader" in routes:
+            reader_route = open_route(driver, "reader", "application")
             opened.append(reader_route)
-        reservation_route = open_reservation_route(
-            writer, acquire_timeout=acquire_timeout, prepare_threshold=prepare_threshold
-        )
+        reservation_route = open_route(driver, "writer", "reservation")
         opened.append(reservation_route)
         runtime = PostgresRuntime(
-            writer_route,
-            reader_route,
+            driver,
+            dialect=dialect,
+            routes=routes,
+            writer=writer_route,
+            reader=reader_route,
             reservation=reservation_route,
             acquire_timeout=acquire_timeout,
         )
@@ -117,7 +109,7 @@ def open_runtime(
     return runtime
 
 
-def _abandon(opened: list[PostgresRoute]) -> None:
+def _abandon[C](opened: list[PostgresRoute[C]]) -> None:
     """Abandon every route opened, the latest first; an interrupt propagates
     only once each has been attempted."""
     interrupted: BaseException | None = None
@@ -131,9 +123,9 @@ def _abandon(opened: list[PostgresRoute]) -> None:
         raise interrupted
 
 
-def _start_reader(
-    runtime: PostgresRuntime,
-    route: PostgresRoute,
+def _start_reader[C, A](
+    runtime: PostgresRuntime[C, A],
+    route: PostgresRoute[C],
     deadline: float,
     login: str,
     reader_startup: ReaderStartup,
@@ -148,20 +140,29 @@ def _start_reader(
     route.proved_at_startup()
 
 
-def _probe(
-    runtime: PostgresRuntime, route: PostgresRoute, deadline: float, expected_login: str | None
+def _probe[C, A](
+    runtime: PostgresRuntime[C, A],
+    route: PostgresRoute[C],
+    deadline: float,
+    expected_login: str | None,
 ) -> str:
-    """Acquire one real connection, prove it decodes, capture its login, and give it back.
+    """Acquire one real connection, prove it, capture its login, and give it back.
 
-    Startup owns no model and adopts no edition, so this creates no execution
-    and reports through no observer: it runs on an initialized connection
-    exactly as later work will. It establishes that later work can run at all
-    and records the authenticated login identity before the runtime is published.
+    Startup owns no model and adopts no edition, so this runs no execution and
+    reports through no observer: the driver's proof runs on the lease, on an
+    initialized connection exactly as later work will. It establishes that
+    later work can run at all and records the authenticated login identity
+    before the runtime is published. The proof is the lease's first
+    submission, so a broken session is replaced once within what remains of
+    the budget. It is not the lease's setup: like any submission after entry,
+    it is not admitted again once it answers, and the budget is checked
+    between phases instead.
     """
     _remaining(route, deadline, "acquire")
     resource = runtime.acquisition(route, deadline)
+    driver = runtime._driver  # pyright: ignore[reportPrivateUsage] - the runtime this module starts
     try:
-        connection = resource.__enter__()
+        resource.__enter__()
     except ConnectionAcquisitionError as exc:
         report_resource_issues("startup", resource.cleanup_result)
         error = DatabaseStartupError(
@@ -176,7 +177,7 @@ def _probe(
             outage=exc.reason in {"unavailable", "timeout"} and _confirmed(resource.cleanup_result),
         ) from None
     try:
-        login = check_probe(connection.execute(PROBE_SQL, [], read_only=True), expected_login)
+        login = resource.run(driver.prove_readiness, expected_login, replay_safe=True)
     except BaseException as exc:
         resource.__exit__(type(exc), exc, exc.__traceback__)
         report_resource_issues("startup", resource.cleanup_result)
@@ -197,7 +198,7 @@ def _probe(
         )
         error.__cause__ = exc
         raise _ReadinessFailure(
-            error, outage=_lost(exc) and _confirmed(resource.cleanup_result)
+            error, outage=driver.is_session_lost(exc) and _confirmed(resource.cleanup_result)
         ) from None
     resource.__exit__(None, None, None)
     result = resource.cleanup_result
@@ -222,13 +223,7 @@ def _confirmed(cleanup: CleanupResult | None) -> bool:
     return not isinstance(cleanup, ReleaseUnconfirmed)
 
 
-def _lost(failure: Exception) -> bool:
-    """Whether a probe failed only because its connection could not be kept."""
-    native = failure.__cause__ if isinstance(failure, DatabaseError) else failure
-    return native is not None and session_lost(native)
-
-
-def _remaining(route: PostgresRoute, deadline: float, phase: StartupPhase) -> float:
+def _remaining[C](route: PostgresRoute[C], deadline: float, phase: StartupPhase) -> float:
     """The startup budget left, refusing to begin ``phase`` without any.
 
     Checked between phases rather than inside them: the budget stops the next

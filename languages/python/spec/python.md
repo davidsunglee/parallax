@@ -727,8 +727,9 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
 
   One further reach is the harness's own driver sessions:
   `parallax.conformance._postgres_control` imports
-  `parallax.postgres._connection.initialize_connection` and
-  `parallax.postgres._connection.PostgresConnection`.
+  `parallax.postgres._connection.initialize_connection`,
+  `parallax.postgres._connection.PostgresConnection`, and
+  `parallax.postgres._connection.DirectLease`.
   The harness opens sessions
   an application never would — the per-case schema reset, a peer holding its own
   transaction, a case's verbatim golden SQL, and the dedicated session an
