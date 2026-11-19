@@ -560,8 +560,10 @@ naming the refusal rather than the wait, and distinguishing a credential that
 was never produced from a connection that was produced and then refused. A
 mode that establishes on the acquiring thread meets a credential or preparation
 refusal there instead, and readiness fails at once with the same naming and
-distinction, as every later acquisition in that mode does: nothing above the
-mode's own establishment retries it.
+distinction: nothing above the mode's own establishment retries it. A later
+acquisition in that mode meets a refusal the same way when it establishes its
+own connection; one served by establishment it did not make itself meets the
+refusal as what the route last recorded, as over retained capacity.
 
 ## A pooling runtime publishes what it measures about itself
 

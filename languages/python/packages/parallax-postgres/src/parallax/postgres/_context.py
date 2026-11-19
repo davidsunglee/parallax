@@ -145,6 +145,10 @@ def _expired(dial_ledger: DialLedger, native: BaseException | None) -> Connectio
     return explained
 
 
+_LATE_REPLACEMENT = (
+    "the replacement database connection arrived after the acquisition's timeout, so nothing "
+    "was submitted on it again"
+)
 _LOST_UNVERIFIED = (
     "the connection handed over while its route's readiness was pending was lost before it "
     "could be verified"
@@ -291,6 +295,7 @@ class PostgresConnectionContext[C, A]:
         "_expected_login",
         "_first_send_available",
         "_opening",
+        "_replacement_refusal",
         "_resource",
         "_route",
         "_selection",
@@ -329,6 +334,7 @@ class PostgresConnectionContext[C, A]:
         self._authorized = False
         self._suspect = False
         self._first_send_available = True
+        self._replacement_refusal: ConnectionAcquisitionError | None = None
         self._resource: C | CleanupResult | None = None
         self._execution: ExecutionAccess | None = None
         self._cleanup_result: CleanupResult | None = None
@@ -340,6 +346,12 @@ class PostgresConnectionContext[C, A]:
     @property
     def selection(self) -> RouteSelection | None:
         return self._selection if self._used else None
+
+    @property
+    def replacement_refusal(self) -> ConnectionAcquisitionError | None:
+        """Why the replacement for a broken session was not taken, where its
+        checkout refused one, as classified when it refused."""
+        return self._replacement_refusal
 
     def __enter__(self) -> DatabaseConnection:
         if self._used:
@@ -714,10 +726,11 @@ class PostgresConnectionContext[C, A]:
         what remains of the step's own deadline — no new allowance — and must
         arrive idle like any checkout. When no usable replacement is held, the
         slot keeps the result of the last release, and the failure that asked
-        for replacement stands. One that arrives once admission would refuse
-        it — after the deadline, or after the runtime closed — is given back
-        unused and that refusal is raised instead, so nothing is resubmitted
-        on it.
+        for replacement stands; a checkout that refused one leaves its refusal
+        on :attr:`replacement_refusal`. One that arrives after the deadline is
+        given back unused and a timeout is raised instead, so nothing is
+        resubmitted on it. A close is not checked here: the replacement is not
+        another acquisition, so it does not end work already admitted.
 
         ``across`` takes the replacement from the plan's next route, within
         what remains of the whole budget. While entry is still under way, entry
@@ -736,20 +749,20 @@ class PostgresConnectionContext[C, A]:
             self._advance("connection_lost")
         try:
             self._resource = checkout(self._route, self._step_deadline)
-        except ConnectionAcquisitionError:
+        except ConnectionAcquisitionError as refused:
+            self._replacement_refusal = refused
             return False
         try:
             self._require_idle(self.current_connection())
-        except ConnectionAcquisitionError:
+        except ConnectionAcquisitionError as refused:
             self._resource = self._settled(suspect=False)
+            self._replacement_refusal = refused
             return False
-        try:
-            self._admit(self._step_deadline)
-        except BaseException as exc:
+        if monotonic() >= self._step_deadline:
             self._resource = self._settled(suspect=False)
-            if isinstance(exc, ConnectionAcquisitionError):
-                exc.selection = self._selection
-            raise
+            late = ConnectionAcquisitionError(_LATE_REPLACEMENT, reason="timeout")
+            late.selection = self._selection
+            raise late
         self._suspect = False
         return True
 

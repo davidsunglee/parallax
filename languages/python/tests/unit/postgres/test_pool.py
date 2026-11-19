@@ -118,8 +118,9 @@ def _wrapped(native: _Native) -> PostgresPool:
 def test_every_native_checkout_failure_maps_to_its_own_reason(
     native: Exception, reason: str
 ) -> None:
-    # A dial failure is in the table because an on-demand pool dials on the
-    # checking-out thread: what the dial met comes out of the checkout itself.
+    # A dial failure is in the table because an on-demand pool with spare
+    # capacity dials on the checking-out thread: what the dial met comes out of
+    # the checkout itself.
     with pytest.raises(CheckoutFailed) as failed:
         _wrapped(_Native(failure=native)).check_out(5.0)
 
@@ -485,6 +486,28 @@ def test_an_initialization_that_fails_reports_its_refusal_closes_and_raises_it(
     assert connection.closed
 
 
+def test_an_initialization_interrupted_reports_nothing_closes_and_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.postgres import _pool as pool_module
+
+    interrupt = KeyboardInterrupt()
+
+    def interrupted(_connection: object) -> None:
+        raise interrupt
+
+    monkeypatch.setattr(pool_module, "initialize_connection", interrupted)
+    reports = _Reports()
+    connection = _Initializable()
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        DialObserver(reports)(cast("Any", connection))
+
+    assert raised.value is interrupt
+    assert reports.reports == []
+    assert connection.closed
+
+
 def test_an_observed_dial_that_fails_reports_its_failure_and_raises_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -667,9 +690,9 @@ def test_an_on_demand_attempt_reports_one_outcome_from_the_caller_s_thread(
 def test_the_installed_pools_dial_through_the_observer_s_connection_class(
     monkeypatch: pytest.MonkeyPatch, native: str
 ) -> None:
-    # The hook is the library's public `connection_class`: on-demand dials on
-    # the caller's thread and retaining on its own workers, and both reach it
-    # and report there, once per attempt.
+    # The hook is the library's public `connection_class`: on-demand with spare
+    # capacity dials on the caller's thread and retaining on its own workers,
+    # and both reach it and report there, once per attempt.
     refused = psycopg.OperationalError("connection refused")
 
     def refuse(cls: type[Any], conninfo: str = "", **kwargs: object) -> Any:

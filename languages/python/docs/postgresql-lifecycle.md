@@ -202,13 +202,12 @@ you ask for those mechanisms, rather than how you disable a check.
 A source that produces no credential is named rather than timed out. Whatever it
 raises is recorded and — unless it is already a `CredentialResolutionError` —
 wrapped in one carrying fixed text, with the original chained beneath it. Where
-that surfaces depends only on which retention policy was asked to establish the
-connection:
+that surfaces depends on which thread establishes the connection:
 
 | Where | What you get |
 |---|---|
-| A retaining pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) when the acquisition budget expires. Startup uses the remaining `startup_timeout`; ordinary acquisitions use `acquire_timeout`. |
-| An on-demand pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) on your own thread when the source fails. |
+| A pool worker: every dial of a retaining pool, and an on-demand pool's replacement for a connection handed back broken or expired while you wait at `max_size` | `ConnectionAcquisitionError` (`reason="credentials_refused"`) when the acquisition budget expires. Startup uses the remaining `startup_timeout`; ordinary acquisitions use `acquire_timeout`. |
+| Your own thread: an on-demand pool with spare capacity | `ConnectionAcquisitionError` (`reason="credentials_refused"`) as soon as the source fails. |
 
 If the startup acquisition fails, `DatabaseStartupError` reports
 `phase="acquire"` and chains the acquisition error. The acquisition error
@@ -523,8 +522,9 @@ refused it, and a connection whose disposal could not be confirmed. A
 retaining reader opens connections on its own threads. When checkout runs out
 of time, it reports the latest dial failure still on record. An unavailable
 dial can therefore lead to fallback even if it failed before checkout began
-or the pool has other connections in use. An on-demand reader reports a dial
-failure on the caller's thread.
+or the pool has other connections in use. An on-demand reader with spare
+capacity reports a dial failure on the caller's thread; a caller queued at its
+`max_size` is served by a worker's dial, as on a retaining reader.
 
 When the reader is known to be unavailable and has no idle connection, one
 preferred acquisition at a time tries it within its half and concurrent
@@ -930,7 +930,7 @@ a total of network failures or of connections successfully replaced: a quiet
 counters do not narrow the climb either. They rule those two causes out and
 leave the ones no counter records and a reading cannot
 tell apart — a connection refused in preparation, a healthy connection retired
-at `max_lifetime`, and, on an on-demand pool, the connection every acquisition
+at `max_lifetime`, and, on an on-demand pool, the connection an acquisition
 creates and closes. A climb beside quiet counters is a question for the logs,
 not a fault.
 

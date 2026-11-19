@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import monotonic
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from parallax.core.internal.db_port import (
     CleanupResult,
@@ -26,6 +26,8 @@ __all__ = ["ReaderStartup", "open_runtime"]
 
 ReaderStartup = Literal["deferrable", "required"]
 """Whether an unavailable reader may leave startup to finish its proof later."""
+
+_OUTAGES: Final = frozenset({"unavailable", "timeout"})
 
 
 class _ReadinessFailure(Exception):
@@ -179,7 +181,7 @@ def _probe[C, A](
             # startup error it might handle.
             raise
         if isinstance(exc, ConnectionAcquisitionError):
-            # The replacement for a lost proof arrived too late to be admitted.
+            # The replacement for a lost proof arrived after the budget.
             raise _unacquired(route, "probe", exc, resource.cleanup_result) from None
         error = DatabaseStartupError(
             str(exc)
@@ -190,13 +192,13 @@ def _probe[C, A](
             cleanup_result=resource.cleanup_result,
         )
         error.__cause__ = exc
-        # A lost session is an outage only while the route records nothing
-        # worse: a replacement whose dial was refused leaves that refusal on
-        # record while the loss that asked for it stays primary.
+        # A lost session is an outage only where its replacement was not
+        # refused as anything worse; the loss that asked for it stays primary.
+        refusal = resource.replacement_refusal
         raise _ReadinessFailure(
             error,
             outage=driver.is_session_lost(exc)
-            and _only_outage_on_record(route)
+            and (refusal is None or refusal.reason in _OUTAGES)
             and _confirmed(resource.cleanup_result),
         ) from None
     resource.__exit__(None, None, None)
@@ -231,7 +233,7 @@ def _unacquired[C](
     error.__cause__ = refused
     return _ReadinessFailure(
         error,
-        outage=refused.reason in {"unavailable", "timeout"} and _confirmed(cleanup_result),
+        outage=refused.reason in _OUTAGES and _confirmed(cleanup_result),
     )
 
 
@@ -239,16 +241,6 @@ def _confirmed(cleanup: CleanupResult | None) -> bool:
     """Whether what a failed startup acquisition took was given back as far as
     its release could establish; an unconfirmed release is never an outage."""
     return not isinstance(cleanup, ReleaseUnconfirmed)
-
-
-def _only_outage_on_record[C](route: PostgresRoute[C]) -> bool:
-    """Whether ``route`` records no dial failure other than an unreachable server.
-
-    A route whose own dials were refused would be refused again, however long
-    it were given.
-    """
-    failure = route.dial_ledger.latest_failure
-    return failure is None or failure.reason == "unavailable"
 
 
 def _remaining[C](
@@ -263,7 +255,8 @@ def _remaining[C](
     Checked between phases rather than inside them: the budget stops the next
     step from starting and makes no claim about interrupting one already
     running. Running out is an outage's symptom only where the route has no
-    refusal on record.
+    refusal on record: a route whose own dials were refused would be refused
+    again, however long it were given.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
@@ -275,5 +268,5 @@ def _remaining[C](
             cleanup_result=cleanup_result,
         )
         error.__cause__ = None if failure is None else failure.cause
-        raise _ReadinessFailure(error, outage=_only_outage_on_record(route))
+        raise _ReadinessFailure(error, outage=failure is None or failure.reason == "unavailable")
     return remaining

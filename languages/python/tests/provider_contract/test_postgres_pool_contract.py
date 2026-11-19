@@ -410,9 +410,9 @@ def test_growth_authenticates_each_connection_it_creates(profile_run: Any) -> No
 def test_on_demand_establishment_authenticates_on_the_acquiring_thread_each_time(
     profile_run: Any,
 ) -> None:
-    # An on-demand runtime keeps no inventory, so every acquisition is a
-    # physical connection and every one is a resolution — on the caller's own
-    # thread, ahead of the driver's connect timeout.
+    # An on-demand runtime keeps no inventory, so every acquisition made with
+    # spare capacity is a physical connection and every one is a resolution —
+    # on the caller's own thread, ahead of the driver's connect timeout.
     runtime, source = _counted(profile_run, pool=OnDemandOptions(max_size=1))
     try:
         established = source.calls
@@ -603,8 +603,9 @@ def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal
 def test_an_on_demand_runtime_meets_the_refusal_on_its_own_thread_and_does_not_wait(
     profile_run: Any,
 ) -> None:
-    # An on-demand runtime establishes on the acquiring thread, so the refusal
-    # comes back as itself rather than as a record read after a wait. Startup's
+    # An on-demand runtime with spare capacity establishes on the acquiring
+    # thread, so the refusal comes back as itself rather than as a record read
+    # after a wait. Startup's
     # own acquisition is the first one to meet it, and it is asked exactly once.
     source = _RefusingAfter(profile_run.credentials)
     configured = profile_run.configured(credentials=source, pool=OnDemandOptions(max_size=1))

@@ -120,8 +120,11 @@ class DialObserver:
     def __call__(self, connection: NativeConnection) -> None:
         try:
             initialize_connection(connection)
-        except Exception as refusal:
-            self._report(refusal)
+        except BaseException as ended:
+            # An interrupt ends the attempt without an outcome to report, but
+            # the connection it leaves is no less this hook's to close.
+            if isinstance(ended, Exception):
+                self._report(ended)
             with contextlib.suppress(Exception):
                 connection.close()
             raise

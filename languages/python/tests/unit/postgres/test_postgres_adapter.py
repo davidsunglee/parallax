@@ -1594,14 +1594,30 @@ def test_a_boundary_has_answered_before_its_callback_runs() -> None:
 
 def test_a_boundary_hands_its_begin_to_the_lease_as_setup_repeatable_only_when_outer() -> None:
     # Setup is what lets a lease admit a boundary that opened after entry and
-    # move a lost one to the next route; only an outer BEGIN may be repeated.
+    # move a lost one to the next route; only an outer BEGIN may be repeated,
+    # and no settlement ever is.
     lease = _RecordingLease(_FakeConnection())
     execution = PostgresConnection(lease)
 
     outcome = execution.transaction(lambda port: port.transaction(lambda _inner: None))
 
     assert outcome == Committed(Committed(None))
-    assert lease.intents == [(True, True), (False, True)]
+    assert lease.intents == [(True, True), (False, True), (False, False), (False, False)]
+    assert _marks(lease) == [(True, True)] * 4
+
+
+def test_a_rollback_runs_through_the_lease_and_is_never_repeatable() -> None:
+    lease = _RecordingLease(_FakeConnection())
+    failure = RuntimeError("the callback failed")
+
+    def fail(_port: object) -> None:
+        raise failure
+
+    outcome = PostgresConnection(lease).transaction(fail)
+
+    assert isinstance(outcome, RolledBack)
+    assert lease.intents == [(True, True), (False, False)]
+    assert _marks(lease) == [(True, True), (True, True)]
 
 
 def test_a_begin_the_server_refuses_has_started_and_is_unanswered() -> None:

@@ -134,21 +134,23 @@ class PoolOptions(_SharedRetention):
 class OnDemandOptions(_SharedRetention):
     """Keep no connection between operations.
 
-    Every acquisition establishes a connection, and releasing one closes it
-    unless a caller is already waiting, in which case it may be handed straight
-    on. So this bounds concurrency without holding inventory — it does NOT
+    An acquisition with spare capacity establishes a connection on its own
+    thread, and releasing one closes it unless a caller is already waiting, in
+    which case it is handed straight on, or replaced on a pool worker if it came
+    back broken or expired. So this bounds concurrency without holding inventory — it does NOT
     promise a brand-new physical connection per operation, and there is no
     ``min_size`` or ``max_idle`` here because there is no inventory for either to
     describe. ``max_lifetime``, ``reconnect_timeout``, and ``num_workers`` still
     apply: they govern the replacement and hand-on paths rather than idle
     retention.
 
-    One establishment behavior is worth knowing before tuning: the driver
-    derives its own connection-establishment timeout from whatever remains of
-    the acquisition budget, overriding a ``connect_timeout`` from the connection
-    string or the environment for that creation. The adapter's
-    ``acquire_timeout`` is therefore the control that matters here, and the two
-    do not compose as independent limits.
+    One establishment behavior is worth knowing before tuning: on the
+    acquiring thread, the driver derives its own connection-establishment
+    timeout from whatever remains of the acquisition budget, overriding a
+    ``connect_timeout`` from the connection string or the environment for that
+    creation. The adapter's ``acquire_timeout`` is therefore the control that
+    matters there, and the two do not compose as independent limits; a pool
+    worker's replacement dial keeps ``connect_timeout`` as configured.
     """
 
 
