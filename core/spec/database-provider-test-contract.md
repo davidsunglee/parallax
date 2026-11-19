@@ -136,8 +136,8 @@ For every supported adapter, the smoke suite covers:
   capacity, an acquisition over retained capacity once the runtime is running,
   and an on-demand acquisition, which meets it on its own thread and reports
   immediately. Each names the credential-refusal reason or phase and carries the
-  refusal as its cause, and readiness spends its whole budget retrying rather
-  than ending at the first refusal. And that a source raising anything else
+  refusal as its cause, and readiness over retained capacity spends its whole
+  budget retrying rather than ending at the first refusal. And that a source raising anything else
   surfaces as a credential refusal with fixed text and the original as its
   cause, with nothing the source put in its own message reaching what the
   driver's pool logs
