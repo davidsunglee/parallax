@@ -388,9 +388,8 @@ class _RangeMeaning:
 
     @property
     def object_key(self) -> ObjectKey:
-        """The range's one object: the one its target conditions' stated
-        state names, which the plan holds through execution, where it has
-        any, so binding builds no second key beside it."""
+        """The range's one object, reusing the key the plan already holds
+        through execution rather than building an equal second one."""
         for condition in self.conditions:
             return condition.authority.state.object
         return _object_key(self.facts, self.key_attribute, self.key_value)
@@ -542,9 +541,8 @@ class _TemporalRangeBinder:
         )
 
     def predecessor(self, row: PredecessorRow) -> _RangePredecessor:
-        """One current row of the range's object as a predecessor, keyed by
-        the stated state of a target condition naming exactly its milestone,
-        which the plan already holds, rather than by an equal second key."""
+        """One current row of the range's object as a predecessor, reusing an
+        equal state the plan already holds rather than building a second key."""
         facts = self.meaning.facts
         edge = milestone_edge(facts.shape, row, None)
         for condition in self.meaning.conditions:
