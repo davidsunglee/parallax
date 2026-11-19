@@ -271,7 +271,7 @@ class WritePlanner:
                 shape = self._temporal_facet.shape(item.target.identity)
                 settled = (
                     self._temporal.settle(_temporal_write(item), shape, flush)
-                    if isinstance(shape, TransactionTimeOnly | Bitemporal)
+                    if isinstance(shape, (TransactionTimeOnly, Bitemporal))
                     else self._non_temporal.settle(_non_temporal_write(item), flush)
                 )
                 if isinstance(settled, DeferredRange):
@@ -407,7 +407,7 @@ def _family_keys(
     """The objects ``item`` writes, by its family's key."""
     objects = (
         item.object_keys
-        if isinstance(item, InsertBatch | UnversionedWriteBatch)
+        if isinstance(item, (InsertBatch, UnversionedWriteBatch))
         else (item.object_key,)
     )
     attribute = entity_view(families, item.target).primary_key.identity
