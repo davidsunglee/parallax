@@ -1,4 +1,4 @@
-"""The full collection and actual selection from an independent pytest session."""
+"""Test collection before and after deselection in an independent pytest session."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def pytest_collection_modifyitems(
 
 
 def selection(*arguments: str) -> SessionSelection:
-    """Collect the real tree and record its selection under the given options."""
+    """Snapshot collection for the supplied pytest paths and options."""
     with TemporaryDirectory(prefix="parallax-selection-") as temporary:
         snapshot = Path(temporary) / "selection.json"
         subprocess.run(
