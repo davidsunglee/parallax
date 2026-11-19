@@ -1,22 +1,15 @@
-"""What one pool sample answers, over a native pool whose statistics are scripted.
+"""What one pool sample answers, over a pool whose readings are scripted.
 
-Sampling is the only place a native mapping becomes a Parallax value, so this is
-where the distance between the two is pinned: which keys a reading must carry,
-which are absent exactly when they are zero, what a value has to BE to count as
-a measurement, and what a reading does when the runtime it belongs to is closing
-underneath it.
-
-The pins are deliberately conservative about what a number means. A pool that
-answered something unreadable produces no measurement rather than a coerced one;
-a counter the pool never incremented reads zero because that is what the pool
-means by omitting it; and no relationship between two fields is checked at all,
-because the reading is taken field by field and a "contradiction" between two of
-them is an ordinary race rather than a broken pool.
+The source owns a sample's outcome and its own lifetime: a reading the pool
+gave is reported as it stands, a reading the pool could not give is an
+unavailable sample rather than a substituted one, and a source the runtime
+detached reaches nothing. What a native reading must carry to count as one is
+the pool's own mapping, pinned with it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable
 from dataclasses import fields
 from typing import Any, cast
 
@@ -25,67 +18,49 @@ import pytest
 from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
-    PoolMeasurements,
+    PoolMetrics,
     PoolUnavailable,
     RouteReadiness,
 )
+from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.postgres._pool import PostgresPool
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
+from parallax.postgres._route import PostgresRoute
 from parallax.postgres._runtime import PostgresRuntime
 
-_GAUGES: dict[str, object] = {
-    "pool_min": 1,
-    "pool_max": 10,
-    "pool_size": 4,
-    "pool_available": 3,
-    "requests_waiting": 0,
-}
 
-_COUNTERS: dict[str, object] = {
-    "requests_num": 17,
-    "requests_queued": 2,
-    "requests_wait_ms": 45,
-    "requests_errors": 1,
-    "connections_num": 5,
-    "connections_ms": 130,
-    "connections_errors": 1,
-    "connections_lost": 2,
-    "returns_bad": 3,
-}
+def _metrics(**counters: int) -> PoolMetrics:
+    return PoolMetrics(
+        pool_min=1, pool_max=10, pool_size=4, pool_available=3, requests_waiting=0, **counters
+    )
 
 
-class _StatsPool:
+class _MeasuredPool:
     def __init__(
         self,
-        *readings: Mapping[str, object],
-        raises: BaseException | None = None,
-        on_read: Any = None,
+        *readings: PoolMetrics | BaseException,
+        on_read: Callable[[], None] | None = None,
     ) -> None:
-        self._readings = list(readings) or [{**_GAUGES, **_COUNTERS}]
-        self._raises = raises
+        self._readings = list(readings) or [_metrics()]
         self._on_read = on_read
         self.reads = 0
         self.closes = 0
 
-    def get_stats(self) -> Mapping[str, object]:
+    def metrics(self) -> PoolMetrics:
         self.reads += 1
         if self._on_read is not None:
             self._on_read()
-        if self._raises is not None:
-            raise self._raises
-        return self._readings[min(self.reads, len(self._readings)) - 1]
+        reading = self._readings[min(self.reads, len(self._readings)) - 1]
+        if isinstance(reading, BaseException):
+            raise reading
+        return reading
 
     def close(self) -> None:
         self.closes += 1
 
 
-def _source(pool: _StatsPool, readiness: RouteReadiness = "verified") -> PostgresPoolMetrics:
+def _source(pool: _MeasuredPool, readiness: RouteReadiness = "verified") -> PostgresPoolMetrics:
     return PostgresPoolMetrics(pool, "writer", lambda: readiness)
-
-
-def _available(pool: _StatsPool) -> PoolMeasurements:
-    sample = _source(pool).sample()
-    assert isinstance(sample, PoolAvailable)
-    return sample.measurements
 
 
 @pytest.mark.parametrize("readiness", ["verified", "pending", "refused"])
@@ -93,86 +68,27 @@ def test_a_reading_reports_the_readiness_of_the_route_its_pool_serves(
     readiness: RouteReadiness,
 ) -> None:
     # A pool whose route is pending or refused is still measurable: the
-    # measurements say what the pool did, and the readiness whether its route
+    # metrics say what the pool did, and the readiness whether its route
     # serves at all.
-    sample = _source(_StatsPool(dict(_GAUGES)), readiness).sample()
+    sample = _source(_MeasuredPool(), readiness).sample()
 
     assert isinstance(sample, PoolAvailable)
+    assert sample.metrics == _metrics()
     assert sample.readiness == readiness
-
-
-# --------------------------------------------------------------------------- #
-# A reading that succeeded.                                                    #
-# --------------------------------------------------------------------------- #
-
-
-def test_a_full_native_reading_becomes_measurements_field_for_field() -> None:
-    measurements = _available(_StatsPool({**_GAUGES, **_COUNTERS}))
-
-    assert measurements == PoolMeasurements(
-        pool_min=1,
-        pool_max=10,
-        pool_size=4,
-        pool_available=3,
-        requests_waiting=0,
-        requests_num=17,
-        requests_queued=2,
-        requests_wait_ms=45,
-        requests_errors=1,
-        connections_num=5,
-        connections_ms=130,
-        connections_errors=1,
-        connections_lost=2,
-        returns_bad=3,
-    )
-
-
-def test_counters_the_pool_never_incremented_read_as_zero() -> None:
-    # The native pool omits a counter it has never touched, and "never touched"
-    # is what zero says. A gauge is not defaulted this way, which is the next
-    # test: the pool supplies every gauge on every successful call.
-    measurements = _available(_StatsPool(dict(_GAUGES)))
-
-    assert measurements.requests_num == 0
-    assert measurements.connections_lost == 0
-    assert measurements.returns_bad == 0
-    assert measurements.pool_max == 10
-
-
-def test_a_measurement_the_contract_does_not_name_is_ignored() -> None:
-    # `usage_ms` is the concrete instance: the native pool populates it only
-    # from a checkout context this adapter does not use, so it is a key the
-    # contract deliberately omits rather than one it never expected.
-    measurements = _available(
-        _StatsPool({**_GAUGES, "usage_ms": 900, "something_a_later_release_added": 7})
-    )
-
-    assert measurements.pool_size == 4
-    assert not hasattr(measurements, "usage_ms")
-
-
-def test_no_relationship_between_two_fields_is_checked() -> None:
-    # The reading is taken field by field rather than atomically, so more
-    # available than managed is a pool measured mid-change, not a broken one.
-    measurements = _available(_StatsPool({**_GAUGES, "pool_size": 1, "pool_available": 4}))
-
-    assert measurements.pool_size == 1
-    assert measurements.pool_available == 4
 
 
 def test_each_sample_reports_what_that_reading_said_and_remembers_nothing() -> None:
     # Counters can reset — the pool is free to start over — so a later reading
     # lower than an earlier one is reported as it stands rather than corrected
     # upwards from a remembered maximum.
-    pool = _StatsPool({**_GAUGES, "requests_num": 40}, {**_GAUGES, "requests_num": 2})
-    source = _source(pool)
+    source = _source(_MeasuredPool(_metrics(requests_num=40), _metrics(requests_num=2)))
 
     first, second = source.sample(), source.sample()
 
     assert isinstance(first, PoolAvailable)
     assert isinstance(second, PoolAvailable)
-    assert first.measurements.requests_num == 40
-    assert second.measurements.requests_num == 2
+    assert first.metrics.requests_num == 40
+    assert second.metrics.requests_num == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -180,47 +96,8 @@ def test_each_sample_reports_what_that_reading_said_and_remembers_nothing() -> N
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("missing", sorted(_GAUGES))
-def test_a_missing_gauge_makes_the_sample_unavailable(missing: str) -> None:
-    reading = {**_GAUGES, **_COUNTERS}
-    del reading[missing]
-
-    assert isinstance(_source(_StatsPool(reading)).sample(), PoolUnavailable)
-
-
-@pytest.mark.parametrize(
-    "value",
-    [True, False, 1.0, "4", None, Ellipsis, -1],
-    ids=["true", "false", "float", "string", "null", "object", "negative"],
-)
-@pytest.mark.parametrize("field", ["pool_size", "requests_num"])
-def test_a_measurement_that_is_not_a_nonnegative_integer_makes_it_unavailable(
-    field: str, value: object
-) -> None:
-    # A gauge and a counter, because the refusal is about the VALUE rather than
-    # about which half of the contract it belongs to. `True` is refused although
-    # it is an `int`: a pool reporting a flag where a size belongs has reported
-    # no size, and recording it as one connection would publish a number nothing
-    # measured.
-    sample = _source(_StatsPool({**_GAUGES, **_COUNTERS, field: value})).sample()
-
-    assert isinstance(sample, PoolUnavailable)
-
-
-def test_an_unavailable_sample_names_no_key_and_no_value_it_read() -> None:
-    # What a pool answered is the pool's. The diagnostic says a reading did not
-    # carry what a sample reports, which is the whole of what an exporter may
-    # be handed about a mapping nobody audited.
-    sample = _source(_StatsPool({**_GAUGES, "pool_size": "enormous"})).sample()
-
-    assert isinstance(sample, PoolUnavailable)
-    assert "enormous" not in sample.diagnostic.message
-    assert "pool_size" not in sample.diagnostic.message
-
-
 def test_a_pool_that_raises_answers_unavailable_with_a_detached_diagnostic() -> None:
-    failure = RuntimeError("the pool refused to be measured")
-    sample = _source(_StatsPool(raises=failure)).sample()
+    sample = _source(_MeasuredPool(RuntimeError("the pool refused to be measured"))).sample()
 
     assert isinstance(sample, PoolUnavailable)
     assert sample.diagnostic.qualified_type == "builtins.RuntimeError"
@@ -233,11 +110,35 @@ def test_a_pool_that_raises_answers_unavailable_with_a_detached_diagnostic() -> 
     )
 
 
+class _NativeStatistics:
+    def __init__(self, stats: dict[str, object]) -> None:
+        self._stats = stats
+
+    def get_stats(self) -> dict[str, object]:
+        return self._stats
+
+
+def test_a_native_reading_that_cannot_be_believed_is_unavailable_and_names_nothing_it_read() -> (
+    None
+):
+    # What a pool answered is the pool's. The diagnostic says a reading did not
+    # carry what a sample reports, which is the whole of what an exporter may
+    # be handed about a mapping nobody audited.
+    native = _NativeStatistics({"pool_size": "enormous"})
+    source = PostgresPoolMetrics(PostgresPool(cast("Any", native)), "writer", lambda: "verified")
+
+    sample = source.sample()
+
+    assert isinstance(sample, PoolUnavailable)
+    assert sample.diagnostic.qualified_type.endswith("_MalformedStatistics")
+    assert "enormous" not in sample.diagnostic.message
+    assert "pool_size" not in sample.diagnostic.message
+
+
 def test_an_unavailable_source_is_still_attached_and_samples_again() -> None:
     # Unavailable is not detachment and not a terminal state: the runtime is
     # alive, so the next sample an exporter chooses to take is a live one.
-    pool = _StatsPool({"pool_min": 1}, {**_GAUGES, **_COUNTERS})
-    source = _source(pool)
+    source = _source(_MeasuredPool(RuntimeError("not this time"), _metrics()))
 
     assert isinstance(source.sample(), PoolUnavailable)
     assert isinstance(source.sample(), PoolAvailable)
@@ -248,7 +149,7 @@ def test_a_control_flow_exception_from_the_pool_is_not_an_unavailable_sample() -
     # cadence should not have to defend against them. An interpreter being torn
     # down is not one of those, and keeps its own propagation.
     with pytest.raises(KeyboardInterrupt):
-        _source(_StatsPool(raises=KeyboardInterrupt())).sample()
+        _source(_MeasuredPool(KeyboardInterrupt())).sample()
 
 
 # --------------------------------------------------------------------------- #
@@ -257,7 +158,7 @@ def test_a_control_flow_exception_from_the_pool_is_not_an_unavailable_sample() -
 
 
 def test_a_detached_source_answers_detached_and_reaches_no_pool() -> None:
-    pool = _StatsPool()
+    pool = _MeasuredPool()
     source = _source(pool)
     source.detach()
 
@@ -267,7 +168,7 @@ def test_a_detached_source_answers_detached_and_reaches_no_pool() -> None:
 
 
 def test_detaching_twice_changes_nothing() -> None:
-    source = _source(_StatsPool())
+    source = _source(_MeasuredPool())
     source.detach()
     source.detach()
 
@@ -275,12 +176,11 @@ def test_detaching_twice_changes_nothing() -> None:
 
 
 def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
-    # The handshake is the pool itself: detachment happens INSIDE the native
-    # call this sample is in the middle of, which is the exact interleaving a
+    # The handshake is the pool itself: detachment happens INSIDE the read this
+    # sample is in the middle of, which is the exact interleaving a
     # thread-timing test would be trying to arrange.
     holder: list[PostgresPoolMetrics] = []
-    pool = _StatsPool(on_read=lambda: holder[0].detach())
-    source = _source(pool)
+    source = _source(_MeasuredPool(on_read=lambda: holder[0].detach()))
     holder.append(source)
 
     inflight = source.sample()
@@ -294,32 +194,28 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _runtime(pool: _StatsPool) -> PostgresRuntime:
-    from parallax.postgres._connection import ConnectionEstablishment
-    from parallax.postgres._route import PostgresRoute
-
+def _runtime(pool: _MeasuredPool) -> PostgresRuntime:
     return PostgresRuntime(
-        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()),
+        PostgresRoute("writer", cast("Any", pool), DialLedger()),
         reservation=PostgresRoute(
-            "writer", cast("Any", _StatsPool()), ConnectionEstablishment(), "reservation"
+            "writer", cast("Any", _MeasuredPool()), DialLedger(), "reservation"
         ),
         acquire_timeout=15.0,
     )
 
 
-def test_the_source_detaches_before_the_native_close_even_when_that_close_fails() -> None:
-    # The ordering handshake is the close itself: the fake pool samples the
-    # source from inside `close`, so what it records is what a sample taken
-    # during the teardown would have seen. A close that then fails does not
-    # widen that window, because detachment already happened.
+def test_the_source_detaches_before_the_pool_closes_even_when_that_close_fails() -> None:
+    # The ordering handshake is the close itself: the pool samples the source
+    # from inside `close`, so what it records is what a sample taken during the
+    # teardown would have seen. A close that then fails does not widen that
+    # window, because detachment already happened.
     seen: list[object] = []
 
-    class _ClosingPool(_StatsPool):
+    class _ClosingPool(_MeasuredPool):
         def close(self) -> None:
             super().close()
-            seen.append(runtime_holder[0].pool_metrics)
             seen.append(runtime_holder[0].pool_metrics[0].sample())
-            raise RuntimeError("the native pool would not close")
+            raise RuntimeError("the pool would not close")
 
     runtime_holder: list[PostgresRuntime] = []
     pool = _ClosingPool()
@@ -329,4 +225,5 @@ def test_the_source_detaches_before_the_native_close_even_when_that_close_fails(
     runtime.close()
 
     assert pool.closes == 1
-    assert isinstance(seen[1], PoolDetached)
+    assert pool.reads == 0
+    assert isinstance(seen[0], PoolDetached)

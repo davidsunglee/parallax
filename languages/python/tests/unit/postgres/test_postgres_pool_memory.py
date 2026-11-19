@@ -74,10 +74,10 @@ def _route(credentials: _Refusing) -> PostgresRoute:
 def never_dialed(credentials: _Refusing, route: PostgresRoute) -> None:
     """Refuse a pool that asked for a credential, counted a connection attempt,
     or served a checkout."""
-    stats = route.pool.get_stats()
-    attempted = stats.get("connections_num", 0) + stats.get("requests_num", 0)
+    metrics = route.pool.metrics()
+    attempted = metrics.connections_num + metrics.requests_num
     if credentials.asked.is_set() or attempted:
-        raise AssertionError(f"the idle pool reached for a connection: {stats}")
+        raise AssertionError(f"the idle pool reached for a connection: {metrics}")
 
 
 def _threads_around() -> tuple[int, int, int]:

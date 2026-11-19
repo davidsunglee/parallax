@@ -81,11 +81,11 @@ from parallax.core.internal.db_port import (
     StatementNotExecuted,
     isolation_level,
 )
+from parallax.core.internal.db_port._runtime._dial_record import DialLedger
 from parallax.core.internal.dialect import PhysicalIndexName
 from parallax.core.internal.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._connection import (
-    ConnectionEstablishment,
     PostgresConnection,
     adapt_binds,
     initialize_connection,
@@ -95,6 +95,7 @@ from parallax.postgres._connection import (
 from parallax.postgres._context import PostgresConnectionContext
 from parallax.postgres._route import PostgresRoute
 from tests._support.errors import raises_code
+from tests.unit._scripted_native import ScriptedPool
 from tests.unit.postgres._native_pipeline_support import (
     Result,
     Server,
@@ -1447,35 +1448,19 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
 # --------------------------------------------------------------------------- #
 
 
-class _FakePool:
-    """The native pool one connection context draws from, handing over each
-    connection in turn."""
-
-    def __init__(self, *connections: _FakeConnection) -> None:
-        self._connections = list(connections)
-        self.checkouts = 0
-        self.returned: list[_FakeConnection] = []
-
-    def getconn(self, timeout: float | None = None) -> _FakeConnection:
-        del timeout
-        self.checkouts += 1
-        return self._connections.pop(0)
-
-    def putconn(self, connection: _FakeConnection) -> None:
-        self.returned.append(connection)
-
-
 def _admitted(_deadline: float) -> None:
     return
 
 
-def _leased(*connections: _FakeConnection) -> tuple[PostgresConnectionContext, _FakePool]:
+def _leased(
+    *connections: _FakeConnection,
+) -> tuple[PostgresConnectionContext, ScriptedPool[_FakeConnection]]:
     """A connection context over ``connections``, each initialized as a pool
     initializes every connection it creates."""
     for connection in connections:
         initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
-    pool = _FakePool(*connections)
-    route = PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment())
+    pool = ScriptedPool(*connections)
+    route = PostgresRoute("writer", cast("Any", pool), DialLedger())
     context = PostgresConnectionContext(
         ((route, monotonic() + 5.0),),
         _admitted,
@@ -1526,7 +1511,7 @@ def test_a_refused_assignment_before_begin_leaves_the_opportunity_open() -> None
         assert scoped.execute("select 1", [], read_only=True) == []
 
     assert isinstance(outcome, BeginFailed)
-    assert pool.checkouts == 2
+    assert len(pool.budgets) == 2
     assert _sent_sql(healthy) == ["select 1"]
 
 
@@ -1550,7 +1535,7 @@ def test_a_read_whose_rows_fail_after_it_was_answered_has_spent_the_opportunity(
             scoped.execute("select", [], ((0, 2),), read_only=True)
         assert _first_send(context) == "spent"
 
-    assert pool.checkouts == 1
+    assert len(pool.budgets) == 1
 
 
 def _document_batch() -> tuple[_Result, _Result]:
@@ -1582,7 +1567,7 @@ def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_r
         assert _first_send(context) == "spent"
 
     assert rows == [[(StructuredDocument({"a": 1}),), (SQL_NULL,)], [(7,)]]
-    assert pool.checkouts == 2
+    assert len(pool.budgets) == 2
     assert pool.returned == [broken, fresh]
     assert not any(event.endswith(("-attach", "-fetch")) for event in broken.pipeline_events)
     assert [event for event in fresh.pipeline_events if "-execute:" not in event] == [
@@ -1616,7 +1601,7 @@ def test_a_read_pipeline_refused_on_a_healthy_connection_is_not_resubmitted() ->
         assert _first_send(context) == "spent"
 
     assert failed.value.native_code == "42601"
-    assert pool.checkouts == 1
+    assert len(pool.budgets) == 1
 
 
 @pytest.mark.parametrize("failing", ["decoding", "driver"])
@@ -1641,7 +1626,7 @@ def test_a_read_pipeline_whose_rows_fail_after_it_synchronized_is_not_resubmitte
             scoped.execute_pipeline(batch, read_only=True)
         assert _first_send(context) == "spent"
 
-    assert pool.checkouts == 1
+    assert len(pool.budgets) == 1
 
 
 def test_a_saved_scope_reaches_nothing_its_lease_held_once_revoked() -> None:

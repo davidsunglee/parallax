@@ -17,7 +17,7 @@ from parallax.core.internal.db_port import (
     RouteSelection,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
-from parallax.postgres._connection import (
+from parallax.postgres._failures import (
     _SERVER_DIAL_MESSAGES,  # pyright: ignore[reportPrivateUsage] - require a canary for every entry
     _fatal_dial_message,  # pyright: ignore[reportPrivateUsage] - inspect native diagnostic text
     dial_reason,
@@ -195,7 +195,7 @@ def test_a_reader_at_its_login_limit_defers_falls_back_and_recovers(profile_run:
                 while True:
                     pending = reader_metrics.sample()
                     assert isinstance(pending, PoolAvailable) and pending.readiness == "pending"
-                    if pending.measurements.connections_errors:
+                    if pending.metrics.connections_errors:
                         break
                     if monotonic() >= deadline:
                         pytest.fail("the retaining reader did not record a dial failure")

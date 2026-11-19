@@ -787,7 +787,7 @@ class PoolWatch:
         sample: PoolSample = self._source.sample()
         if not isinstance(sample, PoolAvailable):
             return None
-        measured = sample.measurements
+        measured = sample.metrics
         return PoolGauges(
             managed=measured.pool_size,
             idle=measured.pool_available,
@@ -881,7 +881,7 @@ is why a reading succeeds even while every slot is held. It answers one of three
 
 | Sample | Meaning |
 |---|---|
-| `PoolAvailable(measurements, readiness)` | This is the reading, and whether its route has proved it can serve: `verified`, `pending`, or `refused` |
+| `PoolAvailable(metrics, readiness)` | This is the reading, and whether its route has proved it can serve: `verified`, `pending`, or `refused` |
 | `PoolUnavailable(diagnostic)` | This reading did not happen; the runtime is still alive and the next one may |
 | `PoolDetached()` | The handle has closed; there is nothing to read |
 
@@ -889,7 +889,7 @@ Unavailable is not a zero. Publishing a substituted zero for one is how a
 monitoring dashboard comes to show an outage that did not happen; skip the
 sample instead, and ask again on your next cadence.
 
-`PoolMeasurements` carries five gauges and nine counters:
+`PoolMetrics` carries five gauges and nine counters:
 
 | Measurement | What it is, and what it is not |
 |---|---|

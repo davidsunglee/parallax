@@ -1,33 +1,24 @@
 from __future__ import annotations
 
 import contextlib
-import math
 import threading
-from collections.abc import Mapping
-from dataclasses import replace
 from typing import TYPE_CHECKING, Final, Literal
-
-import psycopg_pool
 
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.db_port import (
-    CredentialSource,
+    ConnectionPool,
     DatabaseStartupError,
-    DriverManaged,
     PoolPurpose,
     Route,
     RouteReadiness,
     Row,
     report_route_readiness,
 )
-from parallax.postgres._connection import CONNECT_KWARGS, ConnectionEstablishment
-from parallax.postgres._options import PoolOptions, reservation_retention
+from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.postgres._pool import NativeConnection, open_pool
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 
 if TYPE_CHECKING:
-    from psycopg_pool.abc import KwargsParam
-
-    from parallax.postgres._context import NativePool
     from parallax.postgres._endpoint import PostgresEndpoint
 
 __all__ = [
@@ -37,7 +28,6 @@ __all__ = [
     "check_probe",
     "open_reservation_route",
     "open_route",
-    "reservation_socket_options",
 ]
 
 PROBE_SQL: Final = """SELECT
@@ -120,8 +110,8 @@ type _State = Literal["unproven", "verified", "pending", "refused"]
 
 
 class PostgresRoute:
-    """One declared route: its native pool, how that pool establishes
-    connections, its measurements, and whether it has proved it can serve.
+    """One declared route's pool, the latest failure establishing its
+    connections, its metrics source, and whether it has proved it can serve.
 
     A route starts unproven, while startup proves it. Startup then makes it
     ``verified``, or ``pending`` where the reader was unavailable and its
@@ -138,7 +128,7 @@ class PostgresRoute:
         "_probe_slot",
         "_refusal",
         "_state",
-        "establishment",
+        "dial_ledger",
         "metrics",
         "pool",
         "route",
@@ -147,13 +137,13 @@ class PostgresRoute:
     def __init__(
         self,
         route: Route,
-        pool: NativePool,
-        establishment: ConnectionEstablishment,
+        pool: ConnectionPool[NativeConnection],
+        dial_ledger: DialLedger,
         purpose: PoolPurpose = "application",
     ) -> None:
         self.route: Route = route
         self.pool = pool
-        self.establishment = establishment
+        self.dial_ledger = dial_ledger
         self._state: _State = "unproven"
         self._refusal: ProbeMismatch | None = None
         self._lock = threading.Lock()
@@ -165,14 +155,14 @@ class PostgresRoute:
         no idle connection that could serve regardless.
 
         A retained connection is handed over without dialing, so an idle one
-        makes the record irrelevant to the next checkout. A pool whose
-        measurements cannot be read is taken to hold none.
+        makes the record irrelevant to the next checkout. A pool whose metrics
+        cannot be read is taken to hold none.
         """
-        failure = self.establishment.last_failure
+        failure = self.dial_ledger.latest_failure
         if failure is None or failure.reason != "unavailable":
             return False
         try:
-            available = self.pool.get_stats().get("pool_available", 0)
+            available = self.pool.metrics().pool_available
         except Exception:
             return True
         return available <= 0
@@ -258,12 +248,13 @@ def open_route(
     acquire_timeout: float,
     prepare_threshold: int | None,
 ) -> PostgresRoute:
-    """Create and open ``route``'s native pool over ``endpoint``, unproven."""
-    establishment = ConnectionEstablishment()
-    return PostgresRoute(
+    """Create and open ``route``'s pool over ``endpoint``, unproven."""
+    return _opened(
+        endpoint,
         route,
-        _build_pool(endpoint, route, acquire_timeout, prepare_threshold, establishment),
-        establishment,
+        "application",
+        acquire_timeout=acquire_timeout,
+        prepare_threshold=prepare_threshold,
     )
 
 
@@ -272,147 +263,41 @@ def open_reservation_route(
 ) -> PostgresRoute:
     """Create and open the writer capacity key reservations borrow, unproven.
 
-    Its pool dials the writer's endpoint with the writer's credentials under
-    :func:`~parallax.postgres._options.reservation_retention`, so it holds no
-    connection until the first reservation, and every connection it opens
-    carries :func:`reservation_socket_options`. It serves the writer route under
-    the ``reservation`` purpose, which no application Route Policy selects.
+    It serves the writer route under the ``reservation`` purpose, which no
+    application Route Policy selects.
     """
-    establishment = ConnectionEstablishment()
-    endpoint = replace(writer, pool=reservation_retention(writer.pool))
-    return PostgresRoute(
+    return _opened(
+        writer,
         "writer",
-        _build_pool(
-            endpoint,
-            "writer",
-            acquire_timeout,
-            prepare_threshold,
-            establishment,
-            purpose="reservation",
-            connect_options=reservation_socket_options(acquire_timeout),
-        ),
-        establishment,
         "reservation",
+        acquire_timeout=acquire_timeout,
+        prepare_threshold=prepare_threshold,
     )
 
 
-def reservation_socket_options(acquire_timeout: float) -> Mapping[str, object]:
-    """libpq keepalive and unacknowledged-send limits for a reservation
-    connection, so the kernel ends one whose server vanished mid-statement
-    about ``acquire_timeout`` seconds in.
-
-    An approximate bound: a server that is alive but stalled is the session
-    ``statement_timeout`` setup installs, and nothing here is tied to a wall
-    clock.
-    """
-    seconds = max(1, math.ceil(acquire_timeout))
-    return {
-        "keepalives": 1,
-        "keepalives_idle": 1,
-        "keepalives_interval": 1,
-        "keepalives_count": seconds,
-        "tcp_user_timeout": seconds * 1000,
-    }
-
-
-def _build_pool(
+def _opened(
     endpoint: PostgresEndpoint,
     route: Route,
+    purpose: PoolPurpose,
+    *,
     acquire_timeout: float,
     prepare_threshold: int | None,
-    establishment: ConnectionEstablishment,
-    *,
-    purpose: PoolPurpose = "application",
-    connect_options: Mapping[str, object] | None = None,
-) -> NativePool:
-    """Create and open the native pool one route manages.
-
-    ``open=False`` then an explicit open, because the driver's implicit opening
-    is a deprecated default whose behavior is documented to change. The
-    connection keyword arguments are the ones this adapter owns — autocommit,
-    row shape, and prepared-statement policy — every dial goes through the
-    establishment's connection class, and ``configure`` is where every
-    connection, however it came to exist, is initialized and checked. The pool
-    is named for its route, so the driver's own warnings say which route met
-    them.
-
-    Where a credential source is configured, those keywords become a CALLABLE
-    the pool resolves on every connection attempt, which is what makes the
-    secret late rather than frozen into configuration. Under
-    :data:`~parallax.core.internal.db_port.DRIVER_MANAGED` the static dictionary is
-    passed exactly as it would be otherwise and carries no ``password`` at all,
-    leaving authentication to the driver and the server.
-
-    No ``reset`` callback is configured. Native return already brings a
-    connection back to a usable state or discards it, and a reset callback runs
-    after that decision rather than instead of it — so it could not prevent an
-    unexpected transaction being rolled back for reuse, which is exactly the
-    outcome this adapter refuses by disposing of such a connection itself.
-
-    No ``check`` callback is configured either, so a checkout costs no round
-    trip. A connection the server ended while it sat idle is found by its first
-    submission instead, which the connection context replaces where that
-    submission can be repeated.
-    """
-    conninfo = endpoint.connection_string
-    options = endpoint.pool
-    credentials: CredentialSource | DriverManaged = endpoint.credentials
-    base: dict[str, object] = {
-        **CONNECT_KWARGS,
-        **(connect_options or {}),
-        "prepare_threshold": prepare_threshold,
-    }
-    name = f"parallax-{route}" if purpose == "application" else f"parallax-{route}-{purpose}"
-    kwargs: KwargsParam = (
-        base
-        if isinstance(credentials, DriverManaged)
-        else establishment.connect_kwargs(base, credentials)
-    )
-    pool: NativePool
-    if isinstance(options, PoolOptions):
-        pool = psycopg_pool.ConnectionPool(
-            conninfo,
-            connection_class=establishment.connection_class,
-            kwargs=kwargs,
-            open=False,
-            configure=establishment,
-            min_size=options.min_size,
-            max_size=options.max_size,
-            timeout=acquire_timeout,
-            max_waiting=options.max_waiting,
-            max_idle=options.max_idle,
-            max_lifetime=options.max_lifetime,
-            reconnect_timeout=options.reconnect_timeout,
-            num_workers=options.num_workers,
-            name=name,
-        )
-    else:
-        pool = psycopg_pool.NullConnectionPool(
-            conninfo,
-            connection_class=establishment.connection_class,
-            kwargs=kwargs,
-            open=False,
-            configure=establishment,
-            max_size=options.max_size,
-            timeout=acquire_timeout,
-            max_waiting=options.max_waiting,
-            max_lifetime=options.max_lifetime,
-            reconnect_timeout=options.reconnect_timeout,
-            num_workers=options.num_workers,
-            name=name,
-        )
+) -> PostgresRoute:
+    dial_ledger = DialLedger()
     try:
-        pool.open()
-    except BaseException as exc:
-        # Not yet any route's, so nothing else would ever close it.
-        with contextlib.suppress(Exception):
-            pool.close()
-        if not isinstance(exc, Exception):
-            raise
+        pool = open_pool(
+            endpoint,
+            route,
+            purpose,
+            dial_ledger,
+            acquire_timeout=acquire_timeout,
+            prepare_threshold=prepare_threshold,
+        )
+    except Exception as exc:
+        name = route if purpose == "application" else f"{route}-{purpose}"
         raise DatabaseStartupError(
-            f"the database runtime's {name.removeprefix('parallax-')} connection pool could not "
-            "be opened",
+            f"the database runtime's {name} connection pool could not be opened",
             route=route,
             phase="open",
         ) from exc
-    return pool
+    return PostgresRoute(route, pool, dial_ledger, purpose)

@@ -261,7 +261,7 @@ class PoolWatch:
         sample: PoolSample = self._source.sample()
         if not isinstance(sample, PoolAvailable):
             return None
-        measured = sample.measurements
+        measured = sample.metrics
         return PoolGauges(
             managed=measured.pool_size,
             idle=measured.pool_available,

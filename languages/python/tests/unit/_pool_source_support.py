@@ -5,7 +5,7 @@ from __future__ import annotations
 from parallax.core.internal.db_port import (
     PoolAvailable,
     PoolDetached,
-    PoolMeasurements,
+    PoolMetrics,
     PoolPurpose,
     PoolSample,
     Route,
@@ -27,7 +27,7 @@ class DetachableSource:
 
     def __init__(
         self,
-        measurements: PoolMeasurements | None = None,
+        metrics: PoolMetrics | None = None,
         *,
         route: Route = "writer",
         readiness: RouteReadiness = "verified",
@@ -36,10 +36,10 @@ class DetachableSource:
         self.route: Route = route
         self.purpose: PoolPurpose = purpose
         self.readiness: RouteReadiness = readiness
-        self.measurements = (
-            measurements
-            if measurements is not None
-            else PoolMeasurements(
+        self.metrics = (
+            metrics
+            if metrics is not None
+            else PoolMetrics(
                 pool_min=1, pool_max=2, pool_size=1, pool_available=1, requests_waiting=0
             )
         )
@@ -48,7 +48,7 @@ class DetachableSource:
 
     def sample(self) -> PoolSample:
         self.samples += 1
-        return PoolAvailable(self.measurements, self.readiness) if self.attached else PoolDetached()
+        return PoolAvailable(self.metrics, self.readiness) if self.attached else PoolDetached()
 
     def detach(self) -> None:
         self.attached = False

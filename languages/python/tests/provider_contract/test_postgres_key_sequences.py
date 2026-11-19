@@ -310,7 +310,7 @@ class _PoolSources:
         (source,) = [source for source in self.sources if source.purpose == "reservation"]
         sample = source.sample()
         assert isinstance(sample, PoolAvailable)
-        return sample.measurements
+        return sample.metrics
 
 
 def test_a_root_s_sequences_reserve_through_its_one_reservation_connection(
