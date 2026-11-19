@@ -10,7 +10,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import ExitStack, closing
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Never, cast
 
 import pytest
 
@@ -23,8 +23,7 @@ if TYPE_CHECKING:
     from parallax.conformance.profile import Profile
     from parallax.postgres import PostgresEndpoint
 
-# Database-backed checks skipped because Docker/Postgres was unavailable — printed
-# in a final summary so a skip is never silent; CI fails on any skip.
+# Optional database setup skips for the terminal summary in this process.
 _DB_SKIPS: list[str] = []
 
 # The designated entry point to each confined resource, and the class reaching it
@@ -289,10 +288,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     shards.store(_recorded_durations, replace=replace)
 
 
-def record_db_skip(reason: str) -> None:
-    """Record a skipped database-backed check for the end-of-session summary."""
+def _skip_unavailable_database(reason: str) -> Never:
+    # Report required setup failures from the worker that sees them.
+    if os.environ.get("PARALLAX_REQUIRE_DB") == "1":
+        pytest.fail(reason)
     if reason not in _DB_SKIPS:
         _DB_SKIPS.append(reason)
+    pytest.skip(reason)
 
 
 @pytest.fixture(scope="session")
@@ -316,9 +318,8 @@ def profile_run(profile: Profile) -> Iterator[Any]:
     parallel wiring of it, and a case run here cannot be reported under a profile
     that did not open it.
 
-    Skips the database-backed lane with a reason (never silently) when Docker or
-    the provider cannot be brought up; the ``python-check-db`` CI job fails on any
-    such skip, so a green CI run has exercised every database-backed check.
+    A provisioning failure fails required database runs and skips optional runs
+    with the reason.
     A wheel suite supplies its server explicitly; an unavailable or unexpected
     server fails that run rather than taking the Docker availability fallback.
     """
@@ -341,8 +342,7 @@ def profile_run(profile: Profile) -> Iterator[Any]:
     except Exception as exc:
         opened.close()
         reason = f"Testcontainers Postgres unavailable: {type(exc).__name__}: {exc}"
-        record_db_skip(reason)
-        pytest.skip(reason)
+        _skip_unavailable_database(reason)
     try:
         if selected is not None:
             from tests._support.postgres_versions import record_version
@@ -405,10 +405,7 @@ def connection_limit_server(profile_run: Any) -> Iterator[tuple[DriverControl, P
             reason = (
                 f"Testcontainers connection-limit Postgres unavailable: {type(exc).__name__}: {exc}"
             )
-            if os.environ.get("PARALLAX_REQUIRE_DB") == "1":
-                pytest.fail(reason)
-            record_db_skip(reason)
-            pytest.skip(reason)
+            _skip_unavailable_database(reason)
         yield admin, endpoint
 
 
@@ -491,11 +488,6 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
     terminalreporter.write_sep("=", "database-backed checks skipped")
     for reason in _DB_SKIPS:
         terminalreporter.write_line(f"SKIPPED (database): {reason}")
-    if os.environ.get("PARALLAX_REQUIRE_DB") == "1":
-        terminalreporter.write_line(
-            "PARALLAX_REQUIRE_DB=1 set: skipped database checks are a failure"
-        )
-        raise pytest.UsageError("database-backed checks were skipped but required")
 
 
 @pytest.fixture(scope="session")
