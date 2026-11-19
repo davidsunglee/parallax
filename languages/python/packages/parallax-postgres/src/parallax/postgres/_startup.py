@@ -165,17 +165,7 @@ def _probe[C, A](
         resource.__enter__()
     except ConnectionAcquisitionError as exc:
         report_resource_issues("startup", resource.cleanup_result)
-        error = DatabaseStartupError(
-            "no database connection could be acquired while starting up",
-            route=route.route,
-            phase="acquire",
-            cleanup_result=resource.cleanup_result,
-        )
-        error.__cause__ = exc
-        raise _ReadinessFailure(
-            error,
-            outage=exc.reason in {"unavailable", "timeout"} and _confirmed(resource.cleanup_result),
-        ) from None
+        raise _unacquired(route, "acquire", exc, resource.cleanup_result) from None
     try:
         login = resource.run(driver.prove_readiness, expected_login, replay_safe=True)
     except BaseException as exc:
@@ -188,6 +178,9 @@ def _probe[C, A](
             # a caller unwinding must not have that turned into an ordinary
             # startup error it might handle.
             raise
+        if isinstance(exc, ConnectionAcquisitionError):
+            # The replacement for a lost proof arrived too late to be admitted.
+            raise _unacquired(route, "probe", exc, resource.cleanup_result) from None
         error = DatabaseStartupError(
             str(exc)
             if isinstance(exc, ProbeMismatch)
@@ -197,8 +190,14 @@ def _probe[C, A](
             cleanup_result=resource.cleanup_result,
         )
         error.__cause__ = exc
+        # A lost session is an outage only while the route records nothing
+        # worse: a replacement whose dial was refused leaves that refusal on
+        # record while the loss that asked for it stays primary.
         raise _ReadinessFailure(
-            error, outage=driver.is_session_lost(exc) and _confirmed(resource.cleanup_result)
+            error,
+            outage=driver.is_session_lost(exc)
+            and _only_outage_on_record(route)
+            and _confirmed(resource.cleanup_result),
         ) from None
     resource.__exit__(None, None, None)
     result = resource.cleanup_result
@@ -213,8 +212,27 @@ def _probe[C, A](
             ),
             outage=False,
         )
-    _remaining(route, deadline, "release")
+    _remaining(route, deadline, "release", cleanup_result=result)
     return login
+
+
+def _unacquired[C](
+    route: PostgresRoute[C],
+    phase: StartupPhase,
+    refused: ConnectionAcquisitionError,
+    cleanup_result: CleanupResult | None,
+) -> _ReadinessFailure:
+    error = DatabaseStartupError(
+        "no database connection could be acquired while starting up",
+        route=route.route,
+        phase=phase,
+        cleanup_result=cleanup_result,
+    )
+    error.__cause__ = refused
+    return _ReadinessFailure(
+        error,
+        outage=refused.reason in {"unavailable", "timeout"} and _confirmed(cleanup_result),
+    )
 
 
 def _confirmed(cleanup: CleanupResult | None) -> bool:
@@ -223,14 +241,29 @@ def _confirmed(cleanup: CleanupResult | None) -> bool:
     return not isinstance(cleanup, ReleaseUnconfirmed)
 
 
-def _remaining[C](route: PostgresRoute[C], deadline: float, phase: StartupPhase) -> float:
+def _only_outage_on_record[C](route: PostgresRoute[C]) -> bool:
+    """Whether ``route`` records no dial failure other than an unreachable server.
+
+    A route whose own dials were refused would be refused again, however long
+    it were given.
+    """
+    failure = route.dial_ledger.latest_failure
+    return failure is None or failure.reason == "unavailable"
+
+
+def _remaining[C](
+    route: PostgresRoute[C],
+    deadline: float,
+    phase: StartupPhase,
+    *,
+    cleanup_result: CleanupResult | None = None,
+) -> float:
     """The startup budget left, refusing to begin ``phase`` without any.
 
     Checked between phases rather than inside them: the budget stops the next
     step from starting and makes no claim about interrupting one already
     running. Running out is an outage's symptom only where the route has no
-    refusal on record: a route whose own background dials were refused would
-    be refused again, however long it were given.
+    refusal on record.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
@@ -239,7 +272,8 @@ def _remaining[C](route: PostgresRoute[C], deadline: float, phase: StartupPhase)
             "the database runtime did not become ready within its startup timeout",
             route=route.route,
             phase=phase,
+            cleanup_result=cleanup_result,
         )
         error.__cause__ = None if failure is None else failure.cause
-        raise _ReadinessFailure(error, outage=failure is None or failure.reason == "unavailable")
+        raise _ReadinessFailure(error, outage=_only_outage_on_record(route))
     return remaining

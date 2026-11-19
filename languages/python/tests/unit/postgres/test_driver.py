@@ -39,7 +39,7 @@ from parallax.postgres import (
     PostgresRole,
 )
 from parallax.postgres._connection import DirectLease, NativeConnection, PostgresConnection
-from parallax.postgres._driver import PROBE_SQL, PostgresDriver, check_probe
+from parallax.postgres._driver import PROBE_SQL, PostgresDriver
 
 _PROBE_ROW: tuple[object, ...] = (
     1,
@@ -251,6 +251,12 @@ def test_the_session_predicates_are_the_failure_classification_s() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _prove(rows: Sequence[tuple[object, ...]], expected_login: str | None) -> str:
+    """What a proof reading back ``rows`` answers."""
+    connection = _native(_Connection(rows=rows))
+    return _driver().prove_readiness(connection, SubmissionProgress(), expected_login)
+
+
 def test_a_proof_submits_the_probe_once_and_answers_its_login() -> None:
     connection = _Connection(rows=[_PROBE_ROW])
     submission = SubmissionProgress()
@@ -290,12 +296,12 @@ def test_a_probe_that_does_not_read_back_what_it_asked_for_is_a_mismatch(
     rows: list[tuple[object, ...]],
 ) -> None:
     with pytest.raises(ProbeMismatch):
-        check_probe(rows, None)
+        _prove(rows, None)
 
 
 def test_a_probe_that_answers_more_than_one_row_says_how_many() -> None:
     with pytest.raises(ProbeMismatch, match="returned 2 rows rather than one"):
-        check_probe([_PROBE_ROW, _PROBE_ROW], None)
+        _prove([_PROBE_ROW, _PROBE_ROW], None)
 
 
 @pytest.mark.parametrize(
@@ -315,7 +321,7 @@ def test_a_probe_that_reads_a_float_back_inexactly_names_what_rounds_it(
     row[ordinal] = decoded
 
     with pytest.raises(ProbeMismatch) as mismatch:
-        check_probe([tuple(row)], None)
+        _prove([tuple(row)], None)
 
     reason = str(mismatch.value)
     assert "extra_float_digits is at or below zero" in reason
@@ -323,9 +329,9 @@ def test_a_probe_that_reads_a_float_back_inexactly_names_what_rounds_it(
 
 
 def test_a_probe_reading_another_login_than_the_one_every_route_shares_is_a_mismatch() -> None:
-    assert check_probe([_PROBE_ROW], None) == "runtime-login"
+    assert _prove([_PROBE_ROW], None) == "runtime-login"
     with pytest.raises(ProbeMismatch, match="different database login"):
-        check_probe([_PROBE_ROW], "writer-login")
+        _prove([_PROBE_ROW], "writer-login")
 
 
 # --------------------------------------------------------------------------- #
@@ -337,9 +343,11 @@ def test_an_authorization_is_installed_as_its_role_in_one_submission() -> None:
     connection = _Connection()
     submission = SubmissionProgress()
 
-    _driver().install_authorization(_native(connection), submission, PostgresRole('a "b"'))
+    role = PostgresRole('tenant"; reset role; --')
 
-    assert connection.sent == ['SET ROLE "a ""b"""']
+    _driver().install_authorization(_native(connection), submission, role)
+
+    assert connection.sent == ['SET ROLE "tenant""; reset role; --"']
     assert (submission.started, submission.answered) == (True, True)
 
 

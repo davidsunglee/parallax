@@ -461,9 +461,11 @@ def test_a_successful_initialization_reports_the_connection_usable_and_clears_th
     [IncompatibleSessionError("LATIN1"), RuntimeError("the loaders could not be installed")],
     ids=["incompatible", "unexpected"],
 )
-def test_an_initialization_that_fails_reports_its_refusal_and_raises_it(
+def test_an_initialization_that_fails_reports_its_refusal_closes_and_raises_it(
     monkeypatch: pytest.MonkeyPatch, refusal: Exception
 ) -> None:
+    # The native pool neither keeps nor closes a connection its configure
+    # refused, so nothing else would end the session.
     from parallax.postgres import _pool as pool_module
 
     def refuse(_connection: object) -> None:
@@ -471,14 +473,16 @@ def test_an_initialization_that_fails_reports_its_refusal_and_raises_it(
 
     monkeypatch.setattr(pool_module, "initialize_connection", refuse)
     reports = _Reports()
+    connection = _Initializable()
 
     with pytest.raises(type(refusal)) as raised:
-        DialObserver(reports)(cast("Any", _Initializable()))
+        DialObserver(reports)(cast("Any", connection))
 
     assert raised.value is refusal
     assert [(reason, cause) for reason, cause, _ in reports.reports] == [
         ("preparation_failed", refusal)
     ]
+    assert connection.closed
 
 
 def test_an_observed_dial_that_fails_reports_its_failure_and_raises_it(

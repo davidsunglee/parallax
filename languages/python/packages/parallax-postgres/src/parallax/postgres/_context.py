@@ -448,6 +448,9 @@ class PostgresConnectionContext[C, A]:
             )
         except _FellBack:
             raise
+        except ConnectionAcquisitionError:
+            self._cleanup_result = self._settled(suspect=True)
+            raise
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
@@ -485,6 +488,9 @@ class PostgresConnectionContext[C, A]:
                 replay_safe=True,
                 setup=True,
             )
+        except ConnectionAcquisitionError:
+            self._cleanup_result = self._settled(suspect=True)
+            raise
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
@@ -529,6 +535,9 @@ class PostgresConnectionContext[C, A]:
             finally:
                 self._cleanup_result = self._settled(suspect=True)
             raise _refused(mismatch)  # noqa: B904 - chained to the mismatch inside
+        except ConnectionAcquisitionError:
+            self._cleanup_result = self._settled(suspect=True)
+            raise
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
@@ -702,10 +711,13 @@ class PostgresConnectionContext[C, A]:
         ordinary release, so its capacity returns before another is asked for;
         a release that could not be confirmed ends replacement, because nothing
         then vouches for what was handed back. The replacement is taken within
-        what remains of the step's own deadline — no new allowance, and no
-        admission decision of its own — and must arrive idle like any
-        checkout. When no usable replacement is held, the slot keeps the result
-        of the last release, and the failure that asked for replacement stands.
+        what remains of the step's own deadline — no new allowance — and must
+        arrive idle like any checkout. When no usable replacement is held, the
+        slot keeps the result of the last release, and the failure that asked
+        for replacement stands. One that arrives once admission would refuse
+        it — after the deadline, or after the runtime closed — is given back
+        unused and that refusal is raised instead, so nothing is resubmitted
+        on it.
 
         ``across`` takes the replacement from the plan's next route, within
         what remains of the whole budget. While entry is still under way, entry
@@ -731,6 +743,13 @@ class PostgresConnectionContext[C, A]:
         except ConnectionAcquisitionError:
             self._resource = self._settled(suspect=False)
             return False
+        try:
+            self._admit(self._step_deadline)
+        except BaseException as exc:
+            self._resource = self._settled(suspect=False)
+            if isinstance(exc, ConnectionAcquisitionError):
+                exc.selection = self._selection
+            raise
         self._suspect = False
         return True
 
