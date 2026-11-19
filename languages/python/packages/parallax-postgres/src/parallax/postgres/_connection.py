@@ -1097,7 +1097,8 @@ class PostgresConnection:
         the callback runs only once a boundary has opened, so it never runs
         twice. An outer boundary that is the first submission after entry is
         still the acquisition's setup: one that opens past the acquisition's
-        deadline, or after the runtime closed, raises that acquisition's
+        deadline, or after the runtime closed, or whose replacement was refused
+        as anything other than an outage, raises that acquisition's
         :class:`~parallax.core.internal.db_port.ConnectionAcquisitionError` before the
         callback runs.
 

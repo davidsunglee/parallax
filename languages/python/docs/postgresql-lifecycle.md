@@ -523,8 +523,10 @@ retaining reader opens connections on its own threads. When checkout runs out
 of time, it reports the latest dial failure still on record. An unavailable
 dial can therefore lead to fallback even if it failed before checkout began
 or the pool has other connections in use. An on-demand reader with spare
-capacity reports a dial failure on the caller's thread; a caller queued at its
-`max_size` is served by a worker's dial, as on a retaining reader.
+capacity reports a dial failure on the caller's thread. A caller queued at its
+`max_size` is handed a released connection and dials nothing; where that
+connection came back broken or expired, a worker dials its replacement, and a
+failure of that dial reaches the caller as on a retaining reader.
 
 When the reader is known to be unavailable and has no idle connection, one
 preferred acquisition at a time tries it within its half and concurrent

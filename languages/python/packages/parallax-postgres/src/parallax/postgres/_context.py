@@ -37,7 +37,10 @@ if TYPE_CHECKING:
     from parallax.core.internal.db_port._runtime._dial_record import DialLedger
     from parallax.postgres._route import PostgresRoute
 
-__all__ = ["PostgresConnectionContext", "Step"]
+__all__ = ["OUTAGE_REASONS", "PostgresConnectionContext", "Step"]
+
+OUTAGE_REASONS: Final = frozenset({"unavailable", "timeout"})
+"""The acquisition refusals a later attempt could outlast; any other would recur."""
 
 type Admit = Callable[[float], None]
 """The runtime's atomic admission check, raising when work may not proceed.
@@ -662,7 +665,9 @@ class PostgresConnectionContext[C, A]:
         replacement is taken from that step's route instead. Setup that is the
         first submission after entry — an outer ``BEGIN`` — is still the
         acquisition's, so once it has opened the lease is admitted against the
-        step's deadline like any other setup phase.
+        step's deadline like any other setup phase. Setup whose replacement was
+        refused as anything other than an outage raises that refusal rather
+        than the loss: the acquisition met a refusal that would recur.
         """
         connection = self.current_connection()
         opening = setup and self._opening
@@ -685,9 +690,7 @@ class PostgresConnectionContext[C, A]:
             ):
                 raise
             displaced = displaced_control_flow(failure, ambient)
-            if displaced is None and not self._replace(
-                across=setup and self._step + 1 < len(self._steps)
-            ):
+            if displaced is None and not self._replace(setup=setup):
                 raise
         else:
             if submission.started:
@@ -715,7 +718,7 @@ class PostgresConnectionContext[C, A]:
             refused.selection = self._selection
             raise
 
-    def _replace(self, *, across: bool) -> bool:
+    def _replace(self, *, setup: bool) -> bool:
         """Dispose of the current connection and hold a usable replacement in its
         place, answering whether one is now held.
 
@@ -725,39 +728,40 @@ class PostgresConnectionContext[C, A]:
         then vouches for what was handed back. The replacement is taken within
         what remains of the step's own deadline — no new allowance — and must
         arrive idle like any checkout. When no usable replacement is held, the
-        slot keeps the result of the last release, and the failure that asked
+        slot keeps the result of the last release and the failure that asked
         for replacement stands; a checkout that refused one leaves its refusal
-        on :attr:`replacement_refusal`. One that arrives after the deadline is
-        given back unused and a timeout is raised instead, so nothing is
-        resubmitted on it. A close is not checked here: the replacement is not
-        another acquisition, so it does not end work already admitted.
+        on :attr:`replacement_refusal`, and raises it instead where ``setup``
+        asked and it is no outage, since that refusal would recur. One that
+        arrives after the deadline is given back unused and a timeout is raised
+        instead, so nothing is resubmitted on it. A close is not checked here:
+        the replacement is not another acquisition, so it does not end work
+        already admitted.
 
-        ``across`` takes the replacement from the plan's next route, within
-        what remains of the whole budget. While entry is still under way, entry
-        itself establishes that route from the start; an outer ``BEGIN`` is
-        the only setup after entry, and the lease ran no proof or
-        authorization before it, or the ``BEGIN`` would not have been its
-        first submission — so the bare checkout is all the next route needs.
+        ``setup`` on a plan with a later step takes the replacement from that
+        step's route, within what remains of the whole budget. While entry is
+        still under way, entry itself establishes that route from the start;
+        an outer ``BEGIN`` is the only setup after entry, and the lease ran no
+        proof or authorization before it, or the ``BEGIN`` would not have been
+        its first submission — so the bare checkout is all the next route
+        needs.
         """
         disposed = self._settled(suspect=True)
         self._resource = disposed
         if isinstance(disposed, ReleaseUnconfirmed):
             return False
-        if across:
+        if setup and self._step + 1 < len(self._steps):
             if self._entering:
                 self._fall_back("connection_lost")
             self._advance("connection_lost")
         try:
             self._resource = checkout(self._route, self._step_deadline)
         except ConnectionAcquisitionError as refused:
-            self._replacement_refusal = refused
-            return False
+            return self._refused_replacement(refused, setup=setup)
         try:
             self._require_idle(self.current_connection())
         except ConnectionAcquisitionError as refused:
             self._resource = self._settled(suspect=False)
-            self._replacement_refusal = refused
-            return False
+            return self._refused_replacement(refused, setup=setup)
         if monotonic() >= self._step_deadline:
             self._resource = self._settled(suspect=False)
             late = ConnectionAcquisitionError(_LATE_REPLACEMENT, reason="timeout")
@@ -765,6 +769,13 @@ class PostgresConnectionContext[C, A]:
             raise late
         self._suspect = False
         return True
+
+    def _refused_replacement(self, refused: ConnectionAcquisitionError, *, setup: bool) -> bool:
+        self._replacement_refusal = refused
+        if setup and refused.reason not in OUTAGE_REASONS:
+            refused.selection = self._selection
+            raise refused
+        return False
 
     def _require_idle(self, connection: C) -> None:
         """Refuse a checkout that did not hand over an idle connection.
