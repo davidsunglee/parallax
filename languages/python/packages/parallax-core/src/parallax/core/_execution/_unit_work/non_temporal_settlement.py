@@ -245,7 +245,7 @@ class NonTemporalSettlement:
             view=entity_view(self._families, entity),
             version_attribute=self._versioning.version_attribute(entity.identity),
         )
-        if isinstance(item, KeyedInsert | InsertBatch):
+        if isinstance(item, (KeyedInsert, InsertBatch)):
             return SettledWrite.from_bound(
                 BoundRange(steps=(_insert(facts, item.instruction, flush.audit),)),
                 source_evidence=item.source_evidence,
