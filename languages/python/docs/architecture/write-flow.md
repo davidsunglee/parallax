@@ -294,8 +294,11 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │                            observed run of one observation and window,
               │                            compact_observed_run)
               │   target write             refused for an object this attempt
-              │                            inserted (has_admitted_insertion); then,
-              │                            unless a pending write proves its state,
+              │                            inserted (has_admitted_insertion), then
+              │                            where it cannot join its object's pending
+              │                            writes (write-evidence-already-claimed);
+              │                            only then, unless a pending write proves
+              │                            its state,
               │                            the supplied hold_stated_revision holds it:
               │                            a live read of the stated state
               │                            (has_live_observation), else _stored_revision

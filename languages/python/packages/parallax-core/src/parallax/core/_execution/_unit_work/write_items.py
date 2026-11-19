@@ -262,8 +262,11 @@ milestone's Transaction-Time start."""
 class RevisionCondition(Protocol):
     """A caller's stated revision, owned by the authority it grants.
 
-    ``state`` is the condition's one stored fact: the exact state the caller
-    says the write starts from, which names ``revision``. ``holds`` answers
+    ``state`` is the condition's one stored fact: the coordinate the caller
+    says the write starts from, which names ``revision``. As a key it matches
+    a stored state exactly, so on a temporal object it names a milestone's own
+    state only where the caller's Valid-Time start is that milestone's; a row
+    read for the write keeps the row's own coordinates. ``holds`` answers
     whether a stored revision — ``None`` where no row stands — is the stated
     one, and ``refusal`` is the failed precondition raised where it is not.
     """

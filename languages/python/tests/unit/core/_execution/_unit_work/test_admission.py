@@ -260,6 +260,23 @@ def test_a_refused_hold_buffers_nothing_of_its_write(condition: str) -> None:
     assert not admission
 
 
+@pytest.mark.parametrize("condition", ["version", "tx-start"])
+def test_a_held_write_is_buffered_as_its_hold_answered_it(condition: str) -> None:
+    admission = _admitted(meta=_ACCOUNT if condition == "version" else POSITION)
+    write = _account_target(1, 3) if condition == "version" else addressed_write(value="1.00")
+    answered: list[LicensedWrite[CallerConditioned]] = []
+
+    def answering[A: CallerConditioned](item: LicensedWrite[A], /) -> LicensedWrite[A]:
+        held = dataclasses.replace(item)
+        answered.append(held)
+        return held
+
+    admission.admit_target(write, hold_stated_revision=answering)
+    (held,) = answered
+    (buffered,) = admission.composed_writes()
+    assert buffered is held
+
+
 def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_its_hold() -> None:
     hold = _Holds()
     admission = _admitted(meta=_ACCOUNT)
@@ -1399,7 +1416,8 @@ if TYPE_CHECKING:
         start_condition: RevisionCondition = targeted.authority
         del held_version, held_start, version_condition, start_condition
         uow.buffer(versioned)  # pyright: ignore[reportArgumentType] - a caller's condition is buffered only as a target write
-        uow.buffer(conditioned)  # pyright: ignore[reportArgumentType] - a caller's condition is buffered only as a target write
+        uow.buffer(targeted)  # pyright: ignore[reportArgumentType] - a caller's condition is buffered only as a target write
+        admission.admit(versioned)  # pyright: ignore[reportArgumentType] - a caller's condition is admitted only as a target write
         admission.admit(targeted)  # pyright: ignore[reportArgumentType] - a caller's condition is admitted only as a target write
         admission.admit_target(observed, hold_stated_revision=None)  # pyright: ignore[reportArgumentType] - a source's licence states no revision
         crossed: LicensedWrite[TxStartConditioned] = hold(versioned)  # pyright: ignore[reportAssignmentType] - holding keeps the write's own condition

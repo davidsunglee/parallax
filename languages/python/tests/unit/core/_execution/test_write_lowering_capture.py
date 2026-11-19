@@ -181,21 +181,33 @@ def _note(name: str) -> AttributeIdentity:
     return AttributeIdentity(_NOTE, name)
 
 
-def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_its_patches() -> (
-    None
-):
+def _opened(note_id: int, label: str) -> WriteRow:
     row = managed_row_of(
         _NOTES,
         {
-            _note("id"): 1,
-            _note("label"): "opened",
+            _note("id"): note_id,
+            _note("label"): label,
             _note("validStart"): T0,
             _note("validEnd"): OPEN,
             _note("txStart"): T1,
             _note("txEnd"): OPEN,
         },
     )
-    opened = PlannedInsert(entity=_NOTE, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
+    return WriteRow(row=row, origin=NEW_LINEAGE)
+
+
+def _labelled(captures: _Captures) -> list[tuple[object, object]]:
+    """Each handed-over insert entry beside the label its document stores."""
+    return [
+        (subject, cast("Mapping[str, object]", document)["label"])
+        for _kind, subject, document, _ in captures.seen
+    ]
+
+
+def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_its_patches() -> (
+    None
+):
+    opened = PlannedInsert(entity=_NOTE, entries=(_opened(1, "opened"),))
     revised = PlannedTemporalRevision(
         entity=_NOTE,
         target=MilestoneTarget(
@@ -222,3 +234,25 @@ def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_i
     assert revision_kind == "revision"
     assert isinstance(patched, DocumentPatches)
     assert patched.patches
+
+
+def test_each_grouped_insert_entry_is_handed_over_with_its_own_document_once() -> None:
+    entries = (_opened(1, "first"), _opened(2, "second"), _opened(3, "third"))
+    steps = tuple(PlannedInsert(entity=_NOTE, entries=(entry,)) for entry in entries)
+    captures = _Captures()
+    payloads = build_write_planner(bound_model(_NOTES)).payloads
+    assert _streamed(steps, payloads, captures, _NOTES) == 1
+    assert _labelled(captures) == [
+        (entries[0], "first"),
+        (entries[1], "second"),
+        (entries[2], "third"),
+    ]
+
+
+def test_each_entry_of_a_multi_entry_insert_is_handed_over_with_its_own_document() -> None:
+    entries = (_opened(1, "first"), _opened(2, "second"))
+    steps = (PlannedInsert(entity=_NOTE, entries=entries),)
+    captures = _Captures()
+    payloads = build_write_planner(bound_model(_NOTES)).payloads
+    assert _streamed(steps, payloads, captures, _NOTES) == 1
+    assert _labelled(captures) == [(entries[0], "first"), (entries[1], "second")]

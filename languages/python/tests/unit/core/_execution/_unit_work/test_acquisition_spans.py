@@ -96,13 +96,13 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._execution._unit_work._covered_target_support import covered_target
 from tests.unit.core._shared_coverage_support import (
     AT,
     MODEL,
     T0,
     ShareCols,
     ShareDoc,
-    covered_target,
     day,
     frag,
     frag_rows,

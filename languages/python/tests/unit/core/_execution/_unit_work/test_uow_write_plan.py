@@ -114,6 +114,9 @@ from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WherePosition
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._execution._unit_work._covered_target_support import (
+    covered_target_instruction,
+)
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 from tests.unit.core._execution._unit_work._stored_positions_support import StoredPositions
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -130,7 +133,6 @@ from tests.unit.core._execution._write_step_support import (
 from tests.unit.core._shared_coverage_support import MODEL as SHARED_MODEL
 from tests.unit.core._shared_coverage_support import (
     ShareCols,
-    covered_target_instruction,
     day,
     frag,
     frag_rows,
