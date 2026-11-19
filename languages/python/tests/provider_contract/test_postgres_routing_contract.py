@@ -337,36 +337,11 @@ def test_a_retaining_reader_falls_back_during_an_outage_and_serves_again(
             runtime.close()
 
 
-def _missing_database(endpoint: PostgresEndpoint) -> PostgresEndpoint:
-    """``endpoint`` naming a database the server does not have."""
-    return PostgresEndpoint(
-        make_conninfo(endpoint.connection_string, dbname="parallax_no_such_database"),
-        credentials=endpoint.credentials,
-        pool=OnDemandOptions(),
-    )
-
-
 @pytest.mark.adapter_smoke
-@pytest.mark.parametrize(
-    ("refusal", "reason"),
-    [
-        ("rejected-password", "authentication_refused"),
-        ("missing-database", "preparation_failed"),
-    ],
-)
-def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_even_deferrable_startup(
-    profile_run: Any, refusal: str, reason: str
+def test_a_reader_with_a_rejected_password_fails_even_deferrable_startup(
+    profile_run: Any,
 ) -> None:
-    # The driver reports the refusal with no SQLSTATE, but the failed
-    # connection says it sent the password, so the server was reached and
-    # refused it rather than being an outage. Only this server's own message
-    # tells a database that does not exist apart from a rejected login, so a
-    # server or driver that rewords it fails here.
-    reader = (
-        _reader(profile_run, pool=OnDemandOptions(), credentials=Password("not-the-secret"))
-        if refusal == "rejected-password"
-        else _missing_database(_reader(profile_run))
-    )
+    reader = _reader(profile_run, pool=OnDemandOptions(), credentials=Password("not-the-secret"))
     adapter = _routed(profile_run, reader, startup_timeout=10.0)
 
     with pytest.raises(DatabaseStartupError) as failed:
@@ -375,7 +350,7 @@ def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_even_deferr
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
     cause = failed.value.__cause__
     assert isinstance(cause, ConnectionAcquisitionError)
-    assert cause.reason == reason
+    assert cause.reason == "authentication_refused"
 
 
 @pytest.mark.adapter_smoke

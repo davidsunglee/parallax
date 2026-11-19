@@ -130,7 +130,8 @@ def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleR
 
 _DIAL_FAILURES: Final[dict[DialReason, str]] = {
     "unavailable": (
-        "a database connection could not be established: its server could not be reached"
+        "a database connection could not be established: its server could not be reached or is not "
+        "accepting connections"
     ),
     "authentication_refused": (
         "a database connection was refused by its server once its login was offered"
@@ -142,7 +143,8 @@ _DIAL_FAILURES: Final[dict[DialReason, str]] = {
 _EXPIRED_FAILURES: Final[dict[DialReason, str]] = {
     "unavailable": (
         "no database connection became available within the acquisition timeout; the last "
-        "connection this route tried to open could not reach its server"
+        "connection this route tried to open could not reach its server, or the server was not "
+        "accepting connections"
     ),
     "authentication_refused": (
         "no database connection became available within the acquisition timeout; the last "
@@ -300,9 +302,8 @@ class PostgresConnectionContext:
 
     A plan with a later step is a preferred one. Its earlier step spends at
     most its own share of the budget and gives way to the next only for a
-    route that could not be reached or a connection lost while it was still
-    being set up — never for a busy route, a refusal, or a closed runtime,
-    which the next route would not fix. A loss of that kind is the same one
+    route that is unavailable or a connection lost while it was still
+    being set up. A loss of that kind is the same one
     opportunity a first submission has, spent moving to the next route instead
     of retrying on this one, and only where the submission is setup: a proof,
     a role installation, or an outer ``BEGIN``. A designated read is modeled

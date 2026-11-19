@@ -124,7 +124,7 @@ class PostgresRoute:
     connections, its measurements, and whether it has proved it can serve.
 
     A route starts unproven, while startup proves it. Startup then makes it
-    ``verified``, or ``pending`` where the reader could not be reached and its
+    ``verified``, or ``pending`` where the reader was unavailable and its
     proof was deferred. A pending route proves itself on the connections it
     hands over: the first proof that succeeds makes it ``verified``, and the
     first that positively mismatches makes it ``refused`` for good. Those two
@@ -161,8 +161,8 @@ class PostgresRoute:
         self.metrics = PostgresPoolMetrics(pool, route, self.readiness, purpose)
 
     def known_unreachable(self) -> bool:
-        """Whether this route's latest establishment outcome is that it could not
-        be reached and it holds no idle connection that could serve regardless.
+        """Whether this route's latest dial failed as unavailable and it holds
+        no idle connection that could serve regardless.
 
         A retained connection is handed over without dialing, so an idle one
         makes the record irrelevant to the next checkout. A pool whose
@@ -179,7 +179,7 @@ class PostgresRoute:
 
     def claim_probe(self) -> bool:
         """Take the one slot that lets an acquisition try this route while it is
-        known to be unreachable, answering whether this caller now holds it.
+        known to be unavailable, answering whether this caller now holds it.
 
         Other preferred acquisitions can move on while the holder tries the
         route. The holder gives the slot back with :meth:`release_probe`

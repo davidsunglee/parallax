@@ -67,12 +67,12 @@ the adapter holds the topology and the budgets its runtime spends. A configured
 authenticate the writer's login;
 its reader route declares Read Committed and Repeatable Read for read-only
 transactions, never Serializable. `reader_startup` is `"deferrable"` or
-`"required"`: omitted with a reader, it defers an unreachable reader, which a
+`"required"`: omitted with a reader, it defers an unavailable reader, which a
 fixed `parallax.resources` warning reports; supplied without a reader, it
 raises `ValueError`. `DatabaseStartupError.route` names which route failed.
 `ConnectionAcquisitionError.reason` spells `m-db-port`'s acquisition reasons in
 snake_case. `reader_preferred` gives the reader at most half of
-`acquire_timeout`. While a reader is known to be unreachable, one
+`acquire_timeout`. While a reader is known to be unavailable, one
 `reader_preferred` acquisition at a time tries it again, and the others go to
 the writer at once. Required `credentials=` accepts `Password(...)`, a source
 with `resolve() -> Password`, or `DRIVER_MANAGED`, never `None`. `parallax-aws` supplies

@@ -158,12 +158,12 @@ type AcquisitionReason = Literal[
 on record that explains it — including a native success that arrived after it,
 and a pool that was merely saturated. ``queue_rejected`` is a bounded waiting
 queue refusing to hold another waiter. ``closed`` is the runtime no longer
-admitting work. ``unavailable`` is a route that could not be reached: a dial
-that met no server, a server not accepting connections yet, a connection lost
-while the lease was being set up, or a budget spent while a dial failure
-recorded during the wait was still the latest outcome. ``preparation_failed``
-covers establishing or preparing execution access otherwise: a dial the server
-refused for another reason, a session configuration the codecs cannot execute
+admitting work. ``unavailable`` covers failing to reach a server, a server
+at its connection limit, and losing a connection during lease setup. A spent
+checkout reports an unavailable dial while that failure remains on record.
+``preparation_failed`` covers other failures establishing or preparing
+execution access: a dial the server refused for another reason, a session
+configuration the codecs cannot execute
 under, a checkout that handed over a connection which was not idle, and a
 route refused when its connection was verified. ``authorization_failed`` means
 the provider could not establish the bound authorization before admitting

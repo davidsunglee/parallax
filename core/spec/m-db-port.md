@@ -335,8 +335,8 @@ authorization setup, and the outer boundary's opening — spends that same
 budget, and nothing earns a fresh allowance. It moves to the writer for exactly
 two reasons, both before any callback or modeled statement runs:
 
-- **unavailable** — the reader could not be reached: its checkout failed as
-  *unavailable* (below), or the reader is already known to be unreachable and
+- **unavailable** — the reader's checkout failed as *unavailable* (below),
+  or the reader is already known to be unavailable and
   this acquisition is not the one trying it;
 - **connection-lost** — the connection the reader handed over was lost at the
   lease's first submission while that submission was setup — a pending reader's
@@ -356,8 +356,8 @@ the writer's connection is authorized before it is admitted, and authorization
 setup there is no longer the lease's first submission, so it earns no
 replacement of its own.
 
-A reader known to be unreachable — its latest establishment outcome is that it
-could not be reached (*Acquisition and readiness failures*), and it holds no idle
+A reader known to be unavailable — its latest establishment outcome was
+*unavailable* (*Acquisition and readiness failures*), and it holds no idle
 connection that could serve regardless — delays at most one preferred acquisition
 at a time: that one tries it within its share of the budget, and every other moves
 to the writer at once without waiting on the reader. If the probing
@@ -383,12 +383,12 @@ native disposal or accounting that itself failed cannot make.
 proves the writer first and then the reader, within the same one budget, and
 the reader's proof MUST also establish that it authenticated the writer's
 Database Login Identity, however differently the two are credentialed. A
-mismatch, and any failure that is not the reader being unreachable, fails the
+mismatch, and any readiness failure other than an unavailable reader, fails the
 open and releases both routes. Readiness adds no physical-writer check: a
 writer route that reaches a replica stays valid, and its writes fail natively.
 
-**A reader that cannot be reached MAY defer its proof.** Where configuration
-permits it, a reader that could not be reached — or whose share of the budget
+**An unavailable reader MAY defer its proof.** Where configuration
+permits it, a reader that is unavailable — or whose share of the budget
 ran out with no other failure on record — leaves the open successful with the
 reader's **Route Readiness** `pending` rather than `verified`; configuration MAY
 instead require the reader, so the same outage fails the open naming the
@@ -517,9 +517,10 @@ waiting on a pool learns what its establishment met. An expired checkout reports
 the latest failure still on record, regardless of when it was recorded. Only a
 usable connection clears the record.
 
-Unavailable means the route could not be reached: a dial that met no server or
-a server not yet accepting connections, a connection lost while the lease was
-being set up, or a spent budget with an unreachable dial still on record.
+Unavailable covers a dial that met no server, a server not yet accepting
+connections, or a server at its connection limit. It also covers a connection
+lost while the lease was being set up and a spent budget with an unavailable
+dial still on record.
 Timeout is a spent budget with no failure on record, including a native success
 that arrived after it.
 Preparation failure covers establishing or preparing execution access
@@ -531,17 +532,13 @@ authorization. Authentication refused means the server was reached and refused
 the connection once it was offered the login's credential: an
 authorization-class refusal, and — where a driver reports a connect-time
 refusal without its code — a failed dial that reports the credential it sent.
-Such a refusal covers whatever the server refused once that credential was
-exchanged, a rejected credential and a refusal sent only after the login was
-accepted alike, because no code or other structured signal tells them apart.
-The one exception reads the server's own message: a codeless refusal whose
-message exactly matches the server's report that the requested database does
-not exist is a preparation failure, and a message that does not match — a
-reworded or translated one included — stays an authentication refusal. Either
-label means the server was reached, so the distinction changes only the
-reported reason, never fallback eligibility or readiness deferral. A refusal
-the server sends before any credential is exchanged, with no code to name it, is
-indistinguishable from a server that cannot be reached and reads as unavailable.
+For a codeless refusal, an implementation can recognize a connection limit
+from the server's message and report unavailable. After a credential is
+offered, a message that exactly matches the server's report that the
+requested database does not exist is a preparation failure. Other codeless
+refusals, including reworded or translated messages that do not match,
+report authentication refused after a credential is offered and unavailable
+before it is offered.
 Credentials refused means
 the Credential Source produced no credential, so nothing was offered to the
 server. Each refusal is reported wherever it is what the acquisition met,
