@@ -231,7 +231,7 @@ from tests._support.db_port import (
     body_outcome,
 )
 from tests._support.retry import fast_retry
-from tests.unit._gc_reachability import Closure, closure
+from tests.unit._gc_reachability import Closure, boundary_closures
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -1080,8 +1080,7 @@ def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
     comparison share.
     """
     with ExitStack() as stack:
-        activities = shape(stack, INSTALLED)
-        return tuple(closure(activity, activities) for activity in activities)
+        return boundary_closures(shape(stack, INSTALLED))
 
 
 _HOARD: Final = 512

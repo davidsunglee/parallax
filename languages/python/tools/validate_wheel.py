@@ -218,6 +218,11 @@ def _driver(args: argparse.Namespace, driver: str) -> dict[str, Any]:
         if not companions:
             raise RuntimeError("no companion wheels supplied")
         requirement = driver_requirement(args.wheel, driver)
+        cache_args = (
+            ["--cache-dir", str(args.driver_cache.resolve(strict=True))]
+            if driver == "c" and args.driver_cache is not None
+            else ["--no-cache-dir"]
+        )
         result["install_seconds"] = run_logged(
             [
                 str(python),
@@ -225,7 +230,7 @@ def _driver(args: argparse.Namespace, driver: str) -> dict[str, Any]:
                 "-m",
                 "pip",
                 "install",
-                "--no-cache-dir",
+                *cache_args,
                 "--no-binary=psycopg-c",
                 str(args.wheel),
                 *(str(path) for path in companions),
@@ -287,6 +292,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--companions", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--postgres-version", required=True)
+    parser.add_argument("--driver-cache", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--driver", choices=("binary", "c"), help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.wheel = args.wheel.resolve(strict=True)

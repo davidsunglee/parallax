@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -16,8 +14,6 @@ import pytest
 
 from tests._support import shards
 from tests._support.repo import PY_ROOT
-
-WHOLE_CLASS = "1/1"
 
 
 @dataclass(frozen=True)
@@ -64,9 +60,8 @@ def pytest_collection_modifyitems(
         )
 
 
-def selection(expression: str | None, shard: str, *, option: str = "--shard") -> SessionSelection:
+def selection(*arguments: str) -> SessionSelection:
     """Collect the real tree and record its selection under the given options."""
-    narrowing = [] if expression is None else ["-m", expression]
     with TemporaryDirectory(prefix="parallax-selection-") as temporary:
         snapshot = Path(temporary) / "selection.json"
         subprocess.run(
@@ -74,9 +69,7 @@ def selection(expression: str | None, shard: str, *, option: str = "--shard") ->
                 sys.executable,
                 "-m",
                 "pytest",
-                *narrowing,
-                option,
-                shard,
+                *arguments,
                 "--collect-only",
                 "-q",
                 "-p",
@@ -93,12 +86,3 @@ def selection(expression: str | None, shard: str, *, option: str = "--shard") ->
         )
         document = json.loads(snapshot.read_text(encoding="utf-8"))
     return SessionSelection(**document)
-
-
-def selections(
-    requests: Sequence[tuple[str | None, str]], *, option: str = "--shard"
-) -> list[SessionSelection]:
-    expressions = [expression for expression, _ in requests]
-    shards = [shard for _, shard in requests]
-    with ThreadPoolExecutor(max_workers=len(requests)) as sessions:
-        return list(sessions.map(partial(selection, option=option), expressions, shards))

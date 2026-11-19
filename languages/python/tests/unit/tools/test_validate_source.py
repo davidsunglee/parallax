@@ -24,6 +24,7 @@ def test_retained_source_inputs_build_without_checkout_fallback_and_keep_separat
     tmp_path: Path,
 ) -> None:
     sdists, companions, output = _inputs(tmp_path)
+    driver_cache = tmp_path / "driver-cache"
     commands: list[list[str]] = []
 
     def run(command: list[str], log: Path, environment: dict[str, str]) -> float:
@@ -41,11 +42,13 @@ def test_retained_source_inputs_build_without_checkout_fallback_and_keep_separat
         return 4.5
 
     with patch.object(source, "run_logged", run):
-        source.build_and_validate(sdists, companions, output, "18.6")
+        source.build_and_validate(sdists, companions, output, "18.6", driver_cache=driver_cache)
     build, validation = commands
     assert {str(path) for path in sdists.glob("*.tar.gz")}.issubset(build)
     assert {"--no-cache-dir", "--no-deps", "-I"}.issubset(build)
+    assert str(driver_cache) not in build
     assert validation[2].endswith("validate_wheel.py")
+    assert validation[validation.index("--driver-cache") + 1] == str(driver_cache)
     record = json.loads((output / "source.json").read_text())
     assert record["status"] == "passed"
     assert record["sdists"] == source.identities(list(sdists.glob("*.tar.gz")))

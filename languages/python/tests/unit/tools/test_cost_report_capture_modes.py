@@ -20,7 +20,14 @@ import cost_report
 import snapshot_delivery_overhead as snapshot_report
 from cost_report import Collection, MemberResult
 from durations import Spans
-from interpreter_matrix import CURRENT_MINOR, RuntimeIdentity, RuntimeUnavailable, authority_minor
+from interpreter_matrix import (
+    CURRENT_MINOR,
+    ProbeRunner,
+    RuntimeIdentity,
+    RuntimeStatus,
+    RuntimeUnavailable,
+    authority_minor,
+)
 from parallax.conformance import cost_envelope, workloads
 from parallax.conformance.budget import BudgetContract, MemoryGates, derive_memory_gates
 from parallax.conformance.cost_envelope import Provenance, classify_authority
@@ -334,6 +341,13 @@ def test_postgres_refusal_closes_before_workload(monkeypatch: pytest.MonkeyPatch
             events.append("close")
 
     monkeypatch.setattr(snapshot_report, "Provisioner", Provisioner)
+
+    def runtime_identities(
+        _runtimes: Sequence[str], _spans: Spans, _probe: ProbeRunner
+    ) -> dict[str, RuntimeStatus]:
+        return identities()
+
+    monkeypatch.setattr(snapshot_report, "runtime_identities", runtime_identities)
 
     def measure(*_args: Any, **_kwargs: Any) -> Any:
         pytest.fail("workload ran")

@@ -15,6 +15,7 @@ import urllib.request
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from interpreter_matrix import supported_minors
@@ -238,6 +239,7 @@ def _validate(
     env: dict[str, str],
     postgres_version: str,
     container: str | None,
+    driver_cache: Path,
     *,
     source: bool = False,
 ) -> None:
@@ -252,6 +254,8 @@ def _validate(
         str(output / "validation"),
         "--postgres-version",
         postgres_version,
+        "--driver-cache",
+        str(driver_cache),
     ]
     if source:
         validator = PY_ROOT / "tools/validate_source.py"
@@ -323,6 +327,8 @@ def build(
             output / "setup.log",
         )
         with ExitStack() as lifetime:
+            # Reuse the C driver only across installs using this cell's libpq.
+            driver_cache = Path(lifetime.enter_context(TemporaryDirectory(dir=output)))
             postgres = lifetime.enter_context(provision(postgres_version, output / "postgres"))
             env = {**os.environ, **postgres.env}
             if companions is None:
@@ -344,8 +350,10 @@ def build(
                 _build(target, python, output, env)
             finally:
                 record["timings"]["build_repair_seconds"] = time.monotonic() - started
-            _validate(target, python, output, env, postgres_version, container)
-            _validate(target, python, output, env, postgres_version, container, source=True)
+            _validate(target, python, output, env, postgres_version, container, driver_cache)
+            _validate(
+                target, python, output, env, postgres_version, container, driver_cache, source=True
+            )
             record["status"] = "passed"
     except BaseException as error:
         record["status"] = "failed"
