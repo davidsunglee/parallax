@@ -1,6 +1,6 @@
 """Write admission (`m-unit-work` "Observed-State Coalescing"), observed at the
 owner's interface where the write verbs cannot say it precisely: when a
-target write's confirmation is consulted, how a planned buffer drains into the
+target write's stated revision is held, how a planned buffer drains into the
 insertions its source registry keeps, and the window rules a temporal
 object's target writes meet that the verb matrices do not reach. What a caller sees through
 the verbs is the snapshot and API suites'."""
@@ -11,6 +11,7 @@ import dataclasses
 import datetime as dt
 from collections.abc import Callable
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,7 +22,11 @@ from parallax.core._execution._unit_work._write_ownership import (
     NO_INSERTION_AUTHORITY,
     KeyedWriteRefusalAdvice,
 )
-from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
+from parallax.core._execution._unit_work.admission import (
+    BufferOutcome,
+    HoldStatedRevision,
+    WriteAdmission,
+)
 from parallax.core._execution._unit_work.claims import WriteIntent
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
@@ -29,7 +34,6 @@ from parallax.core._execution._unit_work.evidence import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.instructions import (
-    ExpectedTxStart,
     PreparedKeyedInstruction,
     TargetMutation,
     prepare_wire_write,
@@ -38,6 +42,7 @@ from parallax.core._execution._unit_work.row_acquisition import RetainedStarting
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
+    CallerConditioned,
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     InsertionAuthorized,
@@ -77,7 +82,7 @@ from parallax.core.internal.planned_step.write_effects import (
     TemporalRowCoordinates,
     WriteEffects,
 )
-from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_read import Edge, TimeInterval
 from parallax.core.internal.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
@@ -200,78 +205,71 @@ def _account_amend(account_id: int) -> PreparedKeyedInstruction:
 
 
 # --------------------------------------------------------------------------- #
-# A target write is confirmed once acceptance leaves it unproven.   #
+# A target write's revision is held once acceptance leaves it unproven.  #
 # --------------------------------------------------------------------------- #
-class _Confirmations:
+class _Holds:
     def __init__(self) -> None:
-        self.versions: list[LicensedWrite[VersionConditioned]] = []
-        self.starts: list[LicensedWrite[TxStartConditioned]] = []
+        self.held: list[LicensedWrite[CallerConditioned]] = []
 
-    def version(self, item: LicensedWrite[VersionConditioned]) -> None:
-        self.versions.append(item)
-
-    def tx_start(
-        self, item: LicensedWrite[TxStartConditioned]
-    ) -> LicensedWrite[TxStartConditioned]:
-        self.starts.append(item)
+    def __call__[A: CallerConditioned](self, item: LicensedWrite[A], /) -> LicensedWrite[A]:
+        self.held.append(item)
         return item
 
-    def admit(self, admission: WriteAdmission, item: LicensedWrite[WriteAuthority]) -> None:
-        admission.admit(item, confirm_version=self.version, confirm_tx_start=self.tx_start)
+    def admit(self, admission: WriteAdmission, item: AdmittedWrite) -> None:
+        if is_licensed_by(item, VersionConditioned) or is_licensed_by(item, TxStartConditioned):
+            admission.admit_target(item, hold_stated_revision=self)
+        else:
+            admit(admission, item)
 
 
-def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_asked() -> None:
-    confirm = _Confirmations()
+def test_a_pending_write_of_the_targets_state_proves_it_before_its_revision_is_held() -> None:
+    hold = _Holds()
     admission = _admitted()
     first = addressed_write(value="150.00")
-    confirm.admit(admission, first)
+    hold.admit(admission, first)
     # A second write over exactly that window starts from the state the first
-    # does; one refused for another stated start is never confirmed.
-    confirm.admit(admission, addressed_write(value="175.00"))
+    # does; one refused for another stated start is never held.
+    hold.admit(admission, addressed_write(value="175.00"))
     with pytest.raises(UsageError):
-        confirm.admit(admission, addressed_write(tx_start=T1, value="1.00"))
-    assert (confirm.starts, confirm.versions) == ([first], [])
+        hold.admit(admission, addressed_write(tx_start=T1, value="1.00"))
+    assert hold.held == [first]
 
     versioned = _admitted(meta=_ACCOUNT)
-    confirm.admit(versioned, _account_observed(1, 3))
-    confirm.admit(versioned, _account_target(1, 3))
+    hold.admit(versioned, _account_observed(1, 3))
+    hold.admit(versioned, _account_target(1, 3))
     alone = _account_target(2, 3)
-    confirm.admit(versioned, alone)
-    assert (confirm.starts, confirm.versions) == ([first], [alone])
+    hold.admit(versioned, alone)
+    assert hold.held == [first, alone]
 
 
 class _Refused(Exception):
     pass
 
 
-def _refuse_version(item: LicensedWrite[VersionConditioned]) -> None:
-    raise _Refused(item)
-
-
-def _refuse_tx_start(item: LicensedWrite[TxStartConditioned]) -> LicensedWrite[TxStartConditioned]:
+def _refuse[A: CallerConditioned](item: LicensedWrite[A], /) -> LicensedWrite[A]:
     raise _Refused(item)
 
 
 @pytest.mark.parametrize("condition", ["version", "tx-start"])
-def test_a_refused_confirmation_buffers_nothing_of_its_write(condition: str) -> None:
+def test_a_refused_hold_buffers_nothing_of_its_write(condition: str) -> None:
     admission = _admitted(meta=_ACCOUNT if condition == "version" else POSITION)
     write = _account_target(1, 3) if condition == "version" else addressed_write(value="1.00")
     with pytest.raises(_Refused):
-        admission.admit(write, confirm_version=_refuse_version, confirm_tx_start=_refuse_tx_start)
+        admission.admit_target(write, hold_stated_revision=_refuse)
     assert admission.composed_writes() == ()
     assert not admission
 
 
-def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmation() -> None:
-    confirm = _Confirmations()
+def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_its_hold() -> None:
+    hold = _Holds()
     admission = _admitted(meta=_ACCOUNT)
     admission.admit_insert(_account_insert(1), insertion_advice=None)
     admission.drain_planned()
     # A pending write of another state of the object would also refuse it.
-    confirm.admit(admission, _account_observed(1, 1))
+    hold.admit(admission, _account_observed(1, 1))
     with raises_code(UsageError, "write-evidence-inserted"):
-        confirm.admit(admission, _account_target(1, 7))
-    assert (confirm.starts, confirm.versions) == ([], [])
+        hold.admit(admission, _account_target(1, 7))
+    assert hold.held == []
 
 
 # --------------------------------------------------------------------------- #
@@ -639,7 +637,7 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
     assert composed.intents == (
         TemporalIntent(
             WriteIntent("assignment", TimeInterval(MAR, SEP)),
-            TxStartConditioned(ExpectedTxStart(T0)),
+            TxStartConditioned(TemporalObjectStateKey(OBJECT, Edge(tx_time=T0, valid_time=MAR))),
         ),
     )
     assert composed.intents[0].authority is first.authority
@@ -1074,7 +1072,7 @@ def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> 
     assert composed.intents == (
         TemporalIntent(
             WriteIntent("assignment", TimeInterval(MAR, INFINITY)),
-            TxStartConditioned(ExpectedTxStart(T0)),
+            TxStartConditioned(TemporalObjectStateKey(OBJECT, Edge(tx_time=T0, valid_time=MAR))),
         ),
     )
     assert composed.source_evidence == ()
@@ -1142,20 +1140,17 @@ def test_a_second_write_composes_in_the_first_writes_place_keeping_its_authority
     assert isinstance(state, TemporalObjectStateKey)
     held = RetainedStartingRow(state, 0, (), None)
 
-    def retaining(item: LicensedWrite[TxStartConditioned]) -> LicensedWrite[TxStartConditioned]:
+    def retaining[A: CallerConditioned](item: LicensedWrite[A], /) -> LicensedWrite[A]:
+        authority = item.authority
+        assert isinstance(authority, TxStartConditioned)
         return dataclasses.replace(
-            item, authority=dataclasses.replace(item.authority, starting_row=held)
+            item, authority=dataclasses.replace(authority, starting_row=held)
         )
-
-    def unasked(item: LicensedWrite[VersionConditioned]) -> None:
-        raise AssertionError(f"no stated version is confirmed, but {item!r} was")
 
     source = _evidence(LATER)
     admission = _admitted()
-    admission.admit(
-        addressed_write(until=JUN, value="150.00"),
-        confirm_version=unasked,
-        confirm_tx_start=retaining,
+    admission.admit_target(
+        addressed_write(until=JUN, value="150.00"), hold_stated_revision=retaining
     )
     _admit(
         admission,
@@ -1326,31 +1321,28 @@ def test_equal_writes_an_insertion_authorized_compose_into_an_intent_each() -> N
     assert arriving.authority.identity is identity
 
 
-def test_a_condition_confirmed_after_an_earlier_write_keeps_the_starting_row_it_read() -> None:
+def test_a_condition_held_after_an_earlier_write_keeps_the_starting_row_it_read() -> None:
     state = START.key
     assert isinstance(state, TemporalObjectStateKey)
     row = RetainedStartingRow(state, 0, (), None)
-    confirmed: list[LicensedWrite[TxStartConditioned]] = []
+    held: list[LicensedWrite[CallerConditioned]] = []
 
-    def retaining(item: LicensedWrite[TxStartConditioned]) -> LicensedWrite[TxStartConditioned]:
+    def retaining[A: CallerConditioned](item: LicensedWrite[A], /) -> LicensedWrite[A]:
+        authority = item.authority
+        assert isinstance(authority, TxStartConditioned)
         refined = dataclasses.replace(
-            item, authority=dataclasses.replace(item.authority, starting_row=row)
+            item, authority=dataclasses.replace(authority, starting_row=row)
         )
-        confirmed.append(refined)
+        held.append(refined)
         return refined
-
-    def unasked(item: LicensedWrite[VersionConditioned]) -> None:
-        raise AssertionError(f"no stated version is confirmed, but {item!r} was")
 
     admission = _admitted(
         _sourced("amendUntil", LATER, _evidence(LATER), valid_from=JUN, until=SEP, value="175.00")
     )
-    admission.admit(
-        addressed_write(until=JUN, value="150.00"),
-        confirm_version=unasked,
-        confirm_tx_start=retaining,
+    admission.admit_target(
+        addressed_write(until=JUN, value="150.00"), hold_stated_revision=retaining
     )
-    (refined,) = confirmed
+    (refined,) = held
     composed = _composition(admission)
     assert isinstance(composed, ComposedTemporalWrite)
     _, condition = composed.intents
@@ -1380,3 +1372,35 @@ def test_a_write_holding_no_temporal_observation_states_no_start_beside_a_target
         return
     _admit(admission, unclosable)
     assert len(_composition(admission).intents) == 2
+
+
+if TYPE_CHECKING:
+    from parallax.core._execution._unit_work.uow import UnitOfWork
+    from parallax.core._execution._unit_work.write_items import RevisionCondition, SourceBacked
+
+    def _static_admission_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
+        uow: UnitOfWork,
+        admission: WriteAdmission,
+        hold: HoldStatedRevision,
+        sourced: LicensedWrite[SourceBacked],
+        observed: LicensedWrite[StateObserved],
+        conditioned: LicensedWrite[CallerConditioned],
+        versioned: LicensedWrite[VersionConditioned],
+        targeted: LicensedWrite[TxStartConditioned],
+    ) -> None:
+        buffered: BufferOutcome = uow.buffer(sourced)
+        admitted: BufferOutcome = admission.admit(observed)
+        del buffered, admitted
+        admission.admit_target(conditioned, hold_stated_revision=hold)
+        admission.admit_target(conditioned, hold_stated_revision=None)
+        held_version: LicensedWrite[VersionConditioned] = hold(versioned)
+        held_start: LicensedWrite[TxStartConditioned] = hold(targeted)
+        version_condition: RevisionCondition = versioned.authority
+        start_condition: RevisionCondition = targeted.authority
+        del held_version, held_start, version_condition, start_condition
+        uow.buffer(versioned)  # pyright: ignore[reportArgumentType] - a caller's condition is buffered only as a target write
+        uow.buffer(conditioned)  # pyright: ignore[reportArgumentType] - a caller's condition is buffered only as a target write
+        admission.admit(targeted)  # pyright: ignore[reportArgumentType] - a caller's condition is admitted only as a target write
+        admission.admit_target(observed, hold_stated_revision=None)  # pyright: ignore[reportArgumentType] - a source's licence states no revision
+        crossed: LicensedWrite[TxStartConditioned] = hold(versioned)  # pyright: ignore[reportAssignmentType] - holding keeps the write's own condition
+        del crossed

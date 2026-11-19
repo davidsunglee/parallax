@@ -128,15 +128,21 @@ InsertionAuthorized   this attempt's own insertion     versioned: the version th
                       (InsertionIdentity), while it    attempt left the row at;
                       still stands                     unversioned: the object;
                                                        temporal or still pending: none
-VersionConditioned    the caller's stated version      the stated version              expected, source_evidence
+VersionConditioned    the caller's stated version      the stated state                state, source_evidence
                       (ExpectedVersion)
-TxStartConditioned    the caller's stated              the object, which composes by   expected, starting_row
+TxStartConditioned    the caller's stated              the object, which composes by   state, starting_row
                       Transaction-Time start           object
                       (ExpectedTxStart)
 ```
 
 Preparation judges which condition a target write takes, and `target_write` maps that
-judgment once. `source_evidence` is a lifetime edge: it keeps the Read Evidence of every
+judgment once, into the state the caller says the write starts from: a
+`VersionedObjectStateKey`, or a `TemporalObjectStateKey` at the stated
+Transaction-Time start and, on a Bitemporal object, at the window's Valid-Time start,
+which may lie inside the milestone. Both conditioned authorities answer
+`RevisionCondition`: `state` is the one stored fact, `revision` reads it, `holds` judges
+a stored revision against it (no row never holds), and `refusal` is the
+`WritePreconditionError` the call and range binding raise from it. `source_evidence` is a lifetime edge: it keeps the Read Evidence of every
 source whose write composed into this one reachable while the write is pending or
 planned, and nothing reads it for a decision. Neither an insertion nor a
 Transaction-Time start holds any. Planning carries it onto every `SettledWrite` and
@@ -175,10 +181,14 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.write_items:UnversionedLocked.source_evidence`
 - `parallax.core._execution._unit_work.write_items:InsertionAuthorized.identity`
 - `parallax.core._execution._unit_work.write_items:InsertionAuthorized.claim_scope`
-- `parallax.core._execution._unit_work.write_items:VersionConditioned.expected`
+- `parallax.core._execution._unit_work.write_items:VersionConditioned.state`
 - `parallax.core._execution._unit_work.write_items:VersionConditioned.source_evidence`
-- `parallax.core._execution._unit_work.write_items:TxStartConditioned.expected`
+- `parallax.core._execution._unit_work.write_items:TxStartConditioned.state`
 - `parallax.core._execution._unit_work.write_items:TxStartConditioned.starting_row`
+- `parallax.core._execution._unit_work.write_items:RevisionCondition`
+- `parallax.core._execution._unit_work.write_items:RevisionCondition.holds`
+- `parallax.core._execution._unit_work.write_items:RevisionCondition.refusal`
+- `parallax.core._execution._unit_work.write_items:SourceBacked`
 - `parallax.core._execution._unit_work.write_items:is_licensed_by`
 - `parallax.core._execution._unit_work.write_items:target_write`
 - `parallax.core._execution._unit_work.write_items:admitted_write`
@@ -196,6 +206,7 @@ everything it opened is removed, or a later insertion of the object supersedes i
 - `parallax.core._execution._unit_work.source_registry:SourceRegistry.insertion_anchor`
 - `parallax.core.internal.planned_step.keys:ObjectKey`
 - `parallax.core.internal.planned_step.keys:VersionedObjectStateKey`
+- `parallax.core.internal.planned_step.keys:TemporalObjectStateKey`
 - `parallax.core._execution._unit_work._errors:write_evidence_refusal`
 
 ## From verb to buffer
@@ -242,20 +253,22 @@ everything it opened is removed, or a later insertion of the object supersedes i
              SourceRegistry.resolve_read_evidence(...) → SettledEvidence
            → admitted_write(prepared, evidence, object_key, source= / insertion=)
            → an amend assigning nothing stops here, after admission
-           → UnitOfWork.buffer → WriteAdmission.admit
+           → UnitOfWork.buffer → WriteAdmission.admit (source-backed licences only)
  PreparedTargetInstruction
            → UnitOfWork.buffer_target: an amend assigning nothing stops here
-           → target_write: keyed_instruction_from_target + the caller's expectation
-           → WriteAdmission.admit
+           → target_write: keyed_instruction_from_target + the caller's stated state
+           → WriteAdmission.admit_target, holding the stated revision through
+             UnitOfWork._hold_stated_revision under Locking, through nothing
+             under Optimistic (ConcurrencyFacet.gates)
  PreparedPredicateInstruction
            → UnitOfWork.execute_predicate (next section); never buffered
               │
               ▼
  ADMITTED   AdmittedWrite = KeyedInsert | LicensedWrite[WriteAuthority]                write_items
               │
-              │ WriteAdmission.admit / admit_insert: compose with what is        admission
-              │   pending, or refuse; an insertion moves only through
-              │   SourceRegistry transitions onto its WriteOwnership
+              │ WriteAdmission.admit / admit_target / admit_insert: compose      admission
+              │   with what is pending, or refuse; an insertion moves only
+              │   through SourceRegistry transitions onto its WriteOwnership
               │   insert                   open_insertion issues an InsertionIdentity,
               │                            superseding an earlier insertion's; a repeat
               │                            of a standing insertion → UsageError
@@ -282,12 +295,14 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │                            compact_observed_run)
               │   target write             refused for an object this attempt
               │                            inserted (has_admitted_insertion); then,
-              │                            unless a pending write or a live read
-              │                            (has_live_observation) already proves it,
-              │                            confirmed by its condition: under Locking
-              │                            _confirm_version reads the stored version,
-              │                            and _confirm_tx_start reads the starting
-              │                            row whole and keeps it on the authority
+              │                            unless a pending write proves its state,
+              │                            the supplied hold_stated_revision holds it:
+              │                            a live read of the stated state
+              │                            (has_live_observation), else _stored_revision
+              │                            reads the row under the shared lock, the
+              │                            condition judges it (holds) or raises its
+              │                            refusal, and a temporal row read whole is
+              │                            kept on the authority by its own coordinates
               │   anything else            UsageError
               │                            (write-evidence-already-claimed)
               ▼
@@ -386,8 +401,8 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_insert`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_target`
-- `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_version`
-- `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_tx_start`
+- `parallax.core._execution._unit_work.uow:UnitOfWork._hold_stated_revision`
+- `parallax.core._execution._unit_work.uow:UnitOfWork._stored_revision`
 - `parallax.core._execution._unit_work.write_items:target_write`
 - `parallax.core._execution._unit_work.write_items:AdmittedWrite`
 - `parallax.core._execution._unit_work.write_items:WriteAuthority`
@@ -398,6 +413,8 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.write_items:ComposedWrite`
 - `parallax.core._execution._unit_work.admission:WriteAdmission`
 - `parallax.core._execution._unit_work.admission:WriteAdmission.admit`
+- `parallax.core._execution._unit_work.admission:WriteAdmission.admit_target`
+- `parallax.core._execution._unit_work.admission:HoldStatedRevision`
 - `parallax.core._execution._unit_work.admission:WriteAdmission.admit_insert`
 - `parallax.core._execution._unit_work.source_registry:SourceRegistry.open_insertion`
 - `parallax.core._execution._unit_work.source_registry:SourceRegistry.resolve_insertion_authorized_write`

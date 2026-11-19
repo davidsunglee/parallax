@@ -31,12 +31,16 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     ComposedWrite,
+    InsertionAuthorized,
     KeyedInsert,
     LicensedWrite,
     PostRemovalInsert,
+    StateObserved,
     TxStartConditioned,
+    UnversionedLocked,
     VersionConditioned,
     WriteAuthority,
+    is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import SettledWrite, WriteGroup, WritePlan
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
@@ -230,8 +234,7 @@ def admitted_writes(model: Metamodel, writes: Sequence[AdmittedWrite]) -> tuple[
 def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity | None:
     """``item`` admitted through the operation admission takes it by — an
     insert, with no opener advice, through its own, answering the identity it
-    issued — under the Optimistic strategy, whose confirmation of a caller's
-    revision reads nothing."""
+    issued, and a licensed write as :func:`admit_licensed` admits it."""
     if isinstance(item, KeyedInsert):
         return admission.admit_insert(item, insertion_advice=None)
     admit_licensed(admission, item)
@@ -239,11 +242,18 @@ def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity |
 
 
 def admit_licensed(admission: WriteAdmission, item: LicensedWrite[WriteAuthority]) -> BufferOutcome:
-    """``item`` admitted under the Optimistic strategy, whose confirmation of
-    a caller's revision reads nothing."""
-    return admission.admit(
-        item, confirm_version=_optimistic_version, confirm_tx_start=_optimistic_tx_start
-    )
+    """``item`` admitted through the operation its licence takes: a write a
+    caller conditioned through target admission under the Optimistic
+    strategy, which holds no revision, and any other through its own."""
+    if is_licensed_by(item, VersionConditioned) or is_licensed_by(item, TxStartConditioned):
+        admission.admit_target(item, hold_stated_revision=None)
+        return BufferOutcome.BUFFERED
+    assert (
+        is_licensed_by(item, StateObserved)
+        or is_licensed_by(item, UnversionedLocked)
+        or is_licensed_by(item, InsertionAuthorized)
+    )  # every other licence is a source's
+    return admission.admit(item)
 
 
 def source_registry(
@@ -260,16 +270,6 @@ def source_registry(
 def write_admission(model: Metamodel) -> WriteAdmission:
     """An empty buffer over its own :func:`source_registry`."""
     return WriteAdmission(model, registry=source_registry(model))
-
-
-def _optimistic_version(item: LicensedWrite[VersionConditioned]) -> None:
-    del item
-
-
-def _optimistic_tx_start(
-    item: LicensedWrite[TxStartConditioned],
-) -> LicensedWrite[TxStartConditioned]:
-    return item
 
 
 def retained_observation(

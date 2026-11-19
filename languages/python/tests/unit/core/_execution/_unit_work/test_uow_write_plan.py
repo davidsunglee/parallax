@@ -130,7 +130,7 @@ from tests.unit.core._execution._write_step_support import (
 from tests.unit.core._shared_coverage_support import MODEL as SHARED_MODEL
 from tests.unit.core._shared_coverage_support import (
     ShareCols,
-    covered_target,
+    covered_target_instruction,
     day,
     frag,
     frag_rows,
@@ -823,14 +823,14 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
 
 
 def test_a_later_writes_binding_failure_executes_and_completes_nothing_of_its_group() -> None:
-    target, _row = covered_target(ShareCols, 2)
     start = shared_rectangle(ShareCols, 2, 0, None, 0)
     held = HeldRows(SHARED_MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True)
     simulated = _simulated(SHARED_MODEL)
     uow = _uow(SHARED_MODEL, simulated, rows=held)
     ready = frag(ShareCols, 1, 1)
-    for write in (*ready, target):
+    for write in ready:
         uow.buffer(write)
+    uow.buffer_target(covered_target_instruction(ShareCols, 2))
     with raises_code(InternalError, CARDINALITY_CORRUPTION):
         uow.flush(trigger="pre_commit")
     # Object 1 was bound beside object 2 and is ready, yet nothing executes

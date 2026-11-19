@@ -39,7 +39,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.write_items import (
     KeyedInsert,
     LicensedWrite,
-    WriteAuthority,
+    SourceBacked,
 )
 from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.internal.base import (
@@ -2070,7 +2070,7 @@ def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[AdmittedWrite | PreparedT
         UnitOfWork.buffer_target,
     )
 
-    def recorded(uow: UnitOfWork, item: LicensedWrite[WriteAuthority]) -> object:
+    def recorded(uow: UnitOfWork, item: LicensedWrite[SourceBacked]) -> object:
         admitted.append(item)
         return buffer(uow, item)
 

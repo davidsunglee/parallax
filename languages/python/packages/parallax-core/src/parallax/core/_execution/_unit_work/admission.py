@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Collection, Hashable, Iterator
+from collections.abc import Collection, Hashable, Iterator
 from dataclasses import replace
 from enum import Enum
-from typing import Final
+from typing import Final, Protocol
 
 from parallax.core._execution._unit_work._errors import (
     WRITE_EVIDENCE_ALREADY_CLAIMED,
@@ -42,6 +42,7 @@ from parallax.core._execution._unit_work.write_items import (
     KeyedInsert,
     LicensedWrite,
     PostRemovalInsert,
+    SourceBacked,
     StateObserved,
     TemporalCoverageAuthority,
     TemporalCoverageWrite,
@@ -66,6 +67,7 @@ from parallax.core.internal.temporal_write.coverage import NO_TRANSFORM
 
 __all__ = [
     "BufferOutcome",
+    "HoldStatedRevision",
     "WriteAdmission",
 ]
 
@@ -87,12 +89,17 @@ type _PendingItem = AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOp
 
 type _Claimed = LicensedWrite[WriteAuthority]
 
-type _KeyedWrite = LicensedWrite[StateObserved | UnversionedLocked | InsertionAuthorized]
-"""A write a read or an insertion licensed rather than a caller's condition."""
-
 _SEVERAL: Final = object()
 """What the object view records for an object claimed at more than one
 scope."""
+
+
+class HoldStatedRevision(Protocol):
+    """Hold the revision a target write's caller stated, answering the write
+    as holding it left it — with any row it read that the write keeps — or
+    refuse the write with its condition's refusal."""
+
+    def __call__[A: CallerConditioned](self, item: LicensedWrite[A], /) -> LicensedWrite[A]: ...
 
 
 class WriteAdmission:
@@ -100,11 +107,12 @@ class WriteAdmission:
     write is admitted, every claim it holds, and where each still-pending
     insert stands in it (`m-unit-work` "Observed-State Coalescing").
 
-    :meth:`admit` accepts a write under the authority it carries, and
-    :meth:`admit_insert` an insert, or either refuses it, with nothing pending
-    changed. The lifecycle of each insertion — whether it still stands, what
-    it left stored, and when it retires — is ``registry``'s, which this asks
-    through its named transitions. Composition follows authored order:
+    :meth:`admit` accepts a write a source licensed, :meth:`admit_target` a
+    write a caller conditioned, and :meth:`admit_insert` an insert, or each
+    refuses it, with nothing pending changed. The lifecycle of each
+    insertion — whether it still stands, what it left stored, and when it
+    retires — is ``registry``'s, which this asks through its named
+    transitions. Composition follows authored order:
 
     * an amendment or replacement of an object whose insert is still pending
       folds into that insert, and a destructive write of it cancels the pair; a
@@ -182,43 +190,55 @@ class WriteAdmission:
         composed writes, or writes composition left nothing of."""
         return bool(self._writes)
 
-    def admit(
-        self,
-        item: LicensedWrite[WriteAuthority],
-        *,
-        confirm_version: Callable[[LicensedWrite[VersionConditioned]], None],
-        confirm_tx_start: Callable[
-            [LicensedWrite[TxStartConditioned]], LicensedWrite[TxStartConditioned]
-        ],
-    ) -> BufferOutcome:
-        """Accept ``item``, a write of existing state, into the buffer under
-        the authority it carries, composing it there — all of it, or nothing.
+    def admit(self, item: LicensedWrite[SourceBacked]) -> BufferOutcome:
+        """Accept ``item``, a write of existing state a source licensed, into
+        the buffer, composing it there — all of it, or nothing.
 
-        A write a caller conditioned is refused where this attempt inserted
-        its object (``write-evidence-inserted``) or it cannot join the
-        object's pending writes; only then, unless a pending write of the same
-        state already proves its starting state, ``confirm_version`` confirms
-        a stated version, or refuses it, and ``confirm_tx_start`` answers a
-        write stating a Transaction-Time start as it is confirmed, or refuses
-        it. A write an insertion authorized is admitted only while that
-        authority stands. An arriving keyed intent a held claim cannot absorb
-        is refused (``write-evidence-already-claimed``). The outcome reports
-        whether ``item``, a destructive write leaving nothing of its object's
+        A write an insertion authorized is admitted only while that authority
+        stands. An arriving keyed intent a held claim cannot absorb is refused
+        (``write-evidence-already-claimed``). The outcome reports whether
+        ``item``, a destructive write leaving nothing of its object's
         still-pending insert and reaching no stored coverage past it,
         cancelled that pair.
         """
+        if is_licensed_by(item, InsertionAuthorized):
+            item = self._resolve_insertion(item)
+        if (
+            is_licensed_by(item, StateObserved) or is_licensed_by(item, InsertionAuthorized)
+        ) and self._is_temporal(item.target):
+            return self._admit_temporal(item)
+        verdict = self._check_keyed_claim(item)
+        folded = self._folded(item)
+        if folded is not None:
+            return folded
+        # Only a write folding into its object's pending insert claims nothing.
+        assert verdict is not None
+        key = item.object_key
+        self._note_removal(item.instruction, key)
+        self._combine_claimed(item, key, verdict)
+        return BufferOutcome.BUFFERED
+
+    def admit_target(
+        self,
+        item: LicensedWrite[CallerConditioned],
+        *,
+        hold_stated_revision: HoldStatedRevision | None,
+    ) -> None:
+        """Accept ``item``, a write a caller conditioned, into the buffer,
+        composing it there — all of it, or nothing.
+
+        It is refused where this attempt inserted its object
+        (``write-evidence-inserted``) or it cannot join the object's pending
+        writes (``write-evidence-already-claimed``). Only then, unless a
+        pending write of the same state already proves the state it starts
+        from, ``hold_stated_revision`` holds the caller's revision, or refuses
+        it; with none, nothing is read and the condition stays the write's.
+        """
         if is_licensed_by(item, TxStartConditioned):
-            self._admit_temporal_target(item, confirm_tx_start)
-            return BufferOutcome.BUFFERED
-        if is_licensed_by(item, VersionConditioned):
-            self._admit_versioned_target(item, confirm_version)
-            return BufferOutcome.BUFFERED
-        assert (
-            is_licensed_by(item, StateObserved)
-            or is_licensed_by(item, UnversionedLocked)
-            or is_licensed_by(item, InsertionAuthorized)
-        )  # every other authority is a read's or an insertion's
-        return self._admit_keyed(item)
+            self._admit_temporal_target(item, hold_stated_revision)
+            return
+        assert is_licensed_by(item, VersionConditioned)  # a caller states one of the two
+        self._admit_versioned_target(item, hold_stated_revision)
 
     def admit_insert(
         self, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
@@ -283,24 +303,6 @@ class WriteAdmission:
         first = self._first_insert_key
         return () if first is None else (first,)
 
-    def _admit_keyed(self, item: _KeyedWrite) -> BufferOutcome:
-        if is_licensed_by(item, InsertionAuthorized):
-            item = self._resolve_insertion(item)
-        if (
-            is_licensed_by(item, StateObserved) or is_licensed_by(item, InsertionAuthorized)
-        ) and self._is_temporal(item.target):
-            return self._admit_temporal(item)
-        verdict = self._check_keyed_claim(item)
-        folded = self._folded(item)
-        if folded is not None:
-            return folded
-        # Only a write folding into its object's pending insert claims nothing.
-        assert verdict is not None
-        key = item.object_key
-        self._note_removal(item.instruction, key)
-        self._combine_claimed(item, key, verdict)
-        return BufferOutcome.BUFFERED
-
     def _admit_temporal(
         self, item: LicensedWrite[StateObserved | InsertionAuthorized]
     ) -> BufferOutcome:
@@ -322,7 +324,7 @@ class WriteAdmission:
         self._add_temporal(item, arriving, key)
         return BufferOutcome.BUFFERED
 
-    def _folded(self, item: _KeyedWrite) -> BufferOutcome | None:
+    def _folded(self, item: LicensedWrite[SourceBacked]) -> BufferOutcome | None:
         """What folding ``item`` into its object's still-pending insert did, or
         ``None`` where it writes existing state instead: a Bitemporal opening
         takes only a write its own insertion authorized.
@@ -383,27 +385,27 @@ class WriteAdmission:
     def _admit_temporal_target(
         self,
         item: LicensedWrite[TxStartConditioned],
-        confirm_tx_start: Callable[
-            [LicensedWrite[TxStartConditioned]], LicensedWrite[TxStartConditioned]
-        ],
+        hold_stated_revision: HoldStatedRevision | None,
     ) -> None:
         instruction = item.instruction
         key = item.object_key
         arriving = TemporalIntent(self._target_intent(item), item.authority)
         if not self._admits_temporal(item.target, key, arriving):
             raise _already_claimed(key)
-        if not self._states_window(key, instruction.valid_time_window):
-            confirmed = confirm_tx_start(item)
-            if confirmed.authority is not item.authority:
-                arriving = TemporalIntent(arriving.write_intent, confirmed.authority)
-            item = confirmed
+        if hold_stated_revision is not None and not self._states_window(
+            key, instruction.valid_time_window
+        ):
+            held = hold_stated_revision(item)
+            if held.authority is not item.authority:
+                arriving = TemporalIntent(arriving.write_intent, held.authority)
+            item = held
         self._note_removal(instruction, key)
         self._add_temporal(item, arriving, key)
 
     def _admit_versioned_target(
         self,
         item: LicensedWrite[VersionConditioned],
-        confirm_version: Callable[[LicensedWrite[VersionConditioned]], None],
+        hold_stated_revision: HoldStatedRevision | None,
     ) -> None:
         intent = self._target_intent(item)
         scope = item.claim_scope
@@ -413,8 +415,8 @@ class WriteAdmission:
         verdict = admits(self._held_intent(scope), intent)
         if (held is not None and held != scope) or verdict == "incompatible":
             raise _already_claimed(key)
-        if scope not in self._claims:
-            confirm_version(item)
+        if hold_stated_revision is not None and scope not in self._claims:
+            hold_stated_revision(item)
         self._note_removal(item.instruction, key)
         self._combine_claimed(item, key, verdict)
 
@@ -451,7 +453,7 @@ class WriteAdmission:
             raise _already_claimed(item.object_key)
         return item
 
-    def _check_keyed_claim(self, item: _KeyedWrite) -> ClaimVerdict | None:
+    def _check_keyed_claim(self, item: LicensedWrite[SourceBacked]) -> ClaimVerdict | None:
         """What a non-temporal write becomes against the claim held at its
         scope, or ``None`` where it claims nothing — refused where it cannot
         join that claim or its object's pending caller-conditioned write."""
@@ -542,7 +544,7 @@ class WriteAdmission:
         return BufferOutcome.BUFFERED
 
     def _fold_non_bitemporal_opening(
-        self, item: _KeyedWrite, key: ObjectKey, position: int
+        self, item: LicensedWrite[SourceBacked], key: ObjectKey, position: int
     ) -> BufferOutcome:
         """Fold a write into its object's still-pending Non-Temporal or
         Transaction-Time-Only insert at ``position``, which takes an
@@ -762,7 +764,6 @@ class WriteAdmission:
         observed = _retained_observation(other)
         if not isinstance(authority, TxStartConditioned) or observed is None:
             return True
-        expected = authority.expected
         observation = observed.evidence
         if not isinstance(observation, TemporalObservation):
             return True
@@ -770,13 +771,13 @@ class WriteAdmission:
         assert isinstance(shape, temporal_read.Bitemporal)  # disjoint windows are Valid Time's
         if observed.invalidated:
             held = self._held_at(key, shape, window.start)
-            return held is None or milestone_edge(shape, held, None).tx_time == expected.instant
+            return held is None or authority.holds(milestone_edge(shape, held, None).tx_time)
         predecessor = observation.predecessor
         coverage = valid_time_coverage(shape, predecessor, None)
         assert coverage is not None  # a Bitemporal observation lies on Valid Time
         if not coverage.contains(window.start):
             return True
-        return milestone_edge(shape, predecessor, None).tx_time == expected.instant
+        return authority.holds(milestone_edge(shape, predecessor, None).tx_time)
 
     def _starting_revision(
         self,
@@ -792,8 +793,8 @@ class WriteAdmission:
         insertion's write states none, and neither does a continuing one whose
         row there the attempt does not hold."""
         match intent.authority:
-            case TxStartConditioned(expected=expected):
-                return expected.instant
+            case TxStartConditioned(revision=revision):
+                return revision
             case InsertionAuthorized():
                 return None
             case StateObserved(retained_observation=observed):

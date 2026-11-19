@@ -8,7 +8,6 @@ from typing import Final, cast
 
 from parallax.core._execution._unit_work.effects import (
     MISSING_TARGET,
-    WritePreconditionError,
     cardinality_corruption,
     shortfall,
 )
@@ -45,7 +44,6 @@ from parallax.core.internal.planned_step.steps import KeyTarget
 from parallax.core.internal.planned_step.write_effects import BoundRange, TemporalWriteOwnership
 from parallax.core.internal.temporal_read import (
     Bitemporal,
-    Edge,
     TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
@@ -228,7 +226,7 @@ def _states_condition(
 ) -> bool:
     return (
         held.write_intent.valid_time_window == arriving.write_intent.valid_time_window
-        and held.authority.expected == arriving.authority.expected
+        and held.authority.revision == arriving.authority.revision
     )
 
 
@@ -272,13 +270,7 @@ def _stated_predecessor(meaning: _RangeMeaning) -> _RangePredecessor:
     """The current milestone ``meaning``'s one target condition names: its key
     at the Transaction-Time start its caller stated, with no stored row."""
     (condition,) = meaning.conditions
-    return _RangePredecessor(
-        row=None,
-        state=TemporalObjectStateKey(
-            meaning.object_key, Edge(tx_time=condition.authority.expected.instant)
-        ),
-        valid_time_coverage=None,
-    )
+    return _RangePredecessor(row=None, state=condition.authority.state, valid_time_coverage=None)
 
 
 def _holds_start(window: TimeInterval | None, predecessor: _RangePredecessor) -> bool:
@@ -507,21 +499,11 @@ class _TemporalRangeBinder:
         for condition in conditions:
             window = condition.write_intent.valid_time_window
             start = next((row for row in predecessors if _holds_start(window, row)), None)
-            if (
-                start is None
-                or start.state.milestone.tx_time != condition.authority.expected.instant
-            ):
-                raise self._failed(condition)
+            if start is None or not condition.authority.holds(start.state.milestone.tx_time):
+                raise condition.authority.refusal()
             if all(start is not held for held in starts):
                 starts.append(start)
         return tuple(starts)
-
-    def _failed(self, condition: TemporalIntent[TxStartConditioned]) -> WritePreconditionError:
-        return WritePreconditionError(
-            self.meaning.facts.entity.identity,
-            {self.meaning.key_attribute.name: self.meaning.key_value},
-            condition.authority.expected.instant,
-        )
 
     def acquired(
         self,

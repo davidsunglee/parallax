@@ -49,7 +49,6 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CoverageReadRequest,
-    RowRequest,
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
@@ -61,15 +60,14 @@ from parallax.core._execution._unit_work.write_items import (
     StateObserved,
     UnversionedLocked,
     is_licensed_by,
-    target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._unit_work.write_runner import (
     ExecuteCountedStep,
     ExecuteWriteSteps,
 )
-from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal import predicate as predicate_algebra
+from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, InternalError
 from parallax.core.internal.dialect import POSTGRES
 from parallax.core.internal.entity._model import model_of
@@ -1325,61 +1323,37 @@ def _account_target(version: int) -> PreparedTargetInstruction:
         ),
     ],
 )
-def test_a_target_write_is_admitted_as_its_verb_admits_it(
+def test_an_optimistic_target_write_reads_nothing_at_the_call(
     meta: Metamodel,
     target: Callable[[], PreparedTargetInstruction],
     rows: tuple[PredecessorRow, ...],
 ) -> None:
-    # Buffered directly or through its verb, one acceptance judges it: the
-    # Optimistic strategy reads nothing at the call, and the flush makes the
-    # same statements of it.
-    def flushed(
-        buffering: Callable[[UnitOfWork, PreparedTargetInstruction], object],
-    ) -> tuple[list[object], tuple[object, ...], list[RowRequest]]:
-        simulated = _simulated(meta)
-        held = HeldRows(meta, rows)
-        outcomes: list[object] = []
-        _run(
-            lambda uow: outcomes.append(buffering(uow, target())),
-            meta=meta,
-            steps=simulated,
-            rows=held,
-        )
-        return outcomes, simulated.statements, held.requests
-
-    outcomes, carried, carried_reads = flushed(
-        lambda uow, prepared: uow.buffer(
-            target_write(prepared, inheritance.inheritance_facet_of(meta))
-        )
-    )
-    _admitted, admitted, admitted_reads = flushed(lambda uow, prepared: uow.buffer_target(prepared))
-    assert outcomes == [BufferOutcome.BUFFERED]
-    assert carried and carried == admitted
-    assert carried_reads == admitted_reads
-    assert not any(isinstance(request, TargetReadRequest) for request in carried_reads)
+    # The Optimistic strategy holds no stated revision: the caller's revision
+    # becomes the write's gate, and the flush still writes it.
+    simulated = _simulated(meta)
+    held = HeldRows(meta, rows)
+    _run(lambda uow: uow.buffer_target(target()), meta=meta, steps=simulated, rows=held)
+    assert simulated.statements
+    assert not any(isinstance(request, TargetReadRequest) for request in held.requests)
 
 
-@pytest.mark.parametrize("route", ["admitted-write", "verb"])
-def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> None:
+def test_a_locking_target_write_holds_its_stated_revision_with_one_read() -> None:
     stored = PredecessorRow(
         members={"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 2}
     )
     locking = TransactionSettings(preference="locking")
-
-    def buffering(uow: UnitOfWork, version: int) -> None:
-        prepared = _account_target(version)
-        if route == "admitted-write":
-            uow.buffer(target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT)))
-        else:
-            uow.buffer_target(prepared)
-
     held = HeldRows(_ACCOUNT, (stored,))
     with pytest.raises(WritePreconditionError):
-        _run(lambda uow: buffering(uow, 3), settings=locking, rows=held)
+        _run(lambda uow: uow.buffer_target(_account_target(3)), settings=locking, rows=held)
     assert [type(request) for request in held.requests] == [TargetReadRequest]
     held.requests.clear()
     simulated = _simulated()
-    _run(lambda uow: buffering(uow, 2), settings=locking, steps=simulated, rows=held)
+    _run(
+        lambda uow: uow.buffer_target(_account_target(2)),
+        settings=locking,
+        steps=simulated,
+        rows=held,
+    )
     assert [type(request) for request in held.requests] == [TargetReadRequest]
     assert _kinds(simulated) == ["update"]
 

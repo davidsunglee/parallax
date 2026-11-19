@@ -19,8 +19,6 @@ from parallax.core._execution._unit_work.evidence import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.instructions import (
-    ExpectedTxStart,
-    ExpectedVersion,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_typed_write,
@@ -62,7 +60,7 @@ from parallax.core.internal.planned_step.keys import (
     VersionedObjectStateKey,
 )
 from parallax.core.internal.planned_step.managed_row import RowSelection, named_members
-from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_read import Edge, TimeInterval
 from parallax.core.internal.temporal_write.coverage import CoverageTransform
 from parallax.core.internal.unit_work import (
     KeyedMutation,
@@ -432,7 +430,9 @@ def _condition(
 ) -> TemporalIntent[TxStartConditioned]:
     return TemporalIntent(
         WriteIntent(kind, TimeInterval(MAR, until)),
-        TxStartConditioned(ExpectedTxStart(tx_start), starting_row),
+        TxStartConditioned(
+            TemporalObjectStateKey(OBJECT, Edge(tx_time=tx_start, valid_time=MAR)), starting_row
+        ),
     )
 
 
@@ -452,9 +452,9 @@ def test_equal_conditions_are_one_condition_whatever_starting_row_each_kept() ->
         _condition(until=JUN),
         _condition(tx_start=T1),
     ],
-    ids=["kind", "window", "expected-start"],
+    ids=["kind", "window", "stated-start"],
 )
-def test_a_condition_differing_in_kind_window_or_expected_start_is_another(
+def test_a_condition_differing_in_kind_window_or_stated_start_is_another(
     other: TemporalIntent[TxStartConditioned],
 ) -> None:
     assert _condition() != other
@@ -681,12 +681,14 @@ if TYPE_CHECKING:
         locked_evidence: tuple[ReadEvidence, ...] = locked.authority.source_evidence
         identity: InsertionIdentity = authorized.authority.identity
         resolved: ClaimScope | None = authorized.authority.claim_scope
-        version: ExpectedVersion = versioned.authority.expected
+        stated_version: VersionedObjectStateKey = versioned.authority.state
+        version: int = versioned.authority.revision
         absorbed: tuple[ReadEvidence, ...] = versioned.authority.source_evidence
-        start: ExpectedTxStart = targeted.authority.expected
+        stated_start: TemporalObjectStateKey = targeted.authority.state
+        start: dt.datetime = targeted.authority.revision
         starting_row: RetainedStartingRow | None = targeted.authority.starting_row
         del observation, current, observed_evidence, locked_evidence, identity, resolved
-        del version, absorbed, start, starting_row
+        del stated_version, version, absorbed, stated_start, start, starting_row
         lone_intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...] = observed.intents
         lone_transform: CoverageTransform = authorized.transform
         lone_selection: RowSelection = targeted.selection
@@ -697,10 +699,10 @@ if TYPE_CHECKING:
         observed_observation: RetainedObservation = observed_intent.authority.retained_observation
         intent_evidence: tuple[ReadEvidence, ...] = observed_intent.authority.source_evidence
         insertion: InsertionIdentity = authorized_intent.authority.identity
-        expected: ExpectedTxStart = target_intent.authority.expected
+        intent_start: dt.datetime = target_intent.authority.revision
         intent_row: RetainedStartingRow | None = target_intent.authority.starting_row
         del lone_intents, lone_transform, lone_selection, intents, opening_intents, stated
-        del intent_authority, observed_observation, intent_evidence, insertion, expected
+        del intent_authority, observed_observation, intent_evidence, insertion, intent_start
         del intent_row
         pending_intents: tuple[TemporalIntent[TemporalCoverageAuthority], ...] = coverage.intents
         pending_transform: CoverageTransform = coverage.transform
@@ -719,18 +721,18 @@ if TYPE_CHECKING:
         _ = targeted.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a Transaction-Time start absorbs no evidence
         _ = locked.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an unversioned object has no state to observe
         _ = versioned.authority.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a temporal condition reads a starting row
-        _ = observed.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's revision
+        _ = observed.authority.state  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's revision
         _ = admitted.authority  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert needs no licence
-        _ = observed_intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
+        _ = observed_intent.authority.revision  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
         _ = observed_intent.authority.starting_row  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
         _ = authorized_intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion observed nothing
         _ = authorized_intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - insertion authority is no Read Evidence
-        _ = authorized_intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start
+        _ = authorized_intent.authority.revision  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start
         _ = target_intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition observed nothing
         _ = target_intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition is no Read Evidence
         _ = intent.authority.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent observed
         _ = intent.authority.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent holds evidence
-        _ = intent.authority.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a target intent states a start
+        _ = intent.authority.state  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a target intent states a start
         _ = intent.instruction  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an intent keeps no instruction; the transform holds its values
         _ = insert.claim_scope  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert claims nothing
         _ = insert_batch.object_key  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a batch names several objects
