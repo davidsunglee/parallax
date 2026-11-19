@@ -553,11 +553,15 @@ An earlier readiness
 failure stays primary; cleanup that follows it reports through the
 implementation's restricted resource reporting rather than replacing it.
 
-A credential refusal MUST NOT end readiness early. Establishment is retried for
-as long as the readiness budget allows, exactly as a preparation refusal is, and
-readiness fails when that budget is spent — naming the refusal rather than the
-wait, and distinguishing a credential that was never produced from a connection
-that was produced and then refused.
+Over retained capacity, a credential refusal MUST NOT end readiness early.
+Establishment is retried for as long as the readiness budget allows, exactly as
+a preparation refusal is, and readiness fails when that budget is spent —
+naming the refusal rather than the wait, and distinguishing a credential that
+was never produced from a connection that was produced and then refused. A
+mode that establishes on the acquiring thread meets a credential or preparation
+refusal there instead, and readiness fails at once with the same naming and
+distinction, as every later acquisition in that mode does: nothing above the
+mode's own establishment retries it.
 
 ## A pooling runtime publishes what it measures about itself
 
