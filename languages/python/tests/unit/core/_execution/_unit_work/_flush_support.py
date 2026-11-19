@@ -10,9 +10,8 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
-from parallax.core.internal.planned_step.payload import DocumentPatches
-from parallax.core.internal.planned_step.steps import PlannedStep, PlannedTemporalRevision, WriteRow
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.steps import PlannedStep
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from parallax.core.internal.sql_gen import LoweredStatement
 
 __all__ = ["ObservedSteps", "statement_kinds"]
@@ -67,9 +66,7 @@ class ObservedSteps:
         /,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
         position = self.executions
         self.executions = position + 1
@@ -77,9 +74,4 @@ class ObservedSteps:
             self.observe(position, steps)
         if position == self.failing and self.failure is not None:
             raise self.failure
-        self.simulated(
-            steps,
-            effect_spans=effect_spans,
-            capture_insert=capture_insert,
-            capture_revision=capture_revision,
-        )
+        self.simulated(steps, effect_spans=effect_spans, capture=capture)

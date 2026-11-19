@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Final, NamedTuple, cast
 
 from parallax.core._stored_data import InvalidDataError
@@ -31,7 +31,7 @@ from parallax.core.internal.planned_step.steps import (
     PlannedUpdate,
     WriteRow,
 )
-from parallax.core.internal.planned_step.write_effects import EffectSpan
+from parallax.core.internal.planned_step.write_effects import CurrentRowCapture, EffectSpan
 from parallax.core.internal.sql_gen import LoweredStatement
 from parallax.core.internal.sql_gen._context import SQL_GENERATION_FAILED
 from parallax.core.internal.sql_gen._write import (
@@ -90,16 +90,15 @@ class LoweringCursor:
     binding arrays presents as one statement each; a dialect binding none
     reads none of them.
 
-    Each insert entry's payload, as it is demanded, hands ``capture_insert``
-    the entry and the Structured Column document it stores — ``None`` where it
-    stores none — and each temporal revision's hands ``capture_revision`` the
-    revision and the patches it applies to that document — ``None`` where it
-    applies none — where they are given.
+    Where ``capture`` is given, each insert entry's payload, as it is demanded,
+    hands it the entry and the Structured Column document it stores — ``None``
+    where it stores none — and each temporal revision's hands it the revision
+    and the patches it applies to that document — ``None`` where it applies
+    none.
     """
 
     __slots__ = (
-        "_capture_insert",
-        "_capture_revision",
+        "_capture",
         "_dialect",
         "_payloads",
         "_position",
@@ -118,9 +117,7 @@ class LoweringCursor:
         dialect: Dialect,
         *,
         effect_spans: tuple[EffectSpan, ...] = (),
-        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-        capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-        | None = None,
+        capture: CurrentRowCapture | None = None,
     ) -> None:
         self._steps = steps
         self._position = -1
@@ -130,8 +127,7 @@ class LoweringCursor:
         self._payloads = payloads
         self._resolved = resolved
         self._dialect = dialect
-        self._capture_insert = capture_insert
-        self._capture_revision = capture_revision
+        self._capture = capture
 
     def take(self) -> PlannedStep | None:
         """The next step, or ``None`` once the steps are exhausted."""
@@ -157,8 +153,9 @@ class LoweringCursor:
 
     def _demanded_payload(self, step: PlannedStep) -> StepPayload:
         payload = _demanded_payload(step, self._payloads)
-        if self._capture_insert is not None or self._capture_revision is not None:
-            self._capture(step, payload)
+        capture = self._capture
+        if capture is not None:
+            _capture(capture, step, payload)
         return payload
 
     def grouped_effect_start(self, step: PlannedStep) -> EffectSpan | None:
@@ -206,25 +203,13 @@ class LoweringCursor:
             steps.append(step)
         return GroupedEffect(builder.finish(), tuple(steps), None)
 
-    def _capture(self, step: PlannedStep, payload: StepPayload) -> None:
-        capture_insert = self._capture_insert
-        if isinstance(step, PlannedInsert):
-            if capture_insert is not None:
-                inserted = cast("InsertPayload", payload)
-                for entry, cells in zip(step.entries, inserted.rows, strict=True):
-                    capture_insert(entry, _stored_document(inserted.slots, cells))
-            return
-        capture_revision = self._capture_revision
-        if isinstance(step, PlannedTemporalRevision) and capture_revision is not None:
-            capture_revision(step, _document_patches(cast("AssignmentPayload", payload)))
-
     def _captured_cells(
         self, entity: EntityIdentity, slots: RowSlots, entry: WriteRow
     ) -> tuple[object, ...]:
         cells = _entry_cells(entity, slots, entry)
-        capture_insert = self._capture_insert
-        if capture_insert is not None:
-            capture_insert(entry, _stored_document(slots, cells))
+        capture = self._capture
+        if capture is not None:
+            capture.inserted(entry, _stored_document(slots, cells))
         return cells
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
@@ -279,9 +264,7 @@ def stream_physical(
     dialect: Dialect,
     *,
     effect_spans: tuple[EffectSpan, ...] = (),
-    capture_insert: Callable[[WriteRow, object | None], None] | None = None,
-    capture_revision: Callable[[PlannedTemporalRevision, DocumentPatches | None], None]
-    | None = None,
+    capture: CurrentRowCapture | None = None,
 ) -> Iterator[LoweredStatement]:
     """Each statement ``steps`` execute as, in order: the effects of one of
     ``effect_spans`` as the one grouped effect applying them all, a run of
@@ -301,8 +284,7 @@ def stream_physical(
         resolved,
         dialect,
         effect_spans=effect_spans,
-        capture_insert=capture_insert,
-        capture_revision=capture_revision,
+        capture=capture,
     )
     step = cursor.take()
     while step is not None:
@@ -462,6 +444,15 @@ def _entry_cells(entity: EntityIdentity, slots: RowSlots, entry: WriteRow) -> tu
             f"{entity.name!r}: every entry of one insert stores the same cells",
         )
     return prepared.values
+
+
+def _capture(capture: CurrentRowCapture, step: PlannedStep, payload: StepPayload) -> None:
+    if isinstance(step, PlannedInsert):
+        inserted = cast("InsertPayload", payload)
+        for entry, cells in zip(step.entries, inserted.rows, strict=True):
+            capture.inserted(entry, _stored_document(inserted.slots, cells))
+    elif isinstance(step, PlannedTemporalRevision):
+        capture.revised(step, _document_patches(cast("AssignmentPayload", payload)))
 
 
 def _stored_document(slots: RowSlots, cells: tuple[object, ...]) -> object | None:

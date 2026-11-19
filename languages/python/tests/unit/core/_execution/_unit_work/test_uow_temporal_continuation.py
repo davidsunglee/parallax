@@ -42,7 +42,7 @@ from parallax.core._execution._unit_work.row_acquisition import (
 )
 from parallax.core._execution._unit_work.write_plan import WriteGroup
 from parallax.core._execution._unit_work.write_runner import (
-    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
+    _GroupRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -303,8 +303,7 @@ def test_a_group_no_source_demands_hands_its_execution_no_capture() -> None:
     )
     session.flush((_write(_FEB, _APR, acctNum="O"), unretained))
     (keywords,) = handed
-    assert "capture_insert" not in keywords
-    assert "capture_revision" not in keywords
+    assert "capture" not in keywords
 
 
 def test_repeated_writes_through_one_source_hold_its_current_rows_and_no_history() -> None:
@@ -398,12 +397,12 @@ def test_a_deferred_range_records_for_continuation_only_where_a_submission_follo
 def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bound_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    released: list[_CurrentRowCapture] = []
-    release = _CurrentRowCapture.release
+    released: list[_GroupRowCapture] = []
+    release = _GroupRowCapture.release
     yielded: list[WriteGroup] = []
     advance = SpanWriteGroups.__next__
 
-    def releasing(capture: _CurrentRowCapture) -> None:
+    def releasing(capture: _GroupRowCapture) -> None:
         released.append(capture)
         release(capture)
 
@@ -418,7 +417,7 @@ def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bou
 
         return execute
 
-    monkeypatch.setattr(_CurrentRowCapture, "release", releasing)
+    monkeypatch.setattr(_GroupRowCapture, "release", releasing)
     monkeypatch.setattr(SpanWriteGroups, "__next__", advancing)
     session = _Session(execute=failing, ends=(_SEP, INFINITY))
     source = session.observed()

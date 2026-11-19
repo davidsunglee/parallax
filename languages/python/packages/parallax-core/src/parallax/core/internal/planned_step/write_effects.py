@@ -12,6 +12,7 @@ from parallax.core.internal.planned_step.keys import (
     VersionedObjectStateKey,
 )
 from parallax.core.internal.planned_step.observe import PredecessorRow
+from parallax.core.internal.planned_step.payload import DocumentPatches
 from parallax.core.internal.planned_step.steps import (
     INFINITY,
     PlannedStep,
@@ -27,6 +28,7 @@ __all__ = [
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
     "BoundRange",
+    "CurrentRowCapture",
     "CurrentRowOutput",
     "Derivation",
     "DerivedRow",
@@ -113,6 +115,20 @@ class CurrentRowOutput:
     row: WriteRow
     emitter: WriteRow | PlannedTemporalRevision
     predecessor_document: object | None = None
+
+
+class CurrentRowCapture(Protocol):
+    """What one execution of Planned Steps hands, as each payload is demanded,
+    to whoever captures the current rows those steps persist: each insert
+    entry with the Structured Column document its payload stores, ``None``
+    where it stores none, and each temporal revision with the patches its
+    payload applies to that document, ``None`` where it applies none."""
+
+    def inserted(self, entry: WriteRow, document: object | None, /) -> None: ...
+
+    def revised(
+        self, revision: PlannedTemporalRevision, patches: DocumentPatches | None, /
+    ) -> None: ...
 
 
 class TemporalWriteOwnership(Protocol):
