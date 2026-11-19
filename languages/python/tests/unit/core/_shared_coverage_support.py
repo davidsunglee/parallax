@@ -64,6 +64,7 @@ __all__ = [
     "ShareDoc",
     "ShareTag",
     "covered_target",
+    "covered_target_instruction",
     "day",
     "frag",
     "frag_rows",
@@ -192,13 +193,9 @@ def frag(
     return writes
 
 
-def covered_target(
-    entity: type[Bitemporal], key: int
-) -> tuple[LicensedWrite[TxStartConditioned], PredecessorRow]:
-    """A Locking target write of object ``key`` over ``[d_0, d_1)`` beside the
-    one stored rectangle ``[d_0, ∞)`` its acquisition retained, which covers
-    its whole window."""
-    stored = rectangle(entity, key, 0, None, 0)
+def covered_target_instruction(entity: type[Bitemporal], key: int) -> PreparedTargetInstruction:
+    """A target write of object ``key`` over ``[d_0, d_1)`` stating the
+    Transaction-Time start ``T0`` of the stored rectangle ``[d_0, ∞)``."""
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amendUntil",
@@ -211,6 +208,17 @@ def covered_target(
         write_preparation_of(MODEL),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
+    return prepared
+
+
+def covered_target(
+    entity: type[Bitemporal], key: int
+) -> tuple[LicensedWrite[TxStartConditioned], PredecessorRow]:
+    """A Locking target write of object ``key`` over ``[d_0, d_1)`` beside the
+    one stored rectangle ``[d_0, ∞)`` its acquisition retained, which covers
+    its whole window (:func:`covered_target_instruction`)."""
+    stored = rectangle(entity, key, 0, None, 0)
+    prepared = covered_target_instruction(entity, key)
     view = inheritance_facet_of(MODEL).entity(entity.identity)
     assert view is not None
     starting_row = RetainedStartingRow(

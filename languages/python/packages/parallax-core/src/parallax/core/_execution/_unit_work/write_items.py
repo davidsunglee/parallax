@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from typing import Final, Generic, Literal, TypeIs, TypeVar, cast, overload
+from typing import Final, Generic, Literal, Protocol, TypeIs, TypeVar, cast, overload
 
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
@@ -11,6 +11,7 @@ from parallax.core._execution._unit_work.claims import (
     WriteIntent,
     keyed_intent,
 )
+from parallax.core._execution._unit_work.effects import WritePreconditionError
 from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
     ReadEvidence,
@@ -31,9 +32,13 @@ from parallax.core._execution._unit_work.row_acquisition import RetainedStarting
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY, TemporalBound
 from parallax.core.internal.metamodel import CompiledEntity
-from parallax.core.internal.planned_step.keys import ObjectKey, VersionedObjectStateKey
+from parallax.core.internal.planned_step.keys import (
+    ObjectKey,
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
+)
 from parallax.core.internal.planned_step.managed_row import ManagedRow, RowSelection
-from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.temporal_read import Edge, TimeInterval
 from parallax.core.internal.temporal_write.coverage import (
     NO_TRANSFORM,
     CoverageTransform,
@@ -54,6 +59,9 @@ __all__ = [
     "NonTemporalOrderedWrite",
     "OrderedWrite",
     "PostRemovalInsert",
+    "Revision",
+    "RevisionCondition",
+    "SourceBacked",
     "StateObserved",
     "TemporalCoverageAuthority",
     "TemporalCoverageWrite",
@@ -246,6 +254,31 @@ class InsertionAuthorized:
     claim_scope: VersionedObjectStateKey | ObjectKey | None = None
 
 
+type Revision = int | dt.datetime
+"""A revision a caller states: a versioned row's version, or a temporal
+milestone's Transaction-Time start."""
+
+
+class RevisionCondition(Protocol):
+    """A caller's stated revision, owned by the authority it grants.
+
+    ``state`` is the condition's one stored fact: the exact state the caller
+    says the write starts from, which names ``revision``. ``holds`` answers
+    whether a stored revision — ``None`` where no row stands — is the stated
+    one, and ``refusal`` is the failed precondition raised where it is not.
+    """
+
+    @property
+    def state(self) -> VersionedObjectStateKey | TemporalObjectStateKey: ...
+
+    @property
+    def revision(self) -> Revision: ...
+
+    def holds(self, revision: Revision | None) -> bool: ...
+
+    def refusal(self) -> WritePreconditionError: ...
+
+
 @dataclass(frozen=True, slots=True)
 class VersionConditioned:
     """A caller's stated version licenses the write of a versioned
@@ -257,8 +290,18 @@ class VersionConditioned:
     stays whatever values survive.
     """
 
-    expected: ExpectedVersion
+    state: VersionedObjectStateKey
     source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
+
+    @property
+    def revision(self) -> int:
+        return self.state.version
+
+    def holds(self, revision: Revision | None) -> bool:
+        return revision == self.revision
+
+    def refusal(self) -> WritePreconditionError:
+        return _precondition_failed(self.state.object, self.revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,12 +309,30 @@ class TxStartConditioned:
     """A caller's stated Transaction-Time start licenses the write of a
     temporal object.
 
+    ``state`` names the milestone by that start and, on a Bitemporal object,
+    by the Valid-Time start of the write's window, which may lie inside the
+    milestone rather than at its own start.
+
     ``starting_row`` is the starting row a Locking write's admission read
     whole: data its range may reuse, not part of what licenses the write.
     """
 
-    expected: ExpectedTxStart
+    state: TemporalObjectStateKey
     starting_row: RetainedStartingRow | None = field(default=None, compare=False)
+
+    @property
+    def revision(self) -> dt.datetime:
+        return self.state.milestone.tx_time
+
+    def holds(self, revision: Revision | None) -> bool:
+        return revision == self.revision
+
+    def refusal(self) -> WritePreconditionError:
+        return _precondition_failed(self.state.object, self.revision)
+
+
+def _precondition_failed(key: ObjectKey, revision: Revision) -> WritePreconditionError:
+    return WritePreconditionError(key.entity, dict(key.primary_key), revision)
 
 
 type WriteAuthority = (
@@ -285,6 +346,10 @@ type WriteAuthority = (
 
 type CallerConditioned = VersionConditioned | TxStartConditioned
 """The authorities a caller's stated revision grants."""
+
+type SourceBacked = StateObserved | UnversionedLocked | InsertionAuthorized
+"""The authorities a source grants: a read's observation, a read's shared
+lock, or an insertion."""
 
 type TemporalCoverageAuthority = StateObserved | InsertionAuthorized | TxStartConditioned
 """The authorities a write against temporal coverage can carry."""
@@ -342,8 +407,8 @@ class LicensedWrite(Generic[Authority_co]):  # noqa: UP046 - PEP 695 infers inva
                 return self.object_key
             case InsertionAuthorized(claim_scope=scope):
                 return scope
-            case VersionConditioned(expected=expected):
-                return VersionedObjectStateKey(self.object_key, expected.version)
+            case VersionConditioned(state=state):
+                return state
 
     @property
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
@@ -448,10 +513,14 @@ def target_write(
     key = resolve_object_key(instruction, families)
     assert key is not None  # preparation required the key
     match prepared.expectation:
-        case ExpectedVersion() as expected:
-            authority = VersionConditioned(expected)
-        case ExpectedTxStart() as expected:
-            authority = TxStartConditioned(expected)
+        case ExpectedVersion(version=version):
+            authority = VersionConditioned(VersionedObjectStateKey(key, version))
+        case ExpectedTxStart(instant=instant):
+            window = instruction.valid_time_window
+            valid_from = None if window is None else window.start
+            authority = TxStartConditioned(
+                TemporalObjectStateKey(key, Edge(tx_time=instant, valid_time=valid_from))
+            )
     return LicensedWrite(instruction, key, authority)
 
 

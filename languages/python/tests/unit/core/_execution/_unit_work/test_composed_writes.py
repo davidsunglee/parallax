@@ -22,9 +22,7 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     LicensedWrite,
     StateObserved,
-    TxStartConditioned,
     UnversionedLocked,
-    VersionConditioned,
     is_licensed_by,
 )
 from parallax.core._execution._unit_work.write_plan import WriteGroup, WritePlan
@@ -386,8 +384,6 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         admitted_write(
             _position_write("amendUntil", MAR, MAY, value="150.00"), START, OBJECT, source=source
         ),
-        confirm_version=_unconditioned_version,
-        confirm_tx_start=_unconditioned_tx_start,
     )
     assert identity is not None
     admission.admit(
@@ -397,8 +393,6 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
             OBJECT,
             insertion=identity,
         ),
-        confirm_version=_unconditioned_version,
-        confirm_tx_start=_unconditioned_tx_start,
     )
     plan = build_write_planner(bound_model(POSITION)).finalize(
         WritePlanningRequest(
@@ -430,16 +424,6 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     assert tuple(correction.changed) == (START.key,)
     assert opening.source_evidence == ()
     assert tuple(map(id, correction.source_evidence)) == (id(source),)
-
-
-def _unconditioned_version(item: LicensedWrite[VersionConditioned]) -> None:
-    raise AssertionError(f"no target write is admitted, but {item!r} was")
-
-
-def _unconditioned_tx_start(
-    item: LicensedWrite[TxStartConditioned],
-) -> LicensedWrite[TxStartConditioned]:
-    raise AssertionError(f"no target write is admitted, but {item!r} was")
 
 
 # --------------------------------------------------------------------------- #

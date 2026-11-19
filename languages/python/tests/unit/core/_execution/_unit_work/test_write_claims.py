@@ -27,8 +27,6 @@ from parallax.core._execution._unit_work.claims import (
 )
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
-    ExpectedTxStart,
-    ExpectedVersion,
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import (
@@ -47,8 +45,11 @@ from parallax.core.internal.base import INFINITY
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import EntityIdentity
 from parallax.core.internal.planned_step import ObjectKey, VersionObservation
-from parallax.core.internal.planned_step.keys import VersionedObjectStateKey
-from parallax.core.internal.temporal_read import TimeInterval
+from parallax.core.internal.planned_step.keys import (
+    TemporalObjectStateKey,
+    VersionedObjectStateKey,
+)
+from parallax.core.internal.temporal_read import Edge, TimeInterval
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
@@ -346,8 +347,8 @@ _AUTHORITIES: tuple[WriteAuthority, ...] = (
     StateObserved(_RETAINED),
     UnversionedLocked((object_source(_PERSON_ONE),)),
     InsertionAuthorized(InsertionIdentity(_PERSON_ONE)),
-    VersionConditioned(ExpectedVersion(3)),
-    TxStartConditioned(ExpectedTxStart(_VALID_FROM)),
+    VersionConditioned(VersionedObjectStateKey(_PERSON_ONE, 3)),
+    TxStartConditioned(TemporalObjectStateKey(_PERSON_ONE, Edge(tx_time=_VALID_FROM))),
 )
 
 

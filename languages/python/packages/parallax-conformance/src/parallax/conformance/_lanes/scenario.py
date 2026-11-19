@@ -512,8 +512,9 @@ class _SimulatedUnit:
     write that unit of work refuses to admit is refused as the case's
     composition rather than leaked as the production refusal. A target write is
     buffered as the attempt's own is, through
-    :meth:`~parallax.core.internal.unit_work.UnitOfWork.buffer_target`: under Locking
-    its confirmation reads the stored row, which :func:`_simulated_unit` refuses.
+    :meth:`~parallax.core.internal.unit_work.UnitOfWork.buffer_target`: under Locking,
+    holding its stated revision reads the stored row, which
+    :func:`_simulated_unit` refuses.
 
     Each object's latest insertion identity, the handle a source of that
     insertion would carry, outlives every flush.
