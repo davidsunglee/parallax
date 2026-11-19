@@ -101,7 +101,7 @@ def report_unregistration_failure() -> None:
 _READINESS: Final[dict[RouteReadiness, tuple[int, str]]] = {
     "pending": (
         logging.WARNING,
-        "route started unverified because it could not be reached; work that requires "
+        "route started unverified because it was unavailable. Work that requires "
         "it fails until one of its connections is verified",
     ),
     "verified": (logging.INFO, "route was verified and now serves its work"),

@@ -29,13 +29,13 @@ if TYPE_CHECKING:
 __all__ = ["ReaderStartup", "open_runtime"]
 
 ReaderStartup = Literal["deferrable", "required"]
-"""Whether an unreachable reader may leave startup to finish its proof later."""
+"""Whether an unavailable reader may leave startup to finish its proof later."""
 
 
 class _ReadinessFailure(Exception):
     """A route's readiness failed, and whether that failure was only an outage.
 
-    An outage is a route that could not be reached, or whose share of the
+    An outage is an unavailable route, or one whose share of the
     budget ran out with no other failure on record. Anything else — a refused
     credential or login, a session the codecs cannot run under, a probe that
     read back the wrong thing or another login, an unconfirmed release — is a
@@ -63,10 +63,10 @@ def open_runtime(
     Both pools open before either is proved, so a retaining reader's workers
     dial while the writer is being proved and the two share the one budget's
     wall-clock time. The writer must prove itself; the reader then proves the
-    same login within what remains, or — where ``reader_startup`` permits and
-    the reader could only not be reached — is left pending, to be proved by
-    the first connection it hands over. The writer's reservation pool opens
-    beside them holding no connection, and the writer's proof stands for it.
+    same login within what remains. Where ``reader_startup`` permits, an
+    unavailable reader stays pending until a connection proves it. The writer's
+    reservation pool opens beside them holding no connection, and the writer's
+    proof stands for it.
 
     Every failure below publishes no runtime: every pool opened so far is closed
     on the way out, and a startup connection that was already acquired is

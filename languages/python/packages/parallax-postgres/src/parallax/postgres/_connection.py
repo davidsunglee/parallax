@@ -661,21 +661,12 @@ type DialReason = Literal[
 def dial_reason(failure: BaseException) -> DialReason:
     """Classify one failure met while establishing a connection.
 
-    A connection-class SQLSTATE, a server that is not accepting connections
-    yet, a connect timeout, and a driver connection failure that carries no
-    SQLSTATE all mean the route could not be reached — except where the
-    failed connection reports that it sent the server a password. The driver
-    reports a refusal the server sent while connecting without its SQLSTATE,
-    so that report is the one structured sign the server was reached and
-    refused the connection once it was offered the login; :func:`_login_refusal`
-    labels that refusal, and whichever label it picks, the route was reached.
-    A login that offers no password carries no such sign, so a server
-    refusing it before any credential is exchanged is indistinguishable from
-    one that cannot be reached. A failure that does carry an
-    authorization-class SQLSTATE is an authentication refusal too. A
-    credential the source would not produce is its own reason, and anything
-    else — a SQLSTATE nothing here names, a session the codecs cannot run
-    under — is a preparation failure.
+    Connection SQLSTATEs, a server at its connection limit, and a driver
+    failure to reach the server are unavailable. With no SQLSTATE, a capacity
+    message takes precedence over the driver's indication that it sent a
+    password. A password sent otherwise means the server refused the login
+    or, when its message identifies a missing database, preparation failed.
+    A codeless failure with no password sent leaves the route unavailable.
 
     Only a dial is classified here: a failure on an established session
     reports the password that session was opened with, which says nothing
@@ -686,8 +677,19 @@ def dial_reason(failure: BaseException) -> DialReason:
     if isinstance(failure, psycopg.OperationalError):
         state = failure.sqlstate
         if state is None:
-            return _login_refusal(failure) if _offered_password(failure) else "unavailable"
-        if state.startswith("08") or state == _CANNOT_CONNECT_NOW:
+            message = _fatal_dial_message(failure)
+            match: DialReason | None = next(
+                (
+                    reason
+                    for pattern, reason in _SERVER_DIAL_MESSAGES.values()
+                    if pattern.match(message)
+                ),
+                None,
+            )
+            if match == "unavailable" or _offered_password(failure):
+                return "authentication_refused" if match is None else match
+            return "unavailable"
+        if state.startswith("08") or state in _UNAVAILABLE_DIAL_STATES:
             return "unavailable"
         if state.startswith("28"):
             return "authentication_refused"
@@ -714,32 +716,37 @@ def _offered_password(failure: psycopg.OperationalError) -> bool:
         return False
 
 
-type _LoginRefusal = Literal["authentication_refused", "preparation_failed"]
-
-
-def _login_refusal(failure: psycopg.OperationalError) -> _LoginRefusal:
-    """Label a refusal the server sent once it was offered the login's password.
-
-    A rejected password or token, an unknown login, and a database that does
-    not exist arrive alike, so only the server's own message tells the last
-    apart from a rejected login. A message that does not match exactly — a
-    reworded or translated one included — reads as the login being refused.
-    """
+def _fatal_dial_message(failure: psycopg.OperationalError) -> str:
     try:
         attempt = failure.pgconn
         message = "" if attempt is None else attempt.error_message.decode("utf-8", "replace")
     except Exception:
-        return "authentication_refused"
-    return "preparation_failed" if _MISSING_DATABASE.search(message) else "authentication_refused"
+        return ""
+
+    leading, marker, detail = message.partition("FATAL:  ")
+    if leading:
+        prefix = leading.rsplit("\n", 1)[-1]
+        if not marker or not prefix.endswith(": "):
+            return ""
+        # libpq repeats the endpoint prefix on retries. A newline in a quoted
+        # login name does not start a new diagnostic.
+        _, _, latest = f"\n{message}".rpartition(f"\n{prefix}")
+        detail = latest.removeprefix(marker) if latest.startswith(marker) else ""
+    return detail.removesuffix("\n")
 
 
-# The server's message for a database that does not exist, as the last line
-# the attempt reported. The server prints the name unescaped, so the name may
-# itself hold double quotes.
-_MISSING_DATABASE: Final = re.compile(
-    r'(?:^|: )FATAL:  database "[^\n]*" does not exist\n?\Z', re.MULTILINE
-)
+_SERVER_DIAL_MESSAGES: Final[dict[str, tuple[re.Pattern[str], DialReason]]] = {
+    "server-full": (re.compile(r"sorry, too many clients already"), "unavailable"),
+    "connection-limit": (
+        re.compile(r'too many connections for (?:role|database) "'),
+        "unavailable",
+    ),
+    "reserved-slots": (re.compile(r"remaining connection slots are reserved for"), "unavailable"),
+    # The server prints the database name unescaped, including any double quotes.
+    "missing-database": (re.compile(r'database ".*" does not exist\Z'), "preparation_failed"),
+}
 _CANNOT_CONNECT_NOW: Final = "57P03"
+_UNAVAILABLE_DIAL_STATES: Final = frozenset({_CANNOT_CONNECT_NOW, "53300"})
 _SERVER_GONE: Final = frozenset({_CANNOT_CONNECT_NOW, "57P01", "57P02"})
 
 

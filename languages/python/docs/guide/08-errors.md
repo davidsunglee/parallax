@@ -594,9 +594,10 @@ The other failures around the database fall outside the categories, and each als
 reaches you as itself:
 
 - **No connection.** `ConnectionAcquisitionError` means Parallax couldn't get a
-  connection, and its `reason` says why. When checkout runs out of time, an
-  unreachable dial still on record reports `"unavailable"` even if the dial
-  failed before checkout began. A wait for busy connections with no failure on
+  connection, and its `reason` says why. A dial that cannot reach PostgreSQL or
+  meets a connection limit reports `"unavailable"`. When checkout runs out of
+  time, it can report that failure from the route's record. The chained driver
+  error identifies a capacity refusal. A wait for busy connections with no failure on
   record reports `"timeout"`. Acquisition failures aren't retried because no
   attempt began. See the pool's timeouts in the
   [PostgreSQL lifecycle guide](../postgresql-lifecycle.md#timeouts).

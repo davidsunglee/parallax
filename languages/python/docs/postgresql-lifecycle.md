@@ -508,8 +508,8 @@ does not declare it: a `read_only(..., isolation="serializable")` under
 
 `reader_preferred` gives the reader at most half of `acquire_timeout` and the
 writer whatever remains of the whole. It moves to the writer for two reasons
-only, both before any of your code or modeled SQL runs: the reader could not be
-reached (`fallback="unavailable"`), or the connection it handed over was lost
+only, both before any of your code or modeled SQL runs: the reader is
+unavailable (`fallback="unavailable"`), or the connection it handed over was lost
 while it was still being set up — its proof, a principal's `SET ROLE`, or a
 transaction's first `BEGIN` (`fallback="connection_lost"`). That loss is the
 same single resend a broken connection's first request always gets, spent on
@@ -522,12 +522,12 @@ with no failed dial on record, a full queue, a closed root, a refused
 credential or login, a role the reader denies, a reader whose verification
 refused it, and a connection whose disposal could not be confirmed. A
 retaining reader opens connections on its own threads. When checkout runs out
-of time, it reports the latest dial failure still on record. An unreachable
+of time, it reports the latest dial failure still on record. An unavailable
 dial can therefore lead to fallback even if it failed before checkout began
 or the pool has other connections in use. An on-demand reader reports a dial
 failure on the caller's thread.
 
-When the reader is known to be unreachable and has no idle connection, one
+When the reader is known to be unavailable and has no idle connection, one
 preferred acquisition at a time tries it within its half and concurrent
 preferred acquisitions go straight to the writer. A retaining pool backs off
 between reconnect attempts. Until it has a usable connection, each sequential
@@ -571,7 +571,7 @@ initial fill, the pool can grow to `min_size + 1` at startup, bounded by
 Readiness proves the writer first and then the reader, within what remains of
 the one `startup_timeout`, and the reader must authenticate the same login as
 the writer however its credentials differ — an endpoint-specific IAM token
-included. A reader that cannot be reached leaves the root opening anyway with
+included. An unavailable reader leaves the root opening anyway with
 the reader's readiness pending, unless the adapter says `reader_startup="required"`;
 a refused credential, an unusable session, or another login fails the open
 either way. While the reader is pending, every connection it hands over is
@@ -580,23 +580,20 @@ makes the reader serve. A deferral, the reader becoming verified, and the
 reader being refused are each reported once on `parallax.resources`, and each
 pool sample carries its route's readiness.
 
-The driver reports a refusal the server sent while connecting with no
-SQLSTATE. Where the endpoint's login sends a password — a configured credential
-source, an IAM token included — the failed connection still says it sent one,
-and that is read as the server refusing it (`reason="authentication_refused"`):
-a rejected password or token, an unknown login, or anything else the server
-refused once the login was offered. The one exception is a database that does
-not exist: where the server's message is exactly PostgreSQL's
-`database "<name>" does not exist`, the reason is `"preparation_failed"`, and a
-reworded or translated message stays `"authentication_refused"`. Either way the
-refusal fails the open even under deferrable startup and is never a
-reason to fall back. A login that sends no password carries no such sign, so a
-server refusing it before any credential is exchanged — a `pg_hba.conf`
-rejection, say — reaches Parallax looking exactly like an unreachable server,
-as does a mistyped host. Under the default deferrable startup either one leaves
-the reader pending rather than failing the open, and `reader_preferred` falls
-back from it; a deployment that wants them to fail its rollout says
-`reader_startup="required"`.
+A server at its connection limit reports `reason="unavailable"`. This
+includes a server-wide limit, reserved slots, and per-role or per-database
+limits. The chained driver error carries PostgreSQL's message, which
+identifies the refusal. When a dial carries no SQLSTATE, Parallax recognizes
+capacity refusals by their English message.
+
+For other codeless refusals, the driver's indication that it sent a password
+means `reason="authentication_refused"`. An exact `database "<name>" does not exist`
+message after a password was sent reports `"preparation_failed"`. A reworded or
+translated message that misses both checks follows the password indication.
+With no password sent, the refusal appears as `"unavailable"`, as can happen
+with an early `pg_hba.conf` rejection. Under deferrable startup, `unavailable`
+leaves the reader pending and permits preferred reads to fall back.
+`reader_startup="required"` makes an unavailable reader fail the open.
 
 ## Timeouts
 

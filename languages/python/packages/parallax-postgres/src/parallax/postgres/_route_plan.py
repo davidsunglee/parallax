@@ -51,10 +51,9 @@ class RoutePlan:
     ) -> FallbackReason | None:
         """The fallback a step's failure earns, or ``None`` where it ends the acquisition.
 
-        Only a route that could not be reached and a connection lost while it
-        was still being set up qualify: anything else — a spent share, a
-        refused credential, login, or role, a closed runtime — is something the
-        next route would not fix, or a healthy route merely being busy.
+        An unavailable route or a connection lost during lease setup
+        qualifies. A busy reader with an empty dial record reports a timeout
+        and ends the acquisition.
         """
         if failure == "unavailable":
             return "unavailable"

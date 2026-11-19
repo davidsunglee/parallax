@@ -139,7 +139,7 @@ class PostgresAdapter:
         acquired from it, initialized, and made to decode an integer, an
         unbounded instant, a structured document, and a Float32 and a Float64
         exactly, and it was given back — the reader's having authenticated the
-        writer's login — unless an unreachable reader was deferred. A failure at
+        writer's login — unless an unavailable reader was deferred. A failure at
         any of those raises :class:`~parallax.core.internal.db_port.DatabaseStartupError`
         naming the route and the phase, and publishes no runtime: every pool is
         closed and a startup connection already acquired goes through the

@@ -3054,7 +3054,7 @@ def test_a_pending_proof_still_spends_the_acquisition_s_own_deadline(
         (psycopg.errors.ConnectionTimeout("connect timeout"), "unavailable"),
         (_Stated("28P01"), "authentication_refused"),
         (_Stated("3D000"), "preparation_failed"),
-        (_Stated("53300"), "preparation_failed"),
+        (_Stated("53300"), "unavailable"),
         (psycopg.ProgrammingError("invalid option"), "preparation_failed"),
         (CredentialResolutionError("no token"), "credentials_refused"),
         (IncompatibleSessionError("DateStyle"), "preparation_failed"),
@@ -3799,6 +3799,48 @@ def test_only_the_exact_missing_database_message_relabels_a_password_refusal(
 
     assert dial_reason(refused) == reason
     assert RoutePlan.falls_back_on(dial_reason(refused)) is None
+
+
+@pytest.mark.parametrize(
+    ("message", "used_password"),
+    [
+        ("sorry, too many clients already", False),
+        ('too many connections for role "app"', True),
+        ('too many connections for database "app"', True),
+        ("remaining connection slots are reserved for roles with the SUPERUSER attribute", True),
+        (
+            "remaining connection slots are reserved for roles with privileges of the "
+            '"pg_use_reserved_connections" role',
+            True,
+        ),
+    ],
+)
+def test_capacity_refusals_are_unavailable_without_sqlstate(
+    message: str, used_password: bool
+) -> None:
+    attempt = _Attempt(
+        used_password=used_password, error_message=_REFUSED_AT + f"FATAL:  {message}\n"
+    )
+
+    assert dial_reason(_ConnectFailed(attempt)) == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        'too many connections for user "app"',
+        "Lo sentimos, ya hay demasiados clientes",
+        'password authentication failed for user "app: FATAL:  too many connections for role "',
+        'password authentication failed for user "x\nFATAL:  sorry, too many clients already"',
+        "sorry, too many clients already\n"
+        + _REFUSED_AT
+        + "server closed the connection unexpectedly",
+    ],
+)
+def test_an_unmatched_refusal_with_a_password_sent_is_authentication_refused(message: str) -> None:
+    attempt = _Attempt(used_password=True, error_message=_REFUSED_AT + f"FATAL:  {message}\n")
+
+    assert dial_reason(_ConnectFailed(attempt)) == "authentication_refused"
 
 
 class _MessageUnreadable:
