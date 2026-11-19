@@ -383,9 +383,10 @@ native disposal or accounting that itself failed cannot make.
 proves the writer first and then the reader, within the same one budget, and
 the reader's proof MUST also establish that it authenticated the writer's
 Database Login Identity, however differently the two are credentialed. A
-mismatch, and any readiness failure other than an unavailable reader, fails the
-open and releases both routes. Readiness adds no physical-writer check: a
-writer route that reaches a replica stays valid, and its writes fail natively.
+login mismatch or other readiness failure fails the open and releases both
+routes, subject to the reader deferral rule below. Readiness adds no
+physical-writer check: a writer route that reaches a replica stays valid, and
+its writes fail natively.
 
 **An unavailable reader MAY defer its proof.** Where configuration
 permits it, a reader that is unavailable — or whose share of the budget

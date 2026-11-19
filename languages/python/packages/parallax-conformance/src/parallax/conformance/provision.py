@@ -987,7 +987,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         ``reader`` adds a reader route — usually one of this container's own
         :meth:`endpoint` values — and ``reader_startup`` says what opening does
-        when it cannot be reached.
+        when it is unavailable.
 
         A runtime it opens and a proof leaves open is closed and counted with the
         case's own.

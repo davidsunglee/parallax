@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,7 +19,9 @@ from tests._support.distributions import Wheelhouse, build_wheelhouse
 from tests._support.root_ownership import close_owned_roots
 
 if TYPE_CHECKING:
+    from parallax.conformance._database_control import DriverControl
     from parallax.conformance.profile import Profile
+    from parallax.postgres import PostgresEndpoint
 
 # Database-backed checks skipped because Docker/Postgres was unavailable — printed
 # in a final summary so a skip is never silent; CI fails on any skip.
@@ -353,6 +355,59 @@ def profile_run(profile: Profile) -> Iterator[Any]:
         yield run
     finally:
         opened.close()
+
+
+@pytest.fixture
+def connection_limit_server(profile_run: Any) -> Iterator[tuple[DriverControl, PostgresEndpoint]]:
+    """An isolated Postgres for cluster-wide connection-limit canaries.
+
+    Requesting the shared run selects the database lane and its server version.
+    """
+    from psycopg.conninfo import make_conninfo
+    from testcontainers.community.postgres import PostgresContainer
+
+    from parallax.conformance import constants
+    from parallax.conformance._postgres_control import PostgresControl
+    from parallax.core.internal.db_port import Password
+    from parallax.postgres import PostgresEndpoint
+
+    with ExitStack() as opened:
+        try:
+            server = PostgresContainer(  # database-access: cannot cap profile_run's shared server
+                constants.POSTGRES_IMAGE,
+                driver=None,
+                command=[
+                    "postgres",
+                    "-c",
+                    "max_connections=8",
+                    "-c",
+                    "superuser_reserved_connections=1",
+                    "-c",
+                    "reserved_connections=1",
+                ],
+            )
+            opened.callback(server.stop)
+            server.start()  # database-access: same isolated limits fixture
+            admin = PostgresControl.open(  # database-access: owns the isolated server's admin
+                server.get_connection_url(), autocommit=True, prepare_threshold=None
+            )
+            opened.enter_context(closing(admin))
+            endpoint = PostgresEndpoint(
+                make_conninfo(
+                    host=server.get_container_host_ip(),
+                    port=server.get_exposed_port(server.port),
+                    user=server.username,
+                    dbname=server.dbname,
+                ),
+                credentials=Password(server.password),
+            )
+        except Exception as exc:
+            reason = (
+                f"Testcontainers connection-limit Postgres unavailable: {type(exc).__name__}: {exc}"
+            )
+            record_db_skip(reason)
+            pytest.skip(reason)
+        yield admin, endpoint
 
 
 @pytest.fixture(scope="session")

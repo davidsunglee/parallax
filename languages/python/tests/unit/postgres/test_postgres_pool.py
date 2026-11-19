@@ -3723,9 +3723,18 @@ def test_an_on_demand_pool_dials_again_on_every_later_demand() -> None:
 class _Attempt:
     """The finished connection a driver connect failure carries."""
 
-    def __init__(self, *, used_password: bool, error_message: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        used_password: bool,
+        error_message: str = "",
+        user: str = "",
+        db: str = "",
+    ) -> None:
         self.used_password = used_password
         self.error_message = error_message.encode()
+        self.user = user.encode()
+        self.db = db.encode()
 
 
 class _ConnectFailed(psycopg.OperationalError):
@@ -3841,6 +3850,42 @@ def test_an_unmatched_refusal_with_a_password_sent_is_authentication_refused(mes
     attempt = _Attempt(used_password=True, error_message=_REFUSED_AT + f"FATAL:  {message}\n")
 
     assert dial_reason(_ConnectFailed(attempt)) == "authentication_refused"
+
+
+@pytest.mark.parametrize(
+    ("report", "reason"),
+    [
+        ('too many connections for role "app"', "unavailable"),
+        ('database "app" does not exist', "preparation_failed"),
+    ],
+)
+def test_the_latest_native_failure_can_name_a_different_server(report: str, reason: str) -> None:
+    attempt = _Attempt(
+        used_password=True,
+        error_message=(
+            f"{_REFUSED_AT}FATAL:  the database system is shutting down\n"
+            f'connection to server at "other" (127.0.0.2), port 5433 failed: FATAL:  {report}\n'
+        ),
+    )
+    assert dial_reason(_ConnectFailed(attempt)) == reason
+
+
+def test_a_role_name_can_contain_a_native_report_prefix() -> None:
+    user = f"cap\n{_REFUSED_AT}x"
+    attempt = _Attempt(
+        used_password=True,
+        user=user,
+        error_message=f'{_REFUSED_AT}FATAL:  too many connections for role "{user}"\n',
+    )
+    assert dial_reason(_ConnectFailed(attempt)) == "unavailable"
+
+
+def test_a_localized_libpq_prefix_can_report_an_english_missing_database() -> None:
+    attempt = _Attempt(
+        used_password=True,
+        error_message='Verbindung fehlgeschlagen: FATAL:  database "app" does not exist\n',
+    )
+    assert dial_reason(_ConnectFailed(attempt)) == "preparation_failed"
 
 
 class _MessageUnreadable:

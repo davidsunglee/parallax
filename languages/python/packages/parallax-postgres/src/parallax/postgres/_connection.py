@@ -716,23 +716,39 @@ def _offered_password(failure: psycopg.OperationalError) -> bool:
         return False
 
 
+_LIBPQ_DIAL_PREFIX: Final = re.compile(
+    rb'^connection to server (?:at "[^\n]*?"(?: \([^\n)]+\))?, port [^\n]+?'
+    rb'|on socket "[^\n]*?") failed: ',
+    re.MULTILINE,
+)
+
+
 def _fatal_dial_message(failure: psycopg.OperationalError) -> str:
     try:
         attempt = failure.pgconn
-        message = "" if attempt is None else attempt.error_message.decode("utf-8", "replace")
+        if attempt is None:
+            return ""
+        message = attempt.error_message
+        # The startup packet's names are truncated to 63 bytes on the server.
+        # A newline in one of these quoted values cannot start another report.
+        for name in (attempt.user[:63], attempt.db[:63]):
+            if b"\n" in name:
+                quoted = b'"' + name + b'"'
+                message = message.replace(quoted, quoted.replace(b"\n", b"\0"))
     except Exception:
         return ""
 
-    leading, marker, detail = message.partition("FATAL:  ")
-    if leading:
-        prefix = leading.rsplit("\n", 1)[-1]
-        if not marker or not prefix.endswith(": "):
-            return ""
-        # libpq repeats the endpoint prefix on retries. A newline in a quoted
-        # login name does not start a new diagnostic.
-        _, _, latest = f"\n{message}".rpartition(f"\n{prefix}")
-        detail = latest.removeprefix(marker) if latest.startswith(marker) else ""
-    return detail.removesuffix("\n")
+    reports = _LIBPQ_DIAL_PREFIX.split(message)
+    latest = reports[-1].removesuffix(b"\n")
+    marker = b"FATAL:  "
+    if len(reports) == 1 and not latest.startswith(marker):
+        # A localized libpq wrapper may still carry an English server message.
+        before, found, detail = latest.rsplit(b"\n", 1)[-1].partition(marker)
+        if found and before.endswith(b": "):
+            latest = found + detail
+    if latest.startswith(marker):
+        return latest.removeprefix(marker).replace(b"\0", b"\n").decode("utf-8", "replace")
+    return ""
 
 
 _SERVER_DIAL_MESSAGES: Final[dict[str, tuple[re.Pattern[str], DialReason]]] = {

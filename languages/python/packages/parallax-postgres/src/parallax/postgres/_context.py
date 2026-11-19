@@ -400,7 +400,7 @@ class PostgresConnectionContext:
         """Establish this lease on the current step's route, or raise.
 
         A step a later one follows does not wait on a route already known to
-        be unreachable unless it holds that route's one probe slot. The holder
+        be unavailable unless it holds that route's one probe slot. The holder
         tries the route within the step's share, and everyone else moves on at
         once. The slot is given back however this step ends.
         """

@@ -85,12 +85,11 @@ connection for every page.
 A `reader=PostgresEndpoint(...)` beside the `writer` declares a reader route
 with its own credentials and retention. New reads then default to it, writable
 transactions stay on the writer, and both routes must authenticate the same
-login; `reader_startup="required"` makes an unreachable reader fail `connect`
-instead of leaving the reader pending. `with_routing(read_policy="reader_preferred")`
-reads from the reader and moves to the writer, within the same
-`acquire_timeout`, only where the reader cannot be reached or loses its
-connection before any of your work runs; each route keeps its own `max_size`,
-so a two-route root can hold both pools' connections in every process.
+login. With `reader_startup="required"`, an unavailable reader fails `connect`.
+With `with_routing(read_policy="reader_preferred")`, a read moves to the writer
+within the same `acquire_timeout` when the reader is unavailable or loses its
+connection during setup. Each route keeps its own `max_size`, so a two-route
+root can hold both pools' connections in every process.
 
 An endpoint's `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
