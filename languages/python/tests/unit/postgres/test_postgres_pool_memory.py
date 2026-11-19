@@ -1,9 +1,10 @@
 """What an idle key-reservation pool costs the interpreter before it connects.
 
-The pool is the production one: ``open_reservation_route`` over a writer
-endpoint at its default retention, whose reservation capacity is one
-connection, kept by one worker, with nothing retained at the minimum, so
-opening it starts the pool's threads and dials nothing. Its
+The pool is the production one: the reservation pool ``PostgresDriver.open_pool``
+opens over a writer endpoint at its default retention, reporting to a real dial
+ledger, whose reservation capacity is one connection, kept by one worker, with
+nothing retained at the minimum, so opening it starts the pool's threads and
+dials nothing. Its
 credential source refuses and records being asked, so an accidental connection
 attempt fails the reading rather than measuring a connection that should not
 exist.
@@ -11,7 +12,7 @@ exist.
 Two cells. ``pool-open-live`` reads the Python bytes reachable while one such
 pool is open; ``pool-start-close-cycle`` reads what repeated opening and
 closing accumulates and what one cycle allocates and frees again. The
-accumulated figure is reported rather than graded: each route builds its own
+accumulated figure is reported rather than graded: each pool builds its own
 connection class, and how many of those the collector has yet to free at the
 sample moves it by kilobytes without growing with the cycles. The process's
 thread count is read beside them, before the pool, while it is open, and once
@@ -30,10 +31,12 @@ from typing import Final
 
 import pytest
 
-from parallax.core.internal.db_port import CredentialResolutionError, Password
-from parallax.postgres import PoolOptions
+from parallax.core.internal.db_port import CredentialResolutionError, Password, PoolPurpose
+from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.postgres import PoolOptions, PostgresAdapter
+from parallax.postgres._driver import PostgresDriver
 from parallax.postgres._endpoint import PostgresEndpoint
-from parallax.postgres._route import PostgresRoute, open_reservation_route, open_route
+from parallax.postgres._pool import PostgresPool
 from tests._support.pooled_key_diagnostic import requested, write_readings
 from tests.unit.memory_instruments import (
     REPEATS,
@@ -64,17 +67,22 @@ def _endpoint(credentials: _Refusing, options: PoolOptions) -> PostgresEndpoint:
     return PostgresEndpoint("host=127.0.0.1 port=1", credentials=credentials, pool=options)
 
 
-def _route(credentials: _Refusing) -> PostgresRoute:
-    """The reservation pool a writer at its default retention opens."""
-    return open_reservation_route(
-        _endpoint(credentials, PoolOptions()), acquire_timeout=1.0, prepare_threshold=None
+def _opened(credentials: _Refusing, options: PoolOptions, purpose: PoolPurpose) -> PostgresPool:
+    configuration = PostgresAdapter(
+        writer=_endpoint(credentials, options), acquire_timeout=1.0, prepare_threshold=None
     )
+    return PostgresDriver(configuration).open_pool("writer", purpose, DialLedger())
 
 
-def never_dialed(credentials: _Refusing, route: PostgresRoute) -> None:
+def _pool(credentials: _Refusing) -> PostgresPool:
+    """The reservation pool a writer at its default retention opens."""
+    return _opened(credentials, PoolOptions(), "reservation")
+
+
+def never_dialed(credentials: _Refusing, pool: PostgresPool) -> None:
     """Refuse a pool that asked for a credential, counted a connection attempt,
     or served a checkout."""
-    metrics = route.pool.metrics()
+    metrics = pool.metrics()
     attempted = metrics.connections_num + metrics.requests_num
     if credentials.asked.is_set() or attempted:
         raise AssertionError(f"the idle pool reached for a connection: {metrics}")
@@ -85,25 +93,25 @@ def _threads_around() -> tuple[int, int, int]:
     after checking it dialed nothing."""
     credentials = _Refusing()
     before = threading.active_count()
-    route = _route(credentials)
+    pool = _pool(credentials)
     opened = threading.active_count()
-    never_dialed(credentials, route)
-    route.abandon()
+    never_dialed(credentials, pool)
+    pool.close()
     return before, opened, threading.active_count()
 
 
 def _open_live(credentials: _Refusing) -> Seam:
     def seam(sample: Callable[[], None]) -> None:
-        route = _route(credentials)
+        pool = _pool(credentials)
         sample()
-        route.abandon()
+        pool.close()
 
     return seam
 
 
 def _cycle(credentials: _Refusing) -> Seam:
     def seam(sample: Callable[[], None]) -> None:
-        _route(credentials).abandon()
+        _pool(credentials).close()
         sample()
 
     return seam
@@ -164,18 +172,13 @@ def test_an_idle_pool_opened_and_closed_repeatedly_dials_nothing_and_ends_its_th
 
 def test_a_pool_that_reaches_for_a_connection_fails_the_reading() -> None:
     credentials = _Refusing()
-    route = open_route(
-        _endpoint(credentials, PoolOptions(min_size=1, max_size=1, num_workers=1)),
-        "writer",
-        acquire_timeout=1.0,
-        prepare_threshold=None,
-    )
+    pool = _opened(credentials, PoolOptions(min_size=1, max_size=1, num_workers=1), "application")
     try:
         assert credentials.asked.wait(timeout=10.0)
         with pytest.raises(AssertionError, match="reached for a connection"):
-            never_dialed(credentials, route)
+            never_dialed(credentials, pool)
     finally:
-        route.abandon()
+        pool.close()
 
 
 if __name__ == "__main__":

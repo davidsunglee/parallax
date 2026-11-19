@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-import math
 import sys
 from collections.abc import Callable
 from time import monotonic
 from types import TracebackType
-from typing import TYPE_CHECKING, Final, Literal
-
-import psycopg
-from psycopg.pq import TransactionStatus
-from psycopg.rows import TupleRow
+from typing import TYPE_CHECKING, Final
 
 from parallax.core.internal.db_port import (
     CheckoutFailed,
@@ -22,35 +17,24 @@ from parallax.core.internal.db_port import (
     ConnectionPool,
     DatabaseConnection,
     DialReason,
+    ExecutionAccess,
     FallbackReason,
     Invalidated,
+    NativeDriver,
+    NativeOperation,
+    NotIdle,
+    ProbeMismatch,
     ReleaseUnconfirmed,
     Returned,
     RouteSelection,
+    SubmissionProgress,
+    displaced_control_flow,
 )
 from parallax.core.internal.diagnostics import diagnostic_for
-from parallax.core.internal.dialect import POSTGRES
-from parallax.postgres._authorization import (
-    PostgresRole,
-    _install_setup,  # pyright: ignore[reportPrivateUsage] - the lease's session setup, run as its first send
-    _role_statement,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
-    statement_timeout,
-)
-from parallax.postgres._authorization import restore_role as _restore_role
-from parallax.postgres._connection import (
-    PostgresConnection,
-    _displaced_control_flow,  # pyright: ignore[reportPrivateUsage] - the adapter's one reading of an interrupt a driver failure displaced
-    _execute_rows,  # pyright: ignore[reportPrivateUsage] - the one read operation, submitting a pending route's proof
-)
-from parallax.postgres._failures import session_lost
-from parallax.postgres._route import PROBE_SQL, ProbeMismatch, check_probe
 from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
     from parallax.core.internal.db_port._runtime._dial_record import DialLedger
-    from parallax.postgres._connection import (
-        _NativeOperation,  # pyright: ignore[reportPrivateUsage] - the runner's operation shape
-    )
     from parallax.postgres._route import PostgresRoute
 
 __all__ = ["PostgresConnectionContext", "Step"]
@@ -70,8 +54,6 @@ _LOST = (
     "nothing further; acquire another one through the Database that owns the runtime"
 )
 
-type _FirstSend = Literal["available", "submitting", "spent"]
-
 
 class _Condition(Exception):
     """A cleanup condition that no exception reported, stated as one.
@@ -87,7 +69,7 @@ def _issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> Cleanu
     return CleanupIssue(phase=phase, code=code, diagnostic=diagnostic_for(exc))
 
 
-def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleRow]:
+def checkout[C](route: PostgresRoute[C], deadline: float) -> C:
     """Take a connection out of ``route``'s pool within ``deadline``, or raise.
 
     The remaining budget is what the pool's checkout is given, so its wait
@@ -171,8 +153,6 @@ _UNVERIFIED = (
     "the connection handed over while its route's readiness was pending could not be verified"
 )
 
-_PROBE_SQL: Final = PROBE_SQL.encode()
-
 
 def _refused(refusal: ProbeMismatch) -> ConnectionAcquisitionError:
     """The failure every acquisition on a refused route reports, chained to why."""
@@ -184,19 +164,13 @@ def _refused(refusal: ProbeMismatch) -> ConnectionAcquisitionError:
     return refused
 
 
-def _status(connection: psycopg.Connection[TupleRow]) -> TransactionStatus | None:
-    try:
-        return TransactionStatus(connection.pgconn.transaction_status)
-    except Exception:
-        return None
-
-
-def release(
-    pool: ConnectionPool[psycopg.Connection[TupleRow]],
-    connection: psycopg.Connection[TupleRow],
+def release[C, A](
+    driver: NativeDriver[C, A],
+    pool: ConnectionPool[C],
+    connection: C,
     *,
     suspect: bool,
-    restore_role: bool = False,
+    restore_authorization: bool = False,
 ) -> CleanupResult:
     """End this connection's exclusive use, and report what that established.
 
@@ -219,26 +193,28 @@ def release(
     if suspect:
         issues.append(_issue("inspect", "suspect", _Condition("the execution marked it suspect")))
     else:
-        status = _status(connection)
-        if status is None:
+        reading = driver.read_idle(connection)
+        if reading == "unreadable":
             dispose = True
             issues.append(
                 _issue("inspect", "state-unreadable", _Condition("its state could not be read"))
             )
-        elif status != TransactionStatus.IDLE:
+        elif isinstance(reading, NotIdle):
             dispose = True
-            issues.append(_issue("inspect", "not-idle", _Condition(f"its state was {status.name}")))
+            issues.append(
+                _issue("inspect", "not-idle", _Condition(f"its state was {reading.state}"))
+            )
 
-    if not dispose and restore_role:
+    if not dispose and restore_authorization:
         try:
-            _restore_role(connection)
+            driver.restore_authorization(connection)
         except Exception as exc:
             dispose = True
             issues.append(_issue("restore", "authorization-restore-failed", exc))
 
     if dispose:
         try:
-            connection.close()
+            driver.close_connection(connection)
         except Exception as exc:
             issues.append(_issue("dispose", "close-failed", exc))
             return ReleaseUnconfirmed(tuple(issues))
@@ -253,7 +229,7 @@ def release(
     return Invalidated(tuple(issues)) if dispose else Returned(tuple(issues))
 
 
-type Step = tuple["PostgresRoute", float]
+type Step[C] = tuple["PostgresRoute[C]", float]
 """One route an acquisition may be served on, and the absolute deadline by
 which that route must have served it."""
 
@@ -262,18 +238,19 @@ class _FellBack(Exception):
     """Entry left the current step for the next one, which it now establishes."""
 
 
-class PostgresConnectionContext:
+class PostgresConnectionContext[C, A]:
     """One single-use acquisition of a connection, served on the first route of
-    its plan that can serve it.
+    its plan that can serve it, and the lease its execution borrows that
+    connection through.
 
     Creating it takes nothing. Entering it checks out, verifies the connection
     is idle, checks admission against the step's deadline, proves the
     connection where its route's readiness is still pending, installs any
-    bound role, installs a statement timeout where the lease carries a statement
-    deadline, rechecks admission after that provider work, and yields fresh
-    execution access. Leaving it revokes that access and releases the
-    connection once, restoring an installed role only where the session
-    remains reusable.
+    bound authorization, bounds statement time where the lease carries a
+    statement deadline, rechecks admission after that provider work, and yields
+    fresh execution access. Leaving it revokes that access and releases the
+    connection once, restoring an installed authorization only where the
+    session remains reusable.
 
     Entry is permitted once and once only, including after an entry that failed:
     a failed entry has already run cleanup over whatever it took and left what
@@ -283,7 +260,7 @@ class PostgresConnectionContext:
     The context is the only holder of the physical connection for the whole
     lease: execution borrows the current one for each operation. That is what
     lets the lease's actual first submission — a pending route's proof, its
-    role installation, an outer ``BEGIN``, or a read or batch of reads its
+    authorization, an outer ``BEGIN``, or a read or batch of reads its
     caller designated — run once more if it meets a broken session: the
     connection is disposed of and handed back, another is taken within the
     step's deadline, and the same prepared submission is made on it, all
@@ -297,7 +274,7 @@ class PostgresConnectionContext:
     being set up. A loss of that kind is the same one
     opportunity a first submission has, spent moving to the next route instead
     of retrying on this one, and only where the submission is setup: a proof,
-    a role installation, or an outer ``BEGIN``. A designated read is modeled
+    an authorization, or an outer ``BEGIN``. A designated read is modeled
     work, so its one replacement stays on the route that began serving it.
     Whatever the plan, entry reports the route it ended on as its selection,
     and how it got there, a failed entry's refusal included.
@@ -305,15 +282,16 @@ class PostgresConnectionContext:
 
     __slots__ = (
         "_admit",
+        "_authorization",
         "_authorized",
         "_cleanup_result",
+        "_driver",
         "_entering",
         "_execution",
         "_expected_login",
-        "_first_send_state",
+        "_first_send_available",
         "_opening",
         "_resource",
-        "_role",
         "_route",
         "_selection",
         "_statement_deadline",
@@ -326,9 +304,10 @@ class PostgresConnectionContext:
 
     def __init__(
         self,
-        steps: tuple[Step, ...],
+        steps: tuple[Step[C], ...],
         admit: Admit,
-        role: PostgresRole | None,
+        driver: NativeDriver[C, A],
+        authorization: A | None,
         *,
         expected_login: str | None,
         statement_deadline: float | None = None,
@@ -340,7 +319,8 @@ class PostgresConnectionContext:
         self._step_deadline = step_deadline
         self._selection = RouteSelection(route.route)
         self._admit = admit
-        self._role = role
+        self._driver = driver
+        self._authorization = authorization
         self._expected_login = expected_login
         self._statement_deadline = statement_deadline
         self._used = False
@@ -348,9 +328,9 @@ class PostgresConnectionContext:
         self._opening = False
         self._authorized = False
         self._suspect = False
-        self._first_send_state: _FirstSend = "available"
-        self._resource: psycopg.Connection[TupleRow] | CleanupResult | None = None
-        self._execution: PostgresConnection | None = None
+        self._first_send_available = True
+        self._resource: C | CleanupResult | None = None
+        self._execution: ExecutionAccess | None = None
         self._cleanup_result: CleanupResult | None = None
 
     @property
@@ -383,7 +363,7 @@ class PostgresConnectionContext:
         finally:
             self._entering = False
         self._opening = True
-        execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
+        execution = self._driver.open_execution(self)
         self._execution = execution
         return execution
 
@@ -418,7 +398,7 @@ class PostgresConnectionContext:
             if probing:
                 route.release_probe()
 
-    def _require_unrefused(self, route: PostgresRoute) -> None:
+    def _require_unrefused(self, route: PostgresRoute[C]) -> None:
         refusal = route.refusal
         if refusal is not None:
             self._cleanup_result = self._settled(suspect=False)
@@ -436,7 +416,7 @@ class PostgresConnectionContext:
         self._step_deadline = step_deadline
         self._selection = RouteSelection(route.route, reason)
 
-    def _check_out(self, route: PostgresRoute) -> None:
+    def _check_out(self, route: PostgresRoute[C]) -> None:
         try:
             self._resource = checkout(route, self._step_deadline)
         except ConnectionAcquisitionError as refused:
@@ -448,7 +428,7 @@ class PostgresConnectionContext:
             self._cleanup_result = self._settled(suspect=False)
             raise
         try:
-            self._require_idle(self._current_native())
+            self._require_idle(self.current_connection())
             self._admit(self._step_deadline)
         except BaseException:
             # Nothing modeled has run, so what was taken is given back through
@@ -459,11 +439,13 @@ class PostgresConnectionContext:
             raise
 
     def _authorize(self) -> None:
-        role = self._role
-        if role is None:
+        authorization = self._authorization
+        if authorization is None:
             return
         try:
-            self._run_native(_install_setup, _role_statement(role), replay_safe=True, setup=True)
+            self.run(
+                self._driver.install_authorization, authorization, replay_safe=True, setup=True
+            )
         except _FellBack:
             raise
         except BaseException as exc:
@@ -478,16 +460,16 @@ class PostgresConnectionContext:
         try:
             self._admit(self._step_deadline)
         except BaseException:
-            self._cleanup_result = self._settled(suspect=False, restore_role=True)
+            self._cleanup_result = self._settled(suspect=False, restore_authorization=True)
             self._authorized = False
             raise
 
     def _bound_statements(self) -> None:
-        """Install what remains of the statement deadline as the session's
-        ``statement_timeout``, so a statement stalled on a live server — on a
-        lock included — fails within it.
+        """Bound the session's statement time by what remains of the statement
+        deadline, so a statement stalled on a live server — on a lock
+        included — fails within it.
 
-        Setup rather than a modeled statement, like the role installation. Only
+        Setup rather than a modeled statement, like the authorization. Only
         the reservation pool's single-route leases carry a statement deadline,
         so a lost session is replaced on that route rather than another, and
         every one of them installs its own, so the setting never outlives its
@@ -496,10 +478,12 @@ class PostgresConnectionContext:
         deadline = self._statement_deadline
         if deadline is None:
             return
-        milliseconds = max(1, math.ceil((deadline - monotonic()) * 1000))
         try:
-            self._run_native(
-                _install_setup, statement_timeout(milliseconds), replay_safe=True, setup=True
+            self.run(
+                self._driver.limit_statement_time,
+                deadline - monotonic(),
+                replay_safe=True,
+                setup=True,
             )
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
@@ -512,10 +496,12 @@ class PostgresConnectionContext:
         try:
             self._admit(self._step_deadline)
         except BaseException:
-            self._cleanup_result = self._settled(suspect=False, restore_role=self._authorized)
+            self._cleanup_result = self._settled(
+                suspect=False, restore_authorization=self._authorized
+            )
             raise
 
-    def _verify(self, route: PostgresRoute) -> None:
+    def _verify(self, route: PostgresRoute[C]) -> None:
         """Prove this lease's connection before anything else runs on it.
 
         The proof is the lease's first submission, so a broken session met by
@@ -523,19 +509,17 @@ class PostgresConnectionContext:
         acquired while the route is still pending, is proved by that same
         resubmission. Under a preferred plan that one opportunity moves the
         lease to the next route instead, which needs no proof of this one.
-        Submitting it spends the opportunity, whatever the rows then turn out
-        to say, so nothing after it earns another.
+        Submitting it spends the opportunity, whatever the reading then turns
+        out to say, so nothing after it earns another.
 
         A positive mismatch refuses the route; any other failure fails only
         this acquisition. A proof that succeeded still admits nothing on a
         route another lease refused in the meantime.
         """
         try:
-            no_binds: list[object] = []
-            rows = self._run_native(
-                _execute_rows, POSTGRES, _PROBE_SQL, no_binds, (), replay_safe=True, setup=True
+            self.run(
+                self._driver.prove_readiness, self._expected_login, replay_safe=True, setup=True
             )
-            check_probe(rows, self._expected_login)
         except _FellBack:
             raise
         except ProbeMismatch as mismatch:
@@ -549,7 +533,7 @@ class PostgresConnectionContext:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
                 raise
-            lost = session_lost(exc)
+            lost = self._driver.is_session_lost(exc)
             raise ConnectionAcquisitionError(
                 _LOST_UNVERIFIED if lost else _UNVERIFIED,
                 reason="unavailable" if lost else "preparation_failed",
@@ -584,18 +568,19 @@ class PostgresConnectionContext:
         # no-op over a connection nothing ever gave back. A revocation that did
         # not complete leaves a scope that may still reach the connection, so
         # what is given back is treated as suspect and disposed of.
-        revoked = False
+        unsafe = True
         try:
-            execution.revoke()
-            revoked = True
+            unsafe = execution.revoke()
         finally:
             self._execution = None
             self._cleanup_result = self._settled(
-                suspect=self._suspect or not revoked, restore_role=self._authorized
+                suspect=self._suspect or unsafe, restore_authorization=self._authorized
             )
             self._authorized = False
 
-    def _settled(self, *, suspect: bool, restore_role: bool = False) -> CleanupResult | None:
+    def _settled(
+        self, *, suspect: bool, restore_authorization: bool = False
+    ) -> CleanupResult | None:
         """End ownership of whatever the slot holds and answer what that established.
 
         A connection still held is released once; a slot already holding the
@@ -608,28 +593,30 @@ class PostgresConnectionContext:
         self._resource = None
         if resource is None or isinstance(resource, Returned | Invalidated | ReleaseUnconfirmed):
             return resource
-        return release(self._route.pool, resource, suspect=suspect, restore_role=restore_role)
+        return release(
+            self._driver,
+            self._route.pool,
+            resource,
+            suspect=suspect,
+            restore_authorization=restore_authorization,
+        )
 
-    def _current_native(self) -> psycopg.Connection[TupleRow]:
+    def current_connection(self) -> C:
         resource = self._resource
         if resource is None or isinstance(resource, Returned | Invalidated | ReleaseUnconfirmed):
             raise RuntimeError(_LOST)
         return resource
 
-    def _mark_suspect(self) -> None:
+    @property
+    def suspect(self) -> bool:
+        return self._suspect
+
+    def mark_suspect(self) -> None:
         self._suspect = True
 
-    def _start_first_send(self) -> None:
-        if self._first_send_state == "available":
-            self._first_send_state = "submitting"
-
-    def _complete_first_send(self) -> None:
-        if self._first_send_state == "submitting":
-            self._first_send_state = "spent"
-
-    def _run_native[T, *P](
+    def run[T, *P](
         self,
-        operation: _NativeOperation[T, *P],
+        operation: NativeOperation[C, T, *P],
         /,
         *prepared: *P,
         replay_safe: bool,
@@ -638,17 +625,17 @@ class PostgresConnectionContext:
         """Run ``operation`` on the current connection, replacing that connection
         once if this was the lease's first submission and it met a broken session.
 
-        Replacement needs all three of: a raw driver failure while the first
-        submission was in progress, a connection the driver now reports closed
-        — which a broken one is — and an operation whose repetition can have no
-        effect. An error's code, a suspect mark, and the shape of a result grant
-        nothing. A driver failure that took the place of an interrupt raised
-        while the submission waited grants nothing either: that interrupt
-        propagates as itself, rather than being answered by a resubmission that
-        could succeed. The opportunity is spent before anything else happens,
-        by a failure as by a return, so the second invocation can never earn
-        another; and that invocation runs outside the failure it answers, so
-        whatever it raises is its own.
+        Replacement needs all of: the lease's first submission started and
+        unanswered when the operation failed, a driver that reports the
+        session broken by that failure, and an operation whose repetition can
+        have no effect. An error's code, a suspect mark, and the shape of a
+        result grant nothing. A failure that took the place of an interrupt
+        raised while the submission waited grants nothing either: that
+        interrupt propagates as itself, rather than being answered by a
+        resubmission that could succeed. A submission that started spends the
+        opportunity, by a failure as by a return, so the second invocation can
+        never earn another; and that invocation runs outside the failure it
+        answers, so whatever it raises is its own.
 
         Where ``operation`` is ``setup`` and the plan has a later step, the
         replacement is taken from that step's route instead. Setup that is the
@@ -656,33 +643,40 @@ class PostgresConnectionContext:
         acquisition's, so once it has opened the lease is admitted against the
         step's deadline like any other setup phase.
         """
-        native = self._current_native()
+        connection = self.current_connection()
         opening = setup and self._opening
         self._opening = False
+        first = self._first_send_available
+        submission = SubmissionProgress()
         ambient = sys.exception()
         try:
-            result = operation(native, self, *prepared)
+            result = operation(connection, submission, *prepared)
         except BaseException as failure:
-            submitting = self._first_send_state == "submitting"
-            if submitting:
-                self._first_send_state = "spent"
+            if submission.started:
+                self._first_send_available = False
             if not (
-                submitting and replay_safe and isinstance(failure, psycopg.Error) and native.closed
+                first
+                and submission.started
+                and not submission.answered
+                and replay_safe
+                and isinstance(failure, Exception)
+                and self._driver.is_session_broken(connection, failure)
             ):
                 raise
-            displaced = _displaced_control_flow(failure, ambient)
-            if displaced is None and not self._replace_native(
+            displaced = displaced_control_flow(failure, ambient)
+            if displaced is None and not self._replace(
                 across=setup and self._step + 1 < len(self._steps)
             ):
                 raise
         else:
-            self._complete_first_send()
+            if submission.started:
+                self._first_send_available = False
             if opening:
                 self._admit_opened()
             return result
         if displaced is not None:
             raise displaced
-        result = operation(self._current_native(), self, *prepared)
+        result = operation(self.current_connection(), SubmissionProgress(), *prepared)
         if opening:
             self._admit_opened()
         return result
@@ -700,7 +694,7 @@ class PostgresConnectionContext:
             refused.selection = self._selection
             raise
 
-    def _replace_native(self, *, across: bool) -> bool:
+    def _replace(self, *, across: bool) -> bool:
         """Dispose of the current connection and hold a usable replacement in its
         place, answering whether one is now held.
 
@@ -716,8 +710,8 @@ class PostgresConnectionContext:
         ``across`` takes the replacement from the plan's next route, within
         what remains of the whole budget. While entry is still under way, entry
         itself establishes that route from the start; an outer ``BEGIN`` is
-        the only setup after entry, and the lease ran no proof or role
-        installation before it, or the ``BEGIN`` would not have been its
+        the only setup after entry, and the lease ran no proof or
+        authorization before it, or the ``BEGIN`` would not have been its
         first submission — so the bare checkout is all the next route needs.
         """
         disposed = self._settled(suspect=True)
@@ -733,14 +727,14 @@ class PostgresConnectionContext:
         except ConnectionAcquisitionError:
             return False
         try:
-            self._require_idle(self._current_native())
+            self._require_idle(self.current_connection())
         except ConnectionAcquisitionError:
             self._resource = self._settled(suspect=False)
             return False
         self._suspect = False
         return True
 
-    def _require_idle(self, connection: psycopg.Connection[TupleRow]) -> None:
+    def _require_idle(self, connection: C) -> None:
         """Refuse a checkout that did not hand over an idle connection.
 
         No modeled SQL runs on it and no unknown transaction is rolled back to
@@ -748,10 +742,10 @@ class PostgresConnectionContext:
         cleanup that follows disposes of the connection rather than silently
         reacquiring another.
         """
-        status = _status(connection)
-        if status == TransactionStatus.IDLE:
+        reading = self._driver.read_idle(connection)
+        if reading == "idle":
             return
-        state = "unreadable" if status is None else status.name
+        state = reading.state if isinstance(reading, NotIdle) else reading
         raise ConnectionAcquisitionError(
             f"the database runtime handed over a connection whose state is {state} rather "
             f"than idle, so no statement was run on it",

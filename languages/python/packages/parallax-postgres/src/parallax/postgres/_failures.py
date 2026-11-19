@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import re
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import psycopg
 
 from parallax.core.internal.db_port import CredentialResolutionError, DialReason
 
-__all__ = ["dial_reason", "session_lost"]
+if TYPE_CHECKING:
+    from psycopg.rows import TupleRow
+
+__all__ = ["dial_reason", "is_session_broken", "is_session_lost"]
 
 
 def dial_reason(failure: BaseException) -> DialReason:
@@ -22,7 +25,7 @@ def dial_reason(failure: BaseException) -> DialReason:
 
     Only a dial is classified here: a failure on an established session
     reports the password that session was opened with, which says nothing
-    about why it ended; :func:`session_lost` reads those.
+    about why it ended; :func:`is_session_lost` reads those.
     """
     if isinstance(failure, CredentialResolutionError):
         return "credentials_refused"
@@ -48,7 +51,14 @@ def dial_reason(failure: BaseException) -> DialReason:
     return "preparation_failed"
 
 
-def session_lost(failure: BaseException) -> bool:
+def is_session_broken(connection: psycopg.Connection[TupleRow], failure: BaseException) -> bool:
+    """Whether ``failure`` left ``connection`` unusable: a driver failure after
+    which the driver reports the connection closed, as it does once libpq
+    finds the socket gone. An error's code alone says nothing about that."""
+    return isinstance(failure, psycopg.Error) and connection.closed
+
+
+def is_session_lost(failure: BaseException) -> bool:
     """Whether a failure on an established session says the session itself ended.
 
     That is a driver connection failure with no SQLSTATE or a connection-class

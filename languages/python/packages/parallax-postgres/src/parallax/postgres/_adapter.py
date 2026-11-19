@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, cast, get_args
 
+from parallax.core.internal.db_port import Route, RouteCapabilities
 from parallax.core.internal.dialect import POSTGRES
+from parallax.postgres._authorization import PostgresRole
+from parallax.postgres._connection import NativeConnection
+from parallax.postgres._driver import PostgresDriver
 from parallax.postgres._endpoint import PostgresEndpoint
 from parallax.postgres._options import positive_seconds
 from parallax.postgres._runtime import PostgresRuntime
@@ -31,6 +35,11 @@ class _Omitted:
 _OMITTED: Final = _Omitted()
 
 _READER_STARTUPS: Final = cast("tuple[ReaderStartup, ...]", get_args(ReaderStartup))
+
+_WRITER: Final = RouteCapabilities.every_level()
+_READER: Final = RouteCapabilities(frozenset({"read_committed", "repeatable_read"}))
+"""A hot standby begins a read-only transaction at these levels and refuses
+``serializable``, so a reader route never declares it."""
 
 
 def _endpoint(name: str, value: object) -> PostgresEndpoint:
@@ -132,7 +141,7 @@ class PostgresAdapter:
         )
         object.__setattr__(self, "prepare_threshold", _prepare_threshold(self.prepare_threshold))
 
-    def open(self) -> PostgresRuntime:
+    def open(self) -> PostgresRuntime[NativeConnection, PostgresRole]:
         """Open one independent ready runtime, or raise having released what it took.
 
         Ready means proved: each route's pool exists, a real connection was
@@ -146,12 +155,15 @@ class PostgresAdapter:
         ordinary cleanup path, which reports what it established rather than
         promising reclamation.
         """
+        routes: dict[Route, RouteCapabilities] = {"writer": _WRITER}
+        if self.reader is not None:
+            routes["reader"] = _READER
         startup = self.reader_startup
         return open_runtime(
-            self.writer,
-            self.reader,
+            PostgresDriver(self),
+            dialect=self.dialect,
+            routes=routes,
             acquire_timeout=self.acquire_timeout,
             startup_timeout=self.startup_timeout,
             reader_startup="deferrable" if isinstance(startup, _Omitted) else startup,
-            prepare_threshold=self.prepare_threshold,
         )

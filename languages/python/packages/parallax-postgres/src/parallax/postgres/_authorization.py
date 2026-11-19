@@ -6,17 +6,11 @@ from typing import TYPE_CHECKING, Any
 from psycopg.sql import SQL, Composed, Identifier, Literal
 
 from parallax.core.internal.base import UsageError
-from parallax.core.internal.db_port import AUTHORIZATION_INVALID
-from parallax.postgres._connection import (
-    _complete_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers
-    _start_first_send,  # pyright: ignore[reportPrivateUsage] - the lease's shared first-send markers
-)
+from parallax.core.internal.db_port import AUTHORIZATION_INVALID, SubmissionProgress
 
 if TYPE_CHECKING:
     import psycopg
     from psycopg.rows import TupleRow
-
-    from parallax.postgres._context import PostgresConnectionContext
 
 __all__ = ["PostgresRole", "install_role", "restore_role", "statement_timeout"]
 
@@ -44,18 +38,18 @@ def statement_timeout(milliseconds: int) -> Composed:
 
 def _install_setup(
     connection: psycopg.Connection[TupleRow],
-    context: PostgresConnectionContext | None,
+    submission: SubmissionProgress,
     statement: Composed,
 ) -> None:
-    """Run one session setup statement as the lease's possible first send."""
+    """Run one session setup statement as a submission of its own."""
     with connection.cursor() as cursor:
-        _start_first_send(context)
+        submission.started = True
         cursor.execute(statement)
-        _complete_first_send(context)
+        submission.answered = True
 
 
 def install_role(connection: Any, role: PostgresRole) -> None:
-    _install_setup(connection, None, _role_statement(role))
+    _install_setup(connection, SubmissionProgress(), _role_statement(role))
 
 
 def restore_role(connection: Any) -> None:

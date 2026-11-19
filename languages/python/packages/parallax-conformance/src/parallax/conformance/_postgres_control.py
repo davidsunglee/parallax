@@ -31,7 +31,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.diagnostics import diagnostic_for
 from parallax.core.internal.dialect import POSTGRES, Dialect
-from parallax.postgres._connection import PostgresConnection, initialize_connection
+from parallax.postgres._connection import DirectLease, PostgresConnection, initialize_connection
 from parallax.snapshot import ScopedDatabase
 
 if TYPE_CHECKING:
@@ -124,7 +124,7 @@ class PostgresControl:
         on_release: Callable[[PostgresControl], None] | None = None,
     ) -> None:
         self._connection = connection
-        self._execution = PostgresConnection(connection)
+        self._execution = PostgresConnection(DirectLease(connection))
         self._on_release = on_release
 
     @classmethod
@@ -412,7 +412,7 @@ class ControlledRuntime:
                     reason="queue_rejected",
                 )
             self._active = scope
-            return PostgresConnection(self._connection)
+            return PostgresConnection(DirectLease(self._connection))
 
     def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:
@@ -599,7 +599,7 @@ class ControlledAdapter:
         opener = self._session
         connection = opener() if opener is not None else open_session(self._conninfo)
         try:
-            rows = PostgresConnection(connection).execute(_LOGIN_IDENTITY, [])
+            rows = PostgresConnection(DirectLease(connection)).execute(_LOGIN_IDENTITY, [])
             if len(rows) != 1 or len(rows[0]) != 1:
                 raise ValueError("the controlled runtime did not read one session_user value")
             login = rows[0][0]

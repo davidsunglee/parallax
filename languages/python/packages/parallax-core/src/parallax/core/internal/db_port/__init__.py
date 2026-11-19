@@ -16,9 +16,17 @@ from parallax.core.internal.db_port._credentials import (
 from parallax.core.internal.db_port._native import (
     CheckoutFailed,
     CheckoutReason,
+    ConnectionLease,
     ConnectionPool,
     DialReason,
     DialRecord,
+    IdleReading,
+    NativeDriver,
+    NativeOperation,
+    NotIdle,
+    ProbeMismatch,
+    SubmissionProgress,
+    displaced_control_flow,
 )
 from parallax.core.internal.db_port._pool_metrics import (
     PoolAvailable,
@@ -83,6 +91,7 @@ __all__ = [
     "ConnectionAcquisitionError",
     "ConnectionContext",
     "ConnectionContextSource",
+    "ConnectionLease",
     "ConnectionPool",
     "Credential",
     "CredentialResolutionError",
@@ -96,11 +105,16 @@ __all__ = [
     "DialRecord",
     "DocumentReadOrdinals",
     "DriverManaged",
+    "ExecutionAccess",
     "FallbackReason",
+    "IdleReading",
     "Invalidated",
     "IsolationLevel",
     "JsonNull",
     "MappingRow",
+    "NativeDriver",
+    "NativeOperation",
+    "NotIdle",
     "OrderedWriteResult",
     "OrderedWriteResultComplete",
     "OrderedWriteResultInterrupted",
@@ -114,6 +128,7 @@ __all__ = [
     "PoolPurpose",
     "PoolSample",
     "PoolUnavailable",
+    "ProbeMismatch",
     "ReleaseUnconfirmed",
     "ReservationContextSource",
     "ResourceCondition",
@@ -131,7 +146,9 @@ __all__ = [
     "StatementFailed",
     "StatementNotExecuted",
     "StructuredDocument",
+    "SubmissionProgress",
     "TransactionOutcome",
+    "displaced_control_flow",
     "isolation_level",
     "report_resource_issues",
     "report_route_readiness",
@@ -504,6 +521,18 @@ class DatabaseConnection(Protocol):
         failure. Applying either request takes no snapshot.
         """
         ...
+
+
+class ExecutionAccess(DatabaseConnection, Protocol):
+    """One acquisition's execution access, which its owner revokes before handing
+    the connection back.
+
+    :meth:`revoke` is idempotent, leaves later operations raising rather than
+    reaching a connection, and answers whether the access left the connection
+    suspect.
+    """
+
+    def revoke(self) -> bool: ...
 
 
 class DeclaresDialect(Protocol):

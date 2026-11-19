@@ -159,7 +159,7 @@ def test_each_server_dial_message_has_a_real_server_canary(
             assert dial_reason(failure) == reason
 
 
-def _preferred_read(runtime: PostgresRuntime) -> tuple[Row, RouteSelection | None]:
+def _preferred_read(runtime: PostgresRuntime[Any, Any]) -> tuple[Row, RouteSelection | None]:
     resource = runtime.login_source().new_context("reader_preferred")
     with resource as connection:
         (row,) = connection.execute(
