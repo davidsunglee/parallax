@@ -64,6 +64,10 @@ class WriteIntent:
     valid_time_window: TimeInterval | None = None
 
 
+_ASSIGNMENT: Final = WriteIntent(kind="assignment")
+_DESTRUCTIVE: Final = WriteIntent(kind="destructive")
+
+
 type ClaimScope = ObjectStateKey | ObjectKey
 """What one buffered write's claim is taken AT — the grain two intents must
 share before either can affect the other.
@@ -175,10 +179,9 @@ def keyed_intent(instruction: PreparedKeyedInstruction) -> WriteIntent | None:
     """
     if instruction.mutation in INSERT_MUTATIONS:
         return None
-    kind: WriteIntentKind = (
-        "assignment" if instruction.mutation in _ASSIGNMENT_MUTATIONS else "destructive"
-    )
-    return WriteIntent(kind=kind, valid_time_window=instruction.valid_time_window)
+    intent = _ASSIGNMENT if instruction.mutation in _ASSIGNMENT_MUTATIONS else _DESTRUCTIVE
+    window = instruction.valid_time_window
+    return intent if window is None else WriteIntent(intent.kind, window)
 
 
 def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:
