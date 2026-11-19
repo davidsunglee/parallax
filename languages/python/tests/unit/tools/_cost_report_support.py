@@ -57,14 +57,14 @@ type Document = dict[str, Any]
 
 
 def stub_capture_interpreters(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cost_report, "run_probe", lambda _command, _environment: (0, "", ""))
-    monkeypatch.setattr(
-        cost_report,
-        "probe_runtime",
-        lambda runtime, _namespace: RuntimeIdentity(
-            "CPython", f"{runtime}.1", "/interpreters/python"
-        ),
-    )
+    def run_probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        return 0, "", ""
+
+    def probe_runtime(runtime: str, _namespace: str) -> RuntimeIdentity:
+        return RuntimeIdentity("CPython", f"{runtime}.1", "/interpreters/python")
+
+    monkeypatch.setattr(cost_report, "run_probe", run_probe)
+    monkeypatch.setattr(cost_report, "probe_runtime", probe_runtime)
 
 
 def canary_provenance(contract: BudgetContract) -> Provenance:
