@@ -59,6 +59,9 @@ class TemporalObjectStateKey:
     milestone at different pins share one coordinate and therefore one state: an
     observation records the row that was read and nothing about the read that
     reached it, so the two are equal.
+
+    A key built from a stated coordinate rather than a read addresses an
+    observed state only where that coordinate is the milestone's own edge.
     """
 
     object: ObjectKey

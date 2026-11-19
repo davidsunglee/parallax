@@ -12,39 +12,30 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import Final, cast
 
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    PreparedTargetInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     LicensedWrite,
     StateObserved,
-    TxStartConditioned,
     UnversionedLocked,
-    is_licensed_by,
-    target_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import temporal_read
 from parallax.core.internal.base import INFINITY, DocumentValue, StructuredDocument
 from parallax.core.internal.concurrency import ConcurrencyPreference
-from parallax.core.internal.entity._construction_input import ABSENT
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.inheritance import inheritance_facet_of
 from parallax.core.internal.planned_step import ObjectKey, PredecessorRow, TemporalObservation
 from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
 from parallax.core.internal.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
-    TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
     admitted_write,
@@ -53,7 +44,6 @@ from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests._support.write_preparation import write_preparation_of
-from tests.unit._positional_row_support import positional_row
 
 __all__ = [
     "AT",
@@ -63,8 +53,6 @@ __all__ = [
     "ShareCols",
     "ShareDoc",
     "ShareTag",
-    "covered_target",
-    "covered_target_instruction",
     "day",
     "frag",
     "frag_rows",
@@ -191,45 +179,6 @@ def frag(
         observed = observation(entity, rows[2 * pair])
         writes.append(admitted_write(prepared, observed, observed.key.object))
     return writes
-
-
-def covered_target_instruction(entity: type[Bitemporal], key: int) -> PreparedTargetInstruction:
-    """A target write of object ``key`` over ``[d_0, d_1)`` stating the
-    Transaction-Time start ``T0`` of the stored rectangle ``[d_0, ∞)``."""
-    prepared = prepare_wire_write(
-        TargetWriteInstruction(
-            "amendUntil",
-            entity.identity.canonical,
-            {"id": key, "amount": 7},
-            if_tx_start=T0,
-            valid_from=day(0),
-            until=day(1),
-        ),
-        write_preparation_of(MODEL),
-    )
-    assert isinstance(prepared, PreparedTargetInstruction)
-    return prepared
-
-
-def covered_target(
-    entity: type[Bitemporal], key: int
-) -> tuple[LicensedWrite[TxStartConditioned], PredecessorRow]:
-    """A Locking target write of object ``key`` over ``[d_0, d_1)`` beside the
-    one stored rectangle ``[d_0, ∞)`` its acquisition retained, which covers
-    its whole window (:func:`covered_target_instruction`)."""
-    stored = rectangle(entity, key, 0, None, 0)
-    prepared = covered_target_instruction(entity, key)
-    view = inheritance_facet_of(MODEL).entity(entity.identity)
-    assert view is not None
-    starting_row = RetainedStartingRow(
-        _state(entity, stored),
-        0,
-        positional_row(view.member_selection.shape, stored.members, absent=ABSENT),
-        stored.document,
-    )
-    item = target_write(prepared, inheritance_facet_of(MODEL))
-    assert is_licensed_by(item, TxStartConditioned)
-    return replace(item, authority=replace(item.authority, starting_row=starting_row)), stored
 
 
 def plan(

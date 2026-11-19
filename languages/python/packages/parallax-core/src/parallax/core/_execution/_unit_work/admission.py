@@ -416,7 +416,7 @@ class WriteAdmission:
         if (held is not None and held != scope) or verdict == "incompatible":
             raise _already_claimed(key)
         if hold_stated_revision is not None and scope not in self._claims:
-            hold_stated_revision(item)
+            item = hold_stated_revision(item)
         self._note_removal(item.instruction, key)
         self._combine_claimed(item, key, verdict)
 

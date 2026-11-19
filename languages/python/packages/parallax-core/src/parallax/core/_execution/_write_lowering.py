@@ -90,11 +90,8 @@ class LoweringCursor:
     binding arrays presents as one statement each; a dialect binding none
     reads none of them.
 
-    Where ``capture`` is given, each insert entry's payload, as it is demanded,
-    hands it the entry and the Structured Column document it stores — ``None``
-    where it stores none — and each temporal revision's hands it the revision
-    and the patches it applies to that document — ``None`` where it applies
-    none.
+    Where ``capture`` is given, each payload is handed to it as it is demanded
+    (:class:`~parallax.core.internal.planned_step.write_effects.CurrentRowCapture`).
     """
 
     __slots__ = (
