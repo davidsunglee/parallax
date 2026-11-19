@@ -883,11 +883,11 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   cannot import one another or descriptor. The development-only conformance
   family may import every artifact it harnesses.
 - **Database seam scopes.** Pure dialect strategy in `parallax.core.internal.dialect`
-  (driver-free), abstract port in `parallax.core.internal.db_port`, error
-  classification in `parallax.core.internal.db_error`, the concrete adapter in
-  `parallax.postgres`, and the composition root in application/test code. Only
-  the composition root imports the concrete adapter; the port imports nothing
-  application-specific.
+  (driver-free), the port and the shared pooled runtime an adapter composes in
+  `parallax.core.internal.db_port`, error classification in
+  `parallax.core.internal.db_error`, the concrete adapter in `parallax.postgres`,
+  and the composition root in application/test code. Only the composition root
+  imports the concrete adapter; the port imports nothing application-specific.
 
 ## 8. Deployable artifact topology
 
@@ -901,7 +901,7 @@ would collide only if co-installed; documented, accepted).
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, whose `code` names the failing ingestion phase, and `DescriptorViolation` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`_domain_models`, `operations`, `internal.model_evolution`, `internal.schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `Absent`, `Evolution`, `UnilateralEvolution`, `CoordinatedEvolution`, `CoordinationRequirement`, `CoordinationReason`; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, the `UnsupportedError` a Dialect that cannot render an operation raises, `UnsupportedSchemaOperation`, and `SchemaTarget`; `coordinated_migration`, `CoordinatedMigration`, `MigrationStatement`, `ManualStep`, and `ManualAction`; `parallax.evolution.operations`: the closed Evolution Operation (including `TableRelocated` and `SequenceRelocated`), field-delta, Behavioral Impact, and fact vocabularies an evolution's results carry |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot` (with its `_publication` and `_inspection` children) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Database`, `ScopedDatabase`, `TxnContext`, `ReadOnlyTxnContext`, `Snapshot[T]`, `CheckedSnapshot[T]`, `SharingScope`, `WireEntity`, `WireValue`, `WireDatabaseView`, `WireTransactionView`, `WireQuery`, `WireChanges`, `WirePredicateTarget`, `is_view_loaded`, `view`, `pin_of`, and `edge_of` |
-| `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool`, `pyyaml` | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresEndpoint`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling`, and the database binding values `PostgresBinding`, `PostgresLocation`, `PostgresTable`, `PostgresSequence` |
+| `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete adapter composing the shared runtime: native pool, driver, failure classification, and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool`, `pyyaml` | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresEndpoint`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling`, and the database binding values `PostgresBinding`, `PostgresLocation`, `PostgresTable`, `PostgresSequence` |
 | `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source), `parallax.aws.postgres` (its engine-specific slice, behind the `postgres` extra) | `botocore` (sole declarer); `psycopg` under the `postgres` extra | `parallax-core`; `parallax-postgres` under the `postgres` extra | `parallax.aws`: `RdsIamCredentials`; `parallax.aws.postgres`: `rds_endpoint` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `pydantic`, `psycopg`, `pyyaml`, `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

@@ -28,18 +28,20 @@ from parallax.core.internal.db_port import (
     CredentialResolutionError,
     Password,
     PoolMetrics,
+    PoolUnavailable,
 )
+from parallax.core.internal.db_port._runtime._context import check_out_within
 from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.core.internal.db_port._runtime._pooled_route import PooledRoute
+from parallax.core.internal.db_port._runtime._route_metrics import PooledRouteMetricsSource
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint
 from parallax.postgres._connection import IncompatibleSessionError
-from parallax.postgres._context import checkout
 from parallax.postgres._pool import (
     DialObserver,
     PostgresPool,
     open_pool,
     reservation_socket_options,
 )
-from parallax.postgres._route import PostgresRoute
 
 _GAUGES: dict[str, object] = {
     "pool_min": 1,
@@ -261,6 +263,22 @@ def test_a_reading_that_is_not_a_nonnegative_integer_is_no_reading(
 
     assert str(value) not in str(refused.value)
     assert field not in str(refused.value)
+
+
+def test_a_reading_that_cannot_be_believed_samples_unavailable_and_names_nothing_it_read() -> None:
+    # What a pool answered is the pool's. The diagnostic says a reading did not
+    # carry what a sample reports, which is the whole of what an exporter may
+    # be handed about a mapping nobody audited.
+    source = PooledRouteMetricsSource(
+        _wrapped(_Native({"pool_size": "enormous"})), "writer", lambda: "verified"
+    )
+
+    sample = source.sample()
+
+    assert isinstance(sample, PoolUnavailable)
+    assert sample.diagnostic.qualified_type.endswith("_MalformedStatistics")
+    assert "enormous" not in sample.diagnostic.message
+    assert "pool_size" not in sample.diagnostic.message
 
 
 # --------------------------------------------------------------------------- #
@@ -727,7 +745,7 @@ def test_the_installed_pools_dial_through_the_observer_s_connection_class(
     pool.open()
     try:
         with pytest.raises(ConnectionAcquisitionError) as failed:
-            checkout(PostgresRoute("reader", PostgresPool(pool), ledger), _soon(0.5))
+            check_out_within(PooledRoute("reader", PostgresPool(pool), ledger), _soon(0.5))
         attempts = pool.get_stats()["connections_num"]
     finally:
         pool.close()

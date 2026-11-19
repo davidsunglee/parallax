@@ -447,6 +447,9 @@ _MODULE_PRIVATE_CARRIERS: Final = frozenset(
         "parallax.core.internal.base._neutral.JsonCarrierFailure",
         "parallax.core.internal.db_port._native.CheckoutFailed",
         "parallax.core.internal.db_port._native.ProbeMismatch",
+        "parallax.core.internal.db_port._runtime._context._Condition",
+        "parallax.core.internal.db_port._runtime._context._FellBack",
+        "parallax.core.internal.db_port._runtime._startup._ReadinessFailure",
         "parallax.core.internal.document_codec._leaf.LeafEncodingError",
         "parallax.core.internal.document_codec._plan.AuthoringRefusal",
         "parallax.core.internal.document_codec._plan._Refused",
@@ -454,10 +457,7 @@ _MODULE_PRIVATE_CARRIERS: Final = frozenset(
         "parallax.core.internal.wire._codec._JsonFailure",
         "parallax.core.internal.wire._json._HostSpellingChangesMeaning",
         "parallax.postgres._connection.IncompatibleSessionError",
-        "parallax.postgres._context._Condition",
-        "parallax.postgres._context._FellBack",
         "parallax.postgres._pool._MalformedStatistics",
-        "parallax.postgres._startup._ReadinessFailure",
         "parallax.snapshot._publication._graph_view._RowsIncompatible",
     }
 )

@@ -30,17 +30,19 @@ from parallax.core.internal.db_port import (
     SubmissionProgress,
     displaced_control_flow,
 )
+from parallax.core.internal.db_port._runtime._route_plan import RoutePlan
 from parallax.core.internal.diagnostics import diagnostic_for
-from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
     from parallax.core.internal.db_port._runtime._dial_record import DialLedger
-    from parallax.postgres._route import PostgresRoute
+    from parallax.core.internal.db_port._runtime._pooled_route import PooledRoute
 
-__all__ = ["OUTAGE_REASONS", "PostgresConnectionContext", "Step"]
+__all__ = ["OUTAGE_REASONS", "PooledConnectionContext", "Step", "check_out_within", "release"]
 
 OUTAGE_REASONS: Final = frozenset({"unavailable", "timeout"})
-"""The acquisition refusals a later attempt could outlast; any other would recur."""
+"""The acquisition refusals that say only that no connection was reached in
+time. Every other refusal names something more specific than an outage: a
+refused credential, login, or session, a full queue, or a closed runtime."""
 
 type Admit = Callable[[float], None]
 """The runtime's atomic admission check, raising when work may not proceed.
@@ -72,7 +74,7 @@ def _issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> Cleanu
     return CleanupIssue(phase=phase, code=code, diagnostic=diagnostic_for(exc))
 
 
-def checkout[C](route: PostgresRoute[C], deadline: float) -> C:
+def check_out_within[C](route: PooledRoute[C], deadline: float) -> C:
     """Take a connection out of ``route``'s pool within ``deadline``, or raise.
 
     The remaining budget is what the pool's checkout is given, so its wait
@@ -236,7 +238,7 @@ def release[C, A](
     return Invalidated(tuple(issues)) if dispose else Returned(tuple(issues))
 
 
-type Step[C] = tuple["PostgresRoute[C]", float]
+type Step[C] = tuple["PooledRoute[C]", float]
 """One route an acquisition may be served on, and the absolute deadline by
 which that route must have served it."""
 
@@ -245,7 +247,7 @@ class _FellBack(Exception):
     """Entry left the current step for the next one, which it now establishes."""
 
 
-class PostgresConnectionContext[C, A]:
+class PooledConnectionContext[C, A]:
     """One single-use acquisition of a connection, served on the first route of
     its plan that can serve it, and the lease its execution borrows that
     connection through.
@@ -408,12 +410,12 @@ class PostgresConnectionContext[C, A]:
             else:
                 self._require_unrefused(route)
             self._authorize()
-            self._bound_statements()
+            self._limit_statement_time()
         finally:
             if probing:
                 route.release_probe()
 
-    def _require_unrefused(self, route: PostgresRoute[C]) -> None:
+    def _require_unrefused(self, route: PooledRoute[C]) -> None:
         refusal = route.refusal
         if refusal is not None:
             self._cleanup_result = self._settled(suspect=False)
@@ -431,9 +433,9 @@ class PostgresConnectionContext[C, A]:
         self._step_deadline = step_deadline
         self._selection = RouteSelection(route.route, reason)
 
-    def _check_out(self, route: PostgresRoute[C]) -> None:
+    def _check_out(self, route: PooledRoute[C]) -> None:
         try:
-            self._resource = checkout(route, self._step_deadline)
+            self._resource = check_out_within(route, self._step_deadline)
         except ConnectionAcquisitionError as refused:
             fallback = RoutePlan.falls_back_on(refused.reason)
             if fallback is not None and self._step + 1 < len(self._steps):
@@ -482,7 +484,7 @@ class PostgresConnectionContext[C, A]:
             self._authorized = False
             raise
 
-    def _bound_statements(self) -> None:
+    def _limit_statement_time(self) -> None:
         """Bound the session's statement time by what remains of the statement
         deadline, so a statement stalled on a live server — on a lock
         included — fails within it.
@@ -522,7 +524,7 @@ class PostgresConnectionContext[C, A]:
             )
             raise
 
-    def _verify(self, route: PostgresRoute[C]) -> None:
+    def _verify(self, route: PooledRoute[C]) -> None:
         """Prove this lease's connection before anything else runs on it.
 
         The proof is the lease's first submission, so a broken session met by
@@ -546,7 +548,7 @@ class PostgresConnectionContext[C, A]:
         except ProbeMismatch as mismatch:
             # Recorded before the cleanup, which an interrupt can cut short.
             try:
-                route.refuse(mismatch)
+                route.mark_refused(mismatch)
             finally:
                 self._cleanup_result = self._settled(suspect=True)
             raise _refused(mismatch)  # noqa: B904 - chained to the mismatch inside
@@ -562,7 +564,7 @@ class PostgresConnectionContext[C, A]:
                 _LOST_UNVERIFIED if lost else _UNVERIFIED,
                 reason="unavailable" if lost else "preparation_failed",
             ) from exc
-        refusal = route.verified()
+        refusal = route.mark_verified()
         if refusal is not None:
             self._cleanup_result = self._settled(suspect=False)
             raise _refused(refusal)
@@ -667,7 +669,8 @@ class PostgresConnectionContext[C, A]:
         acquisition's, so once it has opened the lease is admitted against the
         step's deadline like any other setup phase. Setup whose replacement was
         refused as anything other than an outage raises that refusal rather
-        than the loss: the acquisition met a refusal that would recur.
+        than the loss: it says more about why the acquisition failed than the
+        loss that asked for the replacement does.
         """
         connection = self.current_connection()
         opening = setup and self._opening
@@ -731,7 +734,8 @@ class PostgresConnectionContext[C, A]:
         slot keeps the result of the last release and the failure that asked
         for replacement stands; a checkout that refused one leaves its refusal
         on :attr:`replacement_refusal`, and raises it instead where ``setup``
-        asked and it is no outage, since that refusal would recur. One that
+        asked and it is no outage, since that refusal, rather than the loss,
+        is what ended the acquisition. One that
         arrives after the deadline is given back unused and a timeout is raised
         instead, so nothing is resubmitted on it. A close is not checked here:
         the replacement is not another acquisition, so it does not end work
@@ -754,7 +758,7 @@ class PostgresConnectionContext[C, A]:
                 self._fall_back("connection_lost")
             self._advance("connection_lost")
         try:
-            self._resource = checkout(self._route, self._step_deadline)
+            self._resource = check_out_within(self._route, self._step_deadline)
         except ConnectionAcquisitionError as refused:
             return self._refused_replacement(refused, setup=setup)
         try:

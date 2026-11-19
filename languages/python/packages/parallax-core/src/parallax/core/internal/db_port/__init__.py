@@ -129,6 +129,7 @@ __all__ = [
     "PoolSample",
     "PoolUnavailable",
     "ProbeMismatch",
+    "ReaderStartup",
     "ReleaseUnconfirmed",
     "ReservationContextSource",
     "ResourceCondition",
@@ -150,6 +151,7 @@ __all__ = [
     "TransactionOutcome",
     "displaced_control_flow",
     "isolation_level",
+    "open_runtime",
     "report_resource_issues",
     "report_route_readiness",
     "report_unregistration_failure",
@@ -546,3 +548,7 @@ class DeclaresDialect(Protocol):
     """
 
     dialect: Dialect
+
+
+# Imported last: the shared runtime is written against the vocabulary above.
+from parallax.core.internal.db_port._runtime import ReaderStartup, open_runtime  # noqa: E402

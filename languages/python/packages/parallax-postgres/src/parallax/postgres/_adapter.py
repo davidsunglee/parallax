@@ -3,15 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, cast, get_args
 
-from parallax.core.internal.db_port import Route, RouteCapabilities
+from parallax.core.internal.db_port import (
+    DatabaseRuntime,
+    ReaderStartup,
+    Route,
+    RouteCapabilities,
+    open_runtime,
+)
 from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres._authorization import PostgresRole
-from parallax.postgres._connection import NativeConnection
 from parallax.postgres._driver import PostgresDriver
 from parallax.postgres._endpoint import PostgresEndpoint
 from parallax.postgres._options import positive_seconds
-from parallax.postgres._runtime import PostgresRuntime
-from parallax.postgres._startup import ReaderStartup, open_runtime
 
 __all__ = ["PostgresAdapter"]
 
@@ -141,7 +144,7 @@ class PostgresAdapter:
         )
         object.__setattr__(self, "prepare_threshold", _prepare_threshold(self.prepare_threshold))
 
-    def open(self) -> PostgresRuntime[NativeConnection, PostgresRole]:
+    def open(self) -> DatabaseRuntime[PostgresRole]:
         """Open one independent ready runtime, or raise having released what it took.
 
         Ready means proved: each route's pool exists, a real connection was

@@ -4,23 +4,29 @@ from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
 from parallax.core.internal.db_port import (
-    CleanupResult,
     ConnectionAcquisitionError,
     DatabaseStartupError,
-    NativeDriver,
     ProbeMismatch,
     ReleaseUnconfirmed,
-    StartupPhase,
     report_resource_issues,
 )
-from parallax.postgres._context import OUTAGE_REASONS
-from parallax.postgres._route import PostgresRoute, open_route
-from parallax.postgres._runtime import PostgresRuntime
+from parallax.core.internal.db_port._runtime._context import OUTAGE_REASONS
+from parallax.core.internal.db_port._runtime._dial_record import DialLedger
+from parallax.core.internal.db_port._runtime._pooled_route import PooledRoute
+from parallax.core.internal.db_port._runtime._pooled_runtime import PooledRuntime
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from parallax.core.internal.db_port import Route, RouteCapabilities
+    from parallax.core.internal.db_port import (
+        CleanupResult,
+        DatabaseRuntime,
+        NativeDriver,
+        PoolPurpose,
+        Route,
+        RouteCapabilities,
+        StartupPhase,
+    )
     from parallax.core.internal.dialect import Dialect
 
 __all__ = ["ReaderStartup", "open_runtime"]
@@ -35,8 +41,9 @@ class _ReadinessFailure(Exception):
     An outage is an unavailable route, or one whose share of the
     budget ran out with no other failure on record. Anything else — a refused
     credential or login, a session the codecs cannot run under, a probe that
-    read back the wrong thing or another login, an unconfirmed release — is a
-    route that would fail the same way again, which no deferral can wait out.
+    read back the wrong thing or another login, an unconfirmed release, a full
+    queue — says more than that the route could not yet be reached, which is
+    the one failure deferral waits out.
     """
 
     def __init__(self, error: DatabaseStartupError, *, outage: bool) -> None:
@@ -54,14 +61,15 @@ def open_runtime[C, A](
     acquire_timeout: float,
     startup_timeout: float,
     reader_startup: ReaderStartup,
-) -> PostgresRuntime[C, A]:
+) -> DatabaseRuntime[A]:
     """Open one ready runtime serving ``routes`` through ``driver``, or raise
-    having released what it took.
+    :class:`DatabaseStartupError` having released what it took.
 
     ``routes`` is the declaration the runtime publishes: it always names the
     writer, and a reader pool opens only where it names a reader. Every pool
-    opens before any is proved, so a retaining reader's workers dial while the
-    writer is being proved and the two share the one budget's wall-clock time.
+    opens before any is proved, so a reader pool that dials in the background
+    does so while the writer is being proved, and the two share the one
+    budget's wall-clock time.
     The writer must prove itself; the reader then proves the same login within
     what remains. Where ``reader_startup`` permits, an unavailable reader stays
     pending until a connection proves it. The writer's reservation pool opens
@@ -74,17 +82,17 @@ def open_runtime[C, A](
     stated rather than assumed away.
     """
     deadline = monotonic() + startup_timeout
-    opened: list[PostgresRoute[C]] = []
+    opened: list[PooledRoute[C]] = []
     try:
-        writer_route = open_route(driver, "writer", "application")
+        writer_route = _open_route(driver, "writer", "application")
         opened.append(writer_route)
         reader_route = None
         if "reader" in routes:
-            reader_route = open_route(driver, "reader", "application")
+            reader_route = _open_route(driver, "reader", "application")
             opened.append(reader_route)
-        reservation_route = open_route(driver, "writer", "reservation")
+        reservation_route = _open_route(driver, "writer", "reservation")
         opened.append(reservation_route)
-        runtime = PostgresRuntime(
+        runtime = PooledRuntime(
             driver,
             dialect=dialect,
             routes=routes,
@@ -94,23 +102,44 @@ def open_runtime[C, A](
             acquire_timeout=acquire_timeout,
         )
         try:
-            login = _probe(runtime, writer_route, deadline, None)
+            login = _prove_route(runtime, driver, writer_route, deadline, None)
         except _ReadinessFailure as failure:
             raise failure.error from failure.error.__cause__
-        writer_route.proved_at_startup()
+        writer_route.start_verified()
         # The writer's proof is the reservation pool's: it dials the same
         # endpoint with the same credentials.
-        reservation_route.proved_at_startup()
+        reservation_route.start_verified()
         runtime._complete_startup(login)  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
         if reader_route is not None:
-            _start_reader(runtime, reader_route, deadline, login, reader_startup)
+            _start_reader(runtime, driver, reader_route, deadline, login, reader_startup)
     except BaseException:
-        _abandon(opened)
+        _unwind(opened)
         raise
     return runtime
 
 
-def _abandon[C](opened: list[PostgresRoute[C]]) -> None:
+def _open_route[C, A](
+    driver: NativeDriver[C, A], route: Route, purpose: PoolPurpose
+) -> PooledRoute[C]:
+    """Open ``route``'s pool for ``purpose`` through ``driver``, unproven.
+
+    The driver releases whatever it built before raising, so a pool that would
+    not open has nothing left to close.
+    """
+    dial_ledger = DialLedger()
+    try:
+        pool = driver.open_pool(route, purpose, dial_ledger)
+    except Exception as exc:
+        name = route if purpose == "application" else f"{route}-{purpose}"
+        raise DatabaseStartupError(
+            f"the database runtime's {name} connection pool could not be opened",
+            route=route,
+            phase="open",
+        ) from exc
+    return PooledRoute(route, pool, dial_ledger, purpose)
+
+
+def _unwind[C](opened: list[PooledRoute[C]]) -> None:
     """Abandon every route opened, the latest first; an interrupt propagates
     only once each has been attempted."""
     interrupted: BaseException | None = None
@@ -125,25 +154,27 @@ def _abandon[C](opened: list[PostgresRoute[C]]) -> None:
 
 
 def _start_reader[C, A](
-    runtime: PostgresRuntime[C, A],
-    route: PostgresRoute[C],
+    runtime: PooledRuntime[C, A],
+    driver: NativeDriver[C, A],
+    route: PooledRoute[C],
     deadline: float,
     login: str,
     reader_startup: ReaderStartup,
 ) -> None:
     try:
-        _probe(runtime, route, deadline, login)
+        _prove_route(runtime, driver, route, deadline, login)
     except _ReadinessFailure as failure:
         if failure.outage and reader_startup == "deferrable":
-            route.defer_verification()
+            route.start_pending()
             return
         raise failure.error from failure.error.__cause__
-    route.proved_at_startup()
+    route.start_verified()
 
 
-def _probe[C, A](
-    runtime: PostgresRuntime[C, A],
-    route: PostgresRoute[C],
+def _prove_route[C, A](
+    runtime: PooledRuntime[C, A],
+    driver: NativeDriver[C, A],
+    route: PooledRoute[C],
     deadline: float,
     expected_login: str | None,
 ) -> str:
@@ -159,9 +190,8 @@ def _probe[C, A](
     it is not admitted again once it answers, and the budget is checked
     between phases instead.
     """
-    _remaining(route, deadline, "acquire")
-    resource = runtime.acquisition(route, deadline)
-    driver = runtime._driver  # pyright: ignore[reportPrivateUsage] - the runtime this module starts
+    _remaining_budget(route, deadline, "acquire")
+    resource = runtime.startup_context(route, deadline)
     try:
         resource.__enter__()
     except ConnectionAcquisitionError as exc:
@@ -213,12 +243,12 @@ def _probe[C, A](
             ),
             outage=False,
         )
-    _remaining(route, deadline, "release", cleanup_result=result)
+    _remaining_budget(route, deadline, "release", cleanup_result=result)
     return login
 
 
 def _unacquired[C](
-    route: PostgresRoute[C],
+    route: PooledRoute[C],
     phase: StartupPhase,
     refused: ConnectionAcquisitionError,
     cleanup_result: CleanupResult | None,
@@ -242,8 +272,8 @@ def _confirmed(cleanup: CleanupResult | None) -> bool:
     return not isinstance(cleanup, ReleaseUnconfirmed)
 
 
-def _remaining[C](
-    route: PostgresRoute[C],
+def _remaining_budget[C](
+    route: PooledRoute[C],
     deadline: float,
     phase: StartupPhase,
     *,

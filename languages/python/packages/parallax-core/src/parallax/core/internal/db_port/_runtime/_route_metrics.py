@@ -15,7 +15,7 @@ from parallax.core.internal.db_port import (
 )
 from parallax.core.internal.diagnostics import diagnostic_for
 
-__all__ = ["PostgresPoolMetrics"]
+__all__ = ["PooledRouteMetricsSource"]
 
 
 class MeasuredPool(Protocol):
@@ -24,17 +24,18 @@ class MeasuredPool(Protocol):
     def metrics(self) -> PoolMetrics: ...
 
 
-class PostgresPoolMetrics:
-    """The stable source over one native pool, until that pool's runtime closes.
+class PooledRouteMetricsSource:
+    """The stable source over one route's pool, until that pool's runtime closes.
 
     Detachment is a single attribute becoming ``None``, and every sample reads it
     once into a local before touching it. That is the whole concurrency
     contract, and it is stated in terms of where a sample BEGAN: one that read
     the pool before a detach carries on and answers with what it measured, one
     that reads after answers detached. So a sample can still be inside the
-    native read while the pool it read from is being closed. That read copies
-    the pool's own counters and measures and takes no lock, so it neither waits
-    for the teardown nor delays it — which is why this holds none either.
+    pool's read while the pool it read from is being closed. That read copies
+    the pool's own bookkeeping and waits for nothing the pool holds, so it
+    neither waits for the teardown nor delays it — which is why this holds no
+    lock either.
     """
 
     __slots__ = ("_pool", "_purpose", "_readiness", "_route")

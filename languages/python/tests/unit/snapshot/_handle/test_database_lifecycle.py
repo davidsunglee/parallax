@@ -1,10 +1,10 @@
 """What a connected handle owns, and how long each operation holds a connection.
 
-The resource contract has two halves and they are proven apart. The Postgres
-runtime's half — what a checkout, a cleanup, and a shutdown ESTABLISH — is
-``test_postgres_pool.py``'s. This file is the other half: which operation
-acquires, when it lets go, and what a handle owns for its own lifetime, all of
-it driver-free over the scripted adapter.
+The resource contract has two halves and they are proven apart. The shared
+pooled runtime's half — what a checkout, a cleanup, and a shutdown ESTABLISH —
+is proven under ``tests/unit/core/db_port/_runtime/``. This file is the other
+half: which operation acquires, when it lets go, and what a handle owns for its
+own lifetime, all of it driver-free over the scripted adapter.
 
 The pins that matter most are about letting go early. An exhausted stream must
 stop occupying capacity at the moment it is over rather than when its caller
