@@ -1106,7 +1106,10 @@ class PostgresConnection:
         boundary; the driver refuses a characteristic requested there, before
         the savepoint opens.
         """
-        connection = self._current_native()
+        # Settlement runs on the lease the boundary opened on, so a boundary
+        # whose scope was revoked while it ran still ends.
+        lease = self._held()
+        connection = lease.current_connection()
         # Resolved before the driver is touched, so a request outside its
         # vocabulary — a type violation the handle's own check would have
         # caught — changes no driver state and opens nothing.
@@ -1128,12 +1131,12 @@ class PostgresConnection:
             try:
                 value = body(self)
             except BaseException as raised:
-                return self._rollback_transaction(CallbackRaised(raised), boundary=boundary)
+                return self._rollback_transaction(lease, CallbackRaised(raised), boundary=boundary)
             try:
-                boundary.__exit__(None, None, None)
+                lease.run(_commit_transaction, boundary, replay_safe=False)
             except psycopg.Error as exc:
                 return self._rollback_transaction(
-                    CommitFailed(reported_failure(self.dialect, exc)), boundary=None
+                    lease, CommitFailed(reported_failure(self.dialect, exc)), boundary=None
                 )
             return Committed(value)
         finally:
@@ -1169,6 +1172,7 @@ class PostgresConnection:
 
     def _rollback_transaction(
         self,
+        lease: ConnectionLease[NativeConnection],
         trigger: RollbackTrigger,
         *,
         boundary: contextlib.AbstractContextManager[psycopg.Transaction] | None,
@@ -1188,11 +1192,8 @@ class PostgresConnection:
         the acquisition's cleanup disposes of it rather than offering it for
         reuse.
         """
-        error = trigger.error
         try:
-            if boundary is not None:
-                boundary.__exit__(type(error), error, error.__traceback__)
-            self._current_native().rollback()
+            lease.run(_roll_back_transaction, boundary, trigger.error, replay_safe=False)
         except psycopg.Error as exc:
             rollback_error = reported_failure(self.dialect, exc)
             self._mark_suspect()
@@ -1236,6 +1237,30 @@ def _open_transaction(
         raise
     submission.answered = True
     return boundary
+
+
+def _commit_transaction(
+    connection: psycopg.Connection[TupleRow],
+    submission: SubmissionProgress,
+    boundary: contextlib.AbstractContextManager[psycopg.Transaction],
+) -> None:
+    del connection
+    submission.started = True
+    boundary.__exit__(None, None, None)
+    submission.answered = True
+
+
+def _roll_back_transaction(
+    connection: psycopg.Connection[TupleRow],
+    submission: SubmissionProgress,
+    boundary: contextlib.AbstractContextManager[psycopg.Transaction] | None,
+    error: BaseException,
+) -> None:
+    submission.started = True
+    if boundary is not None:
+        boundary.__exit__(type(error), error, error.__traceback__)
+    connection.rollback()
+    submission.answered = True
 
 
 _ISOLATION_LEVELS: Final[dict[IsolationLevel, psycopg.IsolationLevel]] = {

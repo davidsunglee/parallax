@@ -1118,6 +1118,26 @@ def test_a_replacement_handed_over_past_the_deadline_is_given_back_unused_and_re
     assert resource.cleanup_result == Returned()
 
 
+def test_a_runtime_closed_while_a_replacement_is_taken_lets_the_admitted_read_finish() -> None:
+    # The replacement is not another acquisition: a close refuses new ones and
+    # leaves admitted work to finish.
+    pool = _pool(ScriptedConnection(lost=_lost()), ScriptedConnection(rows=[(1,)]))
+    runtime = _runtime(pool)
+
+    def close_meanwhile(_budget: float) -> None:
+        if len(pool.budgets) == 2:
+            runtime.close()
+
+    pool.on_check_out = close_meanwhile
+
+    with _login_context(runtime) as scoped:
+        assert scoped.submit("select 1", replay_safe=True) == [(1,)]
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        _login_context(runtime).__enter__()
+
+    assert refused.value.reason == "closed"
+
+
 def test_each_new_owner_has_a_budget_of_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = Clock(monkeypatch)
     broken = ScriptedConnection(lost=_lost())
@@ -1145,8 +1165,9 @@ def test_a_broken_role_installation_is_replaced_and_still_rechecks_admission() -
 
     assert broken.submitted == ["authorize tenant_reader"]
     assert fresh.submitted == ["authorize tenant_reader", "select current_user", RESTORE]
-    # At the first checkout, at the replacement's handover, and after the role.
-    assert len(admissions) == 3
+    # At the first checkout and after the role; the replacement is not another
+    # acquisition.
+    assert len(admissions) == 2
     assert pool.returned == [broken, fresh]
     assert resource.cleanup_result == Returned()
 
@@ -1159,7 +1180,7 @@ def test_final_admission_after_a_replaced_role_installation_can_still_refuse() -
     def admit(_deadline: float) -> None:
         nonlocal calls
         calls += 1
-        if calls == 3:
+        if calls == 2:
             raise ConnectionAcquisitionError("closed during authorization", reason="closed")
 
     pool = _pool(broken, fresh)
@@ -2057,15 +2078,27 @@ def test_a_writer_probe_whose_replacement_arrives_past_the_budget_fails_startup_
         pytest.param("preparation_failed", "preparation_failed", id="codec"),
     ],
 )
+@pytest.mark.parametrize("cleared", [False, True], ids=["held", "cleared-before-startup-reads"])
 def test_a_reader_probe_whose_replacement_dial_was_refused_fails_even_deferrable_startup(
-    recorded: Any, checkout_reason: Any
+    monkeypatch: pytest.MonkeyPatch, recorded: Any, checkout_reason: Any, cleared: bool
 ) -> None:
-    # The lost proof stays the primary failure, but the route's refusal of its
-    # replacement is on record, and a refusal is no outage.
+    # The lost proof stays the primary failure, but its replacement was
+    # refused, and a refusal is no outage — even once a later dial clears the
+    # record before startup decides.
     original = _lost()
     refusal = RuntimeError("the replacement's dial was refused")
     reader_pool = _pool(ScriptedConnection(lost=original))
     writer_pool = _pool()
+    driver = ScriptedDriver(pools={"writer": writer_pool, "reader": reader_pool})
+    if cleared:
+        judged = driver.is_session_lost
+
+        def clear_then_judge(failure: BaseException) -> bool:
+            assert reader_pool.dial_record is not None
+            reader_pool.dial_record.report_usable()
+            return judged(failure)
+
+        monkeypatch.setattr(driver, "is_session_lost", clear_then_judge)
 
     def refuse_the_replacement(_budget: float) -> None:
         if len(reader_pool.budgets) == 2:
@@ -2076,7 +2109,7 @@ def test_a_reader_probe_whose_replacement_dial_was_refused_fails_even_deferrable
     reader_pool.on_check_out = refuse_the_replacement
 
     with pytest.raises(DatabaseStartupError) as failed:
-        _open_routed(ScriptedDriver(pools={"writer": writer_pool, "reader": reader_pool}))
+        _open_routed(driver)
 
     assert (failed.value.route, failed.value.phase) == ("reader", "probe")
     assert failed.value.__cause__ is original
