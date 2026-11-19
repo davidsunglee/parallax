@@ -18,7 +18,6 @@ import re
 import subprocess
 import sys
 import tomllib
-from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
@@ -267,29 +266,18 @@ def test_a_session_given_a_malformed_shard_stops_with_the_usage_error(option: st
 # --------------------------------------------------------------------------
 # The durations the shards are balanced over
 # --------------------------------------------------------------------------
-def _load_of_each(halves: Sequence[Sequence[str]], known: Mapping[str, float]) -> list[float]:
-    unknown = sum(known.values()) / len(known)
-    return [sum(known.get(item, unknown) for item in half) for half in halves]
-
-
-def test_the_shards_are_balanced_by_the_stored_durations() -> None:
-    # Two shards make the claim sharpest. The class's items span two orders of
-    # magnitude, so halves drawn by position are hundreds of seconds apart while
-    # halves drawn by what each item last cost are a fraction of a second apart.
-    # Graded over the stored items through the assignment the hook calls; that
-    # the hook reads the file at all is what the partition test's real session
-    # pins, since a hook weighing everything alike would predict other cells.
-    known = shards.known()
-    stored = sorted(known)
-    shard_of = shards.shard_of_each(shards.weights(stored, known), 2)
-    halves = [
-        [item for item, shard in zip(stored, shard_of, strict=True) if shard == index]
+def test_skewed_durations_are_balanced_across_cost_shards() -> None:
+    durations = [2.0, 20.0, 1.0, 19.0]
+    assignments = shards.shard_of_each(durations, 2)
+    totals = [
+        sum(
+            duration
+            for duration, shard in zip(durations, assignments, strict=True)
+            if shard == index
+        )
         for index in (1, 2)
     ]
-    balanced = _load_of_each(halves, known)
-    positional = _load_of_each([sorted(known)[::2], sorted(known)[1::2]], known)
-    assert abs(balanced[0] - balanced[1]) <= max(known.values())
-    assert abs(balanced[0] - balanced[1]) <= abs(positional[0] - positional[1])
+    assert totals == [21.0, 21.0]
 
 
 def test_an_item_weighs_its_stored_duration_and_an_unknown_one_the_mean() -> None:
