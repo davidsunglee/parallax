@@ -6,8 +6,9 @@ provider-hosted environment, or for the committed cost evidence, the boundary it
 function carries for an interpreter of its own — so neither zero nor two classes
 is representable, provided the
 derivation stays the only source, which is what the authored-marker check below
-pins. The remaining assertions grade the real session rather than a synthetic
-one: whichever selection is running, every item it holds is graded.
+pins. The deployed shard check compares selected node IDs and their order
+against the full collection. The standalone shard checks collect a small test
+file and compare counts by class.
 """
 
 from __future__ import annotations
