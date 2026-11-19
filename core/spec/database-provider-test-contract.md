@@ -150,17 +150,19 @@ For every supported adapter, the smoke suite covers:
   standby refuses. Readiness proves the writer and then the reader; an
   unreachable reader fails the open where the reader is required and is left
   pending where it may defer, and the open releases both routes whenever it
-  fails. A reader the server refuses once the login's credential was offered
-  fails the open even where the reader may defer: a rejected password as an
-  authentication refusal, and a database that does not exist as a preparation
-  failure, which pins the engine's own wording of that refusal.
+  fails. Under [the readiness rules](m-db-port.md#acquisition-and-readiness-failures-are-outside-the-sql-categories),
+  a rejected reader password fails the open as an authentication refusal even
+  where the reader may defer. A reader database that does not exist fails the
+  open as a preparation failure, which pins the engine's wording of that
+  refusal.
   A preferred acquisition is served by a healthy reader, falls back to the
   writer from an unreachable one — a transaction opening its boundary there,
   under the bound authorization — and does not fall back from a reader that is
   merely busy. A different login on the reader, refusal and recovery of a
-  pending reader, concurrent proofs, at most one acquisition trying a known-unreachable
-  reader, deadline allocation, and a connection lost while being set up belong to the
-  language's own internal suites, because a server will not produce them on demand. No replication is involved:
+  pending reader, concurrent proofs, at most one acquisition trying a reader
+  known to be unavailable, deadline allocation, and a connection lost while
+  being set up belong to the language's own internal suites, because a server
+  will not produce them on demand. No replication is involved:
   what the reader route observes about the writer's changes is the subject of a
   separate standby proof
 - where the engine offers physical replication, a **reader route over a real

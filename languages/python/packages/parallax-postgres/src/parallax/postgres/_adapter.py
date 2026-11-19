@@ -72,8 +72,8 @@ class PostgresAdapter:
     endpoint that reaches a replica stays valid here, and writes through it
     fail natively; a reader endpoint promises no physical replica.
 
-    ``reader_startup`` says what opening does when the reader cannot be
-    reached. Omitted with a reader configured, it is ``"deferrable"``: the
+    ``reader_startup`` says what opening does when the reader is unavailable.
+    Omitted with a reader configured, it is ``"deferrable"``: the
     runtime opens with the reader pending, reader-only work fails until one of
     the reader's connections has been proved, and a fixed warning says so — the
     choice that lets a reader resuming after the writer, as a paused Aurora

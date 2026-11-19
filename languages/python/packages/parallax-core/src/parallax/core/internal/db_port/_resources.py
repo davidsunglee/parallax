@@ -211,7 +211,7 @@ class ConnectionAcquisitionError(ParallaxError):
 
     @property
     def is_transient(self) -> bool:
-        """A budget spent waiting, a full waiting queue, and an unreachable
+        """A budget spent waiting, a full waiting queue, and an unavailable
         route may each clear by a later attempt."""
         return self.reason in _TRANSIENT_ACQUISITION_REASONS
 

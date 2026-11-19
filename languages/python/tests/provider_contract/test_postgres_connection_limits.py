@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, closing, contextmanager
-from time import monotonic
+from time import monotonic, sleep
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
-from testcontainers.community.postgres import PostgresContainer
 
-from parallax.conformance import constants
-from parallax.conformance._postgres_control import PostgresControl
 from parallax.core.internal.db_port import (
     ConnectionAcquisitionError,
     DatabaseStartupError,
@@ -107,50 +104,25 @@ def _database_missing(endpoint: PostgresEndpoint) -> psycopg.OperationalError:
     return native
 
 
-def _isolated_server_refusals() -> tuple[
-    psycopg.OperationalError, psycopg.OperationalError, psycopg.OperationalError
-]:
-    server = PostgresContainer(  # database-access: isolated capacity canary
-        constants.POSTGRES_IMAGE,
-        driver=None,
-        command=[
-            "postgres",
-            "-c",
-            "max_connections=8",
-            "-c",
-            "superuser_reserved_connections=1",
-            "-c",
-            "reserved_connections=1",
-        ],
-    )
-    with ExitStack() as container:
-        container.callback(server.stop)
-        server.start()
-        admin_endpoint = PostgresEndpoint(
-            make_conninfo(
-                host=server.get_container_host_ip(),
-                port=server.get_exposed_port(server.port),
-                user=server.username,
-                dbname=server.dbname,
-            ),
-            credentials=Password(server.password),
-        )
-        admin = PostgresControl.open(  # database-access: administrative session on the canary
-            server.get_connection_url(), autocommit=True, prepare_threshold=None
-        )
-        with closing(admin), _login(admin, admin_endpoint) as ordinary, ExitStack() as held:
-            # The admin and five ordinary sessions occupy the ordinary slots.
-            for _ in range(5):
-                held.enter_context(_dial(ordinary))
-            reserved_role = _refused(ordinary)
-            held.enter_context(_dial(admin_endpoint))
-            superuser = _refused(ordinary)
-            held.enter_context(_dial(admin_endpoint))
-            full = _refused(admin_endpoint)
+def _isolated_server_refusals(
+    admin: DriverControl, endpoint: PostgresEndpoint
+) -> tuple[psycopg.OperationalError, psycopg.OperationalError, psycopg.OperationalError]:
+    with _login(admin, endpoint) as ordinary, ExitStack() as held:
+        # The admin and five ordinary sessions occupy the ordinary slots.
+        for _ in range(5):
+            held.enter_context(_dial(ordinary))
+        reserved_role = _refused(ordinary)
+        held.enter_context(_dial(endpoint))
+        superuser = _refused(ordinary)
+        held.enter_context(_dial(endpoint))
+        full = _refused(endpoint)
     return reserved_role, superuser, full
 
 
-def test_each_server_dial_message_has_a_real_server_canary(profile_run: Any) -> None:
+@pytest.mark.adapter_smoke
+def test_each_server_dial_message_has_a_real_server_canary(
+    profile_run: Any, connection_limit_server: tuple[DriverControl, PostgresEndpoint]
+) -> None:
     shared: PostgresEndpoint = profile_run.endpoint(pool=OnDemandOptions())
     missing_database = _database_missing(shared)
     with closing(profile_run.control()) as admin:
@@ -163,7 +135,7 @@ def test_each_server_dial_message_has_a_real_server_canary(profile_run: Any) -> 
         ):
             per_database = _refused(limited_database)
 
-    reserved_role, superuser, full = _isolated_server_refusals()
+    reserved_role, superuser, full = _isolated_server_refusals(*connection_limit_server)
     assert "pg_use_reserved_connections" in _fatal_dial_message(reserved_role)
     assert "SUPERUSER" in _fatal_dial_message(superuser)
     assert _fatal_dial_message(per_role).startswith('too many connections for role "')
@@ -219,8 +191,15 @@ def test_a_reader_at_its_login_limit_defers_falls_back_and_recovers(profile_run:
             runtime = adapter.open()  # database-access: two routes over profile_run's shared server
             try:
                 _, reader_metrics, _ = runtime.pool_metrics
-                pending = reader_metrics.sample()
-                assert isinstance(pending, PoolAvailable) and pending.readiness == "pending"
+                deadline = monotonic() + 3.0
+                while True:
+                    pending = reader_metrics.sample()
+                    assert isinstance(pending, PoolAvailable) and pending.readiness == "pending"
+                    if pending.measurements.connections_errors:
+                        break
+                    if monotonic() >= deadline:
+                        pytest.fail("the retaining reader did not record a dial failure")
+                    sleep(0.01)
 
                 writer_row = ("capacity-writer", runtime.login_identity)
                 fallback = (writer_row, RouteSelection("writer", "unavailable"))

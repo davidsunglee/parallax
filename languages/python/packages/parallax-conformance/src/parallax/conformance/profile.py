@@ -216,8 +216,8 @@ class ProvisionedRun(ProfileRun):
         connections with, carried so every connection this configuration opens
         already has them. ``credentials`` replaces this run's own login secret
         with a source a credential proof supplies. ``reader`` adds a reader
-        route and ``reader_startup`` says what opening does when it cannot be
-        reached. An omitted budget takes the adapter's own default.
+        route and ``reader_startup`` says what opening does when it is
+        unavailable. An omitted budget takes the adapter's own default.
         """
         return self._provisioner.configured(
             pool=pool,

@@ -172,9 +172,8 @@ def routed_configuration(
     ``acquire_timeout`` is one budget per acquisition across both routes, so a
     preferred read waits on the reader for at most half of it before the
     writer gets the rest. ``reader_startup="deferrable"`` is what omitting it
-    means with a reader: a reader that cannot be reached when the root opens
-    leaves it opening with the reader pending, while a writer that cannot be
-    reached fails it.
+    means with a reader: an unavailable reader leaves it opening with the
+    reader pending. An unavailable writer fails the open.
     """
     return PostgresAdapter(
         writer=PostgresEndpoint(writer_conninfo, credentials=credentials),
@@ -201,9 +200,9 @@ def each_scope_reads_where_its_policy_says(
     With a reader configured, new reads default to ``reader_only``: served by
     the reader or failed, and possibly behind the writer. ``writer_only`` is
     how a read avoids that lag. ``reader_preferred`` reads from the reader and
-    moves to the writer only before anything runs — when the reader cannot be
-    reached, or loses its connection while being set up — and an operation
-    that moved stays on the writer for the rest of its pages and retries. None
+    moves to the writer before any application work runs if the reader is
+    unavailable or loses its connection during setup. An operation that moved
+    stays on the writer for the rest of its pages and retries. None
     of the three derivations opens anything, and writable transactions use the
     writer whatever the scope says.
     """
