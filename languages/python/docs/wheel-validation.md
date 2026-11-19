@@ -48,9 +48,10 @@ The server must be disposable and the login must be an administrator: the
 existing tests create conformance roles and reset tables. Validation installs
 explicit wheel paths into two fresh environments. Each run checks installed
 bytes and loaded module origins against the supplied wheels, selects the
-driver explicitly, builds psycopg-c from source against system libpq, and runs
-the existing compiled-loader differential, refusal, timestamp-delivery and
-open-bound tests. Missing database infrastructure, wrong server versions,
+driver explicitly, and runs the compiled-loader differential, refusal,
+timestamp-delivery and open-bound tests. Each cell builds psycopg-c from source
+against system libpq and can reuse that build for the source-install proof in a
+fresh environment. Missing database infrastructure, wrong server versions,
 skips, and empty test results fail. The normal workspace test fixture and its
 timing instrumentation remain in use. Every cell also builds all six production
 wheels from the exact shared sdists with isolated builds and no wheel cache,

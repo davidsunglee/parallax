@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import types
+import venv
 import zipfile
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -26,6 +27,55 @@ def test_driver_resolution_uses_the_candidate_metadata_constraint(tmp_path: Path
         {"adapter.dist-info/METADATA": b"Requires-Dist: psycopg[binary]>=3.3.8,<3.4\n"},
     )
     assert validate_wheel.driver_requirement(wheel, "c") == "psycopg[c]>=3.3.8,<3.4"
+
+
+@pytest.mark.parametrize("use_cell_cache", [False, True])
+def test_only_c_driver_installs_with_a_cell_cache_reuse_locally_built_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use_cell_cache: bool
+) -> None:
+    wheel = _wheel(
+        tmp_path / "adapter.whl",
+        {"adapter.dist-info/METADATA": b"Requires-Dist: psycopg[binary]>=3.3.8,<3.4\n"},
+    )
+    companions = tmp_path / "companions"
+    companions.mkdir()
+    _wheel(companions / "companion.whl", {})
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    arguments = [
+        "--wheel",
+        str(wheel),
+        "--companions",
+        str(companions),
+        "--output",
+        str(tmp_path / "validation"),
+        "--postgres-version",
+        "18.6",
+    ]
+    if use_cell_cache:
+        arguments.extend(["--driver-cache", str(cache)])
+    commands: dict[str, list[str]] = {}
+
+    def skip_environment_creation(_builder: venv.EnvBuilder, _directory: str | Path) -> None:
+        pass
+
+    def stop_at_install(command: list[str], _log: Path, environment: dict[str, str]) -> float:
+        commands[environment["PSYCOPG_IMPL"]] = command
+        raise RuntimeError("stop after the install command")
+
+    monkeypatch.setenv("PARALLAX_WHEEL_DSN", "postgresql://synthetic")
+    monkeypatch.setattr(venv.EnvBuilder, "create", skip_environment_creation)
+    monkeypatch.setattr(validate_wheel, "run_logged", stop_at_install)
+    assert validate_wheel.main(arguments) == 1
+    assert set(commands) == {"binary", "c"}
+    for driver, command in commands.items():
+        assert "--no-binary=psycopg-c" in command
+        if driver == "c" and use_cell_cache:
+            assert command[command.index("--cache-dir") + 1] == str(cache.resolve())
+            assert "--no-cache-dir" not in command
+        else:
+            assert "--no-cache-dir" in command
+            assert "--cache-dir" not in command
 
 
 def test_validation_tool_versions_follow_authoritative_dev_configuration(

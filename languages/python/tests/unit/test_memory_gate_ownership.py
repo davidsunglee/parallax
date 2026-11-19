@@ -15,7 +15,7 @@ from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContrac
 from parallax.conformance.workloads import SCALAR_TYPE_IDS, STRUCTURAL_LAYOUTS
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
-from tests.unit._session_selection_support import WHOLE_CLASS, selections
+from tests.unit._session_selection_support import selection
 from tests.unit._workload_spelling_support import CONTROL_PREFIX, SCALAR_PREFIX
 
 
@@ -26,7 +26,7 @@ def test_every_memory_gate_is_owned_by_one_collected_cost_item() -> None:
     # and function, so ownership is graded here against the class as a real
     # session collects it — never inferred from a report member's registration
     # — and the table is a partition: every gate claimed, none twice.
-    (cost_class,) = selections([("cost", WHOLE_CLASS)])
+    cost_class = selection("-m", "cost")
     collected = set(cost_class.selected)
     for owner in gate_support.OWNERS:
         assert owner.nodeid in collected, owner.nodeid

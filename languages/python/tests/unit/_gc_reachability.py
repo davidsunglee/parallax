@@ -6,7 +6,7 @@ import gc
 from collections.abc import Sequence
 from typing import NamedTuple
 
-__all__ = ["Closure", "closure", "reachable_objects"]
+__all__ = ["Closure", "boundary_closures", "closure", "reachable_objects"]
 
 
 def reachable_objects(value: object, *, boundaries: Sequence[object] = ()) -> tuple[object, ...]:
@@ -68,6 +68,16 @@ def closure(start: object, boundary: Sequence[object]) -> Closure:
     the settled state, where tracked-ness is a property of the structure.
     """
     gc.collect()
+    return _closure(start, boundary)
+
+
+def boundary_closures(boundary: Sequence[object]) -> tuple[Closure, ...]:
+    """Read each member's closure from the same settled live object graph."""
+    gc.collect()
+    return tuple(_closure(member, boundary) for member in boundary)
+
+
+def _closure(start: object, boundary: Sequence[object]) -> Closure:
     others = [member for member in boundary if member is not start]
     positions = {id(member): index for index, member in enumerate(boundary) if member is not start}
     reached: set[int] = set()

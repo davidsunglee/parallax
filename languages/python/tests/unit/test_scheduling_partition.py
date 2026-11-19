@@ -18,7 +18,7 @@ import re
 import subprocess
 import sys
 import tomllib
-from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
 from pathlib import Path
 from typing import Any, cast
 
@@ -160,24 +160,22 @@ def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("PARALLAX_CLOUD_PROVIDERS", raising=False)
+    cost_cells = _deployed_cells(COST_JOB)
+    db_cells = _deployed_cells("python-check-db")
+    cost_cell = cost_cells[len(cost_cells) // 2]
+    db_cell = db_cells[len(db_cells) // 2]
+    snapshot = selection("--shard", cost_cell, "--db-shard", db_cell)
+    expected = {item for item in snapshot.collected if snapshot.classes[item] == "dbfree"}
     variants = (
-        ("cost", _deployed_cells(COST_JOB), "--shard", shards.COST_DURATIONS),
-        ("db", _deployed_cells("python-check-db"), "--db-shard", shards.DB_DURATIONS),
+        ("cost", cost_cells, cost_cell, "--shard", shards.COST_DURATIONS),
+        ("db", db_cells, db_cell, "--db-shard", shards.DB_DURATIONS),
     )
-    with ThreadPoolExecutor(max_workers=len(variants)) as sessions:
-        narrowed = {
-            scheduling_class: sessions.submit(
-                selection, None, cells[len(cells) // 2], option=option
-            )
-            for scheduling_class, cells, option, _path in variants
-        }
-        snapshots = {name: future.result() for name, future in narrowed.items()}
-    for scheduling_class, cells, option, path in variants:
+    for scheduling_class, cells, selected_cell, option, path in variants:
         parsed = [shards.index_and_count(cell, option=option) for cell in cells]
         assert sorted(parsed) == [(index, len(cells)) for index in range(1, len(cells) + 1)]
-        snapshot = snapshots[scheduling_class]
-        whole = [item for item in snapshot.collected if snapshot.classes[item] != "cloud"]
-        members = [item for item in whole if snapshot.classes[item] == scheduling_class]
+        members = [
+            item for item in snapshot.collected if snapshot.classes[item] == scheduling_class
+        ]
         known = shards.known(path)
         if scheduling_class == "db":
             assignment = shards.shard_of_groups(members, snapshot.groups, known, len(cells))
@@ -189,14 +187,7 @@ def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole(
         }
         assert all(predicted.values())
         assert sorted(item for part in predicted.values() for item in part) == sorted(members)
-        spot_checked = cells[len(cells) // 2]
-        actual = snapshot.selected
-        assert [item for item in actual if snapshot.classes[item] == scheduling_class] == predicted[
-            spot_checked
-        ]
-        assert [item for item in actual if snapshot.classes[item] != scheduling_class] == [
-            item for item in whole if snapshot.classes[item] != scheduling_class
-        ]
+        expected.update(predicted[selected_cell])
         if scheduling_class == "db":
             placement = dict(zip(members, assignment, strict=True))
             for group in set(snapshot.groups.values()):
@@ -204,6 +195,31 @@ def test_the_deployed_cells_partition_each_class_and_leave_the_rest_whole(
                     len({placement[item] for item in members if snapshot.groups.get(item) == group})
                     <= 1
                 )
+
+    assert snapshot.selected == [item for item in snapshot.collected if item in expected]
+
+
+@pytest.mark.parametrize(("option", "narrowed"), [("--shard", "cost"), ("--db-shard", "db")])
+def test_each_shard_option_narrows_only_its_own_class(
+    tmp_path: Path, option: str, narrowed: str
+) -> None:
+    planted = tmp_path / "test_partition.py"
+    planted.write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('index', [1, 2])\n"
+        "def test_db(profile_run, index): pass\n"
+        "@pytest.mark.parametrize('index', [1, 2])\n"
+        "def test_cost(committed_cost_evidence, index): pass\n"
+        "def test_dbfree(): pass\n",
+        encoding="utf-8",
+    )
+    snapshot = selection(
+        "-c", str(PY_ROOT / "pyproject.toml"), "-p", "tests.conftest", str(planted), option, "1/2"
+    )
+    collected = Counter(snapshot.classes[item] for item in snapshot.collected)
+    assert collected == {"cost": 2, "db": 2, "dbfree": 1}
+    collected[narrowed] -= 1
+    assert Counter(snapshot.classes[item] for item in snapshot.selected) == collected
 
 
 def test_database_groups_are_indivisible_and_use_unsuffixed_weights() -> None:

@@ -31,7 +31,14 @@ def production_paths(directory: Path, pattern: str) -> list[Path]:
     return paths
 
 
-def build_and_validate(sdists: Path, companions: Path, output: Path, postgres_version: str) -> None:
+def build_and_validate(
+    sdists: Path,
+    companions: Path,
+    output: Path,
+    postgres_version: str,
+    *,
+    driver_cache: Path | None = None,
+) -> None:
     output.mkdir(parents=True, exist_ok=False)
     record: dict[str, Any] = {"status": "failed"}
     started = time.monotonic()
@@ -73,6 +80,7 @@ def build_and_validate(sdists: Path, companions: Path, output: Path, postgres_ve
         (conformance,) = companions.glob("parallax_conformance-*.whl")
         shutil.copy2(conformance, output / "companions" / conformance.name)
         (adapter,) = (output / "wheelhouse").glob("*.whl")
+        cache_args = ["--driver-cache", str(driver_cache)] if driver_cache is not None else []
         run_logged(
             [
                 sys.executable,
@@ -86,6 +94,7 @@ def build_and_validate(sdists: Path, companions: Path, output: Path, postgres_ve
                 str(output / "validation"),
                 "--postgres-version",
                 postgres_version,
+                *cache_args,
             ],
             output / "validate.log",
             environment,
@@ -105,12 +114,14 @@ def main() -> None:
     parser.add_argument("--companions", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--postgres-version", required=True)
+    parser.add_argument("--driver-cache", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     build_and_validate(
         args.sdists.resolve(strict=True),
         args.companions.resolve(strict=True),
         args.output.resolve(),
         args.postgres_version,
+        driver_cache=args.driver_cache,
     )
 
 
