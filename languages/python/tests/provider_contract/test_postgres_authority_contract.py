@@ -146,7 +146,7 @@ def _measurements(runtime: Any) -> Any:
     (source, _reservation) = runtime.pool_metrics
     sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
-    return sample.measurements
+    return sample.metrics
 
 
 @pytest.mark.adapter_smoke

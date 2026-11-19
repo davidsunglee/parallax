@@ -4,10 +4,9 @@ import contextlib
 import re
 import struct
 import sys
-import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, Literal, Self, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import psycopg
 from psycopg import postgres
@@ -52,8 +51,6 @@ from parallax.core.internal.db_port import (
     CommitFailed,
     Committed,
     ConfirmedWriteOutcome,
-    CredentialResolutionError,
-    CredentialSource,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -80,22 +77,15 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONNECT_KWARGS",
-    "ConnectionEstablishment",
-    "DialFailure",
-    "DialReason",
     "IncompatibleSessionError",
     "PostgresConnection",
-    "dial_reason",
     "initialize_connection",
-    "session_lost",
 ]
 
 _REVOKED = (
     "this database connection's scope has ended; acquire another one through the Database "
     "that owns the runtime"
 )
-
-_CREDENTIAL_REFUSAL = "the credential source could not produce a password"
 
 # Resolved once, as the adapter is imported: psycopg fixes its implementation
 # when it is imported, so an implementation the loaders cannot run under is
@@ -650,254 +640,6 @@ def _require_supported_session(connection: psycopg.Connection[TupleRow]) -> None
             f"this connection's DateStyle is {date_style!r}; Parallax decodes timestamps from "
             f"their ISO text form, so it cannot execute under another output style"
         )
-
-
-type DialReason = Literal[
-    "unavailable", "authentication_refused", "credentials_refused", "preparation_failed"
-]
-"""The acquisition reasons establishing a connection can meet."""
-
-
-def dial_reason(failure: BaseException) -> DialReason:
-    """Classify one failure met while establishing a connection.
-
-    Connection SQLSTATEs, a server at its connection limit, and a driver
-    failure to reach the server are unavailable. With no SQLSTATE, a capacity
-    message takes precedence over the driver's indication that it sent a
-    password. A password sent otherwise means the server refused the login
-    or, when its message identifies a missing database, preparation failed.
-    A codeless failure with no password sent leaves the route unavailable.
-
-    Only a dial is classified here: a failure on an established session
-    reports the password that session was opened with, which says nothing
-    about why it ended; :func:`session_lost` reads those.
-    """
-    if isinstance(failure, CredentialResolutionError):
-        return "credentials_refused"
-    if isinstance(failure, psycopg.OperationalError):
-        state = failure.sqlstate
-        if state is None:
-            message = _fatal_dial_message(failure)
-            match: DialReason | None = next(
-                (
-                    reason
-                    for pattern, reason in _SERVER_DIAL_MESSAGES.values()
-                    if pattern.match(message)
-                ),
-                None,
-            )
-            if match == "unavailable" or _offered_password(failure):
-                return "authentication_refused" if match is None else match
-            return "unavailable"
-        if state.startswith("08") or state in _UNAVAILABLE_DIAL_STATES:
-            return "unavailable"
-        if state.startswith("28"):
-            return "authentication_refused"
-    return "preparation_failed"
-
-
-def session_lost(failure: BaseException) -> bool:
-    """Whether a failure on an established session says the session itself ended.
-
-    That is a driver connection failure with no SQLSTATE or a connection-class
-    one, or a server going away, rather than anything a statement provoked.
-    """
-    if not isinstance(failure, psycopg.OperationalError):
-        return False
-    state = failure.sqlstate
-    return state is None or state.startswith("08") or state in _SERVER_GONE
-
-
-def _offered_password(failure: psycopg.OperationalError) -> bool:
-    try:
-        attempt = failure.pgconn
-        return attempt is not None and bool(attempt.used_password)
-    except Exception:
-        return False
-
-
-_LIBPQ_DIAL_PREFIX: Final = re.compile(
-    rb'^connection to server (?:at "[^\n]*?"(?: \([^\n)]+\))?, port [^\n]+?'
-    rb'|on socket "[^\n]*?") failed: ',
-    re.MULTILINE,
-)
-
-
-def _fatal_dial_message(failure: psycopg.OperationalError) -> str:
-    try:
-        attempt = failure.pgconn
-        if attempt is None:
-            return ""
-        message = attempt.error_message
-        # The startup packet's names are truncated to 63 bytes on the server.
-        # A newline in one of these quoted values cannot start another report.
-        for name in (attempt.user[:63], attempt.db[:63]):
-            if b"\n" in name:
-                quoted = b'"' + name + b'"'
-                message = message.replace(quoted, quoted.replace(b"\n", b"\0"))
-    except Exception:
-        return ""
-
-    reports = _LIBPQ_DIAL_PREFIX.split(message)
-    latest = reports[-1].removesuffix(b"\n")
-    marker = b"FATAL:  "
-    if len(reports) == 1 and not latest.startswith(marker):
-        # A localized libpq wrapper may still carry an English server message.
-        before, found, detail = latest.rsplit(b"\n", 1)[-1].partition(marker)
-        if found and before.endswith(b": "):
-            latest = found + detail
-    if latest.startswith(marker):
-        return latest.removeprefix(marker).replace(b"\0", b"\n").decode("utf-8", "replace")
-    return ""
-
-
-_SERVER_DIAL_MESSAGES: Final[dict[str, tuple[re.Pattern[str], DialReason]]] = {
-    "server-full": (re.compile(r"sorry, too many clients already"), "unavailable"),
-    "connection-limit": (
-        re.compile(r'too many connections for (?:role|database) "'),
-        "unavailable",
-    ),
-    "reserved-slots": (re.compile(r"remaining connection slots are reserved for"), "unavailable"),
-    # The server prints the database name unescaped, including any double quotes.
-    "missing-database": (re.compile(r'database ".*" does not exist\Z'), "preparation_failed"),
-}
-_CANNOT_CONNECT_NOW: Final = "57P03"
-_UNAVAILABLE_DIAL_STATES: Final = frozenset({_CANNOT_CONNECT_NOW, "53300"})
-_SERVER_GONE: Final = frozenset({_CANNOT_CONNECT_NOW, "57P01", "57P02"})
-
-
-@dataclass(frozen=True, slots=True)
-class DialFailure:
-    reason: DialReason
-    cause: BaseException
-
-
-class ConnectionEstablishment:
-    """Everything one route's native pool needs to bring a connection into
-    existence, and the latest failure met doing it.
-
-    Three hooks and one record. :meth:`connect_kwargs` produces the driver
-    keywords each physical connection is dialed with, resolving the credential
-    source as it goes; :attr:`connection_class` is the class the pool dials
-    through, observing the socket and authentication step itself; and
-    ``__call__`` is the pool's ``configure``, initializing the connection that
-    resulted. All three write the one record, which is why they live together:
-    the write discipline is stated once rather than agreed on by three modules.
-
-    The record exists because a pool creates most of its connections on its own
-    background path: a failure there is retried and logged where a caller
-    waiting for a connection never sees it, and what that caller eventually gets
-    is a bare timeout. The record lets an expired checkout report the latest
-    dial failure even when the pool made no attempt during that wait.
-
-    One record serves every attempt on the route, because a pool dials several
-    at once on several workers and the caller it answers is waiting on the pool
-    rather than on any one of them. Two rules arbitrate the writes. The most
-    recent failure wins, so a caller is told the last thing establishment
-    actually met rather than the first. Only a connection that became USABLE
-    — one initialized, or one the route handed over — clears the record, so
-    what ends a failure is the outcome a caller could have been handed: a
-    resolved credential or a completed dial is not one, since that connection
-    may still fail to dial or to initialize, and clearing there would let one
-    attempt's partial progress erase another's completed failure and leave a
-    bare timeout in its place.
-    """
-
-    __slots__ = ("_lock", "connection_class", "last_failure")
-
-    def __init__(self) -> None:
-        self.last_failure: DialFailure | None = None
-        self._lock = threading.Lock()
-        self.connection_class: type[psycopg.Connection[TupleRow]] = _observed_connections(self)
-
-    def failed(self, failure: BaseException) -> None:
-        """Record ``failure`` as the route's latest establishment outcome."""
-        reason = dial_reason(failure)
-        with self._lock:
-            self.last_failure = DialFailure(reason, failure)
-
-    def checked_out(self) -> None:
-        """Record that the route handed over a connection, which ends whatever
-        failure was on record: a route serving work is not one an outage or a
-        refusal still describes, even where that connection was retained long
-        before the failure was."""
-        if self.last_failure is not None:
-            self._usable()
-
-    def _usable(self) -> None:
-        with self._lock:
-            self.last_failure = None
-
-    def __call__(self, connection: psycopg.Connection[TupleRow]) -> None:
-        try:
-            initialize_connection(connection)
-        except IncompatibleSessionError as refusal:
-            self.failed(refusal)
-            raise
-        self._usable()
-
-    def connect_kwargs(
-        self, base: dict[str, object], source: CredentialSource
-    ) -> Callable[[], dict[str, object]]:
-        """The pool's ``kwargs``, resolved anew for every connection attempt.
-
-        psycopg_pool calls this on each connection attempt and on no other
-        occasion, which is what the seam asks for: the credential is an input to
-        connecting, so an attempt that never reaches a connection has already
-        asked and a retried attempt asks again, while a reused retained
-        connection never reaches it at all. A fresh dictionary comes back each
-        time, so the secret is never written into the base the next connection
-        would inherit.
-
-        Anything the source raises that is not already a
-        :class:`~parallax.core.internal.db_port.CredentialResolutionError` is wrapped in
-        one with fixed text and the original chained, so classification does not
-        depend on a provider's discipline and the pool's own warning line — which
-        prints the exception's text — carries nothing a source put in a message.
-
-        A refusal is recorded; a credential is not, because producing one
-        establishes nothing. Initialization is where a connection proves usable
-        and therefore where the record clears.
-        """
-
-        def resolve() -> dict[str, object]:
-            try:
-                credential = source.resolve()
-            except CredentialResolutionError as refusal:
-                self.failed(refusal)
-                raise
-            except Exception as exc:
-                refusal = CredentialResolutionError(_CREDENTIAL_REFUSAL)
-                self.failed(refusal)
-                raise refusal from exc
-            return {**base, "password": credential.secret}
-
-        return resolve
-
-
-def _observed_connections(
-    establishment: ConnectionEstablishment,
-) -> type[psycopg.Connection[TupleRow]]:
-    """A connection class whose dials record their failures on ``establishment``.
-
-    The pool sends every dial through its ``connection_class``, on its own
-    workers and on an acquiring caller's thread alike, so this is the one place
-    that sees the socket and authentication step whoever made it. One class per
-    establishment keeps each route's record its own. A dial that completes
-    records nothing: the connection it produced is not usable until it has been
-    initialized.
-    """
-
-    class _ObservedConnection(psycopg.Connection[TupleRow]):
-        @classmethod
-        def connect(cls, conninfo: str = "", **kwargs: Any) -> Self:
-            try:
-                return super().connect(conninfo, **kwargs)
-            except Exception as failure:
-                establishment.failed(failure)
-                raise
-
-    return _ObservedConnection
 
 
 _COMMAND_OK = ExecStatus.COMMAND_OK

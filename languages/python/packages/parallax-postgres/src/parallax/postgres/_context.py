@@ -8,17 +8,20 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Final, Literal
 
 import psycopg
-import psycopg_pool
 from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
 from parallax.core.internal.db_port import (
+    CheckoutFailed,
+    CheckoutReason,
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
     CleanupResult,
     ConnectionAcquisitionError,
+    ConnectionPool,
     DatabaseConnection,
+    DialReason,
     FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
@@ -35,27 +38,22 @@ from parallax.postgres._authorization import (
 )
 from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import (
-    ConnectionEstablishment,
-    DialReason,
     PostgresConnection,
     _displaced_control_flow,  # pyright: ignore[reportPrivateUsage] - the adapter's one reading of an interrupt a driver failure displaced
     _execute_rows,  # pyright: ignore[reportPrivateUsage] - the one read operation, submitting a pending route's proof
-    dial_reason,
-    session_lost,
 )
+from parallax.postgres._failures import session_lost
 from parallax.postgres._route import PROBE_SQL, ProbeMismatch, check_probe
 from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
+    from parallax.core.internal.db_port._runtime._dial_record import DialLedger
     from parallax.postgres._connection import (
         _NativeOperation,  # pyright: ignore[reportPrivateUsage] - the runner's operation shape
     )
     from parallax.postgres._route import PostgresRoute
 
-__all__ = ["NativePool", "PostgresConnectionContext", "Step"]
-
-type NativePool = psycopg_pool.ConnectionPool[psycopg.Connection[TupleRow]]
-"""Either native pool this adapter builds; the null pool is a subclass of it."""
+__all__ = ["PostgresConnectionContext", "Step"]
 
 type Admit = Callable[[float], None]
 """The runtime's atomic admission check, raising when work may not proceed.
@@ -92,43 +90,37 @@ def _issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> Cleanu
 def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleRow]:
     """Take a connection out of ``route``'s pool within ``deadline``, or raise.
 
-    The remaining budget is what the native checkout is given, so its wait
+    The remaining budget is what the pool's checkout is given, so its wait
     spends the caller's time rather than an additional allowance. It is one
     fair wait: the pool queues the caller once, and nothing here polls it
-    again. Native failures map to the checkout-reachable acquisition reasons
-    and keep their cause; authorization setup is classified later, after
-    checkout.
+    again. Checkout failures map to the checkout-reachable acquisition reasons
+    and keep their native cause; authorization setup is classified later,
+    after checkout.
 
     When the budget expires, report the latest dial failure still on record
-    or ``timeout`` if the record is empty. An on-demand pool can raise its dial
-    failure directly. A successful checkout clears the record.
+    or ``timeout`` if the record is empty. A pool that dials on this thread
+    reports its dial failure directly. A successful checkout clears the record.
     """
-    establishment = route.establishment
+    dial_ledger = route.dial_ledger
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        raise _expired(establishment, None)
+        raise _expired(dial_ledger, None)
     try:
-        connection = route.pool.getconn(timeout=remaining)
-    except psycopg_pool.PoolTimeout as exc:
-        raise _expired(establishment, exc)  # noqa: B904 - the cause is chosen above
-    except psycopg_pool.TooManyRequests as exc:
+        connection = route.pool.check_out(remaining)
+    except CheckoutFailed as failed:
+        if failed.reason == "timeout":
+            raise _expired(dial_ledger, failed.__cause__)  # noqa: B904 - the cause is chosen above
         raise ConnectionAcquisitionError(
-            "the database runtime already has as many callers waiting as it admits",
-            reason="queue_rejected",
-        ) from exc
-    except psycopg_pool.PoolClosed as exc:
-        raise ConnectionAcquisitionError(
-            "this Database is closed, so it opens no new database connection",
-            reason="closed",
-        ) from exc
-    except Exception as exc:
-        reason = dial_reason(exc)
-        raise ConnectionAcquisitionError(_DIAL_FAILURES[reason], reason=reason) from exc
-    establishment.checked_out()
+            _CHECKOUT_FAILURES[failed.reason], reason=failed.reason
+        ) from failed.__cause__
+    dial_ledger.clear_on_handover()
     return connection
 
 
-_DIAL_FAILURES: Final[dict[DialReason, str]] = {
+_CHECKOUT_FAILURES: Final[dict[CheckoutReason, str]] = {
+    "timeout": "no database connection became available within the acquisition timeout",
+    "queue_rejected": "the database runtime already has as many callers waiting as it admits",
+    "closed": "this Database is closed, so it opens no new database connection",
     "unavailable": (
         "a database connection could not be established: its server could not be reached or is not "
         "accepting connections"
@@ -160,15 +152,10 @@ _EXPIRED_FAILURES: Final[dict[DialReason, str]] = {
 }
 
 
-def _expired(
-    establishment: ConnectionEstablishment, native: BaseException | None
-) -> ConnectionAcquisitionError:
-    failure = establishment.last_failure
+def _expired(dial_ledger: DialLedger, native: BaseException | None) -> ConnectionAcquisitionError:
+    failure = dial_ledger.latest_failure
     if failure is None:
-        timed_out = ConnectionAcquisitionError(
-            "no database connection became available within the acquisition timeout",
-            reason="timeout",
-        )
+        timed_out = ConnectionAcquisitionError(_CHECKOUT_FAILURES["timeout"], reason="timeout")
         timed_out.__cause__ = native
         return timed_out
     explained = ConnectionAcquisitionError(_EXPIRED_FAILURES[failure.reason], reason=failure.reason)
@@ -205,7 +192,7 @@ def _status(connection: psycopg.Connection[TupleRow]) -> TransactionStatus | Non
 
 
 def release(
-    pool: NativePool,
+    pool: ConnectionPool[psycopg.Connection[TupleRow]],
     connection: psycopg.Connection[TupleRow],
     *,
     suspect: bool,
@@ -215,14 +202,15 @@ def release(
 
     The sequence is finite — inspect, restore scoped authorization where reuse
     remains possible, dispose where either step or the execution says reuse
-    cannot be established, then hand back exactly once — so the issues it can
-    report are bounded by the steps rather than accumulated as history.
+    cannot be established, then hand back exactly once — checked in where it is
+    reusable, discarded where it was disposed of — so the issues it can report
+    are bounded by the steps rather than accumulated as history.
 
     Three refusals are deliberate. A failed physical close does NOT fall back to
     returning a connection that is still suspect, because balancing the
     accounting is not worth offering the next caller a session nothing can
     vouch for. A failed handoff is not retried and is not followed by a close,
-    because a native return that raised may still have handed the connection to
+    because a hand-back that raised may still have handed the connection to
     another caller. And a completed handoff is never inspected afterwards, for
     the same reason.
     """
@@ -255,7 +243,10 @@ def release(
             issues.append(_issue("dispose", "close-failed", exc))
             return ReleaseUnconfirmed(tuple(issues))
     try:
-        pool.putconn(connection)
+        if dispose:
+            pool.discard(connection)
+        else:
+            pool.check_in(connection)
     except Exception as exc:
         issues.append(_issue("return", "handoff-failed", exc))
         return ReleaseUnconfirmed(tuple(issues))

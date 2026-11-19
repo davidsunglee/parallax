@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 __all__ = [
     "PoolAvailable",
     "PoolDetached",
-    "PoolMeasurements",
+    "PoolMetrics",
     "PoolMetricsSource",
     "PoolPurpose",
     "PoolSample",
@@ -25,7 +25,7 @@ or the key reservations a root's allocator makes on the writer."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class PoolMeasurements:
+class PoolMetrics:
     """One reading of a pool's own bookkeeping, as integers.
 
     Five **gauges** describe the pool as it is right now. ``pool_min`` and
@@ -80,15 +80,15 @@ class PoolMeasurements:
 class PoolAvailable:
     """A pool metrics sample taken while the pool was available.
 
-    ``readiness`` is read with the measurements rather than fixed on the
-    source, because a route whose verification was deferred at startup becomes
+    ``readiness`` is read with the metrics rather than fixed on the source,
+    because a route whose verification was deferred at startup becomes
     verified, or is refused, while the source stays the same object. A pool
     whose route is ``pending`` or ``refused`` can still be measured: its
-    measurements say what the pool did, and its readiness says whether that
-    route serves at all.
+    metrics say what the pool did, and its readiness says whether that route
+    serves at all.
     """
 
-    measurements: PoolMeasurements
+    metrics: PoolMetrics
     readiness: RouteReadiness
 
 

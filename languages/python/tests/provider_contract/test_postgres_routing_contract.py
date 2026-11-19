@@ -273,7 +273,7 @@ def _wait_for_failed_dial(source: PoolMetricsSource, previous_errors: int) -> No
     while True:
         sample = source.sample()
         assert isinstance(sample, PoolAvailable)
-        if sample.measurements.connections_errors > previous_errors:
+        if sample.metrics.connections_errors > previous_errors:
             return
         if monotonic() >= deadline:
             pytest.fail("the reader pool did not record a failed dial after severing")
@@ -318,7 +318,7 @@ def test_a_retaining_reader_falls_back_during_an_outage_and_serves_again(
                 with pytest.raises(DatabaseError):
                     connection.execute(_WHERE, [], read_only=True)
             assert lost.selection == RouteSelection("reader")
-            _wait_for_failed_dial(reader_metrics, healthy.measurements.connections_errors)
+            _wait_for_failed_dial(reader_metrics, healthy.metrics.connections_errors)
 
             for _ in range(4):
                 assert _preferred_where(runtime) == fallback

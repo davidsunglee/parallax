@@ -12,7 +12,7 @@ from parallax.core.internal.db_port import (
     StartupPhase,
     report_resource_issues,
 )
-from parallax.postgres._connection import session_lost
+from parallax.postgres._failures import session_lost
 from parallax.postgres._route import (
     PROBE_SQL,
     PostgresRoute,
@@ -239,7 +239,7 @@ def _remaining(route: PostgresRoute, deadline: float, phase: StartupPhase) -> fl
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        failure = route.establishment.last_failure
+        failure = route.dial_ledger.latest_failure
         error = DatabaseStartupError(
             "the database runtime did not become ready within its startup timeout",
             route=route.route,

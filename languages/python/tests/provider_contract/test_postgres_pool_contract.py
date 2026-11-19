@@ -281,7 +281,7 @@ def _wait_until_queued(runtime: Any) -> None:
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         sample = source.sample()
-        if isinstance(sample, PoolAvailable) and sample.measurements.requests_waiting > 0:
+        if isinstance(sample, PoolAvailable) and sample.metrics.requests_waiting > 0:
             return
         time.sleep(0.01)
     raise AssertionError("no borrower ever queued")
@@ -1090,7 +1090,7 @@ def _measurements(runtime: Any) -> Any:
     assert source.route == "writer"
     sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
-    return sample.measurements
+    return sample.metrics
 
 
 @pytest.mark.adapter_smoke
@@ -1301,7 +1301,7 @@ def _pool_readings(sources: list[PoolMetricsSource]) -> list[dict[str, object]]:
             "state": type(sample).__name__,
         }
         if isinstance(sample, PoolAvailable):
-            reading |= dataclasses.asdict(sample.measurements)
+            reading |= dataclasses.asdict(sample.metrics)
         readings.append(reading)
     return readings
 
