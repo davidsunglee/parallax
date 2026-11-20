@@ -14,9 +14,9 @@ read as saying something different:
 * the `rejected` lane's keyed `when.write`, a write-instruction document whose
   singular `row` is itself the input under test
   (:func:`~reference_harness.case_runner._validate_rejected_keyed_write`);
-* a `when.writeSequence` step, whose `mutation` / `entity` / `rows` state keyed
-  instructions' own members even though this harness grades the sequence by
-  executing its golden DML
+* a `when.writeSequence` step, whose `mutation` / `entity` / `rows` (a target
+  step's `row`) state write instructions' own members even though this harness
+  grades the sequence by executing its golden DML
   (:func:`~reference_harness.case_runner._assert_write_input_columns`); and
 * a settled scenario write's entry, on the way to the one row the find it names
   handed over (:func:`~reference_harness.unit_work_scenario.judge._settled_row`).
@@ -142,10 +142,10 @@ def validate_keyed_write(
     (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
 
     This judges instruction shape and the framework-owned assignment names of each
-    row of a case entry's ``rows``. A caller also judging subtype shape and
-    membership, as the rejected lane does for a document's singular ``row``, asks
-    :func:`validate_keyed_write_shape` and :func:`validate_keyed_assignment_members`
-    itself around those judgments.
+    row the entry carries: a writeSequence step's ``rows`` or a submission's one
+    ``row``. A caller also judging subtype shape and membership, as the rejected
+    lane does, asks :func:`validate_keyed_write_shape` and
+    :func:`validate_keyed_assignment_members` itself around those judgments.
     """
     validate_keyed_write_shape(entity, instruction)
     mutation = instruction.get("mutation")

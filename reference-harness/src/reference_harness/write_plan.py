@@ -36,7 +36,7 @@ from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
-from .case import Case, Entity, write_entry_rows
+from .case import Case, Entity, states_revision, write_entry_rows
 from .case_assertions import CaseFailure, write_value_equal
 from .database_binding import PhysicalTable
 from .document_codec import encode_collection, encode_document, encode_leaf
@@ -137,8 +137,10 @@ def unit_resolving_reads(
     is dropped with no database work, so it owes no acquisition or coverage and
     ends no run of shared reads.
 
-    Targets are counted by their canonical spelling, so two entries naming one
-    Entity two ways owe one read between them.
+    A target entry is a scenario submission stating a revision, or a
+    writeSequence target step as :attr:`~reference_harness.case.Case.write_sequence`
+    states it. Targets are counted by their canonical spelling, so two entries
+    naming one Entity two ways owe one read between them.
     """
     opened: set[tuple[str, tuple[Any, ...]]] = set()
     needed: set[str] = set()
@@ -151,7 +153,7 @@ def unit_resolving_reads(
         keys = _entry_object_keys(case, entry)
         written = _settled_objects(entity, entry, keys)
         settled.extend(written)
-        if entry.get("target"):
+        if entry.get("target") is True or states_revision(entry):
             acquires = _acquires(case, entity)
             if acquires and not assigns_nothing(entity, entry):
                 acquired.update(keys)
