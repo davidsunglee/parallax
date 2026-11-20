@@ -37,6 +37,7 @@ from ..write_plan import (
     parse_set_columns,
     settled_object,
     statement_object,
+    statement_reaches,
     tag,
     uncovered_parts,
     unit_resolving_reads,
@@ -149,7 +150,9 @@ def _resolving_reads(case: Case, step: Any) -> int:
         return len(acquired)
     if not isinstance(step, _UngroupedWrite):
         return 0
-    return unit_resolving_reads(case, list(step.entries))
+    return unit_resolving_reads(
+        case, list(step.entries), empty=[submission.empty for submission in step.submissions]
+    )
 
 
 _StepCoverage = tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]
@@ -473,7 +476,7 @@ def _assert_settled_flush(
     none: an empty amendment, dropped with no database work, and a write a
     Temporal Conflict of its flush (*refused*) stops (:func:`_stopped_by`)."""
     every_entry_settles = all(_aligns(submission) for submission in submissions)
-    settling = _settling_statements(case, index, pairs, dialect, every_entry_settles)
+    settling = _settling_statements(case, index, pairs, submissions, dialect)
     aligned: set[int] = set()
     for submission in submissions:
         if submission.empty or (
@@ -530,8 +533,8 @@ def _settling_statements(
     case: Case,
     index: int,
     pairs: list[tuple[str, list[Any]]],
+    submissions: tuple[Submission, ...],
     dialect: str,
-    every_entry_settles: bool,
 ) -> list[tuple[ObjectAddress, str, list[Any]]]:
     """The existing-row statements of a Flush's golden *pairs*, each beside the
     one object it addresses, a grouped effect read as the lone statement each of
@@ -539,10 +542,18 @@ def _settling_statements(
 
     A collapsed update or delete over a membership of keys addresses no one
     object (`m-unit-work` *Set-based flush*), so it is the write of entries
-    naming no find, which the table state grades. Where every entry aligns no
-    such entry exists, so a statement rendering no bound key address there is a
-    defect of the case.
+    naming no find, which the table state grades. Where every entry of
+    *submissions* aligns no such entry exists, so a statement rendering no bound
+    key address there is a defect of the case, as is one reaching the object of
+    an entry that aligns, since every statement addressing that object belongs
+    to it.
     """
+    every_entry_settles = all(_aligns(submission) for submission in submissions)
+    aligned_objects = [
+        (submission.entity, _target_key(case, submission.entity, submission.key))
+        for submission in submissions
+        if _aligns(submission) and submission.entity is not None and submission.key is not None
+    ]
     settling: list[tuple[ObjectAddress, str, list[Any]]] = []
     for statement, binds in _ungrouped_pairs(case, index, pairs):
         if not is_existing_row_statement(statement):
@@ -558,6 +569,16 @@ def _settling_statements(
                 f"or a stated revision, so each statement addresses the ONE object it "
                 f"survives as, and its key leads that address."
             )
+        else:
+            for entity, pk in aligned_objects:
+                table = case.entity_table(entity.canonical_name, dialect)
+                if statement_reaches(statement, binds, dialect, table, pk):
+                    raise CaseFailure(
+                        f"{case.path.name}: scenario[{index}] carries an existing-row golden "
+                        f"for {dialect} reaching {entity.name} pk {pk!r} through no bound key "
+                        f"equality: {statement!r} — every statement addressing a settled or "
+                        f"target entry's object belongs to it, and its key leads that address."
+                    )
     return settling
 
 

@@ -393,11 +393,14 @@ _COLLAPSED_TAG_DELETES = {
 }
 
 
-def _target_beside_collapsed_deletes(dialect: str, *, grouped: bool, gated_on: int) -> Case:
+def _target_beside_collapsed_deletes(
+    dialect: str, *, grouped: bool, gated_on: int, delete_table: str = "sequence_tag"
+) -> Case:
     """A versioned target amendment beside two keyed deletes of an unversioned
     Entity, which its flush collapses into one membership delete. Ungrouped, the
     step's own call also reads what its unit owes."""
     delete, delete_binds = _COLLAPSED_TAG_DELETES[dialect]
+    delete = delete.replace("sequence_tag", delete_table)
     calls = 2 if grouped else 3
     update = "update px.sequence_account set balance = ?, version = ? where id = ? and version = ?"
     raw: dict[str, Any] = {
@@ -458,4 +461,16 @@ def test_a_target_beside_collapsed_keyed_writes_gates_on_its_callers_version(
 ) -> None:
     case = _target_beside_collapsed_deletes(dialect, grouped=grouped, gated_on=2)
     with pytest.raises(CaseFailure, match="writes SequenceAccount from version 1"):
+        assert_judged(case, dialect)
+
+
+@pytest.mark.parametrize("grouped", [False, True], ids=["ungrouped", "grouped"])
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_collapsed_write_reaching_a_targets_object_belongs_to_it(
+    dialect: str, grouped: bool
+) -> None:
+    case = _target_beside_collapsed_deletes(
+        dialect, grouped=grouped, gated_on=1, delete_table="sequence_account"
+    )
+    with pytest.raises(CaseFailure, match="SequenceAccount pk 1 through no bound key equality"):
         assert_judged(case, dialect)

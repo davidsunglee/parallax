@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -35,6 +35,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
+from ._sql_placeholders import array_bind_indices
 from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
 from .case import Case, Entity, states_revision, write_entry_rows
 from .case_assertions import CaseFailure, write_value_equal
@@ -112,7 +113,11 @@ or ``None`` where the case's history does not tell."""
 
 
 def unit_resolving_reads(
-    case: Case, entries: list[dict[str, Any]], *, acquired_start: AcquiredStart | None = None
+    case: Case,
+    entries: list[dict[str, Any]],
+    *,
+    acquired_start: AcquiredStart | None = None,
+    empty: Sequence[bool] | None = None,
 ) -> int:
     """The resolving reads ONE choreography unit owes: one per target Entity whose
     existing-row keyed writes address a row this unit did not itself open.
@@ -135,7 +140,9 @@ def unit_resolving_reads(
     cell of its current row (:func:`binds_from_stated_start`) owes none and
     settles at planning. An amendment assigning nothing
     is dropped with no database work, so it owes no acquisition or coverage and
-    ends no run of shared reads.
+    ends no run of shared reads. ``empty`` marks, position by position, each
+    entry such an amendment where its caller has already classified them;
+    otherwise each is classified here (:func:`assigns_nothing`).
 
     A target entry is a scenario submission stating a revision, or a
     writeSequence target step as :attr:`~reference_harness.case.Case.write_sequence`
@@ -148,14 +155,15 @@ def unit_resolving_reads(
     coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]] = {}
     targeted: dict[tuple[str, tuple[Any, ...]], tuple[Entity, list[str]]] = {}
     settled: list[SettledObject] = []
-    for entry in entries:
+    for position, entry in enumerate(entries):
         entity = _entry_entity(case, entry)
         keys = _entry_object_keys(case, entry)
-        written = _settled_objects(entity, entry, keys)
+        dropped = assigns_nothing(entity, entry) if empty is None else empty[position]
+        written = [] if dropped else _settled_objects(entry, keys)
         settled.extend(written)
         if entry.get("target") is True or states_revision(entry):
             acquires = _acquires(case, entity)
-            if acquires and not assigns_nothing(entity, entry):
+            if acquires and not dropped:
                 acquired.update(keys)
             if entity.is_temporal:
                 window = _target_window(entity, entry, acquires, acquired_start)
@@ -253,10 +261,8 @@ def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:
 
 
 def _settled_objects(
-    entity: Entity, entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
+    entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
 ) -> list[SettledObject]:
-    if assigns_nothing(entity, entry):
-        return []
     region = (entry.get("validFrom"), entry.get("until"))
     return [settled_object(key, str(entry.get("mutation")), region) for key in keys]
 
@@ -1236,6 +1242,25 @@ def statement_object(statement: str, binds: list[Any], dialect: str) -> ObjectAd
     if write is None or key_column is None or offset is None or offset >= len(binds):
         return None
     return ObjectAddress(write.table, key_column, binds[offset])
+
+
+def statement_reaches(
+    statement: str, binds: list[Any], dialect: str, table: PhysicalTable, key: Any
+) -> bool:
+    """Whether the existing-row *statement* writes *table* with *key* among its
+    predicate's binds, one bound array read as its elements: the objects a
+    collapsed write over a membership of keys reaches, though it renders no
+    one-object address (:func:`statement_object`)."""
+    write = _existing_row_write(statement, dialect)
+    offset = _predicate_bind_offset(statement)
+    if write is None or offset is None or not _names_table(write.table, table):
+        return False
+    arrays = array_bind_indices(statement)
+    return any(
+        write_value_equal(value, key)
+        for position, bind in enumerate(binds[offset:], start=offset)
+        for value in (bind if position in arrays and isinstance(bind, list) else [bind])
+    )
 
 
 # --- the optimistic gates a write appends to its address -------------------------
