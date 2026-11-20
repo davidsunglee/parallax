@@ -81,15 +81,9 @@ _WHERE_POSITION_META = model_of(WHERE_POSITION_META)
 
 
 def _person_delete(*ids: int) -> KeyedWriteInstruction:
-    instruction = instructions.deserialize(
-        {
-            "mutation": "delete",
-            "entity": "parallax.compatibility.Person",
-            "rows": [{"id": value} for value in ids],
-        }
+    return KeyedWriteInstruction(
+        "delete", "parallax.compatibility.Person", tuple({"id": value} for value in ids)
     )
-    assert isinstance(instruction, KeyedWriteInstruction)
-    return instruction
 
 
 def _prepared_person_delete(*ids: int) -> PreparedKeyedInstruction:
@@ -108,7 +102,7 @@ def _prepared_intent(mutation: str) -> PreparedKeyedInstruction:
     document: dict[str, object] = {
         "mutation": mutation,
         "entity": "WherePosition",
-        "rows": [{"id": 1, "acctNum": "A", "value": "100.00"}],
+        "row": {"id": 1, "acctNum": "A", "value": "100.00"},
         "validFrom": "2024-01-01T00:00:00.000000Z",
     }
     if mutation.endswith("Until"):

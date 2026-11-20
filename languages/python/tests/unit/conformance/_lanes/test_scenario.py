@@ -487,7 +487,7 @@ def _account_insert(account_id: int) -> dict[str, object]:
     return {
         "mutation": "insert",
         "entity": "Account",
-        "rows": [{"id": account_id, "owner": "Noether", "balance": "5.00", "version": 1}],
+        "rows": [{"id": account_id, "owner": "Noether", "balance": "5.00"}],
     }
 
 
@@ -730,7 +730,7 @@ def test_a_run_grades_an_authored_statement_count_against_what_it_delivered() ->
                         "mutation": "insert",
                         "entity": "Account",
                         "statements": 2,
-                        "rows": [{"id": 90, "owner": "Noether", "balance": "5.00", "version": 1}],
+                        "rows": [{"id": 90, "owner": "Noether", "balance": "5.00"}],
                     }
                 ]
             }
@@ -822,7 +822,7 @@ def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
                         "mutation": "insert",
                         "entity": "Account",
                         "statements": 1,
-                        "rows": [{"id": 1, "version": 1, "observedVersion": 1}],
+                        "rows": [{"id": 1, "observedVersion": 1}],
                     }
                 ]
             }
@@ -1628,15 +1628,10 @@ def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused(
         scenario.compile_write_sequence_case(case, "postgres")
 
 
-def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
-    # The row-count axis of the same seam. `rows` is a schema-valid array of one
-    # or more at every authoring location, and a temporal entity's row count is
-    # not something the shared definition can constrain (it depends on the
-    # model), so a plural temporal entry reaches this scenario. It settles one
-    # milestone chain per row and never a set-based statement, so the second row
-    # is a second chain the case must author as its own entry — and translating
-    # only the first would discard it before the entitlement seam ever sees it,
-    # emitting the first row's statements and grading green.
+def test_every_row_of_a_temporal_write_sequence_entry_is_judged_as_its_own_write() -> None:
+    # A plural temporal entry is one one-row write per row, so its second row
+    # reaches the same entitlement seam as its first: translating only the first
+    # would discard the second row's refused observation and grade green.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1657,9 +1652,7 @@ def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
             },
         },
     )
-    with pytest.raises(
-        UnclassifiedEngineError, match=re.escape("a temporal write entry carries ONE")
-    ):
+    with pytest.raises(UnclassifiedEngineError, match=re.escape("a temporal row authors no")):
         scenario.compile_write_sequence_case(case, "postgres")
 
 

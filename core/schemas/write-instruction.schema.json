@@ -10,18 +10,16 @@
   ],
   "$defs": {
     "keyedWriteInstruction": {
-      "description": "A keyed write: a mutation on one entity carrying flat attribute-named rows, authorized by the source the write was stated through — a read's evidence or an admitted insertion — never by a condition of its own. A Valid-Time mutation carries `validFrom`; the bounded `*Until` forms additionally carry `until`.",
+      "description": "A keyed write: a mutation on one entity carrying one flat attribute-named row, authorized by the source the write was stated through — a read's evidence or an admitted insertion — never by a condition of its own. A Valid-Time mutation carries `validFrom`; the bounded `*Until` forms additionally carry `until`.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mutation", "entity", "rows"],
+      "required": ["mutation", "entity", "row"],
       "properties": {
         "mutation": { "$ref": "#/$defs/keyedMutation" },
         "entity": { "$ref": "#/$defs/entityName" },
-        "rows": {
-          "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by metamodel role and derives the emitted column list and ORDER by filtering the target's Entity Layout slots. A keyed instruction on a TEMPORAL target (one whose inheritance family derives an As-Of Axis — a descendant inherits the root's declaration unchanged and declares none of its own, m-inheritance) carries EXACTLY ONE row (`m-unit-work` \"A temporal keyed instruction carries exactly one row\"): each row closes its own milestone, settles against its own Temporal Observation, and chains its own successors, and a temporal entity never collapses into a set-based statement (`m-batch-write`), so several rows are several chains that must be authored as several instructions. That bound is MODEL-dependent — whether the target is temporal is not visible here — so this array states the general one-or-more shape and the temporal singleton is enforced against the metamodel.",
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/writeRow" }
+        "row": {
+          "description": "The neutral write input: the one flat attribute-named row the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by metamodel role and derives the emitted column list and ORDER by filtering the target's Entity Layout slots.",
+          "$ref": "#/$defs/writeRow"
         },
         "validFrom": {
           "description": "The Valid-Time lower bound of the mutation (`from_z`). Required on every bounded `*Until` mutation.",

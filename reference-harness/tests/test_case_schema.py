@@ -609,8 +609,9 @@ def _rejected_write_case() -> dict[str, Any]:
 def _rejected_keyed_write_case() -> dict[str, Any]:
     """A rejected case whose `when.write` is a whole KEYED INSTRUCTION.
 
-    The third `when.write` form: `rows` names it, and the entity handle rides on
-    the instruction rather than being resolved from the model.
+    The third `when.write` form: a singular `row` stating no revision names it, and
+    the entity handle rides on the instruction rather than being resolved from the
+    model.
     """
     return {
         "model": "models/position.yaml",
@@ -620,10 +621,10 @@ def _rejected_keyed_write_case() -> dict[str, Any]:
             "write": {
                 "mutation": "amend",
                 "entity": "Position",
-                "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
+                "row": {"id": 1, "value": 150.00},
             }
         },
-        "then": {"rejectedRule": "temporal-keyed-write-multi-row"},
+        "then": {"rejectedRule": "framework-owned-member-assigned"},
     }
 
 
@@ -678,7 +679,7 @@ def _rejected_keyed_write_nesting_a_row_member() -> dict[str, Any]:
     member vocabulary.
     """
     doc = _rejected_keyed_write_case()
-    doc["when"]["write"]["rows"] = [{"id": 1, "row": 3}]
+    doc["when"]["write"]["row"] = {"id": 1, "row": 3}
     return doc
 
 
@@ -1082,7 +1083,7 @@ def _conflict_keyed_write() -> dict[str, Any]:
     doc["when"]["write"] = {
         "mutation": "amend",
         "entity": "Balance",
-        "rows": [{"id": 1, "value": 150.00}],
+        "row": {"id": 1, "value": 150.00},
     }
     return doc
 
@@ -1091,8 +1092,8 @@ def _keyed_write_with_a_stray_member() -> dict[str, Any]:
     """A keyed instruction carrying a member its own definition does not declare.
 
     The witness that the keyed branch DECIDES the document rather than being
-    shadowed by the row branch: `$defs/keyedWrite` is closed, so a stray member
-    fails it — and, with `target` / `rows` reserved from `$defs/bareWriteRow`, no
+    shadowed by the row branch: `keyedWriteInstruction` is closed, so a stray member
+    fails it — and, with `target` / `row` reserved from `$defs/bareWriteRow`, no
     other branch admits the document either. Drop that reservation and every
     instruction is also a row, so this document validates and the keyed branch
     adds no validity at all.
@@ -1116,22 +1117,11 @@ def _rejected_write_multi_key_array() -> dict[str, Any]:
     return doc
 
 
-def _bare_write_row_naming_rows() -> dict[str, Any]:
-    """A bare neutral write row whose entity declares a `many` value object `rows`.
-
-    `rows` is reserved at `when.write`, so the row is refused outright instead of
-    being silently re-read as a keyed instruction by every dispatcher.
-    """
-    doc = _conflict_case()
-    doc["when"]["write"] = {"id": 2, "rows": [{"line": 1}], "observedVersion": 1}
-    return doc
-
-
 def _bare_write_row_naming_target() -> dict[str, Any]:
     """A bare neutral write row whose entity declares a value object `target`.
 
-    The other reserved discriminator: `target` names the predicate-selected
-    instruction, so a row may not author one either.
+    One reserved discriminator: `target` names the predicate-selected
+    instruction, so a row may not author one.
     """
     doc = _conflict_case()
     doc["when"]["write"] = {"id": 2, "target": {"kind": "x"}, "observedVersion": 1}
@@ -1141,7 +1131,7 @@ def _bare_write_row_naming_target() -> dict[str, Any]:
 def _bare_write_row_naming_row() -> dict[str, Any]:
     """A bare neutral write row whose entity declares a member `row`.
 
-    The third reserved discriminator: a singular `row` names the target
+    The other reserved discriminator: a singular `row` names a keyed or target
     instruction, so a bare row may not author one.
     """
     doc = _conflict_case()
@@ -1177,14 +1167,14 @@ def _target_write_with_a_stray_member() -> dict[str, Any]:
 
 
 def _rejected_write_mixing_rows_and_row() -> dict[str, Any]:
-    """A keyed instruction also carrying the target form's `row`."""
+    """A keyed instruction also carrying a plural `rows` list."""
     doc = _rejected_keyed_write_case()
-    doc["when"]["write"]["row"] = {"id": 1}
+    doc["when"]["write"]["rows"] = [{"id": 1}]
     return doc
 
 
 def _rejected_write_mixing_target_and_rows() -> dict[str, Any]:
-    """A predicate-selected instruction also carrying the keyed form's `rows`."""
+    """A predicate-selected instruction also carrying a plural `rows` list."""
     doc = _rejected_predicate_replacement_case()
     doc["when"]["write"]["rows"] = [{"id": 1}]
     return doc
@@ -1883,7 +1873,6 @@ REJECTED_CASES = {
     "conflict-keyed-write": _conflict_keyed_write,
     "keyed-write-stray-member": _keyed_write_with_a_stray_member,
     "rejected-write-multi-key-array": _rejected_write_multi_key_array,
-    "bare-write-row-naming-rows": _bare_write_row_naming_rows,
     "bare-write-row-naming-target": _bare_write_row_naming_target,
     "bare-write-row-naming-row": _bare_write_row_naming_row,
     "conflict-target-write": _conflict_target_write,

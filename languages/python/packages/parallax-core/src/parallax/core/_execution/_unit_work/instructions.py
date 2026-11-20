@@ -79,7 +79,6 @@ __all__ = [
     "READ_ONLY_WRITE_TARGET",
     "REPLACE_MUTATIONS",
     "SET_BASED_WRITE_TARGET_UNSUPPORTED",
-    "TEMPORAL_KEYED_WRITE_MULTI_ROW",
     "WRITE_INSTRUCTION_INVALID",
     "WRITE_REQUIRED_ATTRIBUTE_MISSING",
     "WRITE_REQUIRED_VALUE_OBJECT_MISSING",
@@ -204,7 +203,6 @@ _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
 
 type WriteRejectionCode = Literal[
     "write-instruction-invalid",
-    "temporal-keyed-write-multi-row",
     "set-based-write-target-unsupported",
     "read-only-write-target",
     "framework-owned-member-assigned",
@@ -227,9 +225,6 @@ The two value-type mismatches and the two required-member codes are raised as
 
 WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
 
-TEMPORAL_KEYED_WRITE_MULTI_ROW: Final = "temporal-keyed-write-multi-row"
-"""A plural keyed instruction on a temporal target."""
-
 READ_ONLY_WRITE_TARGET: Final = "read-only-write-target"
 """Any write whose target family's effective Persistence Mode is ReadOnly
 (`m-unit-work`)."""
@@ -243,7 +238,8 @@ WRITE_VALUE_TYPE_MISMATCH: Final = "write-value-type-mismatch"
 @dataclass(frozen=True, slots=True)
 class KeyedWriteInstruction:
     """An authored keyed write: a ``mutation`` on one ``entity`` carrying flat
-    attribute-named neutral write input (``rows``).
+    attribute-named neutral write input (``rows``). Its canonical document states
+    exactly one ``row``, so only a single-row instruction serializes.
 
     ``valid_from`` / ``until`` are the Valid-Time bounds; a
     bounded ``*Until`` mutation carries both, a plain temporal mutation carries only
@@ -590,9 +586,10 @@ _ASSIGNMENT_REF = re.compile(
 def deserialize(doc: object) -> WriteInstruction:
     """Parse a canonical write-instruction document into a frozen instruction.
 
-    Discriminates the three shapes by their required carrier (``rows`` -> keyed,
-    ``target`` -> predicate, ``row`` -> target, unless it rides
-    beside a predicate replacement's ``target``), validates the closed
+    Discriminates the three shapes in order: ``target`` names a predicate write
+    (whose replacement carries its ``row`` beside it), a stated revision
+    (``ifVersion`` or ``ifTxStart``) a target write, and anything else a keyed
+    write, whose ``row`` carries no revision. It validates the closed
     shape, the mutation enum, the keyed and target Valid-Time-bound
     pairing rules (a bounded ``*Until`` carries both bounds, every other form
     carries no ``until``; a predicate write carries no bound at all), that a
@@ -610,29 +607,11 @@ def deserialize(doc: object) -> WriteInstruction:
             f"write instruction must be a mapping, got {type(doc).__name__}",
         )
     node = cast("Mapping[str, object]", doc)
-    # A predicate-selected replacement states its `row` beside its `target`.
-    carriers = [
-        key
-        for key in ("rows", "target", "row")
-        if key in node and not (key == "row" and "target" in node)
-    ]
-    if len(carriers) > 1:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"write instruction is ambiguous: it carries {carriers}, and `rows` (keyed), "
-            "`target` (predicate), and `row` (target write) each name a different shape",
-        )
-    if carriers == ["rows"]:
-        return _keyed(node)
-    if carriers == ["target"]:
+    if "target" in node:
         return _predicate(node)
-    if carriers == ["row"]:
+    if "ifVersion" in node or "ifTxStart" in node:
         return _target_write(node)
-    raise UsageError(
-        WRITE_INSTRUCTION_INVALID,
-        "write instruction must carry `rows` (keyed), `target` (predicate), or `row` "
-        "(target write)",
-    )
+    return _keyed(node)
 
 
 def _reject_extra(node: Mapping[str, object], allowed: frozenset[str], shape: str) -> None:
@@ -702,44 +681,39 @@ def _check_valid_time_bounds(
         )
 
 
-def _rows(node: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
-    raw = node.get("rows")
-    if not isinstance(raw, list) or not raw:
-        raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: `rows` must be a non-empty list")
-    rows: list[Mapping[str, object]] = []
-    for item in cast("list[object]", raw):
-        if not isinstance(item, Mapping):
-            raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: each row must be a mapping")
-        row = cast("Mapping[str, object]", item)
-        forbidden = sorted(set(row) & _FORBIDDEN_ROW_KEYS)
-        if forbidden:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-                "(the transaction observation is attached at flush, never on the instruction)",
-            )
-        # A neutral write-row value is opaque JSON (a scalar or a whole value-object
-        # document); its metamodel role decides its meaning at preparation, not its
-        # shape, so the serde keeps it verbatim.
-        rows.append(dict(row))
-    return tuple(rows)
+def _keyed_row(node: Mapping[str, object]) -> Mapping[str, object]:
+    raw = node.get("row")
+    if not isinstance(raw, Mapping):
+        raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: `row` must be a mapping")
+    row = cast("Mapping[str, object]", raw)
+    forbidden = sorted(set(row) & _FORBIDDEN_ROW_KEYS)
+    if forbidden:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"keyed write: row carries forbidden observation control key(s) {forbidden} "
+            "(the transaction observation is attached at flush, never on the instruction)",
+        )
+    # A neutral write-row value is opaque JSON (a scalar or a whole value-object
+    # document); its metamodel role decides its meaning at preparation, not its
+    # shape, so the serde keeps it verbatim.
+    return dict(row)
 
 
 def _keyed(node: Mapping[str, object]) -> KeyedWriteInstruction:
     _reject_extra(
-        node, frozenset({"mutation", "entity", "rows", "validFrom", "until"}), "keyed write"
+        node, frozenset({"mutation", "entity", "row", "validFrom", "until"}), "keyed write"
     )
-    _require(node, ("mutation", "entity", "rows"), "keyed write")
+    _require(node, ("mutation", "entity", "row"), "keyed write")
     mutation = _mutation(node, _KEYED_MUTATIONS, "keyed write")
     entity = _entity_name(node, "entity", "keyed write")
-    rows = _rows(node)
+    row = _keyed_row(node)
     valid_from = _bound(node, "validFrom", "keyed write")
     until = _bound(node, "until", "keyed write")
     _check_valid_time_bounds(mutation, valid_from, until, "keyed write")
     return KeyedWriteInstruction(
         mutation=cast("KeyedMutation", mutation),
         entity=entity,
-        rows=rows,
+        rows=(row,),
         valid_from=valid_from,
         until=until,
     )
@@ -854,7 +828,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
     valid_from = _bound(node, "validFrom", "target write")
     until = _bound(node, "until", "target write")
     _check_valid_time_bounds(mutation, valid_from, until, "target write")
-    instruction = TargetWriteInstruction(
+    return TargetWriteInstruction(
         mutation=cast("TargetMutation", mutation),
         entity=entity,
         row=row,
@@ -863,13 +837,6 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
         valid_from=valid_from,
         until=until,
     )
-    if instruction.if_version is None and instruction.if_tx_start is None:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            "target write: states no revision, and a target write states exactly one "
-            "of `ifVersion` and `ifTxStart`",
-        )
-    return instruction
 
 
 def serialize(instruction: WriteInstruction) -> dict[str, object]:
@@ -887,10 +854,15 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         _emit_bounds(target_body, instruction.valid_from, instruction.until)
         return target_body
     if isinstance(instruction, KeyedWriteInstruction):
+        if len(instruction.rows) != 1:
+            raise ValueError(
+                f"a keyed write instruction document states one row; this instruction "
+                f"carries {len(instruction.rows)}"
+            )
         keyed_body: dict[str, object] = {
             "mutation": instruction.mutation,
             "entity": instruction.entity,
-            "rows": [dict(row) for row in instruction.rows],
+            "row": dict(instruction.rows[0]),
         }
         _emit_bounds(keyed_body, instruction.valid_from, instruction.until)
         return keyed_body
@@ -980,27 +952,6 @@ def _non_temporal_milestone_refusal(
         f"Non-temporal objects like {entity_name!r} do not support "
         f"{_spelled(mutation, surface)!r}, which closes a row's history instead of "
         f"removing it. Use {_spelled('delete', surface)!r} instead."
-    )
-
-
-def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruction) -> str | None:
-    """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
-    when this rule has nothing to say about it.
-
-    Each row of a milestone chain closes its own current milestone, settles
-    against its own Temporal Observation, and opens its own successors, and a
-    temporal entity never collapses into a set-based statement (`m-unit-work`),
-    so several rows under one keyed instruction denote several independent chains
-    rather than one wider write (`m-unit-work` "A temporal keyed instruction
-    carries exactly one row").
-    """
-    if len(instruction.rows) == 1:
-        return None
-    return (
-        f"{entity_name!r}: a keyed {instruction.mutation!r} on a temporal target carries "
-        f"{len(instruction.rows)} rows — a temporal keyed instruction carries exactly one "
-        "(m-unit-work), since each row closes its own milestone, settles against its "
-        "own observation, and chains its own successors; author one instruction per row"
     )
 
 
@@ -1698,7 +1649,7 @@ def _prepare_keyed_write(
     members: Callable[[], Mapping[str, object]] | None,
 ) -> PreparedKeyedInstruction:
     """Judge a keyed write: its verb and window against its target, then its
-    row count, then its rows' subtype shape, members, and values."""
+    rows' subtype shape, members, and values."""
     shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
     window = _judge_applicability(
         model,
@@ -1709,10 +1660,6 @@ def _prepare_keyed_write(
         instruction.until,
         surface="keyed",
     )
-    if _is_temporal(shape):
-        plural = _temporal_singleton_refusal(entity.identity.name, instruction)
-        if plural is not None:
-            raise UsageError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
     if members is not None:
         assigned = members()
         (row,) = instruction.rows

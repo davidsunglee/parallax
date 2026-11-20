@@ -41,7 +41,12 @@ def test_schema_is_meta_valid() -> None:
 
 
 def test_keyed_plain_insert_is_valid() -> None:
-    assert _valid({"mutation": "insert", "entity": "Balance", "rows": [{"id": 1, "value": 100.0}]})
+    assert _valid({"mutation": "insert", "entity": "Balance", "row": {"id": 1, "value": 100.0}})
+
+
+def test_keyed_instruction_carries_one_row_not_a_list() -> None:
+    assert not _valid({"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}]})
+    assert not _valid({"mutation": "insert", "entity": "Balance", "row": [{"id": 1}]})
 
 
 def test_keyed_plain_temporal_carries_valid_from_only() -> None:
@@ -49,7 +54,7 @@ def test_keyed_plain_temporal_carries_valid_from_only() -> None:
         {
             "mutation": "amend",
             "entity": "Balance",
-            "rows": [{"id": 1, "value": 150.0}],
+            "row": {"id": 1, "value": 150.0},
             "validFrom": "2024-06-01T00:00:00+00:00",
         }
     )
@@ -61,7 +66,7 @@ def test_keyed_until_requires_both_valid_time_bounds() -> None:
     doc = {
         "mutation": "amendUntil",
         "entity": "Position",
-        "rows": [{"id": 1, "value": 9}],
+        "row": {"id": 1, "value": 9},
         "validFrom": "2024-01-01T00:00:00+00:00",
         "until": "2024-06-01T00:00:00+00:00",
     }
@@ -71,15 +76,13 @@ def test_keyed_until_requires_both_valid_time_bounds() -> None:
 
 
 def test_keyed_plain_mutation_rejects_a_window_end() -> None:
-    assert not _valid(
-        {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "until": "x"}
-    )
+    assert not _valid({"mutation": "insert", "entity": "Balance", "row": {"id": 1}, "until": "x"})
 
 
 def test_keyed_rejects_a_transaction_instant_field() -> None:
     # The Transaction-Time instant is Clock-supplied context, never an instruction field.
     assert not _valid(
-        {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "at": "2024-01-01"}
+        {"mutation": "insert", "entity": "Balance", "row": {"id": 1}, "at": "2024-01-01"}
     )
 
 
@@ -93,7 +96,7 @@ def test_keyed_instruction_row_rejects_observed_version() -> None:
         {
             "mutation": "amend",
             "entity": "Balance",
-            "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
+            "row": {"id": 1, "value": 150.0, "observedVersion": 3},
         }
     )
 
@@ -105,7 +108,7 @@ def test_keyed_instruction_row_rejects_observed_tx_start() -> None:
         {
             "mutation": "terminate",
             "entity": "Balance",
-            "rows": [{"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"}],
+            "row": {"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"},
         }
     )
 
@@ -118,7 +121,7 @@ def test_observation_cannot_round_trip_as_instruction_state() -> None:
     implementation cannot serialize an observation-bearing row, round-trip it, and have
     it validate back as a durable instruction — the observation has no home here.
     """
-    clean = {"mutation": "amend", "entity": "Balance", "rows": [{"id": 1, "value": 150.0}]}
+    clean = {"mutation": "amend", "entity": "Balance", "row": {"id": 1, "value": 150.0}}
     assert _valid(clean)
     # Round-trip fidelity holds for the clean instruction (write-side serde contract).
     assert serde.roundtrip(clean, serde.JSON) == clean
@@ -129,12 +132,12 @@ def test_observation_cannot_round_trip_as_instruction_state() -> None:
     smuggled_version = {
         "mutation": "amend",
         "entity": "Balance",
-        "rows": [{"id": 1, "value": 150.0, "observedVersion": 3}],
+        "row": {"id": 1, "value": 150.0, "observedVersion": 3},
     }
     smuggled_in_z = {
         "mutation": "terminate",
         "entity": "Balance",
-        "rows": [{"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"}],
+        "row": {"id": 1, "observedTxStart": "2024-01-01T00:00:00+00:00"},
     }
     for smuggled in (smuggled_version, smuggled_in_z):
         assert not _valid(smuggled)
@@ -147,7 +150,7 @@ def test_keyed_value_object_document_and_pk_marker_rows() -> None:
         {
             "mutation": "insert",
             "entity": "Customer",
-            "rows": [{"id": {"computed": "maxPlusOne"}, "address": {"city": "Oslo"}}],
+            "row": {"id": {"computed": "maxPlusOne"}, "address": {"city": "Oslo"}},
         }
     )
 
@@ -213,7 +216,8 @@ def test_target_writes_carry_one_row_and_exactly_one_callers_revision() -> None:
         }
     )
     assert not _valid({**patch, "ifTxStart": "2024-01-01T00:00:00+00:00"})
-    assert not _valid({key: value for key, value in patch.items() if key != "ifVersion"})
+    # Stating no revision, the same members are a keyed instruction.
+    assert _valid({key: value for key, value in patch.items() if key != "ifVersion"})
     assert not _valid({**patch, "row": {"id": 1, "observedVersion": 3}})
     assert not _valid({**patch, "mutation": "insert"})
 
@@ -235,9 +239,7 @@ def test_target_until_requires_both_valid_time_bounds() -> None:
 
 
 def test_instruction_rejects_unknown_top_level_key() -> None:
-    assert not _valid(
-        {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "bogus": True}
-    )
+    assert not _valid({"mutation": "insert", "entity": "Balance", "row": {"id": 1}, "bogus": True})
 
 
 def test_a_predicate_replacement_carrying_a_row_is_no_target_instruction() -> None:

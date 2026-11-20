@@ -6,7 +6,6 @@ when:
   write:
     mutation: insert
     entity: parallax.compatibility.Publication
-    rows:
-      - { id: 2, title: Annual report }
+    row: { id: 2, title: Annual report }
 then:
   rejectedRule: read-only-write-target

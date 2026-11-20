@@ -2305,17 +2305,6 @@ _TEMPORAL_MEMBER_RESERVED_UNREACHABLE_REASON: Final[str] = (
     "rejected model, not a developer verb an idiomatic story can narrate"
 )
 
-_TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
-    "the rule is live and enforced on the developer path — prepared-write production refuses a "
-    "plural keyed instruction on a temporal target before the unit of work buffers it, "
-    "and a licensed write (`LicensedWrite`) refuses an admitted write of more than one row "
-    "again — but the CASE's own authored shape has no idiomatic spelling: every typed keyed "
-    "verb "
-    "(`tx.amend` / `tx.terminate` / their bounded siblings) takes ONE instance and emits an "
-    "instruction of one row, so no sequence of developer calls can construct the plural "
-    "instruction this case authors. A permanent structural non-fit, not a deferred story"
-)
-
 _INVALID_ROOT_WRITE_VALUE_REASON: Final[str] = (
     "the invalid-root write-authority witness: the case-driven write-value runners "
     "(`tests/api/test_write_value_run.py` against real Postgres and "
@@ -2630,7 +2619,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-055": _SOURCE_ADMISSION_REASON,
     "m-unit-work-057": _SOURCE_ADMISSION_REASON,
-    "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
     **dict.fromkeys(

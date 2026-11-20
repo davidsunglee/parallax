@@ -8,7 +8,6 @@ when:
   write:
     mutation: amend
     entity: parallax.compatibility.CardPayment
-    rows:
-      - { id: 10, tendered: 25.00 }
+    row: { id: 10, tendered: 25.00 }
 then:
   rejectedRule: subtype-write-sibling-attribute

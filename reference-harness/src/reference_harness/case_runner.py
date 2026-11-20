@@ -99,7 +99,6 @@ from .inheritance import (
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
     KeyedWriteApplicabilityError,
-    undeclared_row_members,
     validate_keyed_assignment_members,
     validate_keyed_write,
     validate_keyed_write_shape,
@@ -749,17 +748,18 @@ def _assert_rejected(case: Case) -> None:
     A write is dispatched on the members it carries, in order, never on the rule
     the case names (`m-case-format` Rejected cases): a ``target`` is a
     predicate-selected instruction, whose replacement also carries a ``row``;
-    otherwise a ``rows`` array is a whole KEYED instruction judged by
-    ``validate_keyed_write`` against the entity IT names; otherwise a singular
-    ``row`` is a whole TARGET instruction judged by ``target_write_violation``;
-    and anything else is the bare neutral write row, run through
-    ``validate_write`` and Inheritance's ``validate_subtype_write`` against the
-    model's default write root. All three discriminators are RESERVED from a bare
-    row at this position (`compatibility-case.schema.json` ``$defs/bareWriteRow``),
-    so a domain member can never be mistaken for one and this dispatch cannot
-    re-read a row as an instruction. Membership can decide the form only for an
-    OBJECT carrying one form's carriers, so :func:`_rejected_write_input` refuses
-    anything else before dispatch. Inline
+    otherwise a singular ``row`` stating a revision (``ifVersion`` or
+    ``ifTxStart``) is a whole TARGET instruction judged by
+    ``target_write_violation``, and one stating none a whole KEYED instruction
+    judged by ``validate_keyed_write`` against the entity IT names; and anything
+    else is the bare neutral write row, run through ``validate_write`` and
+    Inheritance's ``validate_subtype_write`` against the model's default write
+    root. Both discriminators are RESERVED from a bare row at this position
+    (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
+    can never be mistaken for one and this dispatch cannot re-read a row as an
+    instruction. Membership can decide the form only for an OBJECT carrying only
+    its form's members, so :func:`_rejected_write_input` refuses anything else
+    before dispatch. Inline
     models run the foundational resolver oracles (``validate_foundations``) before
     the semantic rule sets — Primary-Key Generation's shared-allocator rule,
     Inheritance's ``validate_family``, and Storage Layout’s
@@ -791,7 +791,7 @@ def _assert_rejected(case: Case) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: predicate write did not match its pre-SQL refusal"
                 )
-            if "rows" in write:
+            if "row" in write and _REVISION_MEMBERS.isdisjoint(write):
                 _validate_rejected_keyed_write(case, write)
                 raise CaseFailure(
                     f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
@@ -979,21 +979,29 @@ def _rejected_write_input(case: Case) -> dict[str, Any]:
             f"decide which. {type(write).__name__} is the conflict lane's multi-key form, which "
             f"asserts an aggregate affected-row count no rejected case emits SQL to produce."
         )
-    mixed = [pair for pair in _MIXED_WRITE_CARRIERS if pair <= write.keys()]
-    if mixed:
-        first, second = sorted(mixed[0])
+    form, members = (
+        ("predicate-selected", _PREDICATE_MEMBERS)
+        if "target" in write
+        else ("keyed or target", _KEYED_OR_TARGET_MEMBERS)
+        if "row" in write
+        else (None, frozenset[str]())
+    )
+    foreign = sorted(set(write) - members) if form is not None else []
+    if foreign:
         raise CaseFailure(
-            f"{case.path.name}: a rejected `when.write` carries both `{first}` and `{second}`, "
-            f"which name different instruction forms (m-case-format Rejected cases)."
+            f"{case.path.name}: a rejected {form} `when.write` also carries {foreign}, which "
+            f"no one instruction form states together with it (m-case-format Rejected cases)."
         )
     return write
 
 
-# The carrier pairs no one instruction form states together. A predicate
-# replacement's `row` beside its `target` is the one admitted combination.
-_MIXED_WRITE_CARRIERS: Final[tuple[frozenset[str], ...]] = (
-    frozenset({"target", "rows"}),
-    frozenset({"rows", "row"}),
+# The members each write-instruction document form may carry
+# (`write-instruction.schema.json`); a target instruction is the keyed members
+# plus its revision.
+_REVISION_MEMBERS: Final = frozenset({"ifVersion", "ifTxStart"})
+_PREDICATE_MEMBERS: Final = frozenset({"mutation", "target", "assignments", "row"})
+_KEYED_OR_TARGET_MEMBERS: Final = (
+    frozenset({"mutation", "entity", "row", "validFrom", "until"}) | _REVISION_MEMBERS
 )
 
 
@@ -1008,7 +1016,7 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     Persistence admission precedes all of it (`m-unit-work` "Writes to a ReadOnly
     family"): a read-only family is refused whatever the instruction carries.
 
-    Instruction applicability precedes the payload. Rows then run in order:
+    Instruction applicability precedes the payload. Its row then runs
     concrete-subtype shape, framework-owned assignment names, and undeclared
     names. A sibling branch's attribute or hierarchy metadata keeps its specific
     subtype classification rather than becoming a generic assignment refusal.
@@ -1026,18 +1034,17 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
         validate_keyed_write_shape(entity, write)
     except KeyedWriteApplicabilityError as exc:
         raise CaseFailure(f"{case.path.name}: {exc}") from exc
-    rows = write.get("rows")
-    for row in rows if isinstance(rows, list) else ():
-        if isinstance(row, dict):
-            validate_subtype_write(entity, case.model.entity_defs, row)
-            validate_keyed_assignment_members(entity, str(write.get("mutation")), row)
-            unknown = undeclared_row_members(entity, {"rows": [row]})
-            if unknown:
-                raise CaseFailure(
-                    f"{case.path.name}: keyed instruction's row(s) name {unknown}, which are not "
-                    f"attributes or value objects of {entity.name}"
-                )
-            validate_keyed_row_values(entity, str(write.get("mutation")), row)
+    row = write.get("row")
+    if isinstance(row, dict):
+        validate_subtype_write(entity, case.model.entity_defs, row)
+        validate_keyed_assignment_members(entity, str(write.get("mutation")), row)
+        unknown = undeclared_members(entity, row)
+        if unknown:
+            raise CaseFailure(
+                f"{case.path.name}: keyed instruction's row names {unknown}, which are not "
+                f"attributes or value objects of {entity.name}"
+            )
+        validate_keyed_row_values(entity, str(write.get("mutation")), row)
 
 
 def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
@@ -1326,14 +1333,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         zip(case.write_sequence, case.when.get("writeSequence", []), strict=True)
     ):
         count = step.get("statements", 1)
-        rows = step.get("rows")
         entity = case.model.entity(step["entity"])
-        if rows is None:
-            raise CaseFailure(
-                f"{case.path.name}: writeSequence step on {step['entity']} carries no "
-                f"neutral write input (① `rows`) — required on every writeSequence step."
-            )
-        rows = _with_allocated_keys(entity, rows, allocated.get(position, []))
+        rows = _with_allocated_keys(
+            entity, _step_input_rows(case, step, entity), allocated.get(position, [])
+        )
         mutation = step["mutation"]
         # Whether ① describes a row being OPENED whole or a sparse revision. The
         # mutation decides it for a non-temporal step; a TEMPORAL step's every
@@ -1350,14 +1353,9 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
             for row in rows
         ]
-        # `m-unit-work`'s temporal singleton, asked of this lane through the SAME
-        # validator the rejected lane and the buffered scenario write reach: a
-        # writeSequence step carries the keyed instruction's own members
-        # (`mutation` / `entity` / `rows`), so it is judged as one rather than by a
-        # count restated here. The shared `rows` array states the general
-        # one-or-more bound because the singleton is model-dependent, and the
-        # temporal cross-checks below read the first row alone — so a plural
-        # authoring would leave a later row graded against nothing.
+        # A writeSequence step carries keyed instructions' own members
+        # (`mutation` / `entity` / `rows`), so it is judged through the SAME
+        # validator the rejected lane and the buffered scenario write reach.
         try:
             instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
             validate_keyed_write(entity, instruction)
@@ -1424,6 +1422,27 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # _assert_temporal_input).
         assert_inheritance_write_routing(case, entity, step_statements, step_binds, dialect)
         stmt_index += count
+
+
+def _step_input_rows(case: Case, step: Mapping[str, Any], entity: Entity) -> list[dict[str, Any]]:
+    """A writeSequence step's ① ``rows``, which every step carries.
+
+    A temporal step's milestone-chain cross-checks read one row, so this harness
+    grades a temporal step only when it carries exactly one.
+    """
+    rows = step.get("rows")
+    if rows is None:
+        raise CaseFailure(
+            f"{case.path.name}: writeSequence step on {step['entity']} carries no "
+            f"neutral write input (① `rows`) — required on every writeSequence step."
+        )
+    if entity.is_temporal and len(rows) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: writeSequence step on {step['entity']} carries "
+            f"{len(rows)} rows; this harness cross-checks a temporal step's milestone "
+            f"chain from one row, so author a temporal step per row."
+        )
+    return rows
 
 
 def _ungrouped_effects(

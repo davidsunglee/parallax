@@ -8,7 +8,6 @@ when:
   write:
     mutation: amend
     entity: parallax.compatibility.Account
-    rows:
-      - { id: 1, balance: { increment: 5 } }
+    row: { id: 1, balance: { increment: 5 } }
 then:
   rejectedRule: neutral-literal-type-mismatch

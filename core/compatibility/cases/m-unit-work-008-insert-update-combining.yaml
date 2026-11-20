@@ -12,7 +12,7 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 8, owner: Turing, balance: "1.00", version: 1 }
+            - { id: 8, owner: Turing, balance: "1.00" }
         - mutation: amend
           entity: parallax.compatibility.Account
           rows:

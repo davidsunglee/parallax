@@ -536,17 +536,42 @@ def test_read_submissions_splits_a_multi_row_entry_and_keeps_each_declaration() 
         ],
         step=5,
     )
-    assert len(submissions) == 2
     assert [
         s.declared_observation.observed_version if s.declared_observation else None
         for s in submissions
     ] == [3, 7]
     assert [s.pointer for s in submissions] == ["/scenario/5/write/0"] * 2
-    assert all(
-        isinstance(s.instruction, KeyedWriteInstruction)
-        and "observedVersion" not in s.instruction.rows[0]
-        for s in submissions
+    assert [_sole_row(s) for s in submissions] == [
+        {"id": 1, "owner": "Grace"},
+        {"id": 2, "owner": "Ada"},
+    ]
+
+
+def test_read_submissions_splits_a_temporal_entry_into_ordered_one_row_writes() -> None:
+    model = models.load_models()["balance"]
+    submissions = read_submissions(
+        model,
+        [
+            {
+                "mutation": "amend",
+                "entity": "Balance",
+                "rows": [{"id": 2, "value": 1.0}, {"id": 1, "value": 2.0}],
+                "at": "2024-09-01T00:00:00+00:00",
+            }
+        ],
+        step=3,
     )
+    assert [_sole_row(s) for s in submissions] == [{"id": 2, "value": 1.0}, {"id": 1, "value": 2.0}]
+    assert [(s.pointer, s.declared_observation) for s in submissions] == [
+        ("/scenario/3/write/0", None)
+    ] * 2
+
+
+def _sole_row(submission: Submission) -> dict[str, object]:
+    instruction = submission.instruction
+    assert isinstance(instruction, KeyedWriteInstruction)
+    (row,) = instruction.rows
+    return dict(row)
 
 
 @pytest.mark.parametrize("named", [False, True])

@@ -47,7 +47,7 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 9, owner: Noether, balance: "5.00", version: 1 }
+            - { id: 9, owner: Noether, balance: "5.00" }
         - mutation: amend
           entity: parallax.compatibility.Account
           rows:

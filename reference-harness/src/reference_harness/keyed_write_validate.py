@@ -3,32 +3,19 @@
 The two other write validators judge a *payload*: `write_validate` walks a
 neutral write row's value-object documents, `predicate_write_validate` judges a
 predicate-selected instruction's target and assignments. This one judges the
-**shape and assignment names of a keyed instruction** — the members `mutation` / `entity` /
-`rows` carry *together* — against what its target's temporal profile admits:
-
-* ``temporal-keyed-write-multi-row`` — a keyed instruction on a **temporal**
-  target carries more than one row. Each row of a milestone chain closes its own
-  current milestone, settles against its own Temporal Observation, and opens its own
-  successors, and a temporal target never collapses into a set-based statement
-  (`m-batch-write`), so several rows under one instruction denote several
-  independent chains rather than one wider write. Settling the first row and
-  discarding the rest is what the rule forbids, which is why refusing is the only
-  conforming answer even when the discarded rows would each have lowered to
-  well-formed SQL of their own.
-* ``framework-owned-member-assigned`` — an amendment or replacement names a
-  framework-owned member as a caller assignment.
-
-The bound is model-dependent — it exists only for a temporal target — so the
-shared case schema states the general one-or-more `rows` bound and leaves this to
-a validator that can see the model. Every authoring location a keyed instruction
-reaches this harness through asks it here, so no lane can be read as saying
-something different:
+**shape and assignment names of a keyed instruction** — its `mutation` and window
+against what its target's temporal profile admits, then its row's member names —
+refusing ``framework-owned-member-assigned`` when an amendment or replacement
+names a framework-owned member as a caller assignment. Every authoring location a
+keyed instruction reaches this harness through asks it here, so no lane can be
+read as saying something different:
 
 * a `scenario` step's own buffered write (:mod:`reference_harness.schema_validate`);
-* the `rejected` lane's keyed `when.write`, where the instruction is itself the
-  input under test (:func:`~reference_harness.case_runner._validate_rejected_keyed_write`);
-* a `when.writeSequence` step, whose `mutation` / `entity` / `rows` ARE a keyed
-  instruction's own members even though this harness grades the sequence by
+* the `rejected` lane's keyed `when.write`, a write-instruction document whose
+  singular `row` is itself the input under test
+  (:func:`~reference_harness.case_runner._validate_rejected_keyed_write`);
+* a `when.writeSequence` step, whose `mutation` / `entity` / `rows` state keyed
+  instructions' own members even though this harness grades the sequence by
   executing its golden DML
   (:func:`~reference_harness.case_runner._assert_write_input_columns`); and
 * a settled scenario write's entry, on the way to the one row the find it names
@@ -48,12 +35,9 @@ from .temporality import temporal_axes
 from .value_object_resolve import RejectionError
 from .write_validate import framework_owned_names, undeclared_members
 
-TEMPORAL_KEYED_WRITE_MULTI_ROW = "temporal-keyed-write-multi-row"
 FRAMEWORK_OWNED_MEMBER_ASSIGNED = "framework-owned-member-assigned"
 
-KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset(
-    {TEMPORAL_KEYED_WRITE_MULTI_ROW, FRAMEWORK_OWNED_MEMBER_ASSIGNED}
-)
+KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset({FRAMEWORK_OWNED_MEMBER_ASSIGNED})
 
 
 def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> list[str]:
@@ -137,7 +121,7 @@ def _validate_keyed_window(entity: Entity, instruction: Mapping[str, Any]) -> No
 
 
 def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -> None:
-    """Judge operation, window, and temporal row count before payload judgments."""
+    """Judge operation and window before payload judgments."""
     mutation = instruction.get("mutation")
     if mutation == "delete" and entity.is_temporal:
         raise KeyedWriteApplicabilityError(f"{entity.name}: a temporal target takes no delete")
@@ -146,17 +130,6 @@ def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -
             f"{entity.name}: a non-temporal target takes no termination"
         )
     _validate_keyed_window(entity, instruction)
-    rows = instruction.get("rows")
-    if not isinstance(rows, list) or not entity.is_temporal or len(rows) <= 1:
-        return
-    mutation = instruction.get("mutation")
-    raise RejectionError(
-        TEMPORAL_KEYED_WRITE_MULTI_ROW,
-        f"a keyed {mutation!r} on the temporal entity {entity.name!r} carries {len(rows)} rows "
-        f"— a temporal keyed instruction carries exactly one (m-unit-work), since each row "
-        f"closes its own milestone, settles against its own observation, and chains its own "
-        f"successors; author one instruction per row",
-    )
 
 
 def validate_keyed_write(
