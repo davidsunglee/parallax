@@ -385,3 +385,77 @@ def test_a_find_including_a_targets_entity_may_have_observed_it() -> None:
     case = Case(path=Path("m-unit-work-996-synthetic.yaml"), raw=raw, model=model)
     with pytest.raises(CaseFailure, match="scenario\\[0\\] of its group observed"):
         assert_judged(case)
+
+
+_COLLAPSED_TAG_DELETES = {
+    "postgres": ("delete from px.sequence_tag where id = any(cast(? as bigint[]))", [[1, 2]]),
+    "mariadb": ("delete from px.sequence_tag where id in (?, ?)", [1, 2]),
+}
+
+
+def _target_beside_collapsed_deletes(dialect: str, *, grouped: bool, gated_on: int) -> Case:
+    """A versioned target amendment beside two keyed deletes of an unversioned
+    Entity, which its flush collapses into one membership delete. Ungrouped, the
+    step's own call also reads what its unit owes."""
+    delete, delete_binds = _COLLAPSED_TAG_DELETES[dialect]
+    calls = 2 if grouped else 3
+    update = "update px.sequence_account set balance = ?, version = ? where id = ? and version = ?"
+    raw: dict[str, Any] = {
+        "model": "models/buffered-sequence-layout-twin-columns.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "given": {"fixtures": True},
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "scenario": [
+                {
+                    "write": [
+                        {
+                            "mutation": "amend",
+                            "entity": "parallax.compatibility.SequenceAccount",
+                            "row": {"id": 1, "balance": 20},
+                            "ifVersion": 1,
+                        },
+                        {
+                            "mutation": "delete",
+                            "entity": "parallax.compatibility.SequenceTag",
+                            "row": {"id": 1},
+                        },
+                        {
+                            "mutation": "delete",
+                            "entity": "parallax.compatibility.SequenceTag",
+                            "row": {"id": 2},
+                        },
+                    ],
+                    "databaseCalls": calls,
+                    "statements": [
+                        {"sql": {dialect: update}, "binds": [20, gated_on + 1, 1, gated_on]},
+                        {"sql": {dialect: delete}, "binds": delete_binds},
+                    ],
+                }
+            ],
+        },
+        "then": {"databaseCalls": calls},
+    }
+    if grouped:
+        raw["when"]["scenario"][0]["uow"] = "g"
+    model = load_model(COMPATIBILITY_ROOT, raw["model"])
+    return Case(path=Path("m-unit-work-995-synthetic.yaml"), raw=raw, model=model)
+
+
+@pytest.mark.parametrize("grouped", [False, True], ids=["ungrouped", "grouped"])
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_target_aligns_beside_keyed_writes_its_flush_collapses(
+    dialect: str, grouped: bool
+) -> None:
+    assert_judged(_target_beside_collapsed_deletes(dialect, grouped=grouped, gated_on=1), dialect)
+
+
+@pytest.mark.parametrize("grouped", [False, True], ids=["ungrouped", "grouped"])
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_target_beside_collapsed_keyed_writes_gates_on_its_callers_version(
+    dialect: str, grouped: bool
+) -> None:
+    case = _target_beside_collapsed_deletes(dialect, grouped=grouped, gated_on=2)
+    with pytest.raises(CaseFailure, match="writes SequenceAccount from version 1"):
+        assert_judged(case, dialect)

@@ -29,7 +29,6 @@ from ..write_plan import (
     address_valid_end,
     assert_inheritance_write_routing,
     assert_write_values,
-    assigns_nothing,
     binds_from_stated_start,
     classify_write_row,
     close_address_binds,
@@ -142,7 +141,7 @@ def _resolving_reads(case: Case, step: Any) -> int:
                 for submission in step.submissions
                 if submission.kind == "target"
                 and submission.refusal is None
-                and not _is_empty_target(submission)
+                and not submission.empty
             }
             if case.concurrency_mode == "locking"
             else set()
@@ -228,7 +227,7 @@ def _step_coverage(
         if submission.entity is None or key is None:
             settled.append(_unkeyed(submission.pointer))
             continue
-        if submission.refusal is not None or assigns_nothing(submission.entity, entry):
+        if submission.refusal is not None or submission.empty:
             continue
         region = (entry.get("validFrom"), entry.get("until"))
         settled.append(settled_object(key, submission.mutation, region))
@@ -301,16 +300,6 @@ def _writes_through_flushed_inserts(scenario: CompiledScenario) -> frozenset[str
                 if submission.inserts and submission.refusal is None:
                     inserted[_object_key(submission)] = submission.pointer
     return frozenset(through)
-
-
-def _is_empty_target(submission: Submission) -> bool:
-    """Whether *submission* is a target amendment naming nothing beside its key,
-    which is dropped once validated (`m-unit-work` *Target writes*)."""
-    return (
-        submission.kind == "target"
-        and submission.entity is not None
-        and assigns_nothing(submission.entity, submission.entry)
-    )
 
 
 def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
@@ -479,20 +468,15 @@ def _assert_settled_flush(
     *index* is the step whose call presented the Flush, which lists its golden
     *pairs*, and *submissions* are the entries it delivered. Every existing-row
     statement belongs to an entry once every entry aligns; a Flush whose other
-    entries name no find leaves their statements to the table state. A grouped
-    effect is graded as the lone statement each of its source rows stands for
-    (:func:`ungrouped_effect`). An entry that emits no statement aligns with
-    none: an empty target amendment, dropped with no database work, and a write
-    a Temporal Conflict of its flush (*refused*) stops (:func:`_stopped_by`)."""
-    settling = [
-        (_statement_address(case, index, statement, binds, dialect), statement, binds)
-        for statement, binds in _ungrouped_pairs(case, index, pairs)
-        if is_existing_row_statement(statement)
-    ]
-    aligned: set[int] = set()
+    entries name no find leaves their statements to the table state
+    (:func:`_settling_statements`). An entry that emits no statement aligns with
+    none: an empty amendment, dropped with no database work, and a write a
+    Temporal Conflict of its flush (*refused*) stops (:func:`_stopped_by`)."""
     every_entry_settles = all(_aligns(submission) for submission in submissions)
+    settling = _settling_statements(case, index, pairs, dialect, every_entry_settles)
+    aligned: set[int] = set()
     for submission in submissions:
-        if _is_empty_target(submission) or (
+        if submission.empty or (
             refused is not None and _stopped_by(case, submission, refused, settling, dialect)
         ):
             continue
@@ -540,6 +524,41 @@ def _assert_settled_flush(
             f"flush delivers writes — every statement a settled flush emits belongs to one of "
             f"the objects written, and entries settling against one state coalesce into one."
         )
+
+
+def _settling_statements(
+    case: Case,
+    index: int,
+    pairs: list[tuple[str, list[Any]]],
+    dialect: str,
+    every_entry_settles: bool,
+) -> list[tuple[ObjectAddress, str, list[Any]]]:
+    """The existing-row statements of a Flush's golden *pairs*, each beside the
+    one object it addresses, a grouped effect read as the lone statement each of
+    its source rows stands for (:func:`ungrouped_effect`).
+
+    A collapsed update or delete over a membership of keys addresses no one
+    object (`m-unit-work` *Set-based flush*), so it is the write of entries
+    naming no find, which the table state grades. Where every entry aligns no
+    such entry exists, so a statement rendering no bound key address there is a
+    defect of the case.
+    """
+    settling: list[tuple[ObjectAddress, str, list[Any]]] = []
+    for statement, binds in _ungrouped_pairs(case, index, pairs):
+        if not is_existing_row_statement(statement):
+            continue
+        address = statement_object(statement, binds, dialect)
+        if address is not None:
+            settling.append((address, statement, binds))
+        elif every_entry_settles:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
+                f"predicate does not open with a bound key equality for {dialect}: "
+                f"{statement!r} — every entry its flush delivers settles against a named find "
+                f"or a stated revision, so each statement addresses the ONE object it "
+                f"survives as, and its key leads that address."
+            )
+    return settling
 
 
 def _stopped_by(
@@ -784,27 +803,6 @@ def _settled_statement(
     aligned.add(position)
     _address, statement, binds = settling[position]
     return statement, binds
-
-
-def _statement_address(
-    case: Case, index: int, statement: str, binds: list[Any], dialect: str
-) -> ObjectAddress:
-    """The object a settled scenario step's *statement* addresses.
-
-    A settled write addresses the ONE object it survives as, so a golden here that
-    renders no bound key address is a defect of the case rather than a statement
-    with nothing to say — which is why the address is required at this step and
-    optional to :func:`write_plan.statement_object`.
-    """
-    address = statement_object(statement, binds, dialect)
-    if address is None:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] carries an existing-row golden whose "
-            f"predicate does not open with a bound key equality for {dialect}: "
-            f"{statement!r} — a settled write addresses the ONE object it survives as, "
-            f"and its key leads that address."
-        )
-    return address
 
 
 def _assert_version_binds(
