@@ -1628,7 +1628,7 @@ def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused(
         scenario.compile_write_sequence_case(case, "postgres")
 
 
-def test_every_row_of_a_temporal_write_sequence_entry_is_judged_as_its_own_write() -> None:
+def test_a_later_temporal_write_sequence_row_reaches_the_observation_refusal() -> None:
     # A plural temporal entry is one one-row write per row, so its second row
     # reaches the same entitlement seam as its first: translating only the first
     # would discard the second row's refused observation and grade green.
@@ -1654,6 +1654,31 @@ def test_every_row_of_a_temporal_write_sequence_entry_is_judged_as_its_own_write
     )
     with pytest.raises(UnclassifiedEngineError, match=re.escape("a temporal row authors no")):
         scenario.compile_write_sequence_case(case, "postgres")
+
+
+def test_every_row_of_a_temporal_write_sequence_entry_is_compiled_as_its_own_write() -> None:
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Balance",
+                        "statements": 1,
+                        "rows": [
+                            {"id": 1, "acctNum": "A", "value": "1.00"},
+                            {"id": 2, "acctNum": "B", "value": "2.00"},
+                        ],
+                        "at": "2024-09-01T00:00:00+00:00",
+                    }
+                ]
+            },
+        },
+    )
+    (emission,), _database_calls = scenario.compile_write_sequence_case(case, "postgres")
+    assert emission.binds[0] == ArrayBind(INT64, [1, 2])
 
 
 def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> None:

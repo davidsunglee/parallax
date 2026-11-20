@@ -159,9 +159,7 @@ never a key with an empty coordinate. The two differ in what follows from that
 absence: an insert opens a row and has no prior state for anything to be about,
 while an unversioned Non-Temporal existing-row write does write against a stored
 row and is claimed at that row's **Object Key** (`m-unit-work` *Observed-State
-Coalescing*), whose shared row lock is its evidence. Both keys address **one** object,
-so a write instruction naming **several** rows has neither and is claimed
-nowhere.
+Coalescing*), whose shared row lock is its evidence. Both keys address **one** object.
 
 An implementation **MUST NOT** address observations by identity alone. Two reads
 of one primary key may observe two different states — two generations of one

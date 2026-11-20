@@ -334,9 +334,10 @@ def _validate_buffered_write(
       (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`). Asked
       after instruction applicability, before the row's values.
     * **keyed applicability and assignment names** — decided by
-      :func:`~reference_harness.keyed_write_validate.validate_keyed_write`, the
-      SAME function the `rejected` lane's keyed `when.write` reaches, so a buffer
-      entry and a rejected instruction cannot be judged differently.
+      :func:`~reference_harness.keyed_write_validate.validate_keyed_write`, whose
+      shape and assignment-name judgments the `rejected` lane's keyed `when.write`
+      asks one by one around its row's subtype shape, so a buffer entry and a
+      rejected instruction cannot be judged differently.
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
     multi-object flush, an abort pair over distinct objects). Coalescing correctness is

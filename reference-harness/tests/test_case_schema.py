@@ -1180,6 +1180,20 @@ def _rejected_write_mixing_target_and_rows() -> dict[str, Any]:
     return doc
 
 
+def _write_sequence_keyed_step_carrying_row() -> dict[str, Any]:
+    """A keyed writeSequence step also carrying a target step's `row`."""
+    doc = _write_sequence_case()
+    doc["when"]["writeSequence"][0] |= {"mutation": "amend", "row": {"id": 2}}
+    return doc
+
+
+def _write_sequence_target_step_carrying_rows() -> dict[str, Any]:
+    """A target writeSequence step also carrying a keyed step's `rows`."""
+    doc = _write_sequence_keyed_step_carrying_row()
+    doc["when"]["writeSequence"][0]["ifVersion"] = 1
+    return doc
+
+
 def _settled_write_ungrouped() -> dict[str, Any]:
     """A write step naming a source find without declaring a `uow` group.
 
@@ -1878,6 +1892,8 @@ REJECTED_CASES = {
     "conflict-target-write": _conflict_target_write,
     "target-write-stray-member": _target_write_with_a_stray_member,
     "rejected-write-mixing-rows-and-row": _rejected_write_mixing_rows_and_row,
+    "write-sequence-keyed-step-carrying-row": _write_sequence_keyed_step_carrying_row,
+    "write-sequence-target-step-carrying-rows": _write_sequence_target_step_carrying_rows,
     "rejected-write-mixing-target-and-rows": _rejected_write_mixing_target_and_rows,
     "settled-write-ungrouped": _settled_write_ungrouped,
     "settled-write-on-array": _settled_write_on_array,
