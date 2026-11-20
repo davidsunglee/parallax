@@ -557,6 +557,7 @@ def test_a_retained_runtime_whose_source_refuses_fails_startup_naming_the_refusa
         "credential-resolution-failed: the credential source could not produce a password"
     )
     assert refusal.__cause__ is source.error
+    assert source.calls >= 2
     attempts = [record for record in caplog.records if record.name == "psycopg.pool"]
     assert attempts
     assert all(str(refusal) in record.getMessage() for record in attempts)
