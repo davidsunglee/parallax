@@ -300,9 +300,11 @@ Three of them are the driver's own maintenance and keep the driver's meanings.
 than an exact per-connection idle deadline. `max_lifetime` retains the driver's
 jitter, so connections built together do not all retire together.
 `reconnect_timeout` bounds the driver's own background attempts to restore
-capacity. Set below `startup_timeout`, it also ends startup's retries early:
-startup waits out the rest of its budget and then fails naming the last
-refusal. `num_workers` sizes the driver's maintenance threads, not your
+capacity. Set below `startup_timeout`, it also ends a retaining pool's
+startup retries early. Startup still waits out the rest of its budget and
+then judges the last dial failure as it would have anyway: a refusal, or an
+unavailable writer, fails the open naming it, and an unavailable reader is
+left pending unless `reader_startup="required"`. `num_workers` sizes the driver's maintenance threads, not your
 application's. Retirement never interrupts work in progress, and the driver
 reconnecting is not a Parallax transaction retry.
 
