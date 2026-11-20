@@ -524,12 +524,23 @@ def test_an_unreachable_reader_fails_startup_when_it_is_required() -> None:
     assert (writer_pool.closes, reader_pool.closes) == (1, 1)
 
 
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        pytest.param({}, id="nothing-recorded"),
+        pytest.param(
+            {"reader": ("unavailable", lost_session("sorry, too many clients already"))},
+            id="connection-limit-recorded",
+        ),
+    ],
+)
 def test_a_reader_whose_budget_ran_out_between_phases_is_left_pending(
     monkeypatch: pytest.MonkeyPatch,
+    recorded: Mapping[Route, tuple[Any, BaseException]],
 ) -> None:
-    # Running out names no refusal, so it is an outage's symptom. The startup
-    # clock reads the deadline, the writer's two phase checks, and then the
-    # reader's first, by which time the one budget is gone.
+    # Running out with at most an unavailable dial on record is an outage's
+    # symptom. The startup clock reads the deadline, the writer's two phase
+    # checks, and then the reader's first, by which time the one budget is gone.
     from parallax.core.internal.db_port._runtime import _startup as startup_module
 
     Clock(monkeypatch)
@@ -537,17 +548,19 @@ def test_a_reader_whose_budget_ran_out_between_phases_is_left_pending(
     monkeypatch.setattr(startup_module, "monotonic", lambda: next(readings))
     reader_pool = pool_of()
 
-    runtime = _open_routed(ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}))
+    runtime = _open_routed(
+        ScriptedDriver(pools={"writer": pool_of(), "reader": reader_pool}, recorded=recorded)
+    )
 
     assert _reader_readiness(runtime) == "pending"
     assert reader_pool.budgets == []
 
 
-def test_a_reader_whose_budget_ran_out_with_a_refusal_on_record_fails_deferrable_startup(
+def test_a_reader_whose_budget_ran_out_with_credentials_refused_fails_deferrable_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The same spent budget as above, but the reader's own background dials
-    # were refused meanwhile, so it is no outage.
+    # had their credentials refused meanwhile, so it is no outage.
     from parallax.core.internal.db_port._runtime import _startup as startup_module
 
     Clock(monkeypatch)
