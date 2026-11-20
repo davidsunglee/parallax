@@ -476,15 +476,16 @@ def _assert_settled_flush(
     none: an empty amendment, dropped with no database work, and a write a
     Temporal Conflict of its flush (*refused*) stops (:func:`_stopped_by`)."""
     every_entry_settles = all(_aligns(submission) for submission in submissions)
-    settling = _settling_statements(case, index, pairs, submissions, dialect)
+    keys: dict[str, Any] = {}
+    settling = _settling_statements(case, index, pairs, submissions, keys, dialect)
     aligned: set[int] = set()
     for submission in submissions:
         if submission.empty or (
-            refused is not None and _stopped_by(case, submission, refused, settling, dialect)
+            refused is not None and _stopped_by(case, submission, refused, settling, keys, dialect)
         ):
             continue
         if submission.kind == "target":
-            _assert_target_statement(case, index, submission, settling, aligned, dialect)
+            _assert_target_statement(case, index, submission, settling, aligned, keys, dialect)
             continue
         origin = submission.settles_on
         if origin is None:
@@ -534,6 +535,7 @@ def _settling_statements(
     index: int,
     pairs: list[tuple[str, list[Any]]],
     submissions: tuple[Submission, ...],
+    keys: dict[str, Any],
     dialect: str,
 ) -> list[tuple[ObjectAddress, str, list[Any]]]:
     """The existing-row statements of a Flush's golden *pairs*, each beside the
@@ -549,11 +551,6 @@ def _settling_statements(
     to it.
     """
     every_entry_settles = all(_aligns(submission) for submission in submissions)
-    aligned_objects = [
-        (submission.entity, _target_key(case, submission.entity, submission.key))
-        for submission in submissions
-        if _aligns(submission) and submission.entity is not None and submission.key is not None
-    ]
     settling: list[tuple[ObjectAddress, str, list[Any]]] = []
     for statement, binds in _ungrouped_pairs(case, index, pairs):
         if not is_existing_row_statement(statement):
@@ -570,9 +567,13 @@ def _settling_statements(
                 f"survives as, and its key leads that address."
             )
         else:
-            for entity, pk in aligned_objects:
+            for submission in submissions:
+                entity = submission.entity
+                if entity is None or submission.key is None or not _aligns(submission):
+                    continue
+                pk = _addressed_key(case, submission, keys)
                 table = case.entity_table(entity.canonical_name, dialect)
-                if statement_reaches(statement, binds, dialect, table, pk):
+                if statement_reaches(statement, binds, dialect, table, entity.identity_column, pk):
                     raise CaseFailure(
                         f"{case.path.name}: scenario[{index}] carries an existing-row golden "
                         f"for {dialect} reaching {entity.name} pk {pk!r} through no bound key "
@@ -587,6 +588,7 @@ def _stopped_by(
     submission: Submission,
     refused: FlushFailure,
     settling: list[tuple[ObjectAddress, str, list[Any]]],
+    keys: dict[str, Any],
     dialect: str,
 ) -> bool:
     """Whether the Temporal Conflict *refused* stops *submission* before any
@@ -597,7 +599,7 @@ def _stopped_by(
     entity, key = submission.entity, submission.key
     if entity is None or key is None or submission.names(refused.entity, refused.key):
         return True
-    return not _addressing(case, entity, _target_key(case, entity, key), settling, dialect)
+    return not _addressing(case, entity, _addressed_key(case, submission, keys), settling, dialect)
 
 
 def _addressing(
@@ -640,6 +642,7 @@ def _assert_target_statement(
     submission: Submission,
     settling: list[tuple[ObjectAddress, str, list[Any]]],
     aligned: set[int],
+    keys: dict[str, Any],
     dialect: str,
 ) -> None:
     """Grade one target entry's golden against the revision its caller states
@@ -655,10 +658,10 @@ def _assert_target_statement(
     stated ``ifVersion`` as a settled write's does on the generation its find
     observed.
     """
-    entity, key = submission.entity, submission.key
-    assert entity is not None and key is not None  # a target submission names its object
+    entity = submission.entity
+    assert entity is not None  # a target submission names its object
     entry = submission.entry
-    pk = _target_key(case, entity, key)
+    pk = _addressed_key(case, submission, keys)
     matches = _addressing(case, entity, pk, settling, dialect)
     aligned.update(matches)
     if temporal_axes(entity.runtime_facts):
@@ -716,13 +719,17 @@ def _starting_statement(
     return statement, binds
 
 
-def _target_key(case: Case, entity: Entity, key: Mapping[str, Any]) -> Any:
-    """The key value a target entry's statements address, as
-    :func:`write_plan.classify_write_row` derives it for a keyed row."""
-    _, pk, _set_cols, _observed = classify_write_row(
-        case, entity, dict(key), mutation="delete", opening=False
-    )
-    return pk
+def _addressed_key(case: Case, submission: Submission, keys: dict[str, Any]) -> Any:
+    """The key value an aligned *submission*'s statements address, as
+    :func:`write_plan.classify_write_row` derives it for a keyed row, derived
+    once per flush and kept in *keys* by the submission's pointer."""
+    if submission.pointer not in keys:
+        entity, key = submission.entity, submission.key
+        assert entity is not None and key is not None  # an aligned submission names its object
+        _, keys[submission.pointer], _set_cols, _observed = classify_write_row(
+            case, entity, dict(key), mutation="delete", opening=False
+        )
+    return keys[submission.pointer]
 
 
 def _settled_start(
