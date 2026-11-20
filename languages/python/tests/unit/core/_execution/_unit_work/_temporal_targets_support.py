@@ -8,8 +8,8 @@ from decimal import Decimal
 
 from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
     StateObserved,
@@ -33,7 +33,7 @@ from parallax.core.internal.unit_work import (
     TargetWriteInstruction,
     admitted_write,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 
 POSITION = formed(corpus_records()["position"])
@@ -83,7 +83,7 @@ def addressed_write(
         else ("amend" if until is None else "amendUntil")
     )
     item = target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(
                 mutation,
                 "Position",
@@ -93,6 +93,7 @@ def addressed_write(
                 until=until,
             ),
             write_preparation_of(POSITION),
+            WIRE,
         ),
         FAMILIES,
     )
@@ -108,9 +109,10 @@ def observed_write(
     until: dt.datetime | None = SEP,
     **members: object,
 ) -> LicensedWrite[StateObserved]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Position", {"id": 1, **members}, valid_from, until),
         write_preparation_of(POSITION),
+        WIRE,
     )
     item = admitted_write(prepared, evidence, evidence.key.object)
     assert is_licensed_by(item, StateObserved)

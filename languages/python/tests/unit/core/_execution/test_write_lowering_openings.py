@@ -507,7 +507,7 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     instruction = KeyedWriteInstruction(
         "amendUntil",
         "Position",
-        ({"id": 1, "value": Decimal("200.00")},),
+        {"id": 1, "value": Decimal("200.00")},
         valid_from=_MAR,
         until=_SEP,
     )

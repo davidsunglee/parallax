@@ -278,19 +278,18 @@ class AuthoringPlan:
         lane = AuthoringLane(converter_for, MAPPING_DOCUMENTS, definition_converter)
         return AuthoringCatalog((lane,), absent=absent).plan(shape)
 
-    def scalar_converter(self, lane: int, position: int) -> ScalarConverter:
-        """The converter ``lane`` admits the single scalar at ``position`` with."""
+    def scalar_cell(self, lane: int, position: int, raw: object) -> object:
+        """The owned cell ``lane`` authors for ``raw`` as the single scalar at
+        ``position``, so a caller can admit one member ahead of its row and
+        hand the cell back as that row's ``admitted`` cell.
+
+        Raises :class:`AuthoringRefusal` as a row refusing that member would.
+        """
         if not self._scalar >> position & 1:
             raise ValueError(f"{self.shape.members[position].name!r} is no single scalar")
-        return cast("ScalarConverter", self._steps[lane * len(self.shape.members) + position])
+        return self._top_level_scalar(lane * len(self.shape.members), position, raw)
 
-    def authored_values(self, payload: Mapping[str, object]) -> tuple[object, ...]:
-        """``payload``'s members in this plan's order, ``absent`` where it names
-        none."""
-        absent = self._absent
-        return tuple(payload.get(member.name, absent) for member in self.shape.members)
-
-    def complete_row(
+    def complete_row(  # noqa: C901 - one branch per case of the per-member loop every complete row runs
         self,
         raws: Iterable[object],
         *,
@@ -301,6 +300,7 @@ class AuthoringPlan:
         excluded: int = 0,
         check: MemberCheck | None = None,
         nonnull: int = 0,
+        admitted: tuple[int, object] | None = None,
     ) -> PreparedAuthoringRow:
         """The owned cells ``lane`` authors for a row stating every member it
         carries.
@@ -311,7 +311,9 @@ class AuthoringPlan:
         its empty collection, an unstated member in ``nulled`` is stated as
         null, and an unstated or null member in ``required`` is refused, as is
         a null member in ``nonnull``, which may be left unstated.
-        ``check`` judges each stated member first.
+        ``check`` judges each stated member first. ``admitted`` is a position
+        beside the cell its caller already authored for it, which the row
+        states as given whatever ``raws`` holds there.
 
         Raises :class:`AuthoringRefusal` for the first refused member.
         """
@@ -323,9 +325,17 @@ class AuthoringPlan:
         cells: list[object] = []
         presence = 0
         position = -1
+        admitted_bit, admitted_cell = (
+            (0, None) if admitted is None else (1 << admitted[0], admitted[1])
+        )
+        omitted |= admitted_bit
         for position, raw in enumerate(raws):
             bit = 1 << position
             if raw is absent or omitted & bit:
+                if admitted_bit & bit:
+                    cells.append(admitted_cell)
+                    presence |= bit
+                    continue
                 completed = self._completed(position, bit, required, nulled, excluded)
                 if completed is not _UNSTATED:
                     cells.append(completed)
@@ -355,21 +365,27 @@ class AuthoringPlan:
         *,
         lane: int,
         check: MemberCheck | None = None,
+        admitted: tuple[int, object] | None = None,
     ) -> PreparedAuthoringRow:
         """The owned cells ``lane`` authors for a row stating only the members
         ``pairs`` positions, judged in the order ``pairs`` states them.
 
         Each stated member is judged by ``check`` first. An explicit null is a
         null cell, except at a ``many`` member, which is never null; whether
-        any other member may be null is the caller's to judge. The cells are
+        any other member may be null is the caller's to judge. ``admitted`` is
+        a position beside the cell its caller already authored for it, which
+        the row states as given whatever ``pairs`` pairs with it. The cells are
         packed in member order whatever order they were judged in.
 
         Raises :class:`AuthoringRefusal` for the first refused member.
         """
         scalar = self._scalar
         base = lane * len(self.shape.members)
-        stated: dict[int, object] = {}
+        stated: dict[int, object] = {} if admitted is None else dict((admitted,))
+        admitted_position = -1 if admitted is None else admitted[0]
         for position, raw in pairs:
+            if position == admitted_position:
+                continue
             if check is not None:
                 check(position, raw)
             if raw is None:

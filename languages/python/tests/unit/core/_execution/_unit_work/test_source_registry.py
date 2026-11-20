@@ -28,8 +28,8 @@ from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES
@@ -59,7 +59,7 @@ from parallax.core.internal.unit_work import (
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._gc_reachability import reachable_objects
@@ -277,11 +277,12 @@ def test_a_flush_borrows_one_live_ownership_or_one_reusable_concluding_view_of_i
 
 
 def _position_insert() -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), JAN
+            "insert", "Position", {"id": 1, "acctNum": "A", "value": "1.00"}, JAN
         ),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -298,9 +299,10 @@ def test_an_insertion_stands_until_a_completed_removal_of_its_rows_and_its_histo
     admission.drain_planned()
     row = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     registry.complete_write(WriteEffects(opened=Openings(continued=(row,))))
-    termination = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "Position", ({"id": 1},), JAN),
+    termination = prepare_instruction(
+        KeyedWriteInstruction("terminate", "Position", {"id": 1}, JAN),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(termination, PreparedKeyedInstruction)
     write = registry.resolve_insertion_authorized_write(
@@ -322,9 +324,10 @@ def test_clearing_forgets_every_fact_but_keeps_participation_and_freshness() -> 
     stale = ReadEvidence(_person(1).entity, _person(1), participation, None)
     registry.complete_write(WriteEffects(changed=(_person(1),), destroyed=(_person(1),)))
     registry.register_read_evidence(stale, read_at=read_at)
-    insert = prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)),
+    insert = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 9, "name": "Ada"}),
         write_preparation_of(_PERSON),
+        WIRE,
     )
     assert isinstance(insert, PreparedKeyedInstruction)
     identity = WriteAdmission(_PERSON, registry=registry).admit_insert(

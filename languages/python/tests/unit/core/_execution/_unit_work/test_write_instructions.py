@@ -39,6 +39,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work import instructions as wi
+from parallax.core._execution._unit_work.preparation import TYPED, WIRE
 from parallax.core.internal import inheritance
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
@@ -48,21 +49,21 @@ from parallax.core.internal.planned_step.managed_row import named_members
 from parallax.core.internal.temporal_read import TimeInterval
 from tests._support.errors import raises_code
 from tests._support.repo import REPO_ROOT
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
 
 
 def _prepare_typed(
-    instruction: wi.WriteInstruction, model: AcceptedMetamodel, **keywords: Any
+    instruction: wi.WriteInstruction, model: AcceptedMetamodel
 ) -> wi.PreparedInstruction | wi.PreparedTargetInstruction:
-    return wi.prepare_typed_write(instruction, write_preparation_of(model), **keywords)
+    return prepare_instruction(instruction, write_preparation_of(model), TYPED)
 
 
 def _prepare_wire(
-    instruction: wi.WriteInstruction, model: AcceptedMetamodel, **keywords: Any
+    instruction: wi.WriteInstruction, model: AcceptedMetamodel
 ) -> wi.PreparedInstruction | wi.PreparedTargetInstruction:
-    return wi.prepare_wire_write(instruction, write_preparation_of(model), **keywords)
+    return prepare_instruction(instruction, write_preparation_of(model), WIRE)
 
 
 def _schema(name: str) -> dict[str, Any]:
@@ -333,17 +334,10 @@ def test_serde_round_trip(doc: dict[str, Any]) -> None:
     assert wi.serialize(wi.deserialize(doc)) == doc
 
 
-@pytest.mark.parametrize("rows", [(), ({"id": 1}, {"id": 2})], ids=["no-row", "two-rows"])
-def test_a_keyed_document_is_serialized_only_from_one_row(rows: tuple[dict[str, int], ...]) -> None:
-    instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", rows=rows)
-    with pytest.raises(ValueError, match=f"carries {len(rows)}"):
-        wi.serialize(instruction)
-
-
-def test_keyed_rows_are_frozen_views() -> None:
-    instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", rows=({"id": 9},))
+def test_a_keyed_row_is_a_frozen_view() -> None:
+    instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", row={"id": 9})
     with pytest.raises(TypeError):
-        cast("dict[str, object]", instruction.rows[0])["id"] = 10
+        cast("dict[str, object]", instruction.row)["id"] = 10
 
 
 # --------------------------------------------------------------------------- #
@@ -668,21 +662,11 @@ def _target(
     return wi.TargetWriteInstruction(mutation, entity, row, **kwargs)
 
 
-def _prepare_wire_target(
-    instruction: wi.TargetWriteInstruction, model: AcceptedMetamodel
-) -> wi.PreparedTargetInstruction:
-    return wi.prepare_wire_write(
-        instruction,
-        write_preparation_of(model),
-        authored_members=instruction.row.keys(),
-    )
-
-
 _BOTH_PRODUCERS = pytest.mark.parametrize(
     "prepare",
     [
         pytest.param(_prepare_typed, id="typed"),
-        pytest.param(_prepare_wire_target, id="wire"),
+        pytest.param(_prepare_wire, id="wire"),
     ],
 )
 
@@ -692,31 +676,25 @@ _BOTH_PRODUCERS = pytest.mark.parametrize(
     ("instruction", "model", "assigns"),
     [
         pytest.param(
-            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1},)),
+            wi.KeyedWriteInstruction("amend", "Account", {"id": 1}),
             "account",
             False,
             id="key-only-amend",
         ),
         pytest.param(
-            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1, "owner": "Bo"},)),
+            wi.KeyedWriteInstruction("amend", "Account", {"id": 1, "owner": "Bo"}),
             "account",
             True,
             id="member-beside-the-key",
         ),
         pytest.param(
-            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1}, {"id": 2, "owner": "Bo"})),
-            "account",
-            True,
-            id="one-row-of-several",
-        ),
-        pytest.param(
-            wi.KeyedWriteInstruction("amendUntil", "Position", ({"id": 1},), _I1, _I2),
+            wi.KeyedWriteInstruction("amendUntil", "Position", {"id": 1}, _I1, _I2),
             "position",
             False,
             id="key-only-bounded-amend",
         ),
         pytest.param(
-            wi.KeyedWriteInstruction("delete", "Account", ({"id": 1},)),
+            wi.KeyedWriteInstruction("delete", "Account", {"id": 1}),
             "account",
             False,
             id="delete",
@@ -730,13 +708,13 @@ def test_a_keyed_write_assigns_when_a_row_states_a_member_beside_the_key(
 
 
 def test_a_keyed_replacement_assigns_the_writable_state_it_completes() -> None:
-    replaced = wi.KeyedWriteInstruction("replace", "WriteTwinLog", ({"id": 5},))
-    assert wi.prepare_typed_write(replaced, write_preparation_of(_TWIN)).assigns is True
+    replaced = wi.KeyedWriteInstruction("replace", "WriteTwinLog", {"id": 5})
+    assert prepare_instruction(replaced, write_preparation_of(_TWIN)).assigns is True
 
 
 def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_another() -> None:
-    prepared = wi.prepare_typed_write(
-        wi.KeyedWriteInstruction("amend", "Account", ({"id": 1},)), write_preparation_of(_ACCOUNT)
+    prepared = prepare_instruction(
+        wi.KeyedWriteInstruction("amend", "Account", {"id": 1}), write_preparation_of(_ACCOUNT)
     )
     assert wi.derive_keyed_instruction(prepared, prepared.rows).assigns is False
     assert wi.derive_keyed_instruction(prepared, prepared.rows, assigns=True).assigns is True
@@ -746,7 +724,7 @@ def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_anoth
     ("prepare", "celsius"),
     [
         pytest.param(_prepare_typed, Decimal("1.00"), id="typed"),
-        pytest.param(_prepare_wire_target, "1.00", id="wire"),
+        pytest.param(_prepare_wire, "1.00", id="wire"),
     ],
 )
 def test_a_replacement_refuses_an_omitted_required_value_object(
@@ -770,7 +748,7 @@ def test_a_replacement_refuses_an_omitted_required_value_object(
     ("prepare", "celsius", "code"),
     [
         pytest.param(_prepare_typed, "1.00", "write-assignment-value-type-mismatch", id="typed"),
-        pytest.param(_prepare_wire_target, "1.001", "neutral-literal-out-of-space", id="wire"),
+        pytest.param(_prepare_wire, "1.001", "neutral-literal-out-of-space", id="wire"),
     ],
 )
 def test_a_replacement_judges_its_members_in_declaration_order(
@@ -916,9 +894,9 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
     instruction = wi.KeyedWriteInstruction(
         "insert",
         "Customer",
-        ({"id": 9, "name": "Ada", "address": address},),
+        {"id": 9, "name": "Ada", "address": address},
     )
-    prepared = wi.prepare_typed_write(instruction, write_preparation_of(_MODELS["customer"]))
+    prepared = prepare_instruction(instruction, write_preparation_of(_MODELS["customer"]))
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     retained = named_members(prepared.rows[0])["address"]
     address["city"] = "Oslo"
@@ -929,11 +907,11 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
 
 def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_pass() -> None:
     address = _OnePassMapping({"street": "Main", "city": "Berlin"})
-    prepared = wi.prepare_typed_write(
+    prepared = prepare_instruction(
         wi.KeyedWriteInstruction(
             "insert",
             "Customer",
-            ({"id": 9, "name": "Ada", "address": address},),
+            {"id": 9, "name": "Ada", "address": address},
         ),
         write_preparation_of(_MODELS["customer"]),
     )
@@ -947,10 +925,10 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
     instruction = wi.KeyedWriteInstruction(
         "amend",
         "Position",
-        ({"id": 1, "value": 5},),
+        {"id": 1, "value": 5},
         valid_from=stated,
     )
-    prepared = wi.prepare_typed_write(instruction, write_preparation_of(_POSITION))
+    prepared = prepare_instruction(instruction, write_preparation_of(_POSITION))
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY
@@ -959,9 +937,10 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
 
     serialized = wi.serialize(instruction)
     assert serialized["validFrom"] == "2024-01-01T00:00:00.000000Z"
-    wire_prepared = wi.prepare_wire_write(
+    wire_prepared = prepare_instruction(
         wi.deserialize({**serialized, "row": {"id": 1, "value": "5.00"}}),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(wire_prepared, wi.PreparedKeyedInstruction)
     assert wire_prepared.valid_time_window == prepared.valid_time_window
@@ -971,35 +950,17 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
 def test_both_producers_refuse_a_bound_that_is_no_instant(prepare: Any) -> None:
     for bound in ("2024-01-01T00:00:00.000000Z", dt.date(2024, 1, 1)):
         instruction = wi.KeyedWriteInstruction(
-            "amend", "Position", ({"id": 1},), valid_from=cast("dt.datetime", bound)
+            "amend", "Position", {"id": 1}, valid_from=cast("dt.datetime", bound)
         )
         with raises_code(
             UsageError, "instant-invalid", match="takes an aware datetime for valid_from"
         ):
             prepare(instruction, _POSITION)
     naive = wi.KeyedWriteInstruction(
-        "amend", "Position", ({"id": 1},), valid_from=dt.datetime(2024, 1, 1)
+        "amend", "Position", {"id": 1}, valid_from=dt.datetime(2024, 1, 1)
     )
     with raises_code(UsageError, "instant-invalid", match="naive datetime"):
         prepare(naive, _POSITION)
-
-
-def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
-    instruction = wi.KeyedWriteInstruction(
-        "amend",
-        "Account",
-        (
-            {"id": 1, "balance": "1.00"},
-            {"id": 2, "balance": "2.00"},
-        ),
-    )
-
-    with raises_code(
-        UsageError, "write-instruction-invalid", match="applies only to one addressed write row"
-    ):
-        wi.prepare_wire_write(
-            instruction, write_preparation_of(_ACCOUNT), authored_members={"balance"}
-        )
 
 
 def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
@@ -1017,8 +978,8 @@ def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
     monkeypatch.setattr(inheritance, "inheritance_facet_of", missing_view)
 
     with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
-        wi.prepare_typed_write(
-            wi.KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
+        prepare_instruction(
+            wi.KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("1.00")}),
             preparation,
         )
 
@@ -1031,13 +992,13 @@ def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() ->
     # not declare at all stays the plain well-formedness refusal.
     keyed = wi.deserialize({"mutation": "delete", "entity": "SharedVariant", "row": {"id": 1}})
     with raises_code(UsageError, "reference-ambiguous-entity-name") as excinfo:
-        wi.prepare_typed_write(keyed, write_preparation_of(_SHARED_LOCAL_NAME))
+        prepare_instruction(keyed, write_preparation_of(_SHARED_LOCAL_NAME))
     assert "archive.SharedVariant" in str(excinfo.value)
     assert "catalog.SharedVariant" in str(excinfo.value)
 
     unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "row": {"id": 1}})
     with raises_code(UsageError, "write-instruction-invalid", match="declares no entity 'Ghost'"):
-        wi.prepare_typed_write(unknown, write_preparation_of(_SHARED_LOCAL_NAME))
+        prepare_instruction(unknown, write_preparation_of(_SHARED_LOCAL_NAME))
 
 
 # --------------------------------------------------------------------------- #
@@ -1051,7 +1012,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target() -> None:
     # in full.
     write = wi.deserialize({"mutation": "terminate", "entity": "Account", "row": {"id": 1}})
     with raises_code(UsageError, "write-instruction-invalid") as raised:
-        wi.prepare_wire_write(write, write_preparation_of(_ACCOUNT))
+        prepare_instruction(write, write_preparation_of(_ACCOUNT), WIRE)
     assert raised.value.args[1] == (
         "Non-temporal objects like 'Account' do not support 'terminate', which closes "
         "a row's history instead of removing it. Use 'delete' instead."
@@ -1069,7 +1030,7 @@ def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -
         }
     )
     with pytest.raises(UsageError) as refused:
-        wi.prepare_typed_write(predicate, write_preparation_of(_ACCOUNT))
+        prepare_instruction(predicate, write_preparation_of(_ACCOUNT))
     assert refused.value.code == wi.SET_BASED_WRITE_TARGET_UNSUPPORTED
 
 
@@ -1089,7 +1050,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
         }
     )
     with raises_code(UsageError, "between-bounds-inverted"):
-        wi.prepare_typed_write(predicate, write_preparation_of(_WALLET))
+        prepare_instruction(predicate, write_preparation_of(_WALLET))
 
 
 # --------------------------------------------------------------------------- #
@@ -1189,7 +1150,7 @@ def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> Non
         }
     )
     with raises_code(UsageError, "between-bounds-inverted"):
-        wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
+        prepare_instruction(instruction, write_preparation_of(_PAYMENT))
 
 
 def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> None:
@@ -1208,7 +1169,7 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
         }
     )
     with raises_code(UnsupportedError, "subtype-write-set-based-unsupported"):
-        wi.prepare_typed_write(instruction, write_preparation_of(_PAYMENT))
+        prepare_instruction(instruction, write_preparation_of(_PAYMENT))
 
 
 def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
@@ -1223,7 +1184,7 @@ def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
         }
     )
     with raises_code(UsageError, "write-instruction-invalid", match="shoe_size"):
-        wi.prepare_typed_write(keyed, write_preparation_of(_ACCOUNT))
+        prepare_instruction(keyed, write_preparation_of(_ACCOUNT))
 
 
 def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
@@ -1233,7 +1194,7 @@ def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
         {"mutation": "insert", "entity": "Shipment", "row": {"id": 5, "name": "Express"}}
     )
     with raises_code(UsageError, "write-required-value-object-missing"):
-        wi.prepare_typed_write(keyed, write_preparation_of(_MODELS["shipment"]))
+        prepare_instruction(keyed, write_preparation_of(_MODELS["shipment"]))
 
 
 # --------------------------------------------------------------------------- #
@@ -1283,13 +1244,13 @@ def test_a_reserved_observation_key_refuses_before_any_window_is_judged() -> Non
         UsageError, "write-instruction-invalid", match="forbidden observation control key"
     ):
         wi.KeyedWriteInstruction(
-            "amendUntil", "Account", ({"id": 1, "observedVersion": 2},), valid_from=_I2, until=_I1
+            "amendUntil", "Account", {"id": 1, "observedVersion": 2}, valid_from=_I2, until=_I1
         )
 
 
 def test_a_prepared_instruction_has_no_field_constructor() -> None:
-    prepared = wi.prepare_typed_write(
-        wi.KeyedWriteInstruction("delete", "Account", ({"id": 1},)), write_preparation_of(_ACCOUNT)
+    prepared = prepare_instruction(
+        wi.KeyedWriteInstruction("delete", "Account", {"id": 1}), write_preparation_of(_ACCOUNT)
     )
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     with pytest.raises(TypeError):
@@ -1323,48 +1284,46 @@ _ALL = predicate_algebra.TrueNode()
     ("instruction", "model", "message"),
     [
         (
-            wi.KeyedWriteInstruction("delete", "Position", ({"id": 1, "nonsense": 1},)),
+            wi.KeyedWriteInstruction("delete", "Position", {"id": 1, "nonsense": 1}),
             _POSITION,
             "Temporal objects like 'Position' do not support 'delete'",
         ),
         (
-            wi.KeyedWriteInstruction("insert", "Position", ({"id": 1, "nonsense": 1},)),
+            wi.KeyedWriteInstruction("insert", "Position", {"id": 1, "nonsense": 1}),
             _POSITION,
             "a bitemporal 'insert' requires valid_from",
         ),
         (
-            wi.KeyedWriteInstruction(
-                "amend", "Balance", ({"id": 1, "nonsense": 1},), valid_from=_I1
-            ),
+            wi.KeyedWriteInstruction("amend", "Balance", {"id": 1, "nonsense": 1}, valid_from=_I1),
             _BALANCE,
             "a Transaction-Time-Only 'amend' takes no valid_from",
         ),
         (
-            wi.KeyedWriteInstruction("amendUntil", "Position", ({"id": 1},), valid_from=_I1),
+            wi.KeyedWriteInstruction("amendUntil", "Position", {"id": 1}, valid_from=_I1),
             _POSITION,
             "states its window as a pair, and until is absent",
         ),
         (
-            wi.KeyedWriteInstruction("amend", "Position", ({"id": 1},), valid_from=_I1, until=_I2),
+            wi.KeyedWriteInstruction("amend", "Position", {"id": 1}, valid_from=_I1, until=_I2),
             _POSITION,
             "'amend' is unbounded and takes no until",
         ),
         (
             wi.KeyedWriteInstruction(
-                "amendUntil", "Position", ({"id": 1},), valid_from=_I2, until=_I1
+                "amendUntil", "Position", {"id": 1}, valid_from=_I2, until=_I1
             ),
             _POSITION,
             "'amendUntil' requires valid_from < until",
         ),
         (
             wi.KeyedWriteInstruction(
-                "terminateUntil", "Position", ({"id": 1},), valid_from=_I1, until=_I1
+                "terminateUntil", "Position", {"id": 1}, valid_from=_I1, until=_I1
             ),
             _POSITION,
             "'terminateUntil' requires valid_from < until",
         ),
         (
-            wi.KeyedWriteInstruction("terminate", "Account", ({"id": 1, "nonsense": 1},)),
+            wi.KeyedWriteInstruction("terminate", "Account", {"id": 1, "nonsense": 1}),
             _ACCOUNT,
             "Non-temporal objects like 'Account' do not support 'terminate'",
         ),
@@ -1458,7 +1417,7 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
     prepared = prepare(
         wi.KeyedWriteInstruction(
-            "terminateUntil", "Position", ({"id": 1},), valid_from=stated, until=_I2
+            "terminateUntil", "Position", {"id": 1}, valid_from=stated, until=_I2
         ),
         _POSITION,
     )
@@ -1466,9 +1425,9 @@ def test_both_producers_normalize_an_aware_bound_to_utc(prepare: Any) -> None:
 
 
 def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -> None:
-    prepared = wi.prepare_typed_write(
+    prepared = prepare_instruction(
         wi.KeyedWriteInstruction(
-            "amendUntil", "Position", ({"id": 1, "value": 5},), valid_from=_I1, until=_I2
+            "amendUntil", "Position", {"id": 1, "value": 5}, valid_from=_I1, until=_I2
         ),
         write_preparation_of(_POSITION),
     )
@@ -1484,7 +1443,7 @@ def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -
 def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
     until: dt.datetime | None, mutation: wi.TargetMutation
 ) -> None:
-    prepared = wi.prepare_typed_write(
+    prepared = prepare_instruction(
         _target(
             mutation,
             "Position",
@@ -1579,10 +1538,8 @@ def test_a_predicate_deletion_prepares_no_row(prepare: Any) -> None:
 def test_a_predicate_amendment_never_assigns_the_key(prepare: Any) -> None:
     with raises_code(
         UsageError, "write-instruction-invalid", match="primary-key fields may not be assigned"
-    ) as raised:
+    ):
         prepare(_wallet_update(("Wallet.id", 5)), _WALLET)
-    assert isinstance(raised.value.__cause__, UsageError)
-    assert raised.value.__cause__.code == "write-assignment-primary-key"
 
 
 # --------------------------------------------------------------------------- #
@@ -1652,7 +1609,7 @@ _RATE_ROW: dict[str, object] = {"id": 1, "amount": "1.00", "grade": "A"}
 
 
 def _rate_insert(row: Mapping[str, object]) -> wi.KeyedWriteInstruction:
-    return wi.KeyedWriteInstruction("insert", "DepositRate", (row,), valid_from=_I1)
+    return wi.KeyedWriteInstruction("insert", "DepositRate", row, valid_from=_I1)
 
 
 def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclared_one() -> None:
@@ -1662,17 +1619,13 @@ def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclare
         "framework-owned-member-assigned",
         match=r"DepositRate\.txStart: framework-owned fields",
     ):
-        wi.prepare_wire_write(
-            _rate_insert(row), write_preparation_of(_RATE), authored_members=row.keys()
-        )
+        _prepare_wire(_rate_insert(row), _RATE)
 
 
 def test_an_authored_inserts_subtype_shape_is_judged_before_its_framework_owned_member() -> None:
     row = {**_RATE_ROW, "txStart": _B1, "tagValue": "deposit"}
     with raises_code(UsageError, "subtype-write-metadata-field"):
-        wi.prepare_wire_write(
-            _rate_insert(row), write_preparation_of(_RATE), authored_members=row.keys()
-        )
+        _prepare_wire(_rate_insert(row), _RATE)
 
 
 def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_document() -> None:
@@ -1765,10 +1718,10 @@ def _refusal(prepare: Any, instruction: wi.WriteInstruction, model: AcceptedMeta
 
 
 def _keyed(
-    mutation: str, entity: str, *rows: Mapping[str, object], valid_from: dt.datetime | None = None
+    mutation: str, entity: str, row: Mapping[str, object], valid_from: dt.datetime | None = None
 ) -> wi.KeyedWriteInstruction:
     return wi.KeyedWriteInstruction(
-        cast("wi.KeyedMutation", mutation), entity, rows, valid_from=valid_from
+        cast("wi.KeyedMutation", mutation), entity, row, valid_from=valid_from
     )
 
 

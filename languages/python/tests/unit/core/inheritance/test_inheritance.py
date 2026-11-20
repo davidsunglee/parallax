@@ -12,7 +12,6 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import UnsupportedError
-from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import STRING, Numeric, UsageError, typed_converter
@@ -94,7 +93,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
@@ -367,8 +366,8 @@ def _assignment_rejects(value: object) -> bool:
 def _row_rejects(value: object) -> bool:
     row = {"id": 1, "amount": value}
     try:
-        prepare_typed_write(
-            KeyedWriteInstruction("insert", "Invoice", (row,)),
+        prepare_instruction(
+            KeyedWriteInstruction("insert", "Invoice", row),
             write_preparation_of(_INVOICE_ACCEPTED),
         )
     except UsageError:

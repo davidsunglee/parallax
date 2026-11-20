@@ -36,7 +36,6 @@ from parallax.core._execution._retention import (
     defer_read_evidence,
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
     StateObserved,
@@ -72,7 +71,7 @@ from parallax.core.internal.unit_work import (
 )
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
@@ -661,8 +660,8 @@ def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> No
 def _balance_update(
     model: AcceptedMetamodel, hint: ReadEvidence
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    instruction = prepare_typed_write(
-        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)),
+    instruction = prepare_instruction(
+        KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("6.00")}),
         write_preparation_of(model),
     )
     assert hint.observation is not None

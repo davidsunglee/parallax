@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from decimal import Decimal
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import prepare_wire_write
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import AdmittedWrite
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core.internal import temporal_read
@@ -37,7 +37,7 @@ from parallax.core.internal.unit_work import (
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import model
 
 SPANS = model("buffered-sequence-layout-twin-columns")
@@ -102,11 +102,12 @@ def observed_write(
     assigned: Mapping[str, object] | None = None,
     **members: object,
 ) -> AdmittedWrite:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            mutation, entity, ({"id": 1, **(assigned or {}), **members},), valid_from, until
+            mutation, entity, {"id": 1, **(assigned or {}), **members}, valid_from, until
         ),
         write_preparation_of(meta),
+        WIRE,
     )
     return admitted_write(prepared, evidence, evidence.key.object)
 

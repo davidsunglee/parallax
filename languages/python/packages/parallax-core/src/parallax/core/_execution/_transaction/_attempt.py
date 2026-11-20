@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Set
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self, cast
 
@@ -37,11 +37,14 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     TargetMutation,
-    TargetWriteInstruction,
+    WriteAssignment,
     derive_keyed_instruction,
-    prepare_typed_write,
-    prepare_wire_write,
-    resolve_target,
+    prepare_target_write,
+)
+from parallax.core._execution._unit_work.preparation import (
+    CompletePayload,
+    PartialPayload,
+    WriteRepresentation,
 )
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
@@ -133,20 +136,16 @@ selects the bounded form."""
 
 @dataclass(frozen=True, slots=True)
 class TargetWriteInput:
-    """What a representation answers about one target write: the Entity
-    spelling, the row naming the object beside the members it states, which
-    lane judges its values, and the members preparation judges as
-    assignments — named outright, or produced once the write is admitted.
-    A Typed representation also names the Entity it already resolved that
-    spelling to. The attempt states every other part of the canonical
-    instruction."""
+    """What a representation answers about one target write: the Entity it
+    resolved, the representation its values are judged in, the payload naming
+    the object beside the members it states, and any qualified assignments
+    preparation resolves into that payload. The attempt supplies the revision
+    and the window."""
 
-    entity: str
-    row: Mapping[str, object]
-    representation: Literal["typed", "wire"]
-    authored_members: Set[str] | None = None
-    members: Callable[[], Mapping[str, object]] | None = None
-    target: CompiledEntity | None = None
+    target: CompiledEntity
+    representation: WriteRepresentation
+    payload: CompletePayload | PartialPayload
+    assignments: tuple[WriteAssignment, ...] = ()
 
 
 class TargetWriteAdapter(Protocol):
@@ -647,50 +646,28 @@ class TxnAttempt(_TxnAttemptBase):
         Concurrency Strategy needs participation.
 
         Re-entry is refused first, then ``adapter`` asked for its input under
-        this attempt's write projection, then its target resolved, and only
-        then a stated start judged. The canonical instruction states that input
-        under the caller's revision and window, and the target's Persistence
-        Mode, its key, the window, the revision, and the payload are
-        preparation's to judge. A stated ``until``, ``None`` included, selects
-        the bounded verb, and every revision keyword stated, ``None`` included,
-        reaches preparation as stated.
+        this attempt's write projection, which resolves its target, and only
+        then a stated start judged. The target's Persistence Mode, its key, the
+        window, the revision, and the payload are preparation's to judge. A
+        stated ``until``, ``None`` included, selects the bounded verb, and every
+        revision keyword stated, ``None`` included, reaches preparation as
+        stated.
         """
         refuse_reentry(self._lifecycle)
         mutation, bound = _bounded_mutation(verb, until)
         write = adapter.write_input(self._write, mutation)
-        preparation = self._write.preparation
-        target = (
-            write.target
-            if write.target is not None
-            else resolve_target(preparation.meta, write.entity)
-        )
         start = stated_valid_from(valid_from)
-        revision = target_revision_arguments(version=version, tx_start=tx_start)
-        instruction = TargetWriteInstruction(
-            mutation,
-            write.entity,
-            write.row,
-            revision.if_version,
-            revision.if_tx_start,
-            start,
-            bound,
-            revision.stated,
-        )
         self._uow.buffer_target(
-            prepare_typed_write(
-                instruction,
-                preparation,
-                authored_members=write.authored_members,
-                members=write.members,
-                target=target,
-            )
-            if write.representation == "typed"
-            else prepare_wire_write(
-                instruction,
-                preparation,
-                authored_members=write.authored_members,
-                members=write.members,
-                target=target,
+            prepare_target_write(
+                self._write.preparation,
+                write.representation,
+                mutation,
+                write.target,
+                write.payload,
+                assignments=write.assignments,
+                revision=target_revision_arguments(version=version, tx_start=tx_start),
+                valid_from=start,
+                until=bound,
             )
         )
 

@@ -25,10 +25,13 @@ from typing import get_type_hints
 
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work.instructions import (
-    PreparedInstruction,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    prepare_typed_write,
-    prepare_wire_write,
+    prepare_insert,
+    prepare_keyed_write,
+    prepare_predicate_write,
+    prepare_target_write,
 )
 from parallax.core.internal import sql_gen
 from parallax.core.internal.navigate import TemporallyResolvedPredicate
@@ -157,14 +160,10 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
     assert get_type_hints(plan_deep_fetch)["query"] is ResolvedObjectQuery
     assert get_type_hints(compile_read)["query"] is PlannedEntityQuery
     assert get_type_hints(compile_write_predicate)["op"] is TemporallyResolvedPredicate
-    assert (
-        get_type_hints(prepare_typed_write)["return"]
-        == PreparedInstruction | PreparedTargetInstruction
-    )
-    assert (
-        get_type_hints(prepare_wire_write)["return"]
-        == PreparedInstruction | PreparedTargetInstruction
-    )
+    assert get_type_hints(prepare_insert)["return"] is PreparedKeyedInstruction
+    assert get_type_hints(prepare_keyed_write)["return"] is PreparedKeyedInstruction
+    assert get_type_hints(prepare_target_write)["return"] is PreparedTargetInstruction
+    assert get_type_hints(prepare_predicate_write)["return"] is PreparedPredicateInstruction
     assert get_type_hints(compile_write_step)["step"] == PlannedStep
     assert not {
         "compile_read",
@@ -605,6 +604,10 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance._lanes.scenario", "parallax.core._execution._planning"): frozenset(
         {"build_write_planner", "build_write_preparation"}
     ),
+    **{
+        (lane, "parallax.core._execution._planning"): frozenset({"build_write_preparation"})
+        for lane in ("parallax.conformance._lanes.rejected", "parallax.conformance._lanes.snapshot")
+    },
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._transaction._lifetime",
@@ -626,20 +629,52 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"validate_source_pin"}
     ),
     # The unit of work's implementation leaves the case lanes build writes
-    # through: the instruction vocabulary and its prepared forms. The facade
-    # exports none of them, so each lane names the private owner.
+    # through: the instruction vocabulary, the family preparation entries case
+    # ingress adapts each instruction to, their payloads, and their prepared
+    # forms. The facade exports none of them, so each lane names the private
+    # owner.
     **{
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
             "parallax.conformance._wire_submission",
             "parallax.conformance._lanes.rejected",
-            "parallax.conformance._lanes.scenario",
         )
     },
     (
         "parallax.conformance._case_ingress",
         "parallax.core._execution._unit_work.instructions",
-    ): frozenset({"PreparedTargetInstruction", "PreparedInstruction", "WriteInstruction"}),
+    ): frozenset(
+        {
+            "INSERT_MUTATIONS",
+            "REPLACE_MUTATIONS",
+            "PreparedKeyedInstruction",
+            "PreparedPredicateInstruction",
+            "PreparedTargetInstruction",
+            "WriteInstruction",
+            "prepare_insert",
+            "prepare_keyed_write",
+            "prepare_predicate_write",
+            "prepare_target_write",
+            "resolve_target",
+        }
+    ),
+    (
+        "parallax.conformance._case_ingress",
+        "parallax.core._execution._unit_work.preparation",
+    ): frozenset(
+        {
+            "WIRE",
+            "CompletePayload",
+            "EntityPreparation",
+            "PartialPayload",
+            "TargetRevisionArguments",
+            "WritePreparation",
+        }
+    ),
+    (
+        "parallax.conformance._lanes.scenario",
+        "parallax.core._execution._unit_work.preparation",
+    ): frozenset({"WritePreparation"}),
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.instructions",

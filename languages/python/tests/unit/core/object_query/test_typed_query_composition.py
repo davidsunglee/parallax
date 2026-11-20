@@ -105,9 +105,6 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core._execution._unit_work.instructions import (
-    prepare_typed_write,
-)
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.entity import AttributeAssignment
 from parallax.core.internal.entity._authored_resolver import object_query_node
@@ -131,7 +128,7 @@ from tests._support.snapshot_models import (
     SnapOrder,
     SnapOrderStatus,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 _ANIMALS = snapshot_models.ANIMAL_MODEL
 _ORDERS = snapshot_models.SNAP_ORDERS_MODEL
@@ -692,7 +689,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
     with raises_code(
         UsageError, "write-instruction-invalid", match="does not name a declared member"
     ):
-        prepare_typed_write(write, write_preparation_of(model_of(_ORDERS)))
+        prepare_instruction(write, write_preparation_of(model_of(_ORDERS)))
 
 
 def test_an_assignment_value_is_the_members_own_declared_type() -> None:

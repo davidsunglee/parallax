@@ -39,8 +39,8 @@ from parallax.core._execution._unit_work.effects import (
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
@@ -91,7 +91,7 @@ from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.errors import raises_code
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, deferred_ranges
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._reach_support import frames, reaches
@@ -134,11 +134,12 @@ def _transaction_time_only(*keys: int) -> tuple[DeferredRange, ...]:
     amendment of each object ``keys`` names, settled in one finalization."""
     targets = [
         target_write(
-            prepare_wire_write(
+            prepare_instruction(
                 TargetWriteInstruction(
                     "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_JAN
                 ),
                 write_preparation_of(_BALANCE),
+                WIRE,
             ),
             inheritance_facet_of(_BALANCE),
         )
@@ -451,15 +452,16 @@ def test_a_range_whose_read_returned_nothing_binds_as_it_binds_alone(replaces: b
 
 
 def _reaching_past(observed: PredecessorRow, *, replaces: bool) -> AdmittedWrite:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
             "replaceUntil" if replaces else "amendUntil",
             ShareCols.identity.canonical,
-            ({"id": 2, "amount": 9, "label": "k2"} if replaces else {"id": 2, "amount": 9},),
+            {"id": 2, "amount": 9, "label": "k2"} if replaces else {"id": 2, "amount": 9},
             day(0),
             day(4),
         ),
         write_preparation_of(MODEL),
+        WIRE,
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -727,11 +729,12 @@ def test_a_deferred_write_a_planned_write_separates_binds_in_a_span_of_its_own()
 def _inside_write() -> AdmittedWrite:
     """A write of object 9 its observation covers, so it binds at planning."""
     observed = rectangle(ShareCols, 9, 0, None, 0)
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "amendUntil", ShareCols.identity.canonical, ({"id": 9, "amount": 9},), day(0), day(1)
+            "amendUntil", ShareCols.identity.canonical, {"id": 9, "amount": 9}, day(0), day(1)
         ),
         write_preparation_of(MODEL),
+        WIRE,
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -756,11 +759,12 @@ def _log_row(key: int) -> PredecessorRow:
 def _log_target(key: int, *, covered: bool = False) -> LicensedWrite[TxStartConditioned]:
     """A target write of object ``key`` stating ``T0``, beside, where
     ``covered``, the current row its Locking acquisition retained."""
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amend", ShareLog.identity.canonical, {"id": key, "amount": 7}, if_tx_start=T0
         ),
         write_preparation_of(_LOG_MODEL),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     families = inheritance_facet_of(_LOG_MODEL)

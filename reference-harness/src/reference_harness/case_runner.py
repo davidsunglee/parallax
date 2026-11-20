@@ -756,9 +756,10 @@ def _assert_rejected(case: Case) -> None:
     ``ifTxStart``) is a whole TARGET instruction judged by
     ``target_write_violation``, and one stating none a whole KEYED instruction
     judged by :func:`_validate_rejected_keyed_write` against the entity IT
-    names; and anything else is the bare neutral write row, run through
-    ``validate_write`` and Inheritance's ``validate_subtype_write`` against the
-    model's default write root. Both discriminators are RESERVED from a bare row at this position
+    names; and anything else is the bare neutral write row, an opening run
+    through Inheritance's ``validate_subtype_write``, then its authored
+    framework-owned names, then ``validate_write``, against the model's default
+    write root. Both discriminators are RESERVED from a bare row at this position
     (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
     can never be mistaken for one and this dispatch cannot re-read a row as an
     instruction. :func:`_rejected_write_input` dispatches the form and validates
@@ -818,6 +819,7 @@ def _assert_rejected(case: Case) -> None:
             entity = _rejected_default_root(case)
             validate_write_persistence(entity)
             validate_subtype_write(entity, case.model.entity_defs, write)
+            validate_keyed_assignment_members(entity, "insert", write)
             _assert_bare_row_members_declared(case, entity, write)
             validate_write(entity, write)
         elif "model" in case.when:

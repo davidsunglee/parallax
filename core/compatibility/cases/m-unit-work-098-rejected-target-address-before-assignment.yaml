@@ -1,0 +1,13 @@
+# A target payload's key addresses its object and is the first value judged:
+# the key naming no object is refused before the out-of-space balance beside it.
+model: models/account.yaml
+tags: [m-unit-work, write, rejected, target-write, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Account
+    row: { id: "bad-key", balance: "99999999999999999999.00" }
+    ifVersion: 1
+then:
+  rejectedRule: neutral-literal-type-mismatch

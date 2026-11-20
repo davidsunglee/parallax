@@ -31,8 +31,8 @@ from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadKey,
@@ -90,7 +90,7 @@ from tests._support.db_port import (
     inserted_rows,
 )
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit import _family_predecessor_support as family
 from tests.unit.core import _shared_coverage_support as shared
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
@@ -106,11 +106,12 @@ def _account(account_id: int = 1) -> MappingRow:
 
 
 def _patch(*, version: int = 3) -> PreparedTargetInstruction:
-    return prepare_wire_write(
+    return prepare_instruction(
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
         ),
         write_preparation_of(_META),
+        WIRE,
     )
 
 
@@ -147,9 +148,10 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
 
 
 def _ledger_patch() -> PreparedTargetInstruction:
-    return prepare_wire_write(
+    return prepare_instruction(
         TargetWriteInstruction("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
         write_preparation_of(model_of(_LEDGER)),
+        WIRE,
     )
 
 
@@ -406,9 +408,10 @@ def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> Non
         "out_z": INFINITY,
     }
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(), Write()))
-    patch = prepare_wire_write(
+    patch = prepare_instruction(
         TargetWriteInstruction("amend", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
         write_preparation_of(model_of(_BALANCE)),
+        WIRE,
     )
     scope(port, _BALANCE, provider=recorder).transact(
         lambda tx: tx.uow.buffer_target(patch), itself, concurrency="optimistic"
@@ -451,11 +454,12 @@ def test_the_deferred_ranges_of_one_span_share_one_coverage_read_of_their_flush(
         )
     )
     patches = [
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(
                 "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_T0
             ),
             write_preparation_of(model_of(_BALANCE)),
+            WIRE,
         )
         for key in (1, 2)
     ]
@@ -734,7 +738,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
     metadata, _key = _hull_keys(entity)
 
     def amend(tags: list[str]) -> PreparedTargetInstruction:
-        return prepare_wire_write(
+        return prepare_instruction(
             TargetWriteInstruction(
                 "amend",
                 metadata.identity.canonical,
@@ -743,6 +747,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
                 valid_from=_MAR,
             ),
             write_preparation_of(model_of(_HULLS)),
+            WIRE,
         )
 
     def fn(tx: TxnAttempt) -> None:
@@ -770,7 +775,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
 
     def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer_target(
-            prepare_wire_write(
+            prepare_instruction(
                 TargetWriteInstruction(
                     "amend",
                     metadata.identity.canonical,
@@ -779,6 +784,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
                     valid_from=_MAR,
                 ),
                 write_preparation_of(model_of(_HULLS)),
+                WIRE,
             )
         )
         assert [type(call) for call in port.calls] == [BeginCall]
@@ -853,7 +859,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
 
     def fn(tx: TxnAttempt) -> None:
         tx.uow.buffer_target(
-            prepare_wire_write(
+            prepare_instruction(
                 TargetWriteInstruction(
                     "amend",
                     metadata.identity.canonical,
@@ -862,6 +868,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
                     valid_from=_MAR,
                 ),
                 write_preparation_of(model_of(_HULLS)),
+                WIRE,
             )
         )
         called.append("returned")
@@ -942,7 +949,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
     def fn(tx: TxnAttempt) -> None:
         with raises_code(InvalidDataError, "stored-data-decoding-failed") as caught:
             tx.uow.buffer_target(
-                prepare_wire_write(
+                prepare_instruction(
                     TargetWriteInstruction(
                         "amend",
                         metadata.identity.canonical,
@@ -951,6 +958,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
                         valid_from=_MAR,
                     ),
                     write_preparation_of(model_of(_HULLS)),
+                    WIRE,
                 )
             )
         refused.append(caught.value)
@@ -968,7 +976,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
 # propagates (`m-unit-work` *Shared coverage acquisition*).                    #
 # --------------------------------------------------------------------------- #
 def _hull_target(metadata: Any, key: int) -> PreparedTargetInstruction:
-    return prepare_wire_write(
+    return prepare_instruction(
         TargetWriteInstruction(
             "amend",
             metadata.identity.canonical,
@@ -977,6 +985,7 @@ def _hull_target(metadata: Any, key: int) -> PreparedTargetInstruction:
             valid_from=_MAR,
         ),
         write_preparation_of(model_of(_HULLS)),
+        WIRE,
     )
 
 
@@ -1176,7 +1185,7 @@ def test_a_ready_groups_failing_insert_reports_its_statement_error_alone() -> No
 
 def _tag_predicate() -> PreparedPredicateInstruction:
     tag = shared.ShareTag.identity.canonical
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -1186,6 +1195,7 @@ def _tag_predicate() -> PreparedPredicateInstruction:
             assignments=(WriteAssignment(f"{tag}.label", "q"),),
         ),
         write_preparation_of(model_of(shared.DOMAIN)),
+        WIRE,
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared

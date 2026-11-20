@@ -237,9 +237,7 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
     # the rendered statement: the chained row carries the merged payload, never
     # the caller's sparse row alone, and its origin names the predecessor it
     # changed.
-    sparse_update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "value": Decimal("150.00")},)
-    )
+    sparse_update = KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("150.00")})
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
         payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
@@ -264,7 +262,7 @@ def test_audit_only_update_carries_a_full_authored_row_over_every_observed_membe
     # The authored row overrides each observed member it names, whatever the
     # predecessor held there.
     full_update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
+        "amend", "Balance", {"id": 1, "acctNum": "A", "value": Decimal("150.00")}
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -280,7 +278,7 @@ def test_audit_only_update_carries_a_full_authored_row_over_every_observed_membe
 
 def test_audit_only_insert_begins_a_lineage_and_closes_nothing() -> None:
     insert = KeyedWriteInstruction(
-        "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},)
+        "insert", "Balance", {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
     )
     (opened,) = _finalize(insert, BALANCE, "2024-01-01T00:00:00+00:00")
     assert isinstance(opened, PlannedInsert)
@@ -288,7 +286,7 @@ def test_audit_only_insert_begins_a_lineage_and_closes_nothing() -> None:
 
 
 def test_audit_only_terminate_records_termination_and_chains_nothing() -> None:
-    terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
+    terminate = KeyedWriteInstruction("terminate", "Balance", {"id": 1})
     (close,) = _finalize(
         terminate,
         BALANCE,
@@ -303,7 +301,7 @@ def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -
     # m-concurrency-022: a locking-mode close never binds `in_z`, even when one
     # was observed.
     update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
+        "amend", "Balance", {"id": 1, "acctNum": "A", "value": Decimal("175.00")}
     )
     observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
     step, close = _lower_steps(
@@ -349,7 +347,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
     update = KeyedWriteInstruction(
         "amendUntil",
         "Position",
-        ({"id": 1, "value": Decimal("200.00")},),
+        {"id": 1, "value": Decimal("200.00")},
         valid_from=_instant("2024-04-01T00:00:00+00:00"),
         until=_instant("2024-07-01T00:00:00+00:00"),
     )
@@ -383,7 +381,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
 
 
 def test_temporal_close_requires_an_effective_table() -> None:
-    terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
+    terminate = KeyedWriteInstruction("terminate", "Balance", {"id": 1})
     (close,) = _finalize(
         terminate,
         BALANCE,
@@ -422,7 +420,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
         "out_z",
     )
     insert = KeyedWriteInstruction(
-        "insert", "SpotQuote", ({"id": 1, "price": Decimal("50.00"), "symbol": "ACME"},)
+        "insert", "SpotQuote", {"id": 1, "price": Decimal("50.00"), "symbol": "ACME"}
     )
     assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
         (
@@ -511,7 +509,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         "txEnd": OPEN_BOUND,
     }
 
-    update = KeyedWriteInstruction("amend", "SpotQuote", ({"id": 1, "price": Decimal("60.00")},))
+    update = KeyedWriteInstruction("amend", "SpotQuote", {"id": 1, "price": Decimal("60.00")})
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert chain == (
         "insert into px.spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -565,7 +563,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
         "thru_z",
     )
     terminate = KeyedWriteInstruction(
-        "terminate", "Bond", ({"id": 1},), valid_from=_instant("2024-06-01T00:00:00+00:00")
+        "terminate", "Bond", {"id": 1}, valid_from=_instant("2024-06-01T00:00:00+00:00")
     )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
@@ -605,7 +603,7 @@ def test_a_bitemporal_guard_addresses_its_rectangle_by_both_ends() -> None:
     update = KeyedWriteInstruction(
         "amendUntil",
         "Position",
-        ({"id": 1, "value": Decimal("100.00")},),
+        {"id": 1, "value": Decimal("100.00")},
         _instant("2024-03-01T00:00:00+00:00"),
         _instant("2024-05-01T00:00:00+00:00"),
     )
@@ -631,9 +629,7 @@ def test_a_bitemporal_guard_addresses_its_rectangle_by_both_ends() -> None:
 
 
 def test_a_table_per_hierarchy_guard_carries_the_tag_guard_after_the_key() -> None:
-    update = KeyedWriteInstruction(
-        "amend", "MeterReading", ({"id": 1, "celsius": Decimal("21.50")},)
-    )
+    update = KeyedWriteInstruction("amend", "MeterReading", {"id": 1, "celsius": Decimal("21.50")})
     lowered = _lower(
         update,
         READING,
@@ -699,7 +695,7 @@ def test_bitemporal_successor_origins_follow_the_split(
         KeyedWriteInstruction(
             mutation,
             "Position",
-            (row,),
+            row,
             valid_from=_instant("2024-03-01T00:00:00+00:00"),
             until=None if until is None else _instant(until),
         ),
@@ -725,7 +721,7 @@ def test_bitemporal_insert_successor_begins_a_lineage() -> None:
         KeyedWriteInstruction(
             "insertUntil",
             "Position",
-            ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
+            {"id": 1, "acctNum": "A", "value": Decimal("100.00")},
             valid_from=_instant("2024-03-01T00:00:00+00:00"),
             until=_instant("2024-09-01T00:00:00+00:00"),
         ),
@@ -742,7 +738,7 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
             KeyedWriteInstruction(
                 "terminate",
                 "Position",
-                ({"id": 1},),
+                {"id": 1},
                 valid_from=_instant("2024-06-01T00:00:00+00:00"),
             ),
             POSITION,
@@ -815,7 +811,7 @@ def _owned_lowering(
 
 
 def test_an_owned_revision_gates_on_its_observed_start_under_optimistic() -> None:
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    update = KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("175.00")})
     observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
     lowered = _owned_lowering(
         update, BALANCE, observation, _own_balance(), concurrency="optimistic"
@@ -836,7 +832,7 @@ def test_a_row_the_attempt_did_not_open_is_never_closed_at_or_before_its_start(
     # A row an earlier attempt committed at the same instant — a repeating clock —
     # carries `in_z = T` too; only the attempt's own record makes a row owned, so
     # this one would be closed into an empty or inverted interval.
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    update = KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("175.00")})
     observation = _observed(tx_start=stored_start, payload={"id": 1, "acctNum": "A", "value": 150})
     with raises_code(ConflictError, TEMPORAL_CONFLICT) as refused:
         _finalize(update, BALANCE, _T, observation=observation)
@@ -874,7 +870,7 @@ _DEC = "2024-12-01T00:00:00+00:00"
 
 def test_an_owned_suffix_update_revises_the_retained_end_and_inserts_the_head() -> None:
     update = KeyedWriteInstruction(
-        "amend", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_MAR)
+        "amend", "Position", {"id": 1, "value": Decimal("200.00")}, valid_from=_instant(_MAR)
     )
     lowered = _owned_lowering(update, POSITION, _owned_position(_JAN), _own_position())
     assert [type(step) for step, _ in lowered] == [PlannedTemporalRevision, PlannedInsert]
@@ -892,7 +888,7 @@ def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_
     update_until = KeyedWriteInstruction(
         "amendUntil",
         "Position",
-        ({"id": 1, "value": Decimal("200.00")},),
+        {"id": 1, "value": Decimal("200.00")},
         valid_from=_instant(_MAR),
         until=_instant(_JUN),
     )
@@ -917,9 +913,7 @@ def test_an_owned_interior_correction_moves_the_tail_start_and_inserts_head_and_
 def test_an_owned_unbounded_termination_removes_the_row_and_inserts_its_head() -> None:
     # No successor keeps the row's own Valid-Time end, so nothing is moved to
     # make one: the row is removed and its head opened at its own address.
-    terminate = KeyedWriteInstruction(
-        "terminate", "Position", ({"id": 1},), valid_from=_instant(_MAR)
-    )
+    terminate = KeyedWriteInstruction("terminate", "Position", {"id": 1}, valid_from=_instant(_MAR))
     lowered = _owned_lowering(terminate, POSITION, _owned_position(_JAN), _own_position())
     assert [type(step) for step, _ in lowered] == [PlannedTemporalRemoval, PlannedInsert]
     assert [statement for _, statement in lowered] == [
@@ -935,9 +929,7 @@ def test_terminating_an_owned_rectangle_at_its_own_end_changes_nothing() -> None
     # The terminated window starts where the rectangle already ends, so its one
     # successor is the whole rectangle at its own address with nothing moved:
     # there is nothing to revise, remove, or open.
-    terminate = KeyedWriteInstruction(
-        "terminate", "Position", ({"id": 1},), valid_from=_instant(_DEC)
-    )
+    terminate = KeyedWriteInstruction("terminate", "Position", {"id": 1}, valid_from=_instant(_DEC))
     lowered = _owned_lowering(
         terminate, POSITION, _owned_position(_JAN, _DEC), _own_position(_instant(_DEC))
     )
@@ -946,7 +938,7 @@ def test_terminating_an_owned_rectangle_at_its_own_end_changes_nothing() -> None
 
 def test_a_pre_attempt_rectangle_is_closed_and_opens_only_nonempty_successors() -> None:
     update = KeyedWriteInstruction(
-        "amend", "Position", ({"id": 1, "value": Decimal("200.00")},), valid_from=_instant(_JAN)
+        "amend", "Position", {"id": 1, "value": Decimal("200.00")}, valid_from=_instant(_JAN)
     )
     observation = _observed(
         tx_start=_JAN, valid_start=_JAN, valid_end="infinity", payload=_R1_PAYLOAD

@@ -226,7 +226,7 @@ def _undeclared(entity: str) -> Mapping[Representation, _Expected]:
         "typed": _refused(
             UsageError,
             f"{entity}: assignment 'parallax.compatibility.{entity}.nickname' does not name a "
-            f"member parallax.compatibility.{entity} declares or inherits",
+            f"declared member of parallax.compatibility.{entity}",
             code="write-instruction-invalid",
         ),
         "wire": _undeclared_member(entity),
@@ -615,9 +615,9 @@ _REPRESENTATION_SHAPE: Final[tuple[_Row, ...]] = (
         _wire(
             _refused(
                 UsageError,
-                "target write: row carries forbidden observation control key(s) "
-                "['observedVersion'] (a target write's condition is its own revision argument, "
-                "never a row member)",
+                "write row carries forbidden observation control key(s) "
+                "['observedVersion'] (the transaction observation is attached at flush, never "
+                "on the instruction)",
                 code="write-instruction-invalid",
             )
         ),

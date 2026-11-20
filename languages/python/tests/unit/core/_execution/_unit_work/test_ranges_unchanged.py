@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
-from parallax.core._execution._unit_work.instructions import prepare_wire_write
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import target_write
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY
@@ -29,7 +29,7 @@ from parallax.core.internal.unit_work import (
     TargetWriteInstruction,
 )
 from tests._support.planner_probes import plan_steps, settled_writes
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._unchanged_milestones_support import (
     BALANCE,
@@ -120,7 +120,7 @@ def test_an_original_whose_start_the_composition_destroys_is_changed() -> None:
 def test_a_window_a_target_keeps_a_milestone_it_leaves_unchanged() -> None:
     whole = retained_state(SPANS, SPAN, span_row(JAN, INFINITY, 100, "a"))
     target = target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(
                 "amendUntil",
                 "SequenceSpan",
@@ -130,6 +130,7 @@ def test_a_window_a_target_keeps_a_milestone_it_leaves_unchanged() -> None:
                 until=JUN,
             ),
             write_preparation_of(SPANS),
+            WIRE,
         ),
         inheritance.inheritance_facet_of(SPANS),
     )
@@ -208,11 +209,12 @@ def test_an_earlier_milestone_at_an_address_the_attempt_reopened_is_not_proven_b
 
 def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precondition() -> None:
     target = target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(
                 "amend", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0
             ),
             write_preparation_of(BALANCES),
+            WIRE,
         ),
         inheritance.inheritance_facet_of(BALANCES),
     )

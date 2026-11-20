@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.conformance import _case_ingress, case_format, models
-from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._mechanism.model_facts import (
@@ -16,6 +15,7 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
 )
 from parallax.conformance.bindings import binding_document
+from parallax.core._execution._planning import build_write_preparation
 from parallax.core._execution._unit_work import instructions
 from parallax.core.internal.base import ParallaxError
 from parallax.core.internal.database_binding import BindingError, ResolvedBinding
@@ -113,10 +113,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     itself carries (`m-case-format` Rejected cases) — never on the case's tags or
     filename — and adapted once to the instruction it denotes
     (:func:`_rejected_instruction`). Every form is then graded through the one
-    case-format preparation seam, which normalizes carriers and delegates
-    recursive Wire decoding, validation, and retained-value freezing to
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_wire_write`, so the
-    rejected lane cannot drift from ordinary Wire write ingress.
+    case-format preparation seam, which normalizes carriers and hands the
+    instruction to its family's Wire preparation, so the rejected lane cannot
+    drift from ordinary Wire write ingress.
 
     Whatever the input, a refusal is graded by :func:`rejected_rule`, except a
     formation refusal, which is graded by its single issue: a refusal whose code
@@ -227,7 +226,9 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
         )
     try:
         instruction = _rejected_instruction(case, cast("Mapping[str, object]", raw_write), model)
-        _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))
+        _case_ingress.prepare_case_write(
+            _case_ingress.normalize_case_write(instruction, model), build_write_preparation(model)
+        )
     except ParallaxError as exc:
         return rejected_rule(exc, case)
     raise UnclassifiedEngineError(
@@ -253,4 +254,4 @@ def _rejected_instruction(
         return instructions.deserialize(authored)
     target = case_entity(model, _rejected_target(case, model))
     durable_row = {name: value for name, value in authored.items() if name != "observedVersion"}
-    return KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))
+    return KeyedWriteInstruction("insert", target.identity.canonical, durable_row)

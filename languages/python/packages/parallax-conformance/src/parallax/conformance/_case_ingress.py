@@ -8,9 +8,25 @@ from typing import Final, cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core._execution._unit_work.instructions import (
-    PreparedInstruction,
+    INSERT_MUTATIONS,
+    REPLACE_MUTATIONS,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     PreparedTargetInstruction,
     WriteInstruction,
+    prepare_insert,
+    prepare_keyed_write,
+    prepare_predicate_write,
+    prepare_target_write,
+    resolve_target,
+)
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
+    CompletePayload,
+    EntityPreparation,
+    PartialPayload,
+    TargetRevisionArguments,
+    WritePreparation,
 )
 from parallax.core.internal import inheritance, predicate, relationship, temporal_read
 from parallax.core.internal.base import (
@@ -54,7 +70,6 @@ from parallax.core.internal.unit_work import (
 from parallax.core.internal.wire import WireValue, decode_wire, is_decoding_refusal, located_refusal
 
 __all__ = [
-    "WirePreparer",
     "decode_case_row",
     "normalize_case_query",
     "normalize_case_write",
@@ -64,37 +79,97 @@ __all__ = [
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
 
-type WirePreparer = Callable[[WriteInstruction], PreparedInstruction | PreparedTargetInstruction]
-"""Strict Wire preparation against one model's write preparation."""
-
-
 @overload
 def prepare_case_write(
-    instruction: TargetWriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
+    instruction: TargetWriteInstruction, preparation: WritePreparation
 ) -> PreparedTargetInstruction: ...
 @overload
 def prepare_case_write(
-    instruction: KeyedWriteInstruction | PredicateWriteInstruction,
-    model: AcceptedMetamodel,
-    prepare: WirePreparer,
-) -> PreparedInstruction: ...
+    instruction: KeyedWriteInstruction, preparation: WritePreparation
+) -> PreparedKeyedInstruction: ...
 @overload
 def prepare_case_write(
-    instruction: WriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
-) -> PreparedInstruction | PreparedTargetInstruction: ...
+    instruction: PredicateWriteInstruction, preparation: WritePreparation
+) -> PreparedPredicateInstruction: ...
+@overload
 def prepare_case_write(
-    instruction: WriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
-) -> PreparedInstruction | PreparedTargetInstruction:
-    """Normalize one case-format instruction and invoke strict Wire preparation
-    through ``prepare``, ``model``'s.
+    instruction: WriteInstruction, preparation: WritePreparation
+) -> PreparedKeyedInstruction | PreparedPredicateInstruction | PreparedTargetInstruction: ...
+def prepare_case_write(
+    instruction: WriteInstruction, preparation: WritePreparation
+) -> PreparedKeyedInstruction | PreparedPredicateInstruction | PreparedTargetInstruction:
+    """Prepare one normalized case-format instruction as a Wire caller does:
+    its Entity resolved, its row built into the payload of its family's
+    preparation, and that preparation judging everything else."""
+    meta = preparation.meta
+    if isinstance(instruction, PredicateWriteInstruction):
+        selection = instruction.target
+        target = resolve_target(meta, selection.entity)
+        row = instruction.row
+        return prepare_predicate_write(
+            preparation,
+            WIRE,
+            instruction.mutation,
+            target,
+            selection.predicate,
+            None
+            if row is None
+            else preparation.entity(target.identity).complete_payload_from_names(row),
+            assignments=instruction.assignments,
+        )
+    target = resolve_target(meta, instruction.entity)
+    payload = _case_payload(
+        preparation.entity(target.identity), instruction.mutation, instruction.row
+    )
+    if isinstance(instruction, TargetWriteInstruction):
+        return prepare_target_write(
+            preparation,
+            WIRE,
+            instruction.mutation,
+            target,
+            payload,
+            revision=_case_revision(instruction),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    if instruction.mutation in INSERT_MUTATIONS:
+        return prepare_insert(
+            preparation,
+            WIRE,
+            instruction.mutation,
+            target,
+            cast("CompletePayload", payload),
+            valid_from=instruction.valid_from,
+            until=instruction.until,
+        )
+    return prepare_keyed_write(
+        preparation,
+        WIRE,
+        instruction.mutation,
+        target,
+        payload,
+        valid_from=instruction.valid_from,
+        until=instruction.until,
+    )
 
-    Synthetic conformance cases may carry values already in their managed Python
-    form. This seam encodes only those, using the declared member type; authored
-    JSON values, structural defects, and semantic defects reach
-    ``prepare_wire_write`` unchanged for it to decode, classify, validate, freeze,
-    and retain in its prepared result.
-    """
-    return prepare(normalize_case_write(instruction, model))
+
+def _case_payload(
+    prepared: EntityPreparation, mutation: str, row: Mapping[str, object]
+) -> CompletePayload | PartialPayload:
+    if mutation in INSERT_MUTATIONS or mutation in REPLACE_MUTATIONS:
+        return prepared.complete_payload_from_names(row)
+    return prepared.partial_payload_from_names(row)
+
+
+def _case_revision(instruction: TargetWriteInstruction) -> TargetRevisionArguments:
+    """The revision a case's target instruction states: each condition its
+    document carries."""
+    stated: tuple[str, ...] = ()
+    if instruction.if_version is not None:
+        stated += ("version",)
+    if instruction.if_tx_start is not None:
+        stated += ("tx_start",)
+    return TargetRevisionArguments(instruction.if_version, instruction.if_tx_start, stated)
 
 
 def decode_case_row(
@@ -368,13 +443,7 @@ def normalize_case_write(
     if isinstance(instruction, TargetWriteInstruction):
         return replace(instruction, row=_normalize_row(members, instruction.row))
     if isinstance(instruction, KeyedWriteInstruction):
-        return KeyedWriteInstruction(
-            instruction.mutation,
-            instruction.entity,
-            tuple(_normalize_row(members, row) for row in instruction.rows),
-            instruction.valid_from,
-            instruction.until,
-        )
+        return replace(instruction, row=_normalize_row(members, instruction.row))
     assignments = tuple(
         WriteAssignment(
             assignment.attr,

@@ -175,8 +175,8 @@ def _prepared_writes() -> list[ComposedWrite]:
     """Every non-temporal case version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
     position, and a collapsing unversioned run."""
-    fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
-    account_delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
+    fridge_update = KeyedWriteInstruction("amend", "Fridge", {"id": 1, "name": "Chill"})
+    account_delete = KeyedWriteInstruction("delete", "Account", {"id": 3})
     fridge_key = object_key(fridge_update, _MODEL)
     account_key = object_key(account_delete, _MODEL)
     assert fridge_key is not None and account_key is not None
@@ -186,12 +186,12 @@ def _prepared_writes() -> list[ComposedWrite]:
                 KeyedWriteInstruction(
                     "insert",
                     "Account",
-                    ({"id": 9, "owner": "Ada", "balance": Decimal("1.00")},),
+                    {"id": 9, "owner": "Ada", "balance": Decimal("1.00")},
                 ),
                 fridge_update,
                 account_delete,
-                KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
-                KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
+                KeyedWriteInstruction("amend", "Wallet", {"id": 1, "balance": Decimal("2.00")}),
+                KeyedWriteInstruction("amend", "Wallet", {"id": 2, "balance": Decimal("2.00")}),
             ],
             _MODEL,
             {
@@ -262,13 +262,11 @@ _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 def _temporal_writes() -> list[ComposedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
     a Bitemporal family, and an observed standalone terminate."""
-    quote_update = KeyedWriteInstruction(
-        "amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},)
-    )
+    quote_update = KeyedWriteInstruction("amend", "SpotQuote", {"id": 1, "price": Decimal("2.00")})
     rate_update = KeyedWriteInstruction(
-        "amend", "DepositRate", ({"id": 2, "amount": Decimal("3.00")},), valid_from=_VALID_FROM
+        "amend", "DepositRate", {"id": 2, "amount": Decimal("3.00")}, valid_from=_VALID_FROM
     )
-    balance_terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 3},))
+    balance_terminate = KeyedWriteInstruction("terminate", "Balance", {"id": 3})
     predecessors: list[tuple[KeyedWriteInstruction, Mapping[str, object]]] = [
         (quote_update, {"id": 1, "price": Decimal("1"), "symbol": "Q", **_TRANSACTION_TIME}),
         (rate_update, {"id": 2, "amount": Decimal("1"), "grade": "A", **_BITEMPORAL}),

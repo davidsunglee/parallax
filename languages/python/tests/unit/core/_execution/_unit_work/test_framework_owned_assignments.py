@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
-from typing import Any, Final, cast
+from typing import Final
 
 import pytest
 
 from parallax.core._execution._unit_work import instructions as wi
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
+    WIRE,
+    PartialPayload,
+    WriteRepresentation,
+)
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import INT32, STRING, TIMESTAMP, UsageError
 from parallax.core.internal.metamodel import (
@@ -24,7 +29,11 @@ from parallax.core.internal.metamodel import (
 )
 from parallax.core.internal.planned_step.managed_row import named_members
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import (
+    REPRESENTATIONS,
+    prepare_instruction,
+    write_preparation_of,
+)
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _PLAIN = identity("Plain")
@@ -106,87 +115,77 @@ _MODEL = form_metamodel(
     )
 )
 _PREPARATION = write_preparation_of(_MODEL)
-_LANES: Final = pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
-type _Prepare = Callable[..., Any]
 
 
-@_LANES
+@REPRESENTATIONS
 @pytest.mark.parametrize("value", [1, None, {"increment": 1}, {"computed": "maxPlusOne"}])
 def test_a_version_assignment_is_refused_by_role_before_any_value(
-    prepare: _Prepare, value: object
+    representation: WriteRepresentation, value: object
 ) -> None:
     instruction = wi.KeyedWriteInstruction(
-        "amend", _VERSIONED.canonical, ({"id": "bad-key", "label": 7, "revisionCounter": value},)
+        "amend", _VERSIONED.canonical, {"id": "bad-key", "label": 7, "revisionCounter": value}
     )
     with raises_code(UsageError, _RULE, match=r"Counted\.revisionCounter"):
-        prepare(instruction, _PREPARATION)
+        prepare_instruction(instruction, _PREPARATION, representation)
 
 
-@_LANES
 @pytest.mark.parametrize("member", _OWNED)
-@pytest.mark.parametrize("mutation", ["amend", "amendUntil", "replace", "replaceUntil"])
+@pytest.mark.parametrize(
+    ("representation", "mutation"),
+    [
+        (TYPED, "amend"),
+        (TYPED, "amendUntil"),
+        (WIRE, "amend"),
+        (WIRE, "amendUntil"),
+        (WIRE, "replace"),
+        (WIRE, "replaceUntil"),
+    ],
+)
 def test_temporal_assignment_roles_are_refused_in_bounded_and_unbounded_writes(
-    prepare: _Prepare, member: str, mutation: wi.KeyedMutation
+    representation: WriteRepresentation, member: str, mutation: wi.KeyedMutation
 ) -> None:
     instruction = wi.KeyedWriteInstruction(
         mutation,
         _TEMPORAL.canonical,
-        ({"id": 1, "label": 7, member: {"computed": "txInstant"}},),
+        {"id": 1, "label": 7, member: {"computed": "txInstant"}},
         valid_from=_START,
         until=_END if mutation.endswith("Until") else None,
     )
     with raises_code(UsageError, _RULE, match=rf"Recorded\.{member}"):
-        prepare(instruction, _PREPARATION)
+        prepare_instruction(instruction, _PREPARATION, representation)
 
 
-@_LANES
-@pytest.mark.parametrize("bad_row", [0, 1, 2])
-def test_each_amendment_row_is_judged(prepare: _Prepare, bad_row: int) -> None:
-    rows: list[dict[str, object]] = [{"id": i, "label": "accepted"} for i in range(3)]
-    rows[bad_row]["revisionCounter"] = 2
-    with raises_code(UsageError, _RULE):
-        prepare(wi.KeyedWriteInstruction("amend", _VERSIONED.canonical, tuple(rows)), _PREPARATION)
-
-
-@_LANES
-def test_an_earlier_rows_value_is_judged_before_a_later_rows_owned_name(prepare: _Prepare) -> None:
+@REPRESENTATIONS
+def test_subtype_metadata_is_judged_before_an_inherited_owned_name(
+    representation: WriteRepresentation,
+) -> None:
     instruction = wi.KeyedWriteInstruction(
-        "amend",
-        _VERSIONED.canonical,
-        ({"id": 1, "label": 7}, {"id": 2, "revisionCounter": 2}),
-    )
-    with pytest.raises(UsageError, match=r"Counted\.label") as refused:
-        prepare(instruction, _PREPARATION)
-    assert refused.value.code != _RULE
-
-
-@_LANES
-def test_subtype_metadata_is_judged_before_an_inherited_owned_name(prepare: _Prepare) -> None:
-    instruction = wi.KeyedWriteInstruction(
-        "amend", _CHILD.canonical, ({"id": 1, "revisionCounter": 2, "tagValue": "child"},)
+        "amend", _CHILD.canonical, {"id": 1, "revisionCounter": 2, "tagValue": "child"}
     )
     with raises_code(UsageError, "subtype-write-metadata-field"):
-        prepare(instruction, _PREPARATION)
+        prepare_instruction(instruction, _PREPARATION, representation)
 
 
-@_LANES
-def test_target_and_operation_applicability_precede_assignment_names(prepare: _Prepare) -> None:
+@REPRESENTATIONS
+def test_target_and_operation_applicability_precede_assignment_names(
+    representation: WriteRepresentation,
+) -> None:
     instruction = wi.KeyedWriteInstruction(
         "amendUntil",
         _VERSIONED.canonical,
-        ({"id": 1, "revisionCounter": 2},),
+        {"id": 1, "revisionCounter": 2},
         valid_from=_START,
         until=_END,
     )
     with raises_code(UsageError, "write-instruction-invalid") as refused:
-        prepare(instruction, _PREPARATION)
+        prepare_instruction(instruction, _PREPARATION, representation)
     assert "Non-Temporal" in str(refused.value) or "non-temporal" in str(refused.value)
 
 
-@pytest.mark.parametrize("explicit_members", [False, True])
+@pytest.mark.parametrize("explicit", [False, True])
 @pytest.mark.parametrize("member", ["revisionCounter", *_OWNED])
-def test_optimized_typed_preparation_refuses_framework_owned_assignments(
-    explicit_members: bool, member: str
+def test_typed_partial_payloads_refuse_framework_owned_assignments(
+    explicit: bool, member: str
 ) -> None:
     entity = _VERSIONED if member == "revisionCounter" else _TEMPORAL
     target = _MODEL.entity(entity)
@@ -194,52 +193,40 @@ def test_optimized_typed_preparation_refuses_framework_owned_assignments(
     entry = _PREPARATION.entity(entity)
     position = entry.selection.members.shape.position(member)
     assert position is not None
+    identity_pair = (entry.key_position, 1)
     with raises_code(UsageError, _RULE):
-        wi.prepare_typed_keyed_write(
+        wi.prepare_keyed_write(
             _PREPARATION,
+            TYPED,
             "amend",
             target,
-            pairs=((entry.key, 1),) if explicit_members else ((entry.key, 1), (position, None)),
-            members=(lambda: {member: None}) if explicit_members else None,
+            PartialPayload((identity_pair,) if explicit else (identity_pair, (position, None))),
+            assignments=(wi.WriteAssignment(f"{entity.canonical}.{member}", None),)
+            if explicit
+            else (),
             valid_from=None if entity == _VERSIONED else _START,
             until=None,
         )
 
 
-@pytest.mark.parametrize("mutation", ["replace", "replaceUntil"])
-def test_typed_full_state_replacement_omits_carried_temporal_endpoints(
+@pytest.mark.parametrize("mutation", ["insert", "replace", "replaceUntil"])
+def test_a_typed_complete_payload_omits_carried_temporal_endpoints(
     mutation: wi.KeyedMutation,
 ) -> None:
-    target = _MODEL.entity(_TEMPORAL)
-    assert target is not None
-    entry = _PREPARATION.entity(_TEMPORAL)
-    values = entry.plan.authored_values({"id": 1, "label": "accepted", **dict.fromkeys(_OWNED, 7)})
-    prepared = wi.prepare_typed_keyed_write(
-        _PREPARATION,
+    instruction = wi.KeyedWriteInstruction(
         mutation,
-        target,
-        values=values,
+        _TEMPORAL.canonical,
+        {"id": 1, "label": "accepted", **dict.fromkeys(_OWNED, 7)},
         valid_from=_START,
         until=_END if mutation.endswith("Until") else None,
     )
+    prepared = prepare_instruction(instruction, _PREPARATION, TYPED)
     assert named_members(prepared.rows[0]) == {"id": 1, "label": "accepted"}
 
 
-@_LANES
-def test_neutral_insert_projection_omits_carried_framework_owned_state(prepare: _Prepare) -> None:
-    instruction = wi.KeyedWriteInstruction(
-        "insert",
-        _TEMPORAL.canonical,
-        ({"id": 1, "label": "accepted", **dict.fromkeys(_OWNED, 7)},),
-        valid_from=_START,
-    )
-    prepared = cast("wi.PreparedKeyedInstruction", prepare(instruction, _PREPARATION))
-    assert named_members(prepared.rows[0]) == {"id": 1, "label": "accepted"}
-
-
-@_LANES
+@REPRESENTATIONS
 def test_a_target_missing_its_revision_is_refused_before_payload_ownership(
-    prepare: _Prepare,
+    representation: WriteRepresentation,
 ) -> None:
     instruction = wi.TargetWriteInstruction(
         "amend",
@@ -247,26 +234,22 @@ def test_a_target_missing_its_revision_is_refused_before_payload_ownership(
         {"id": 1, "revisionCounter": 2},
     )
     with raises_code(UsageError, "write-instruction-invalid", match="requires version"):
-        prepare(instruction, _PREPARATION)
+        prepare_instruction(instruction, _PREPARATION, representation)
 
 
 @pytest.mark.parametrize("member", _OWNED)
-def test_an_explicit_wire_insert_still_refuses_owned_payload_members(member: str) -> None:
-    target = _MODEL.entity(_TEMPORAL)
-    assert target is not None
+def test_a_wire_insert_refuses_owned_payload_members(member: str) -> None:
+    instruction = wi.KeyedWriteInstruction(
+        "insert",
+        _TEMPORAL.canonical,
+        {"id": 1, "label": "accepted", member: None},
+        valid_from=_START,
+    )
     with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
-        wi.prepare_wire_insert(
-            _PREPARATION,
-            "insert",
-            target,
-            {"id": 1, "label": "accepted", member: None},
-            valid_from=_START,
-            until=None,
-        )
+        prepare_instruction(instruction, _PREPARATION, WIRE)
 
 
-@_LANES
-@pytest.mark.parametrize("authorship", ["authored", "members"])
+@REPRESENTATIONS
 @pytest.mark.parametrize(
     ("entity", "member", "mutation"),
     [
@@ -276,25 +259,17 @@ def test_an_explicit_wire_insert_still_refuses_owned_payload_members(member: str
     ],
 )
 def test_authored_ownership_refusal_precedes_undeclared_members(
-    prepare: _Prepare,
-    authorship: str,
+    representation: WriteRepresentation,
     entity: EntityIdentity,
     member: str,
     mutation: wi.KeyedMutation,
 ) -> None:
-    assignments = {"undeclared": 7, member: 2}
-    row = {"id": 1, **assignments}
     instruction = wi.KeyedWriteInstruction(
         mutation,
         entity.canonical,
-        (row,),
+        {"id": 1, "undeclared": 7, member: 2},
         valid_from=_START if entity == _TEMPORAL else None,
         until=_END if mutation == "amendUntil" else None,
     )
     with raises_code(UsageError, _RULE):
-        prepare(
-            instruction,
-            _PREPARATION,
-            authored_members=row.keys() if authorship == "authored" else None,
-            members=(lambda: assignments) if authorship == "members" else None,
-        )
+        prepare_instruction(instruction, _PREPARATION, representation)

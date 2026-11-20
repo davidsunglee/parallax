@@ -45,8 +45,8 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CompletionRequest,
@@ -110,7 +110,7 @@ from tests._support.planner_probes import (
     deferred_ranges,
     retained_observation,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WherePosition
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
@@ -322,7 +322,7 @@ class _Watched:
 def _target(
     valid_from: dt.datetime, until: dt.datetime, value: str, *, key: int = 1
 ) -> PreparedTargetInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "Position",
@@ -332,6 +332,7 @@ def _target(
             until=until,
         ),
         write_preparation_of(TARGET_POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -343,9 +344,10 @@ _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month i
 def _observed_amend(
     key: int, claim: RetainedObservation
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amend", "Position", {"id": key, "value": "150.00"}, _APR),
         write_preparation_of(TARGET_POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, claim, claim.key.object)
@@ -597,7 +599,7 @@ _FEB, _AUG = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 8))
 
 
 def _tag_predicate_write() -> PreparedPredicateInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -609,6 +611,7 @@ def _tag_predicate_write() -> PreparedPredicateInstruction:
             assignments=(WriteAssignment("RunnerTag.label", "q"),),
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
@@ -635,26 +638,28 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         rows=_Watched(positions.acquire, seen.append),
         counted=simulated.counted,
     )
-    amendment = prepare_wire_write(
+    amendment = prepare_instruction(
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            ({"id": 1, "acctNum": "O"},),
+            {"id": 1, "acctNum": "O"},
             valid_from=_FEB,
             until=_APR,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(amendment, PreparedKeyedInstruction)
-    later = prepare_wire_write(
+    later = prepare_instruction(
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            ({"id": 1, "value": "175.00"},),
+            {"id": 1, "value": "175.00"},
             valid_from=_JUN,
             until=_AUG,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(later, PreparedKeyedInstruction)
     observed = uow.source_registry.retain(retained_observation(amendment, _PREDICATED, observation))

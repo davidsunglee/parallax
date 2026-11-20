@@ -401,8 +401,7 @@ _UNBOUND_PATH: Final = _refused(
 )
 _UNDECLARED_WIRE_CHANGE: Final = _refused(
     UsageError,
-    "Person: assignment 'parallax.compatibility.Person.undeclared' does not name a declared "
-    "member of parallax.compatibility.Person",
+    "Person: predicate write row names undeclared member(s) ['undeclared']",
     code="write-instruction-invalid",
 )
 
@@ -489,13 +488,7 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="undeclared"),
-        _wire(
-            _refused(
-                UsageError,
-                "Person: predicate write row names undeclared member(s) ['undeclared']",
-                code="write-instruction-invalid",
-            )
-        ),
+        _wire(_UNDECLARED_WIRE_CHANGE),
     ),
     _Row(
         PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="none"),

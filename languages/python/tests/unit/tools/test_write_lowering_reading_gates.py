@@ -42,6 +42,7 @@ import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
+from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.internal.base import detach_json_container
@@ -73,11 +74,10 @@ headroom: the smallest Typed checkpoint and the three Wire successors, whose
 checkpoints are the largest of the categorical cases."""
 
 PREPARATION_ENTRIES: Final = (
-    "prepare_typed_insert",
-    "prepare_typed_keyed_write",
-    "prepare_typed_write",
-    "prepare_wire_insert",
-    "prepare_wire_write",
+    "prepare_insert",
+    "prepare_keyed_write",
+    "prepare_predicate_write",
+    "prepare_target_write",
 )
 """The preparation entries Typed and Wire sources call, each answering the
 prepared rows the retained-duplication seed copies."""
@@ -172,7 +172,8 @@ _REGISTRY: Final = _Registry()
 def _duplicating(prepare: Callable[..., Any]) -> Callable[..., Any]:
     def prepared(*args: object, **kwargs: object) -> Any:
         result = prepare(*args, **kwargs)
-        _REGISTRY.keep(tuple(detach_json_container(row.cells) for row in result.rows))
+        rows = result.rows if isinstance(result, PreparedKeyedInstruction) else (result.row,)
+        _REGISTRY.keep(tuple(detach_json_container(row.cells) for row in rows))
         return result
 
     return prepared

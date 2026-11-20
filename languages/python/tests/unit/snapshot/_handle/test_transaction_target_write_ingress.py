@@ -28,7 +28,6 @@ from parallax.conformance.story_models import Wallet
 from parallax.core import Attr, Entity, Int32, attr
 from parallax.core._execution._unit_work.instructions import (
     deserialize,
-    prepare_typed_write,
     serialize,
 )
 from parallax.core.internal.base import InvalidValueError, UsageError
@@ -51,7 +50,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -385,9 +384,13 @@ def _raw(member: str, value: object) -> AttributeAssignment[Any]:
         ),
         ((_raw("id", 2),), "primary-key", "write-instruction-invalid"),
         ((_raw("version", 9),), "framework-owned", "framework-owned-member-assigned"),
-        ((Wallet.balance.set(Decimal(1)),), "declares or inherits", "write-instruction-invalid"),
+        (
+            (Wallet.balance.set(Decimal(1)),),
+            "does not name a declared member",
+            "write-instruction-invalid",
+        ),
         ((_raw("balance", "much"),), "balance", "write-assignment-value-type-mismatch"),
-        ((_raw("nickname", "x"),), "declares or inherits", "write-instruction-invalid"),
+        ((_raw("nickname", "x"),), "does not name a declared member", "write-instruction-invalid"),
     ],
     ids=["duplicate", "primary-key", "version", "foreign", "ill-typed", "undeclared"],
 )
@@ -426,9 +429,13 @@ def test_a_sibling_member_and_an_abstract_target_are_refused() -> None:
     ancestor = Vessel.name.set("Skua").attr.entity
 
     def fn(tx: TxnContext) -> None:
-        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="does not name a declared member"
+        ):
             tx.amend_if(Ferry, cast("Any", Tug.pull.set(1)), key=4, version=3)
-        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="does not name a declared member"
+        ):
             tx.amend_if(
                 Ferry, AttributeAssignment(AttributeRef(ancestor, "berths"), 8), key=4, version=3
             )
@@ -499,7 +506,9 @@ def test_a_source_assignment_addressing_another_entity_is_refused() -> None:
 
     def fn(tx: TxnContext) -> None:
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        with raises_code(UsageError, "write-instruction-invalid", match="declares or inherits"):
+        with raises_code(
+            UsageError, "write-instruction-invalid", match="does not name a declared member"
+        ):
             tx.amend(found, Wallet.balance.set(Decimal(1)))  # pyright: ignore[reportArgumentType]
 
     account_db(port).transact(fn)
@@ -720,7 +729,7 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
 ) -> None:
     model = model_of(MODELS["wallet"] if entity == "Wallet" else MODELS["account"])
     with raises_code(UsageError, "write-instruction-invalid", match=outcome):
-        prepare_typed_write(
+        prepare_instruction(
             TargetWriteInstruction("amend", entity, row), write_preparation_of(model)
         )
 

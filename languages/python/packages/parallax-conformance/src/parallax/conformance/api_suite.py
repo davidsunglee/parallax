@@ -1191,6 +1191,33 @@ EXAMPLES: Final[list[Example]] = [
         ")\n"
         '# raises UsageError(code="read-only-write-target")',
     ),
+    # Wire payload-order proofs: each Wire verb refuses the SAME payload the
+    # corpus's rejected lane prepares, naming the SAME classified rule before
+    # anything is written — proven by
+    # `test_idiomatic_wire_payload_rejects_the_corpus_rule`
+    # (`tests/api/test_write_no_drift.py`).
+    Example(
+        "m-unit-work-098",
+        "A target amendment whose key names no object, beside an out-of-space balance",
+        "db.transact(\n"
+        "    lambda tx: tx.wire.amend_if(\n"
+        '        "Account",\n'
+        '        {"id": "bad-key", "balance": "99999999999999999999.00"},\n'
+        "        version=1,\n"
+        "    )\n"
+        ")\n"
+        '# raises InvalidValueError(code="neutral-literal-type-mismatch")',
+    ),
+    Example(
+        "m-unit-work-099",
+        "A Wire insert authoring the framework-owned version",
+        "db.transact(\n"
+        "    lambda tx: tx.wire.insert(\n"
+        '        "Account", {"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}\n'
+        "    )\n"
+        ")\n"
+        '# raises UsageError(code="framework-owned-member-assigned")',
+    ),
     Example(
         "m-unit-work-069",
         "A predicate amendment of a ReadOnly Entity",
@@ -1892,7 +1919,7 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
     "so no single typed instance can reproduce this payload's cross-branch shape to drive "
     "`tx.insert`/`tx.amend` through it — `test_write_instructions.py` exercises the "
-    "classified rule directly at the write preparation seam (`prepare_typed_write`) instead. "
+    "classified rule directly at the write preparation seam (`prepare_insert`) instead. "
     "The same holds for the keyed-instruction twin (m-inheritance-131), whose row carries the "
     "sibling column alone: the typed surface reaches write preparation only through an "
     "instance, and the instance cannot carry the field"
@@ -1903,7 +1930,7 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "the class and its `inheritance=ConcreteSubtype(tag_value=...)` at CLASS-DEFINITION "
     "time, never a per-instance Pydantic field a caller can pass to `tx.insert`/`tx.amend` "
     "— `test_write_instructions.py` exercises the classified rule directly at the write "
-    "preparation seam (`prepare_wire_write`) instead"
+    "preparation seam (`prepare_insert`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
     "the idiomatic spelling EXISTS: `subtype-write-set-based-unsupported`'s natural "

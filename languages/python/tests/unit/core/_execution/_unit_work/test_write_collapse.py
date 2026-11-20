@@ -152,30 +152,12 @@ def test_insert_preparation_refuses_a_missing_required_slot_before_grouping() ->
     model, _ = WALLET
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
+            "insert", "Wallet", {"id": 10, "owner": "Mira", "balance": Decimal("100.00")}
         ),
-        KeyedWriteInstruction("insert", "Wallet", ({"id": 11, "owner": "Omar"},)),
+        KeyedWriteInstruction("insert", "Wallet", {"id": 11, "owner": "Omar"}),
     ]
     with pytest.raises(UsageError, match=r"Wallet\.balance: required attribute"):
         _flush_and_lower(buffer, model)
-
-
-def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
-    # A DELETE's emitted statement selects the key columns alone, so two rows
-    # carrying different non-key payload members are the SAME physical shape and
-    # must reach one key-membership statement.
-    model, _ = WALLET
-    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
-        KeyedWriteInstruction(
-            "delete", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
-        ),
-        KeyedWriteInstruction("delete", "Wallet", ({"id": 11},)),
-    ]
-    statements = _flush_and_lower(buffer, model)
-    assert [statement.sql for statement in statements] == [
-        "delete from px.wallet where id = any(cast(? as bigint[]))"
-    ]
-    assert [statement.binds for statement in statements] == [(ArrayBind(INT64, [10, 11]),)]
 
 
 def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
@@ -184,10 +166,10 @@ def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
     # each side then collapses on its own uniform values.
     model, _ = WALLET
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 10, "balance": Decimal("5.00")},)),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 11, "balance": Decimal("5.00")},)),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 12, "owner": "Omar"},)),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 13, "owner": "Omar"},)),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 10, "balance": Decimal("5.00")}),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 11, "balance": Decimal("5.00")}),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 12, "owner": "Omar"}),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 13, "owner": "Omar"}),
     ]
     statements = _flush_and_lower(buffer, model)
     assert [statement.sql for statement in statements] == [
@@ -213,7 +195,7 @@ def test_a_collapse_wider_than_the_parameter_limit_stays_one_step_and_one_statem
         KeyedWriteInstruction(
             mutation,
             "Wallet",
-            ({"id": key} if mutation == "delete" else {"id": key, "balance": Decimal("5.00")},),
+            {"id": key} if mutation == "delete" else {"id": key, "balance": Decimal("5.00")},
         )
         for key in keys
     ]
@@ -234,10 +216,10 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
     model, _ = WALLET
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
+            "insert", "Wallet", {"id": 10, "owner": "Mira", "balance": Decimal("100.00")}
         ),
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"balance": Decimal("20.00"), "id": 11, "owner": "Omar"},)
+            "insert", "Wallet", {"balance": Decimal("20.00"), "id": 11, "owner": "Omar"}
         ),
     ]
     assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
@@ -263,7 +245,7 @@ def test_insert_runs_use_the_admitted_target_and_preserve_row_order(
 ) -> None:
     model, entity = target
     writes = [
-        KeyedWriteInstruction("insert", entity.identity.canonical, ({"id": key, **values},))
+        KeyedWriteInstruction("insert", entity.identity.canonical, {"id": key, **values})
         for key in (3, 1, 2)
     ]
     admitted = observed_buffer(writes, model, None)
@@ -298,9 +280,9 @@ def test_insert_runs_use_the_admitted_target_and_preserve_row_order(
             (1, 1, 1),
         ),
         ("amend", ({"id": 3, "balance": Decimal("5")}, {"id": 1, "owner": "Ada"}), (1, 1)),
-        ("delete", ({"id": 3, "balance": Decimal("5")}, {"id": 1}), (2,)),
+        ("delete", ({"id": 3}, {"id": 1}), (2,)),
     ],
-    ids=["singleton", "uniform", "whole-run-nonuniform", "presence", "delete-payload"],
+    ids=["singleton", "uniform", "whole-run-nonuniform", "presence", "delete"],
 )
 def test_unversioned_runs_preserve_whole_run_membership(
     mutation: Literal["amend", "delete"],
@@ -309,7 +291,7 @@ def test_unversioned_runs_preserve_whole_run_membership(
 ) -> None:
     model, entity = WALLET
     admitted = observed_buffer(
-        [KeyedWriteInstruction(mutation, entity.identity.canonical, (row,)) for row in rows],
+        [KeyedWriteInstruction(mutation, entity.identity.canonical, row) for row in rows],
         model,
         None,
     )
@@ -335,28 +317,11 @@ def test_presence_shapes_split_even_when_members_share_one_document(layout: str)
     model = document_model() if layout == "document" else columns_model()
     rows = ({"id": 3, "score": None}, {"id": 1, "displayName": None}, {"id": 2, "score": None})
     admitted = observed_buffer(
-        [KeyedWriteInstruction("amend", PERSON.canonical, (row,)) for row in rows], model, None
+        [KeyedWriteInstruction("amend", PERSON.canonical, row) for row in rows], model, None
     )
     result = collapse_writes(model, admitted)
     assert len(result) == 3
     assert all(actual is expected for actual, expected in zip(result, admitted, strict=True))
-
-
-@pytest.mark.parametrize("model", [columns_model(), document_model()], ids=["columns", "document"])
-def test_delete_runs_ignore_nonkey_presence(model: Metamodel) -> None:
-    rows = ({"id": 3, "score": 5}, {"id": 1, "displayName": "Ada"}, {"id": 2})
-    admitted = observed_buffer(
-        [KeyedWriteInstruction("delete", PERSON.canonical, (row,)) for row in rows], model, None
-    )
-    result = collapse_writes(model, admitted)
-    assert len(result) == 1
-    (batch,) = result
-    assert isinstance(batch, UnversionedWriteBatch)
-    assert tuple(row.cell(AttributeIdentity(PERSON, "id")) for row in batch.instruction.rows) == (
-        3,
-        1,
-        2,
-    )
 
 
 @pytest.mark.parametrize("target", [DOG, GENERATED_KEY_LEAF], ids=["inherited", "generated-key"])
@@ -366,7 +331,7 @@ def test_uniform_updates_exclude_the_inherited_addressing_key(
     model, entity = target
     member = "name" if entity.identity.name == "Dog" else "title"
     writes = [
-        KeyedWriteInstruction("amend", entity.identity.canonical, ({"id": key, member: "same"},))
+        KeyedWriteInstruction("amend", entity.identity.canonical, {"id": key, member: "same"})
         for key in (3, 1)
     ]
     (batch,) = collapse_writes(model, observed_buffer(writes, model, None))
@@ -382,7 +347,11 @@ def test_observed_writes_remain_separate_despite_uniform_values(
     model, entity = target
     member = "owner" if entity.identity.name == "Account" else "name"
     writes = [
-        KeyedWriteInstruction(mutation, entity.identity.canonical, ({"id": key, member: "same"},))
+        KeyedWriteInstruction(
+            mutation,
+            entity.identity.canonical,
+            {"id": key, member: "same"} if mutation == "amend" else {"id": key},
+        )
         for key in (3, 1)
     ]
     observations: dict[ObjectKey, StateObservation] = {}

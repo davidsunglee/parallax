@@ -22,8 +22,8 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     TargetMutation,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -83,7 +83,7 @@ from tests._support.planner_probes import (
     settled_writes,
     write_admission,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     alone,
@@ -160,18 +160,20 @@ def _opened(steps: Iterable[PlannedStep], member: str = "value") -> list[tuple[o
 def _position(
     mutation: KeyedMutation, valid_from: dt.datetime, until: dt.datetime | None, **members: object
 ) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Position", {"id": 1, **members}, valid_from, until),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
 def _balance(mutation: KeyedMutation, **members: object) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Balance", {"id": 1, **members}),
         write_preparation_of(_BALANCE),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -300,9 +302,10 @@ def _balance_target(
     tx_start: dt.datetime, mutation: TargetMutation = "amend", **members: object
 ) -> LicensedWrite[CallerConditioned]:
     return target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(mutation, "Balance", {"id": 1, **members}, if_tx_start=tx_start),
             write_preparation_of(_BALANCE),
+            WIRE,
         ),
         inheritance.inheritance_facet_of(_BALANCE),
     )
@@ -385,7 +388,7 @@ def _position_target(
     mutation: TargetMutation, **members: object
 ) -> LicensedWrite[CallerConditioned]:
     return target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(
                 mutation,
                 "Position",
@@ -395,6 +398,7 @@ def _position_target(
                 until=SEP,
             ),
             write_preparation_of(POSITION),
+            WIRE,
         ),
         FAMILIES,
     )

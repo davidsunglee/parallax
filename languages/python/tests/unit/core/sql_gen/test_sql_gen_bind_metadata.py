@@ -531,15 +531,17 @@ def test_an_unrendered_marker_has_no_wire_projection(
 
 def test_a_multi_row_insert_binds_self_describing_arrays_with_no_span_metadata() -> None:
     statement = lower_instruction(
-        KeyedWriteInstruction(
-            "insert",
-            "Wallet",
-            (
-                {"id": 1, "owner": "A", "balance": Decimal("10.00")},
-                {"id": 2, "owner": "B", "balance": Decimal("20.00")},
-                {"id": 3, "owner": "C", "balance": Decimal("30.00")},
+        [
+            KeyedWriteInstruction(
+                "insert", "Wallet", {"id": 1, "owner": "A", "balance": Decimal("10.00")}
             ),
-        ),
+            KeyedWriteInstruction(
+                "insert", "Wallet", {"id": 2, "owner": "B", "balance": Decimal("20.00")}
+            ),
+            KeyedWriteInstruction(
+                "insert", "Wallet", {"id": 3, "owner": "C", "balance": Decimal("30.00")}
+            ),
+        ],
         WALLET,
         POSTGRES,
         "locking",

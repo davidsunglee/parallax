@@ -18,8 +18,8 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     LicensedWrite,
@@ -43,7 +43,7 @@ from parallax.core.internal.unit_work import (
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 __all__ = [
     "AT",
@@ -165,15 +165,16 @@ def frag(
     rows = frag_rows(entity, key, parts)
     writes: list[LicensedWrite[StateObserved | UnversionedLocked]] = []
     for pair in range(parts):
-        prepared = prepare_wire_write(
+        prepared = prepare_instruction(
             KeyedWriteInstruction(
                 "amendUntil",
                 entity.identity.canonical,
-                ({"id": key, "amount": 1000 + pair},),
+                {"id": key, "amount": 1000 + pair},
                 day(2 * pair),
                 day(2 * pair + 2),
             ),
             write_preparation_of(MODEL),
+            WIRE,
         )
         assert isinstance(prepared, PreparedKeyedInstruction)
         observed = observation(entity, rows[2 * pair])

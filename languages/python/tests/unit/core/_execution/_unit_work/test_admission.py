@@ -36,8 +36,8 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     TargetMutation,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
@@ -92,7 +92,7 @@ from parallax.core.internal.unit_work import (
 )
 from tests._support.errors import raises_code
 from tests._support.planner_probes import admit, admit_licensed, object_source, source_registry
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -158,9 +158,10 @@ def _account(account_id: int) -> ObjectKey:
 def _account_observed(
     account_id: int, version: int
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amend", "Account", {"id": account_id, "owner": "Bo"}),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)
@@ -173,11 +174,12 @@ def _account_target(
     account_id: int, version: int, mutation: TargetMutation = "amend"
 ) -> LicensedWrite[VersionConditioned]:
     members: dict[str, object] = {"balance": "1.00"} if mutation == "amend" else {}
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             mutation, "Account", {"id": account_id, **members}, if_version=version
         ),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     item = target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT))
     assert is_licensed_by(item, VersionConditioned)
@@ -185,20 +187,22 @@ def _account_target(
 
 
 def _account_insert(account_id: int) -> KeyedInsert:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
+            "insert", "Account", {"id": account_id, "owner": "N", "balance": "5.00"}
         ),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _account(account_id))
 
 
 def _account_amend(account_id: int) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amend", "Account", {"id": account_id, "owner": "Cy"}),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -296,8 +300,8 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     admission = _admitted(meta=_ACCOUNT)
     assert not admission
     identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
-    deletion = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), write_preparation_of(_ACCOUNT)
+    deletion = prepare_instruction(
+        KeyedWriteInstruction("delete", "Account", {"id": 9}), write_preparation_of(_ACCOUNT), WIRE
     )
     assert isinstance(deletion, PreparedKeyedInstruction)
     assert identity is not None
@@ -318,9 +322,10 @@ def _person(person_id: int) -> ObjectKey:
 def _person_write(
     person_id: int, source: ReadEvidence
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amend", "Person", {"id": person_id, "name": "Grace"}),
         write_preparation_of(_PERSON),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, _person(person_id), _person(person_id), source=source)
@@ -354,9 +359,10 @@ def test_discard_drops_the_buffer_and_leaves_the_registrys_insertions_alone() ->
     admission = _admitted(
         _person_write(1, object_source(_person(1))), meta=_PERSON, registry=registry
     )
-    insertion = prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)),
+    insertion = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 9, "name": "Ada"}),
         write_preparation_of(_PERSON),
+        WIRE,
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     identity = admission.admit_insert(
@@ -381,11 +387,12 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
 
 
 def _position_insert() -> KeyedInsert:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
+            "insert", "Position", {"id": 1, "acctNum": "A", "value": "1.00"}, FEB
         ),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, OBJECT)
@@ -456,17 +463,20 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothin
 def _account_delete_through(
     identity: InsertionIdentity, account_id: int = 9
 ) -> LicensedWrite[InsertionAuthorized]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("delete", "Account", {"id": account_id}),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _account(account_id), insertion=identity)
 
 
 def _balance_terminate_through(identity: InsertionIdentity) -> LicensedWrite[InsertionAuthorized]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)), write_preparation_of(_BALANCE)
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("terminate", "Balance", {"id": 1}),
+        write_preparation_of(_BALANCE),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _BALANCE_OBJECT, insertion=identity)
@@ -723,15 +733,17 @@ def test_a_shared_token_names_whatever_rectangle_holds_each_start() -> None:
 def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None:
     # An insertion's write states no starting revision a caller's could agree
     # with, so the two cannot be one operation over one window.
-    insertion = prepare_wire_write(
+    insertion = prepare_instruction(
         KeyedWriteInstruction(
-            "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), MAR
+            "insert", "Position", {"id": 1, "acctNum": "A", "value": "1.00"}, MAR
         ),
         write_preparation_of(POSITION),
+        WIRE,
     )
-    amendment = prepare_wire_write(
-        KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), MAR, SEP),
+    amendment = prepare_instruction(
+        KeyedWriteInstruction("amendUntil", "Position", {"id": 1, "value": "2.00"}, MAR, SEP),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
@@ -749,9 +761,10 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
 def _position(
     mutation: KeyedMutation, valid_from: dt.datetime, until: dt.datetime | None, **members: object
 ) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Position", {"id": 1, **members}, valid_from, until),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -838,9 +851,10 @@ def test_cancelling_an_opening_leaves_a_read_authorized_write_beside_it_standing
 
 
 def _balance_insert() -> KeyedInsert:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("insert", "Balance", ({"id": 1, "acctNum": "N", "value": "5.00"},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("insert", "Balance", {"id": 1, "acctNum": "N", "value": "5.00"}),
         write_preparation_of(_BALANCE),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _BALANCE_OBJECT)
@@ -848,9 +862,10 @@ def _balance_insert() -> KeyedInsert:
 
 def _balance_observed(mutation: KeyedMutation) -> LicensedWrite[StateObserved | UnversionedLocked]:
     members: dict[str, object] = {"value": "7.00"} if mutation == "amend" else {}
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Balance", {"id": 1, **members}),
         write_preparation_of(_BALANCE),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     row = PredecessorRow(
@@ -879,9 +894,10 @@ def _balance_observed(mutation: KeyedMutation) -> LicensedWrite[StateObserved | 
 def _account_observed_delete(
     account_id: int, version: int
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("delete", "Account", {"id": account_id}),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)
@@ -949,9 +965,10 @@ def _account_read(
     account_id: int, version: int, mutation: KeyedMutation = "amend"
 ) -> tuple[LicensedWrite[StateObserved | UnversionedLocked], ReadEvidence]:
     members: dict[str, object] = {"owner": "Bo"} if mutation == "amend" else {}
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Account", ({"id": account_id, **members},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Account", {"id": account_id, **members}),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)

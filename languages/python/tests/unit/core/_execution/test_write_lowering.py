@@ -32,7 +32,7 @@ import dataclasses
 import datetime as dt
 import gc
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from types import MappingProxyType
 from typing import cast
@@ -168,7 +168,7 @@ _EXPANDING = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
 
 
 def _lower(
-    instruction: WriteInstruction,
+    instruction: WriteInstruction | Sequence[KeyedWriteInstruction],
     model: Metamodel,
     *,
     observation: StateObservation | None = None,
@@ -209,7 +209,7 @@ def test_non_temporal_write_requires_an_effective_table() -> None:
             KeyedWriteInstruction(
                 "insert",
                 "Account",
-                ({"id": 1, "owner": "A", "balance": Decimal("1.00"), "version": 1},),
+                {"id": 1, "owner": "A", "balance": Decimal("1.00"), "version": 1},
             ),
             malformed,
         )
@@ -226,7 +226,7 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
         KeyedWriteInstruction(
             "insert",
             "Customer",
-            ({"id": 1, "name": "Ada", "address": {"street": "1 Main", "city": "Oslo"}},),
+            {"id": 1, "name": "Ada", "address": {"street": "1 Main", "city": "Oslo"}},
         ),
         CUSTOMER,
     )[0]
@@ -246,18 +246,16 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
         KeyedWriteInstruction(
             "insert",
             "Customer",
-            (
-                {
-                    "id": 2,
-                    "name": "Bo",
-                    "address": {
-                        "street": "2 Main",
-                        "city": "Bergen",
-                        "geo": {"country": "NO", "elevation": 12},
-                        "phones": [{"type": "home", "number": "555-0100"}],
-                    },
+            {
+                "id": 2,
+                "name": "Bo",
+                "address": {
+                    "street": "2 Main",
+                    "city": "Bergen",
+                    "geo": {"country": "NO", "elevation": 12},
+                    "phones": [{"type": "home", "number": "555-0100"}],
                 },
-            ),
+            },
         ),
         CUSTOMER,
     )[0]
@@ -312,7 +310,7 @@ def test_full_row_insert_emits_the_entity_layout_slot_selection(
     # table-per-hierarchy concrete's applicable slots of the SHARED table (the
     # derived discriminator included, the sibling's own slot excluded), and a
     # table-per-concrete-subtype concrete's complete ancestry in its own table.
-    statement = _lower(KeyedWriteInstruction("insert", entity, (row,)), model)[0]
+    statement = _lower(KeyedWriteInstruction("insert", entity, row), model)[0]
     assert _insert_columns(statement) == _layout_columns(model, entity)
 
 
@@ -324,7 +322,7 @@ def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> N
         KeyedWriteInstruction(
             "amend",
             "CardPayment",
-            ({"id": 1, "amount": Decimal("130.00"), "cardNetwork": "Visa"},),
+            {"id": 1, "amount": Decimal("130.00"), "cardNetwork": "Visa"},
         ),
         PAYMENT,
     )[0]
@@ -340,14 +338,18 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
     # filtered to the members every row carries, with the derived discriminator's
     # array at its own slot, repeating each row's tag.
     statement = _lower(
-        KeyedWriteInstruction(
-            "insert",
-            "CardPayment",
-            (
+        [
+            KeyedWriteInstruction(
+                "insert",
+                "CardPayment",
                 {"id": 1, "amount": Decimal("10.00"), "cardNetwork": "Visa"},
+            ),
+            KeyedWriteInstruction(
+                "insert",
+                "CardPayment",
                 {"cardNetwork": "Amex", "amount": Decimal("20.00"), "id": 2},
             ),
-        ),
+        ],
         PAYMENT,
     )[0]
     assert _insert_columns(statement) == _layout_columns(PAYMENT, "CardPayment")
@@ -380,7 +382,7 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     # field is never caller data, so it is never silently double-assigned
     # against the derived advance, EVEN when an observation is also available.
     update = KeyedWriteInstruction(
-        "amend", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
+        "amend", "Account", {"id": 1, "balance": Decimal("175.00"), "version": 2}
     )
     with raises_code(UsageError, "framework-owned-member-assigned", match="framework-owned"):
         _lower(
@@ -395,7 +397,7 @@ def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> Non
     # Optimistic mode binds the observed version LAST, exactly as
     # a versioned UPDATE's own gate does — the gate is concurrency-driven, never
     # mutation-driven.
-    delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
+    delete = KeyedWriteInstruction("delete", "Account", {"id": 3})
     statement = _lower(
         delete,
         ACCOUNT,
@@ -410,7 +412,7 @@ def test_versioned_delete_is_ungated_in_locking_mode() -> None:
     # m-batch-write-004: locking mode renders NO gate on a versioned delete, the
     # same ungated form a versioned UPDATE and a temporal close take — the shared
     # read lock, not a version predicate, is what makes the write correct.
-    delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
+    delete = KeyedWriteInstruction("delete", "Account", {"id": 3})
     statement = _lower(
         delete, ACCOUNT, observation=VersionObservation(observed_version=1), concurrency="locking"
     )[0]
@@ -421,7 +423,7 @@ def test_versioned_delete_is_ungated_in_locking_mode() -> None:
 def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None:
     # An ungated (locking-mode) shortfall is the NON-retriable stale outcome an
     # ungated close's is; a gated (optimistic) one stays the retriable conflict.
-    delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
+    delete = KeyedWriteInstruction("delete", "Account", {"id": 3})
     observation = VersionObservation(observed_version=1)
     model = ACCOUNT
     locking, _ = lower_instruction_steps(
@@ -440,7 +442,7 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
     insert = KeyedWriteInstruction(
         "insert",
         "Account",
-        ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 99},),
+        {"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 99},
     )
     statement = _lower(insert, ACCOUNT)[0]
     assert (
@@ -468,7 +470,7 @@ def test_a_document_at_a_scalar_member_is_not_its_declared_type(
     document: dict[str, object], mutation: str
 ) -> None:
     row = {"id": 1, "holder": document}
-    instruction = KeyedWriteInstruction(mutation, "Badge", (row,))  # pyright: ignore[reportArgumentType]
+    instruction = KeyedWriteInstruction(mutation, "Badge", row)  # pyright: ignore[reportArgumentType]
     with pytest.raises(UsageError, match="does not match the declared type"):
         _lower(instruction, PK_SEQUENCE)
 
@@ -523,14 +525,12 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
     # Uniform membership is a Planned Insert's own construction invariant, so
     # the mixed shape is refused while the step is being settled — before any
     # column list exists to mis-emit against.
-    mixed = KeyedWriteInstruction(
-        "insert",
-        "Wallet",
-        (
-            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
-            {"id": 11, "owner": "Omar"},
+    mixed = [
+        KeyedWriteInstruction(
+            "insert", "Wallet", {"id": 10, "owner": "Mira", "balance": Decimal("100.00")}
         ),
-    )
+        KeyedWriteInstruction("insert", "Wallet", {"id": 11, "owner": "Omar"}),
+    ]
     with pytest.raises(UsageError, match="required attribute is absent"):
         _lower(mixed, WALLET)
 
@@ -544,14 +544,18 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
     # multi-row insert on a versioned entity (Wallet/Customer,
     # m-batch-write-001/m-value-object-045, are both non-versioned), so this
     # is a unit-level pin.
-    insert = KeyedWriteInstruction(
-        "insert",
-        "Account",
-        (
+    insert = [
+        KeyedWriteInstruction(
+            "insert",
+            "Account",
             {"id": 20, "owner": "Curie", "balance": Decimal("10.00"), "version": 98},
+        ),
+        KeyedWriteInstruction(
+            "insert",
+            "Account",
             {"id": 21, "owner": "Bohr", "balance": Decimal("20.00"), "version": 99},
         ),
-    )
+    ]
     statement = _lower(insert, ACCOUNT)[0]
     assert statement.sql == (
         "insert into px.account(id, owner, balance, version) select * from unnest("
@@ -566,38 +570,21 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
 
 
 def test_a_dialect_binding_no_arrays_lists_a_collapsed_updates_keys() -> None:
-    update = KeyedWriteInstruction(
-        "amend",
-        "Wallet",
-        ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
-    )
+    update = [
+        KeyedWriteInstruction("amend", "Wallet", {"id": 10, "balance": Decimal("500.00")}),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 11, "balance": Decimal("500.00")}),
+    ]
     statement = _lower(update, WALLET, dialect=_EXPANDING)[0]
     assert statement.sql == "update px.wallet set balance = ? where id in (?, ?)"
     assert statement.binds == (500.00, 10, 11)
 
 
-def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> None:
-    # The counterpart to the uniform collapse above. A run buffered one row at a
-    # time is asked whether it collapses; an instruction that ARRIVED carrying
-    # several rows must be asked the same question, because a shared step carries
-    # ONE assignment shape and `m-batch-write` keeps incompatible writes in
-    # separate steps. Otherwise the first row's values would be applied to every
-    # key the statement addresses and the later rows' values would never be
-    # written at all.
-    update = KeyedWriteInstruction(
-        "amend",
-        "Wallet",
-        ({"id": 10, "balance": Decimal("111.00")}, {"id": 11, "balance": Decimal("222.00")}),
-    )
-    first, second = _lower(update, WALLET)
-    assert first.sql == "update px.wallet set balance = ? where id = ?"
-    assert first.binds == (111.00, 10)
-    assert second.sql == "update px.wallet set balance = ? where id = ?"
-    assert second.binds == (222.00, 11)
-
-
 def test_a_dialect_binding_no_arrays_lists_a_collapsed_deletes_keys() -> None:
-    delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
+    delete = [
+        KeyedWriteInstruction("delete", "Wallet", {"id": 1}),
+        KeyedWriteInstruction("delete", "Wallet", {"id": 2}),
+        KeyedWriteInstruction("delete", "Wallet", {"id": 3}),
+    ]
     statement = _lower(delete, WALLET, dialect=_EXPANDING)[0]
     assert statement.sql == "delete from px.wallet where id in (?, ?, ?)"
     assert statement.binds == (1, 2, 3)
@@ -610,7 +597,10 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     # UNGUARDED membership delete would remove a sibling subtype's rows whose ids
     # happen to be listed — the tag is what keeps a batch collapse inside one
     # concrete subtype.
-    delete = KeyedWriteInstruction("delete", "CardPayment", ({"id": 1}, {"id": 2}))
+    delete = [
+        KeyedWriteInstruction("delete", "CardPayment", {"id": 1}),
+        KeyedWriteInstruction("delete", "CardPayment", {"id": 2}),
+    ]
     statement = _lower(delete, PAYMENT)[0]
     assert (
         statement.sql == "delete from px.payment where id = any(cast(? as bigint[])) and kind = ?"
@@ -620,11 +610,10 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     assert expanded.sql == "delete from px.payment where id in (?, ?) and kind = ?"
     assert expanded.binds == (1, 2, "card")
 
-    update = KeyedWriteInstruction(
-        "amend",
-        "CardPayment",
-        ({"id": 1, "amount": Decimal("5.00")}, {"id": 2, "amount": Decimal("5.00")}),
-    )
+    update = [
+        KeyedWriteInstruction("amend", "CardPayment", {"id": 1, "amount": Decimal("5.00")}),
+        KeyedWriteInstruction("amend", "CardPayment", {"id": 2, "amount": Decimal("5.00")}),
+    ]
     updated = _lower(update, PAYMENT)[0]
     assert updated.sql == (
         "update px.payment set amount = ? where id = any(cast(? as bigint[])) and kind = ?"
@@ -684,11 +673,10 @@ def test_a_dialect_binding_no_arrays_renders_a_multi_column_key_as_a_row_constru
 def test_a_collapsed_targets_text_and_bind_count_follow_its_key_columns_alone() -> None:
     statements = [
         _lower(
-            KeyedWriteInstruction(
-                "amend",
-                "Wallet",
-                tuple({"id": key, "balance": Decimal("1.00")} for key in range(1, count + 1)),
-            ),
+            [
+                KeyedWriteInstruction("amend", "Wallet", {"id": key, "balance": Decimal("1.00")})
+                for key in range(1, count + 1)
+            ],
             WALLET,
         )[0]
         for count in (2, 3, 70_000)
@@ -755,7 +743,7 @@ def test_a_readless_predicate_replacement_lowers_its_completed_state_as_an_updat
 # it. Everything above composes the two; these pin the split itself.           #
 # --------------------------------------------------------------------------- #
 def _finalize(
-    instruction: WriteInstruction,
+    instruction: WriteInstruction | Sequence[KeyedWriteInstruction],
     model: Metamodel,
     *,
     observation: StateObservation | None = None,
@@ -841,7 +829,7 @@ def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document
 def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:
     steps = _finalize(
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
+            "insert", "Wallet", {"id": 10, "owner": "Mira", "balance": Decimal("100.00")}
         ),
         WALLET,
     )
@@ -870,7 +858,7 @@ def test_finalization_derives_the_initial_version_the_row_never_authors() -> Non
     # already carries it, so nothing downstream re-derives it from the model.
     steps = _finalize(
         KeyedWriteInstruction(
-            "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+            "insert", "Account", {"id": 9, "owner": "Noether", "balance": Decimal("5.00")}
         ),
         ACCOUNT,
     )
@@ -886,7 +874,7 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
     # exists, so an unknown one is refused where the resolution happens — never
     # silently dropped from the emitted column list.
     with pytest.raises(UsageError, match="undeclared member"):
-        _finalize(KeyedWriteInstruction("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
+        _finalize(KeyedWriteInstruction("insert", "Wallet", {"id": 10, "nickname": "M"}), WALLET)
 
 
 def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() -> None:
@@ -894,7 +882,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() 
     # declaring no as-of axis has none — refused where the target's family is
     # resolved, never rendered as an ordinary keyed write.
     with pytest.raises(UsageError, match="do not support 'terminate'"):
-        _finalize(KeyedWriteInstruction("terminate", "Account", ({"id": 1},)), ACCOUNT)
+        _finalize(KeyedWriteInstruction("terminate", "Account", {"id": 1}), ACCOUNT)
 
 
 def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() -> None:
@@ -902,7 +890,7 @@ def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() 
     # mode chose, the advance that rides the assignments, and how a shortfall
     # against its expected effect classifies.
     steps = _finalize(
-        KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
+        KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("175.00")}),
         ACCOUNT,
         observation=VersionObservation(observed_version=3),
         concurrency="optimistic",
@@ -932,7 +920,7 @@ def test_finalization_records_an_explicit_ungated_decision_under_locking() -> No
     # still advances — the advance is an assignment, never a gate member — so a
     # shortfall is the non-retriable stale outcome instead of a conflict.
     steps = _finalize(
-        KeyedWriteInstruction("delete", "Account", ({"id": 1},)),
+        KeyedWriteInstruction("delete", "Account", {"id": 1}),
         ACCOUNT,
         observation=VersionObservation(observed_version=3),
         concurrency="locking",
@@ -954,7 +942,13 @@ def test_finalization_records_an_explicit_ungated_decision_under_locking() -> No
 def test_finalization_gives_an_observation_free_keyed_write_a_missing_target_shortfall() -> None:
     # An unversioned keyed write observed nothing, so a shortfall says only that
     # the addressed rows are not there. The policy is carried, not yet enforced.
-    steps = _finalize(KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2})), WALLET)
+    steps = _finalize(
+        [
+            KeyedWriteInstruction("delete", "Wallet", {"id": 1}),
+            KeyedWriteInstruction("delete", "Wallet", {"id": 2}),
+        ],
+        WALLET,
+    )
     assert steps is not None
     (step,) = steps
     assert isinstance(step, PlannedDelete)

@@ -104,8 +104,8 @@ def _locking_policy(
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWriteInstruction("amend", "Account", ({"id": 2, "balance": Decimal("250.00")},)),
-        KeyedWriteInstruction("delete", "Account", ({"id": 2},)),
+        KeyedWriteInstruction("amend", "Account", {"id": 2, "balance": Decimal("250.00")}),
+        KeyedWriteInstruction("delete", "Account", {"id": 2}),
     ],
     ids=["amend", "delete"],
 )
@@ -123,8 +123,8 @@ def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_wr
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("250.00")},)),
-        KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 2, "balance": Decimal("250.00")}),
+        KeyedWriteInstruction("delete", "Wallet", {"id": 2}),
     ],
     ids=["amend", "delete"],
 )

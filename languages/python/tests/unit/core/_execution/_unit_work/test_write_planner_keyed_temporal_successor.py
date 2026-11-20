@@ -13,7 +13,6 @@ import pytest
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan
 from parallax.core._execution._write_lowering import lowered
@@ -51,7 +50,7 @@ from tests._support.planner_probes import (
     plan_steps,
     retained_observation,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._positional_row_support import positional_row
 
@@ -85,7 +84,7 @@ def _plan(
 
 
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(write, write_preparation_of(model))
+    prepared = prepare_instruction(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -129,13 +128,11 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         KeyedWriteInstruction(
             "amendUntil",
             target.identity.canonical,
-            (
-                {
-                    "id": 1,
-                    "title": _ASSIGNED_TITLE,
-                    "address": {"city": "Oslo", "geo": {"country": "NO"}},
-                },
-            ),
+            {
+                "id": 1,
+                "title": _ASSIGNED_TITLE,
+                "address": {"city": "Oslo", "geo": {"country": "NO"}},
+            },
             _INTERIOR_FROM,
             _INTERIOR_UNTIL,
         ),

@@ -21,9 +21,9 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
-    prepare_typed_write,
-    prepare_wire_write,
+    derive_keyed_instruction,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -77,7 +77,7 @@ from tests._support.planner_probes import (
     source_registry,
     write_admission,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     JAN,
@@ -100,11 +100,19 @@ _PERSON = model_of(CLASS_MODELS["person"])
 
 
 def _prepared(mutation: KeyedMutation, *rows: Mapping[str, object]) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction(mutation, "Account", rows), write_preparation_of(_ACCOUNT)
+    """``rows`` written by ``mutation`` as one prepared write: several rows are
+    the derived plural a collapse produces."""
+    first, *others = (
+        prepare_instruction(
+            KeyedWriteInstruction(mutation, "Account", row), write_preparation_of(_ACCOUNT)
+        )
+        for row in rows
     )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    if not others:
+        return first
+    return derive_keyed_instruction(
+        first, (*first.rows, *(row for other in others for row in other.rows))
+    )
 
 
 def _account(account_id: int) -> dict[str, object]:
@@ -183,15 +191,17 @@ def test_a_post_removal_insert_answers_its_inserts_phase_and_target() -> None:
 
 
 def _position_opening() -> ComposedBitemporalOpening:
-    insertion = prepare_wire_write(
+    insertion = prepare_instruction(
         KeyedWriteInstruction(
-            "insertUntil", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), JAN, SEP
+            "insertUntil", "Position", {"id": 1, "acctNum": "A", "value": "1.00"}, JAN, SEP
         ),
         write_preparation_of(POSITION),
+        WIRE,
     )
-    amendment = prepare_wire_write(
-        KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), JAN, MAR),
+    amendment = prepare_instruction(
+        KeyedWriteInstruction("amendUntil", "Position", {"id": 1, "value": "2.00"}, JAN, MAR),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
@@ -264,8 +274,8 @@ def _advanced_account() -> tuple[AdmittedWrite, ClaimScope | None, tuple[ReadEvi
 
 
 def _locked_person() -> tuple[AdmittedWrite, ClaimScope | None, tuple[ReadEvidence, ...]]:
-    prepared = prepare_typed_write(
-        KeyedWriteInstruction("delete", "Person", ({"id": 1},)), write_preparation_of(_PERSON)
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("delete", "Person", {"id": 1}), write_preparation_of(_PERSON)
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     key = object_key(prepared, _PERSON)
@@ -298,9 +308,10 @@ def _resolved_insertion() -> tuple[AdmittedWrite, ClaimScope | None, tuple[ReadE
 
 
 def _version_target() -> tuple[AdmittedWrite, ClaimScope | None, tuple[ReadEvidence, ...]]:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction("amend", "Account", {"id": 1, "balance": "2.00"}, if_version=3),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     write = target_write(prepared, inheritance.inheritance_facet_of(_ACCOUNT))
@@ -365,9 +376,10 @@ def test_only_a_licensed_write_is_licensed_by_an_authority() -> None:
 
 
 def _insertion_position() -> LicensedWrite[InsertionAuthorized]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "150.00"},), MAR, SEP),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amendUntil", "Position", {"id": 1, "value": "150.00"}, MAR, SEP),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, OBJECT, insertion=InsertionIdentity(OBJECT))

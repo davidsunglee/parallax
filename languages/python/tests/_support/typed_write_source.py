@@ -25,7 +25,7 @@ class TypedWriteSource:
 
     def _against(self, value: Entity) -> tuple[Any, Any, int]:
         entry = self._preparation.entity(type(value).identity)
-        return entry.selection.members.shape, type(value).identity, entry.key
+        return entry.selection.members.shape, type(value).identity, entry.key_position
 
     def row(self, value: Entity) -> dict[str, object]:
         """What a write reads as stated: every member the value holds but the

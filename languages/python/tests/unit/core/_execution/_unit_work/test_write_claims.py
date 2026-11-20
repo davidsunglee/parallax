@@ -28,7 +28,9 @@ from parallax.core._execution._unit_work.claims import (
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
+    derive_keyed_instruction,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorized,
     LicensedWrite,
@@ -57,7 +59,7 @@ from parallax.core.internal.unit_work import (
     keyed_intent,
 )
 from tests._support.planner_probes import object_source
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
 )
@@ -80,18 +82,22 @@ _PERSON_META = model_of(PERSON)
 _WHERE_POSITION_META = model_of(WHERE_POSITION_META)
 
 
-def _person_delete(*ids: int) -> KeyedWriteInstruction:
-    return KeyedWriteInstruction(
-        "delete", "parallax.compatibility.Person", tuple({"id": value} for value in ids)
-    )
-
-
 def _prepared_person_delete(*ids: int) -> PreparedKeyedInstruction:
-    prepared = instructions.prepare_wire_write(
-        _person_delete(*ids), write_preparation_of(_PERSON_META)
+    """The deletion of each Person ``ids`` names, as one prepared write: several
+    ids are the derived plural a collapse produces."""
+    first, *others = (
+        prepare_instruction(
+            KeyedWriteInstruction("delete", "parallax.compatibility.Person", {"id": value}),
+            write_preparation_of(_PERSON_META),
+            WIRE,
+        )
+        for value in ids
     )
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    if not others:
+        return first
+    return derive_keyed_instruction(
+        first, (*first.rows, *(row for other in others for row in other.rows))
+    )
 
 
 def _prepared_intent(mutation: str) -> PreparedKeyedInstruction:
@@ -102,15 +108,15 @@ def _prepared_intent(mutation: str) -> PreparedKeyedInstruction:
     document: dict[str, object] = {
         "mutation": mutation,
         "entity": "WherePosition",
-        "row": {"id": 1, "acctNum": "A", "value": "100.00"},
+        "row": {"id": 1}
+        if mutation.startswith("terminate")
+        else {"id": 1, "acctNum": "A", "value": "100.00"},
         "validFrom": "2024-01-01T00:00:00.000000Z",
     }
     if mutation.endswith("Until"):
         document["until"] = "2024-06-01T00:00:00.000000Z"
     instruction = instructions.deserialize(document)
-    prepared = instructions.prepare_wire_write(
-        instruction, write_preparation_of(_WHERE_POSITION_META)
-    )
+    prepared = prepare_instruction(instruction, write_preparation_of(_WHERE_POSITION_META), WIRE)
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -352,9 +358,10 @@ def test_a_licensed_write_refuses_an_insert_and_a_write_of_several_objects(
 ) -> None:
     # The record's own structural half, which needs no model: an opening row
     # needs no licence, and a licence is about the one object a write addresses.
-    insert = instructions.prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
+    insert = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 1, "name": "Ada"}),
         write_preparation_of(_PERSON_META),
+        WIRE,
     )
     assert isinstance(insert, PreparedKeyedInstruction)
     with pytest.raises(ValueError, match="an insert is admitted by its own verb"):
@@ -364,9 +371,10 @@ def test_a_licensed_write_refuses_an_insert_and_a_write_of_several_objects(
 
 
 def test_the_factory_refuses_a_licensed_insert_and_a_licensed_write_of_several_objects() -> None:
-    insert = instructions.prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
+    insert = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 1, "name": "Ada"}),
         write_preparation_of(_PERSON_META),
+        WIRE,
     )
     assert isinstance(insert, PreparedKeyedInstruction)
     source = object_source(_PERSON_ONE)

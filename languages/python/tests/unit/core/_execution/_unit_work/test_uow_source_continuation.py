@@ -36,9 +36,8 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     WriteAssignment,
-    prepare_typed_write,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import StateObserved, is_licensed_by
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY
@@ -69,7 +68,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._gc_reachability import reachable_objects
@@ -143,10 +142,8 @@ def _write(
 ) -> AdmittedWrite:
     entity = _entity(meta, source.entity.name)
     key = source.object_key
-    instruction = prepare_typed_write(
-        KeyedWriteInstruction(
-            mutation, entity.identity.name, ({**dict(key.primary_key), **members},)
-        ),
+    instruction = prepare_instruction(
+        KeyedWriteInstruction(mutation, entity.identity.name, {**dict(key.primary_key), **members}),
         write_preparation_of(meta),
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
@@ -235,8 +232,8 @@ def test_a_locking_versioned_source_carrying_no_observation_settles_against_noth
 
 def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
     uow, simulated = _uow(_PERSON)
-    insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)),
+    insertion = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 5, "name": "New"}),
         write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
@@ -244,8 +241,8 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
     _flush(uow)
     assert identity is not None
     for name in ("First", "Second"):
-        amendment = prepare_typed_write(
-            KeyedWriteInstruction("amend", "Person", ({"id": 5, "name": name},)),
+        amendment = prepare_instruction(
+            KeyedWriteInstruction("amend", "Person", {"id": 5, "name": name}),
             write_preparation_of(_PERSON),
         )
         assert isinstance(amendment, PreparedKeyedInstruction)
@@ -284,8 +281,8 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
     del deleted
     gc.collect()
     assert held() is None
-    insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)),
+    insertion = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": 1, "name": "New"}),
         write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
@@ -334,7 +331,7 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
     uow, _simulated = _uow(_PERSON)
     read_at = uow.source_registry.freshness
     source = _published(uow, _person(1))
-    predicate = prepare_typed_write(
+    predicate = prepare_instruction(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -361,8 +358,8 @@ def _reinserted(uow: UnitOfWork, key: int) -> int:
     before = uow.source_registry.freshness
     _write(uow, _PERSON, _published(uow, _person(key)), "delete")
     _flush(uow)
-    insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)),
+    insertion = prepare_instruction(
+        KeyedWriteInstruction("insert", "Person", {"id": key, "name": "Again"}),
         write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
@@ -529,11 +526,10 @@ def _deferred_write(
         planner=build_write_planner(bound_model(_POSITION)),
         actor_identity=TEST_ACTOR_IDENTITY,
     )
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(
-            "amend", "WherePosition", ({"id": 1, "acctNum": "O"},), valid_from=_FEB
-        ),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amend", "WherePosition", {"id": 1, "acctNum": "O"}, valid_from=_FEB),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     observation = uow.source_registry.retain(

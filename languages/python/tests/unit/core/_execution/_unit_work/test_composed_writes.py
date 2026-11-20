@@ -15,8 +15,8 @@ from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
@@ -73,7 +73,7 @@ from tests._support.planner_probes import (
     settled_writes,
     source_registry,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     AUG,
@@ -134,9 +134,10 @@ def _write(
     source: ReadEvidence | None = None,
     **members: object,
 ) -> LicensedWrite[StateObserved]:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Balance", {"id": 1, **members}),
         write_preparation_of(_BALANCE),
+        WIRE,
     )
     item = admitted_write(prepared, evidence, evidence.key.object, source=source)
     assert is_licensed_by(item, StateObserved)
@@ -256,14 +257,15 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     # from, so any other evidence reaches the ordinary required-observation
     # refusal rather than a range.
     model = formed(corpus_records()["position"])
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
             "amend",
             "Position",
-            ({"id": 1, "value": "1.00"},),
+            {"id": 1, "value": "1.00"},
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         ),
         write_preparation_of(model),
+        WIRE,
     )
     position = ObjectKey(prepared.target.identity, (("id", 1),))
     unobserved = RetainedObservation(
@@ -312,9 +314,10 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
     assert shape is not None
 
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> AdmittedWrite:
-        prepared = prepare_wire_write(
-            KeyedWriteInstruction("amend", "Position", ({"id": 1, "value": value},), valid_from),
+        prepared = prepare_instruction(
+            KeyedWriteInstruction("amend", "Position", {"id": 1, "value": value}, valid_from),
             write_preparation_of(model),
+            WIRE,
         )
         state = object_state_key_from_observation(
             ObjectKey(position, (("id", 1),)), observed, shape
@@ -347,9 +350,10 @@ def _position_write(
     until: dt.datetime | None,
     **members: object,
 ) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Position", {"id": 1, **members}, valid_from, until),
         write_preparation_of(POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -454,9 +458,10 @@ def _balance_observation(balance_id: int) -> RetainedObservation:
 def _balance(
     mutation: KeyedMutation, balance_id: int, **members: object
 ) -> PreparedKeyedInstruction:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": balance_id, **members},)),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction(mutation, "Balance", {"id": balance_id, **members}),
         write_preparation_of(_BALANCE),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
