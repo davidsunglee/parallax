@@ -36,10 +36,13 @@ type CheckoutReason = Literal["timeout", "queue_rejected", "closed"] | DialReaso
 class DialRecord(Protocol):
     """Where a pool reports what each physical connection attempt met.
 
-    Every attempt reports exactly one outcome, from the thread that made it,
-    before a checkout can hand over or refuse because of it: a classified
-    failure, or usable once the connection has been initialized. Reporting does
-    no I/O, calls nothing on the pool, and waits for nothing the pool holds.
+    Every attempt that reaches an outcome reports exactly that one, from the
+    thread that made it, before a checkout can hand over or refuse because of
+    it: a classified failure, or usable once the connection has been
+    initialized. An attempt an interrupt ends has no outcome and reports
+    nothing, so the record keeps the latest outcome an attempt did reach.
+    Reporting does no I/O, calls nothing on the pool, and waits for nothing the
+    pool holds.
     """
 
     def report_failure(self, reason: DialReason, cause: BaseException, /) -> None: ...
@@ -69,9 +72,11 @@ class ConnectionPool[C](Protocol):
     timeout granularity; the runtime refuses such a late handover rather than
     running work on it.
 
-    Every connection handed over comes back exactly once: through
+    A connection handed over comes back at most once: through
     :meth:`check_in` while it remains reusable, or through :meth:`discard`
-    once it has already been closed.
+    once it has already been closed. One whose required close failed never
+    comes back, so its capacity is not recovered, and a hand-back that raised
+    is not repeated.
 
     :meth:`metrics` reads the pool's own bookkeeping without I/O and without
     taking a connection, and raises when no reading can be taken.
@@ -167,7 +172,8 @@ class NativeDriver[C, A](Protocol):
     raises the adapter's ``UsageError`` with code ``AUTHORIZATION_INVALID``.
 
     :meth:`open_pool` returns an open pool reporting its dials to
-    ``dial_record``, or raises the raw failure having released what it built.
+    ``dial_record``, or raises the raw failure having attempted to release
+    what it built.
     :meth:`open_execution` does no I/O and returns fresh execution access
     whose every statement runs through the lease.
 

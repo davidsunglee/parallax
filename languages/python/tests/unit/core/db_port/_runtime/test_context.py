@@ -24,6 +24,7 @@ import pytest
 from parallax.core.internal.db_port import (
     ConnectionAcquisitionError,
     CredentialResolutionError,
+    IdleReading,
     Invalidated,
     NotIdle,
     ProbeMismatch,
@@ -116,6 +117,18 @@ def _set_up_on(setup: str, pool: Pool) -> Any:
     else:
         with _context(pool) as scoped:
             scoped.submit("BEGIN", replay_safe=True, setup=True)
+
+
+def _readings(monkeypatch: pytest.MonkeyPatch, *readings: IdleReading) -> list[IdleReading]:
+    """Have every scripted connection read as ``readings`` in turn, answering
+    the list of those not yet read."""
+    remaining = list(readings)
+
+    def read_idle(_driver: object, _connection: object) -> IdleReading:
+        return remaining.pop(0)
+
+    monkeypatch.setattr(ScriptedDriver, "read_idle", read_idle)
+    return remaining
 
 
 def _release(connection: ScriptedConnection, pool: Pool | None = None, **kwargs: Any) -> Any:
@@ -232,11 +245,14 @@ def test_the_remaining_budget_is_what_the_pool_s_one_wait_is_given() -> None:
     ("reading", "state"), [(NotIdle("INTRANS"), "INTRANS"), ("unreadable", "unreadable")]
 )
 def test_a_checkout_that_hands_over_a_connection_that_is_not_idle_is_refused(
-    reading: Any, state: str
+    monkeypatch: pytest.MonkeyPatch, reading: Any, state: str
 ) -> None:
     # No modeled SQL runs on it and no unknown transaction is rolled back to
-    # make it usable: an adapter invariant this broken is reported.
-    connection = ScriptedConnection(idle=reading)
+    # make it usable: an adapter invariant this broken is reported. The reading
+    # that refused it is the one its cleanup decides on, so a state that reads
+    # differently afterwards cannot turn the disposal into a return.
+    connection = ScriptedConnection()
+    readings = _readings(monkeypatch, reading, "idle")
     pool = pool_of(connection)
     resource = _context(pool)
 
@@ -249,7 +265,11 @@ def test_a_checkout_that_hands_over_a_connection_that_is_not_idle_is_refused(
     # The partial ownership is cleaned up, and a connection in this state is
     # disposed of rather than offered to the next caller.
     assert isinstance(resource.cleanup_result, Invalidated)
+    assert issues_of(resource.cleanup_result) == [
+        ("inspect", "state-unreadable" if reading == "unreadable" else "not-idle")
+    ]
     assert connection.closes == 1
+    assert readings == ["idle"]
 
 
 def test_a_late_native_success_is_released_rather_than_admitted(
@@ -277,6 +297,33 @@ def test_a_late_native_success_is_released_rather_than_admitted(
     assert pool.check_ins == [connection]
     # The handover still cleared the record: the route did hand over a connection.
     assert ledger.latest_failure is None
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("the execution could not be built"), KeyboardInterrupt()]
+)
+def test_execution_access_that_cannot_be_opened_is_a_failed_entry_that_gave_back_its_connection(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    # The caller never holds execution access, so it has nothing to leave:
+    # entry's own cleanup is the only path back to the pool.
+    def refuse(_driver: object, _lease: object) -> object:
+        raise failure
+
+    monkeypatch.setattr(ScriptedDriver, "open_execution", refuse)
+    connection = ScriptedConnection()
+    pool = pool_of(connection)
+    resource = _context(pool, authorization="tenant_reader")
+
+    with pytest.raises(type(failure)) as raised:
+        resource.__enter__()
+
+    assert raised.value is failure
+    assert connection.submitted == ["authorize tenant_reader", RESTORE]
+    assert resource.cleanup_result == Returned()
+    assert pool.check_ins == [connection]
+    with pytest.raises(RuntimeError, match="already been used"):
+        resource.__enter__()
 
 
 def test_a_context_is_entered_exactly_once_and_a_failed_entry_spends_it() -> None:
@@ -656,10 +703,15 @@ def test_an_unavailable_replacement_preserves_the_original_failure_and_its_clean
     assert issues_of(resource.cleanup_result) == [("inspect", "suspect")]
 
 
-def test_a_replacement_that_is_not_idle_is_given_back_and_its_cleanup_is_what_is_reported() -> None:
+def test_a_replacement_that_is_not_idle_is_given_back_and_its_cleanup_is_what_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original = lost_session()
     broken = ScriptedConnection(lost=original)
-    busy = ScriptedConnection(idle=NotIdle("INTRANS"))
+    busy = ScriptedConnection()
+    # The original's checkout reads it idle; the replacement's one reading
+    # refuses it and decides its disposal, however it would read afterwards.
+    readings = _readings(monkeypatch, "idle", NotIdle("INTRANS"), "idle")
     pool = pool_of(broken, busy)
     resource = _context(pool)
 
@@ -671,6 +723,7 @@ def test_a_replacement_that_is_not_idle_is_given_back_and_its_cleanup_is_what_is
     assert pool.returned == [broken, busy]
     assert issues_of(resource.cleanup_result) == [("inspect", "not-idle")]
     assert busy.closes == 1
+    assert readings == ["idle"]
 
 
 def test_a_disposal_that_failed_ends_replacement_and_is_reported_without_repeating_it() -> None:

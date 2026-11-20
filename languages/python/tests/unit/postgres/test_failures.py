@@ -14,7 +14,6 @@ import psycopg
 import pytest
 
 from parallax.core.internal.db_port import CredentialResolutionError
-from parallax.core.internal.db_port._runtime._route_plan import RoutePlan
 from parallax.postgres._connection import IncompatibleSessionError
 from parallax.postgres._failures import dial_reason, is_session_broken, is_session_lost
 
@@ -139,7 +138,6 @@ def test_only_the_exact_missing_database_message_relabels_a_password_refusal(
     refused = _ConnectFailed(_Attempt(used_password=True, error_message=_REFUSED_AT + server_said))
 
     assert dial_reason(refused) == reason
-    assert RoutePlan.falls_back_on(dial_reason(refused)) is None
 
 
 @pytest.mark.parametrize(

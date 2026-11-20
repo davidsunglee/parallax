@@ -19,6 +19,7 @@ from parallax.core.internal.db_port import (
     DialReason,
     ExecutionAccess,
     FallbackReason,
+    IdleReading,
     Invalidated,
     NativeDriver,
     NativeOperation,
@@ -88,7 +89,9 @@ def check_out_within[C](route: PooledRoute[C], deadline: float) -> C:
 
     When the budget expires, report the latest dial failure still on record
     or ``timeout`` if the record is empty. A pool that dials on this thread
-    reports its dial failure directly. A successful checkout clears the record.
+    reports its dial failure directly, except where it reports a dial that
+    timed out as a checkout timeout: the record, which that dial reported to,
+    then supplies its classification. A successful checkout clears the record.
     """
     dial_ledger = route.dial_ledger
     remaining = deadline - monotonic()
@@ -182,6 +185,7 @@ def release[C, A](
     *,
     suspect: bool,
     restore_authorization: bool = False,
+    reading: IdleReading | None = None,
 ) -> CleanupResult:
     """End this connection's exclusive use, and report what that established.
 
@@ -189,7 +193,9 @@ def release[C, A](
     remains possible, dispose where either step or the execution says reuse
     cannot be established, then hand back exactly once — checked in where it is
     reusable, discarded where it was disposed of — so the issues it can report
-    are bounded by the steps rather than accumulated as history.
+    are bounded by the steps rather than accumulated as history. A ``reading``
+    the caller already took is the inspection, so the decision it led to is
+    not made again on another.
 
     Three refusals are deliberate. A failed physical close does NOT fall back to
     returning a connection that is still suspect, because balancing the
@@ -199,22 +205,13 @@ def release[C, A](
     another caller. And a completed handoff is never inspected afterwards, for
     the same reason.
     """
-    issues: list[CleanupIssue] = []
-    dispose = suspect
-    if suspect:
-        issues.append(_issue("inspect", "suspect", _Condition("the execution marked it suspect")))
-    else:
-        reading = driver.read_idle(connection)
-        if reading == "unreadable":
-            dispose = True
-            issues.append(
-                _issue("inspect", "state-unreadable", _Condition("its state could not be read"))
-            )
-        elif isinstance(reading, NotIdle):
-            dispose = True
-            issues.append(
-                _issue("inspect", "not-idle", _Condition(f"its state was {reading.state}"))
-            )
+    inspected = (
+        _issue("inspect", "suspect", _Condition("the execution marked it suspect"))
+        if suspect
+        else _inspection(driver, connection, reading)
+    )
+    issues: list[CleanupIssue] = [] if inspected is None else [inspected]
+    dispose = inspected is not None
 
     if not dispose and restore_authorization:
         try:
@@ -238,6 +235,20 @@ def release[C, A](
         issues.append(_issue("return", "handoff-failed", exc))
         return ReleaseUnconfirmed(tuple(issues))
     return Invalidated(tuple(issues)) if dispose else Returned(tuple(issues))
+
+
+def _inspection[C, A](
+    driver: NativeDriver[C, A], connection: C, reading: IdleReading | None
+) -> CleanupIssue | None:
+    """What rules out reusing ``connection`` on ``reading``, read now where none
+    was given, or nothing where it reads idle."""
+    if reading is None:
+        reading = driver.read_idle(connection)
+    if reading == "unreadable":
+        return _issue("inspect", "state-unreadable", _Condition("its state could not be read"))
+    if isinstance(reading, NotIdle):
+        return _issue("inspect", "not-idle", _Condition(f"its state was {reading.state}"))
+    return None
 
 
 type Step[C] = tuple["PooledRoute[C]", float]
@@ -381,8 +392,15 @@ class PooledConnectionContext[C, A]:
                 break
         finally:
             self._entering = False
+        try:
+            execution = self._driver.open_execution(self)
+        except BaseException:
+            self._cleanup_result = self._settled(
+                suspect=False, restore_authorization=self._authorized
+            )
+            self._authorized = False
+            raise
         self._opening = True
-        execution = self._driver.open_execution(self)
         self._execution = execution
         return execution
 
@@ -446,15 +464,17 @@ class PooledConnectionContext[C, A]:
             # held; that disposal is what this acquisition's cleanup established.
             self._cleanup_result = self._settled(suspect=False)
             raise
+        reading: IdleReading | None = None
         try:
-            self._require_idle(self.current_connection())
+            reading = self._driver.read_idle(self.current_connection())
+            _require_idle(reading)
             self._admit(self._step_deadline)
         except BaseException:
             # Nothing modeled has run, so what was taken is given back through
-            # the same path a completed scope uses: an idle connection returns
-            # and a non-idle one is disposed of, without either decision being
-            # made twice.
-            self._cleanup_result = self._settled(suspect=False)
+            # the same path a completed scope uses, judged on the reading
+            # already taken: an idle connection returns and a non-idle one is
+            # disposed of.
+            self._cleanup_result = self._settled(suspect=False, reading=reading)
             raise
 
     def _authorize(self) -> None:
@@ -607,7 +627,11 @@ class PooledConnectionContext[C, A]:
             self._authorized = False
 
     def _settled(
-        self, *, suspect: bool, restore_authorization: bool = False
+        self,
+        *,
+        suspect: bool,
+        restore_authorization: bool = False,
+        reading: IdleReading | None = None,
     ) -> CleanupResult | None:
         """End ownership of whatever the slot holds and answer what that established.
 
@@ -627,6 +651,7 @@ class PooledConnectionContext[C, A]:
             resource,
             suspect=suspect,
             restore_authorization=restore_authorization,
+            reading=reading,
         )
 
     def current_connection(self) -> C:
@@ -763,13 +788,14 @@ class PooledConnectionContext[C, A]:
             self._resource = check_out_within(self._route, self._step_deadline)
         except ConnectionAcquisitionError as refused:
             return self._refused_replacement(refused, setup=setup)
+        reading = self._driver.read_idle(self.current_connection())
         try:
-            self._require_idle(self.current_connection())
+            _require_idle(reading)
         except ConnectionAcquisitionError as refused:
-            self._resource = self._settled(suspect=False)
+            self._resource = self._settled(suspect=False, reading=reading)
             return self._refused_replacement(refused, setup=setup)
         if monotonic() >= self._step_deadline:
-            self._resource = self._settled(suspect=False)
+            self._resource = self._settled(suspect=False, reading=reading)
             late = ConnectionAcquisitionError(_LATE_REPLACEMENT, reason="timeout")
             late.selection = self._selection
             raise late
@@ -783,20 +809,20 @@ class PooledConnectionContext[C, A]:
             raise refused
         return False
 
-    def _require_idle(self, connection: C) -> None:
-        """Refuse a checkout that did not hand over an idle connection.
 
-        No modeled SQL runs on it and no unknown transaction is rolled back to
-        make it usable: an adapter invariant this broken is reported, and the
-        cleanup that follows disposes of the connection rather than silently
-        reacquiring another.
-        """
-        reading = self._driver.read_idle(connection)
-        if reading == "idle":
-            return
-        state = reading.state if isinstance(reading, NotIdle) else reading
-        raise ConnectionAcquisitionError(
-            f"the database runtime handed over a connection whose state is {state} rather "
-            f"than idle, so no statement was run on it",
-            reason="preparation_failed",
-        )
+def _require_idle(reading: IdleReading) -> None:
+    """Refuse a checkout whose connection did not read as idle.
+
+    No modeled SQL runs on it and no unknown transaction is rolled back to make
+    it usable: an adapter invariant this broken is reported, and the cleanup
+    that follows disposes of the connection on this same reading rather than
+    silently reacquiring another.
+    """
+    if reading == "idle":
+        return
+    state = reading.state if isinstance(reading, NotIdle) else reading
+    raise ConnectionAcquisitionError(
+        f"the database runtime handed over a connection whose state is {state} rather "
+        f"than idle, so no statement was run on it",
+        reason="preparation_failed",
+    )

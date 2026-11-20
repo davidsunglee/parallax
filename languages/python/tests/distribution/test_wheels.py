@@ -239,12 +239,26 @@ def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) 
     }
 
 
-def test_postgres_wheel_ships_its_adapter_only_behind_the_root(wheelhouse: Wheelhouse) -> None:
-    # The root publishes `PostgresAdapter`, so the module defining it is private;
-    # a public `adapter.py` beside it is what a stale build looks like.
-    names = _names(wheelhouse, "parallax-postgres")
-    assert "parallax/postgres/_adapter.py" in names
-    assert "parallax/postgres/adapter.py" not in names
+def test_postgres_wheel_ships_exactly_its_adapter_modules(wheelhouse: Wheelhouse) -> None:
+    # Same idiom, same reasoning as the Descriptor package check above. The root
+    # publishes `PostgresAdapter`, so a public `adapter.py` beside `_adapter.py`
+    # is what a stale build looks like, and so is any lifecycle module the shared
+    # runtime in core now owns: a copy left in the build's staging tree would
+    # ship a second, dead policy implementation.
+    assert _modules_directly_in(wheelhouse, "parallax-postgres", "parallax/postgres/") == {
+        "parallax/postgres/__init__.py",
+        "parallax/postgres/_adapter.py",
+        "parallax/postgres/_authorization.py",
+        "parallax/postgres/_binding.py",
+        "parallax/postgres/_compiled_loaders.py",
+        "parallax/postgres/_connection.py",
+        "parallax/postgres/_driver.py",
+        "parallax/postgres/_endpoint.py",
+        "parallax/postgres/_failures.py",
+        "parallax/postgres/_isolation.py",
+        "parallax/postgres/_options.py",
+        "parallax/postgres/_pool.py",
+    }
 
 
 def test_postgres_wheel_ships_compiled_loaders_for_this_interpreter(

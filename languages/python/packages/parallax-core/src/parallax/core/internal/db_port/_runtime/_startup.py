@@ -125,8 +125,8 @@ def _open_route[C, A](
 ) -> PooledRoute[C]:
     """Open ``route``'s pool for ``purpose`` through ``driver``, unproven.
 
-    The driver releases whatever it built before raising, so a pool that would
-    not open has nothing left to close.
+    The driver attempts to release whatever it built before raising, so a pool
+    that would not open leaves startup nothing to close.
     """
     dial_ledger = DialLedger()
     try:
@@ -205,7 +205,7 @@ def _prove_route[C, A](
         resource.__exit__(type(exc), exc, exc.__traceback__)
         report_resource_issues("startup", resource.cleanup_result)
         if not isinstance(exc, Exception):
-            # The connection is released either way, but a fatal or
+            # The connection's release is attempted either way, but a fatal or
             # control-flow exception keeps its own propagation: an interpreter
             # being torn down is not a runtime that failed to become ready, and
             # a caller unwinding must not have that turned into an ordinary
@@ -214,6 +214,12 @@ def _prove_route[C, A](
         if isinstance(exc, ConnectionAcquisitionError):
             # The replacement for a lost proof arrived after the budget.
             raise _unacquired(route, "probe", exc, resource.cleanup_result) from None
+        refusal = resource.replacement_refusal
+        if refusal is not None and refusal.reason not in OUTAGE_REASONS:
+            # A replacement refused as something worse than an outage is why
+            # the route is not ready; the loss that asked for it stays on that
+            # refusal's context chain.
+            raise _unacquired(route, "probe", refusal, resource.cleanup_result) from None
         error = DatabaseStartupError(
             str(exc)
             if isinstance(exc, ProbeMismatch)
@@ -223,14 +229,9 @@ def _prove_route[C, A](
             cleanup_result=resource.cleanup_result,
         )
         error.__cause__ = exc
-        # A lost session is an outage only where its replacement was not
-        # refused as anything worse; the loss that asked for it stays primary.
-        refusal = resource.replacement_refusal
         raise _ReadinessFailure(
             error,
-            outage=driver.is_session_lost(exc)
-            and (refusal is None or refusal.reason in OUTAGE_REASONS)
-            and _confirmed(resource.cleanup_result),
+            outage=driver.is_session_lost(exc) and _confirmed(resource.cleanup_result),
         ) from None
     resource.__exit__(None, None, None)
     result = resource.cleanup_result

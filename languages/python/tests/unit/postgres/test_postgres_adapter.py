@@ -73,17 +73,19 @@ from parallax.core.internal.db_port import (
     OrderedWriteResult,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
+    Password,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
+    RouteCapabilities,
     StatementFailed,
     StatementNotExecuted,
     SubmissionProgress,
     isolation_level,
 )
-from parallax.core.internal.dialect import PhysicalIndexName
+from parallax.core.internal.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.internal.wire._json import authored_token
-from parallax.postgres import PostgresAdapter, isolation_spelling
+from parallax.postgres import PostgresAdapter, PostgresEndpoint, isolation_spelling
 from parallax.postgres._connection import (
     DirectLease,
     NativeConnection,
@@ -93,6 +95,7 @@ from parallax.postgres._connection import (
     translate_driver_error,
     translating_driver_errors,
 )
+from parallax.postgres._driver import PostgresDriver
 from tests._support.errors import raises_code
 from tests.unit.postgres._native_pipeline_support import (
     Result,
@@ -122,6 +125,60 @@ def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
         "repeatable_read": "repeatable read",
         "serializable": "serializable",
     }
+
+
+def test_configuration_composes_its_runtime_from_its_driver_and_its_declared_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # What `open` delegates to, and with what, is only observable by calling it,
+    # so this is the one place the suite spells the acquisition the access guard
+    # exists to refuse — over a stub, reaching no server.
+    from parallax.postgres import _adapter as adapter_module
+
+    composed: list[tuple[object, ...]] = []
+
+    def open_runtime_stub(driver: object, /, **arguments: object) -> object:
+        composed.append((driver, arguments))
+        return "the runtime"
+
+    monkeypatch.setattr(adapter_module, "open_runtime", open_runtime_stub)
+    writer = PostgresEndpoint("host=localhost", credentials=Password("hunter2"))
+    reader = PostgresEndpoint("host=replica", credentials=Password("hunter2"))
+    single = PostgresAdapter(writer=writer, acquire_timeout=2.0, startup_timeout=4.0)
+    deferred = PostgresAdapter(writer=writer, reader=reader)
+    required = PostgresAdapter(writer=writer, reader=reader, reader_startup="required")
+
+    for configured in (single, deferred, required):
+        assert configured.open() == "the runtime"  # database-access: open_runtime is stubbed above
+
+    every = RouteCapabilities.every_level()
+    # A hot standby refuses SERIALIZABLE, so the reader never declares it.
+    standby = RouteCapabilities(frozenset({"read_committed", "repeatable_read"}))
+    assert all(isinstance(driver, PostgresDriver) for driver, _ in composed)
+    # An omitted reader_startup defers a configured reader.
+    assert [arguments for _, arguments in composed] == [
+        {
+            "dialect": POSTGRES,
+            "routes": {"writer": every},
+            "acquire_timeout": 2.0,
+            "startup_timeout": 4.0,
+            "reader_startup": "deferrable",
+        },
+        {
+            "dialect": POSTGRES,
+            "routes": {"writer": every, "reader": standby},
+            "acquire_timeout": 15.0,
+            "startup_timeout": 30.0,
+            "reader_startup": "deferrable",
+        },
+        {
+            "dialect": POSTGRES,
+            "routes": {"writer": every, "reader": standby},
+            "acquire_timeout": 15.0,
+            "startup_timeout": 30.0,
+            "reader_startup": "required",
+        },
+    ]
 
 
 def test_frozen_documents_dump_byte_equal_to_the_standard_json_settings() -> None:

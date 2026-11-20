@@ -698,27 +698,17 @@ def test_a_writer_probe_whose_replacement_arrives_past_the_budget_fails_startup_
         pytest.param("preparation_failed", "preparation_failed", id="codec"),
     ],
 )
-@pytest.mark.parametrize("cleared", [False, True], ids=["held", "cleared-before-startup-reads"])
-def test_a_reader_probe_whose_replacement_dial_was_refused_fails_even_deferrable_startup(
-    monkeypatch: pytest.MonkeyPatch, recorded: Any, checkout_reason: Any, cleared: bool
+def test_a_reader_probe_whose_replacement_dial_was_refused_fails_deferrable_startup_naming_it(
+    recorded: Any, checkout_reason: Any
 ) -> None:
-    # The lost proof stays the primary failure, but its replacement was
-    # refused, and a refusal is no outage — even once a later dial clears the
-    # record before startup decides.
+    # The refused replacement, not the loss that asked for it, is why the
+    # reader is not ready, and a refusal is no outage; the loss stays on the
+    # refusal's context chain.
     original = lost_session()
     refusal = RuntimeError("the replacement's dial was refused")
     reader_pool = pool_of(ScriptedConnection(lost=original))
     writer_pool = pool_of()
     driver = ScriptedDriver(pools={"writer": writer_pool, "reader": reader_pool})
-    if cleared:
-        judged = driver.is_session_lost
-
-        def clear_then_judge(failure: BaseException) -> bool:
-            assert reader_pool.dial_record is not None
-            reader_pool.dial_record.report_usable()
-            return judged(failure)
-
-        monkeypatch.setattr(driver, "is_session_lost", clear_then_judge)
 
     def refuse_the_replacement(_budget: float) -> None:
         if len(reader_pool.budgets) == 2:
@@ -732,7 +722,15 @@ def test_a_reader_probe_whose_replacement_dial_was_refused_fails_even_deferrable
         _open_routed(driver)
 
     assert (failed.value.route, failed.value.phase) == ("reader", "probe")
-    assert failed.value.__cause__ is original
+    cause = failed.value.__cause__
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert (cause.reason, cause.__cause__) == (recorded, refusal)
+    contexts: list[BaseException] = []
+    link = cause.__context__
+    while link is not None:
+        contexts.append(link)
+        link = link.__context__
+    assert original in contexts
     assert (writer_pool.closes, reader_pool.closes) == (1, 1)
 
 

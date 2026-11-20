@@ -148,7 +148,8 @@ class PooledRoute[C]:
         report_route_readiness(self.route, "refused")
 
     def abandon(self) -> None:
-        """Close the pool of a runtime that is never published, reporting nothing."""
+        """Attempt to close the pool of a runtime that is never published; an
+        ordinary close failure is suppressed, and nothing is reported."""
         self.metrics.detach()
         with contextlib.suppress(Exception):
             self.pool.close()
