@@ -46,6 +46,7 @@ from tests.unit.core.db_port._runtime._scripted_native import (
     Clock,
     ScriptedConnection,
     ScriptedDriver,
+    ScriptedExecution,
     SessionLost,
     checkout_failed,
 )
@@ -698,11 +699,13 @@ def test_a_writer_probe_whose_replacement_arrives_past_the_budget_fails_startup_
         pytest.param("preparation_failed", "preparation_failed", id="codec"),
     ],
 )
+@pytest.mark.parametrize("cleared", [False, True], ids=["held", "cleared-before-startup-decides"])
 def test_a_reader_probe_whose_replacement_dial_was_refused_fails_deferrable_startup_naming_it(
-    recorded: Any, checkout_reason: Any
+    monkeypatch: pytest.MonkeyPatch, recorded: Any, checkout_reason: Any, cleared: bool
 ) -> None:
     # The refused replacement, not the loss that asked for it, is why the
-    # reader is not ready, and a refusal is no outage; the loss stays on the
+    # reader is not ready, and a refusal is no outage — even once a later dial
+    # clears the record before startup decides. The loss stays on the
     # refusal's context chain.
     original = lost_session()
     refusal = RuntimeError("the replacement's dial was refused")
@@ -717,6 +720,16 @@ def test_a_reader_probe_whose_replacement_dial_was_refused_fails_deferrable_star
             reader_pool.checkout_failure = checkout_failed(checkout_reason, refusal)
 
     reader_pool.on_check_out = refuse_the_replacement
+    if cleared:
+        revoke = ScriptedExecution.revoke
+
+        def clear_then_revoke(execution: ScriptedExecution) -> bool:
+            if len(reader_pool.budgets) == 2:
+                assert reader_pool.dial_record is not None
+                reader_pool.dial_record.report_usable()
+            return revoke(execution)
+
+        monkeypatch.setattr(ScriptedExecution, "revoke", clear_then_revoke)
 
     with pytest.raises(DatabaseStartupError) as failed:
         _open_routed(driver)

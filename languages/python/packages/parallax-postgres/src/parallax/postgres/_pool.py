@@ -52,15 +52,13 @@ class PostgresPool:
     raises as its own checkout timeout, so its classification reaches the
     runtime through the dial record. Every other dial runs on the pool's own
     workers — all of a retaining pool's, and an on-demand pool's replacement
-    for a connection handed back broken or expired while a caller waits — and
-    its failure reaches the runtime only through the pool's dial record.
+    for a connection handed back broken or expired — and its failure reaches
+    the runtime only through the pool's dial record.
 
-    Both accounting methods are the native return. The native pool already
-    tells the two apart by the connection's state: a closed connection is
-    counted as a bad return, and :meth:`discard` is only ever handed one that
-    is already closed. A retaining pool then dials a replacement; an on-demand
-    pool dials one only for a caller already waiting, and otherwise just frees
-    the capacity for the next checkout to dial.
+    Both accounting methods are the native return: the native pool tells the
+    two apart by the connection's state, and :meth:`discard` is only ever
+    handed one that is already closed. How that return is counted, and whether
+    it is replaced, is the native pool's own policy.
     """
 
     __slots__ = ("_native",)
