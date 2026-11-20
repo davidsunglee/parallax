@@ -51,6 +51,7 @@ import datetime as dt
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Final, NamedTuple
 
 import sqlglot
@@ -111,6 +112,7 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
+from .paths import schemas_dir
 from .pk_gen import (
     KEY_SEQUENCE,
     SEQUENCE_EXHAUSTION,
@@ -125,6 +127,7 @@ from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
 from .relationship import validate_relationship_declarations, validate_relationship_types
+from .schemas import load_json
 from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
 from .sql_tables import physical_table_of
@@ -751,10 +754,10 @@ def _assert_rejected(case: Case) -> None:
     otherwise a singular ``row`` stating a revision (``ifVersion`` or
     ``ifTxStart``) is a whole TARGET instruction judged by
     ``target_write_violation``, and one stating none a whole KEYED instruction
-    judged by ``validate_keyed_write`` against the entity IT names; and anything
-    else is the bare neutral write row, run through ``validate_write`` and
-    Inheritance's ``validate_subtype_write`` against the model's default write
-    root. Both discriminators are RESERVED from a bare row at this position
+    judged by :func:`_validate_rejected_keyed_write` against the entity IT
+    names; and anything else is the bare neutral write row, run through
+    ``validate_write`` and Inheritance's ``validate_subtype_write`` against the
+    model's default write root. Both discriminators are RESERVED from a bare row at this position
     (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
     can never be mistaken for one and this dispatch cannot re-read a row as an
     instruction. Membership can decide the form only for an OBJECT carrying only
@@ -995,14 +998,22 @@ def _rejected_write_input(case: Case) -> dict[str, Any]:
     return write
 
 
-# The members each write-instruction document form may carry
-# (`write-instruction.schema.json`); a target instruction is the keyed members
-# plus its revision.
-_REVISION_MEMBERS: Final = frozenset({"ifVersion", "ifTxStart"})
-_PREDICATE_MEMBERS: Final = frozenset({"mutation", "target", "assignments", "row"})
-_KEYED_OR_TARGET_MEMBERS: Final = (
-    frozenset({"mutation", "entity", "row", "validFrom", "until"}) | _REVISION_MEMBERS
-)
+# The members each write-instruction document form may carry, read from the
+# closed definitions of `write-instruction.schema.json`.
+_WRITE_INSTRUCTION_DEFS: Final = load_json(
+    schemas_dir(Path(__file__)) / "write-instruction.schema.json"
+)["$defs"]
+
+
+def _instruction_members(definition: str) -> frozenset[str]:
+    return frozenset(_WRITE_INSTRUCTION_DEFS[definition]["properties"])
+
+
+_KEYED_MEMBERS: Final = _instruction_members("keyedWriteInstruction")
+_TARGET_MEMBERS: Final = _instruction_members("targetWriteInstruction")
+_PREDICATE_MEMBERS: Final = _instruction_members("predicateWriteInstruction")
+_KEYED_OR_TARGET_MEMBERS: Final = _KEYED_MEMBERS | _TARGET_MEMBERS
+_REVISION_MEMBERS: Final = _TARGET_MEMBERS - _KEYED_MEMBERS
 
 
 def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
@@ -1355,7 +1366,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         ]
         # A writeSequence step carries keyed instructions' own members
         # (`mutation` / `entity` / `rows`), so it is judged through the SAME
-        # validator the rejected lane and the buffered scenario write reach.
+        # validator the buffered scenario write reaches.
         try:
             instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
             validate_keyed_write(entity, instruction)

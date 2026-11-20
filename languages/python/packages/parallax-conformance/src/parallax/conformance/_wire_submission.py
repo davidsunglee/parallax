@@ -124,6 +124,12 @@ def _entry_instructions(
     ``document`` alone."""
     if "rows" not in entry:
         return ((document, None),)
+    rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
+    if "row" in entry or not rows:
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            "a keyed write entry states a non-empty `rows` list and no `row`",
+        )
     entity, mutation = cast("str", entry["entity"]), cast("str", entry["mutation"])
     return tuple(
         (
@@ -132,7 +138,7 @@ def _entry_instructions(
             if row.get("observedVersion") is not None
             else None,
         )
-        for row in cast("Sequence[Mapping[str, object]]", entry["rows"])
+        for row in rows
     )
 
 

@@ -881,14 +881,21 @@
               {
                 "description": "A keyed step: each of its `rows` is the neutral write input (①) of one keyed instruction, whose evidence the case authors on the row (`observedVersion`).",
                 "required": ["rows"],
-                "not": { "anyOf": [{ "required": ["ifVersion"] }, { "required": ["ifTxStart"] }] },
+                "not": {
+                  "anyOf": [
+                    { "required": ["row"] },
+                    { "required": ["ifVersion"] },
+                    { "required": ["ifTxStart"] }
+                  ]
+                },
                 "properties": {
                   "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
                 }
               },
               {
-                "description": "A target step: its `row` names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states — the key alone for a deletion or termination — and its condition is exactly one caller's revision member, `ifVersion` or `ifTxStart`, as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
+                "description": "A target step: its `row`, carried rather than `rows`, names one existing object by primary key beside the members a patch assigns or the complete writable state a replacement states — the key alone for a deletion or termination — and its condition is exactly one caller's revision member, `ifVersion` or `ifTxStart`, as `write-instruction.schema.json`'s `targetWriteInstruction` carries it.",
                 "required": ["row"],
+                "not": { "required": ["rows"] },
                 "properties": {
                   "mutation": { "$ref": "write-instruction.schema.json#/$defs/targetMutation" }
                 },
@@ -955,7 +962,7 @@
                 "default": 1
               },
               "rows": {
-                "description": "The neutral write input (①) for this step: the row(s) the mutation operates on, as flat attribute-named literals (`$defs/writeRow`). A GENERATING adapter classifies each field by metamodel role and derives the emitted column list + ORDER from the target's Entity Layout view, plus the SQL and the binds. `then.statements` stays an independent oracle the derivation cross-checks against. REQUIRED on every writeSequence step. Each row is one keyed instruction's `row` (`write-instruction.schema.json#/$defs/keyedWriteInstruction`); a keyed step's rows are submitted in order within its one choreography unit.",
+                "description": "The neutral write input (①) for this step: the row(s) the mutation operates on, as flat attribute-named literals (`$defs/writeRow`). A GENERATING adapter classifies each field by metamodel role and derives the emitted column list + ORDER from the target's Entity Layout view, plus the SQL and the binds. `then.statements` stays an independent oracle the derivation cross-checks against. REQUIRED on every keyed step, which carries no `row`. Each row is one keyed instruction's `row` (`write-instruction.schema.json#/$defs/keyedWriteInstruction`); a keyed step's rows are submitted in order within its one choreography unit.",
                 "type": "array",
                 "minItems": 1,
                 "items": { "$ref": "#/$defs/writeRow" }

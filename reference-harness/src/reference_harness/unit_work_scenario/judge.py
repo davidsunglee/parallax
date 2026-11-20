@@ -990,10 +990,11 @@ def _sole_settled_row(
     """The ONE row a settled write entry authors.
 
     The entry is judged by the SAME
-    :func:`~reference_harness.keyed_write_validate.validate_keyed_write` every
-    other lane asks, so this lane cannot refuse a different set of entries; what
-    is local here is only the row count — a settled entry hands over exactly one
-    row, because the named find handed over exactly one value.
+    :func:`~reference_harness.keyed_write_validate.validate_keyed_write` the
+    buffered and writeSequence entries ask, so this lane cannot refuse a different
+    set of entries; what is local here is only the row count — a settled entry
+    hands over exactly one row, because the named find handed over exactly one
+    value.
     """
     try:
         validate_keyed_write(entity, entry)

@@ -19,7 +19,7 @@ read as saying something different:
   executing its golden DML
   (:func:`~reference_harness.case_runner._assert_write_input_columns`); and
 * a settled scenario write's entry, on the way to the one row the find it names
-  handed over (:func:`~reference_harness.case_runner._sole_settled_row`).
+  handed over (:func:`~reference_harness.unit_work_scenario.judge._sole_settled_row`).
 """
 
 from __future__ import annotations
@@ -142,8 +142,11 @@ def validate_keyed_write(
     handle, so a concrete subtype inherits the root's temporality unchanged
     (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
 
-    This judges instruction shape and framework-owned assignment names. A caller
-    also judging subtype shape and membership applies those judgments per row.
+    This judges instruction shape and the framework-owned assignment names of each
+    row of a case entry's ``rows``. A caller also judging subtype shape and
+    membership, as the rejected lane does for a document's singular ``row``, asks
+    :func:`validate_keyed_write_shape` and :func:`validate_keyed_assignment_members`
+    itself around those judgments.
     """
     validate_keyed_write_shape(entity, instruction)
     rows = instruction.get("rows")

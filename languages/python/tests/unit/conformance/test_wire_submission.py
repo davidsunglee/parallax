@@ -25,6 +25,7 @@ from parallax.core.internal.db_port import ArrayBind, MappingRow
 from parallax.core.internal.execution import RetryPolicy, ServingModel, prepare_model
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.unit_work import (
+    WRITE_INSTRUCTION_INVALID,
     WRITE_PRECONDITION_FAILED,
     KeyedWriteInstruction,
     WritePreconditionError,
@@ -565,6 +566,20 @@ def test_read_submissions_splits_a_temporal_entry_into_ordered_one_row_writes() 
     assert [(s.pointer, s.declared_observation) for s in submissions] == [
         ("/scenario/3/write/0", None)
     ] * 2
+
+
+@pytest.mark.parametrize(
+    "carriers",
+    [{"rows": []}, {"rows": [{"id": 2}], "row": {"id": 1}}],
+    ids=["empty-rows", "rows-beside-row"],
+)
+def test_read_submissions_refuses_a_keyed_entry_without_one_rows_carrier(
+    carriers: dict[str, object],
+) -> None:
+    with raises_code(UsageError, WRITE_INSTRUCTION_INVALID):
+        read_submissions(
+            models.load_models()["account"], [{"mutation": "amend", "entity": "Account"} | carriers]
+        )
 
 
 def _sole_row(submission: Submission) -> dict[str, object]:
