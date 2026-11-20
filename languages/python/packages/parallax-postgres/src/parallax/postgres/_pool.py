@@ -48,15 +48,19 @@ class PostgresPool:
 
     An on-demand pool with capacity to spare dials on the checking-out thread,
     so that dial's failure comes out of :meth:`check_out` itself and is
-    classified there. Every other dial runs on the pool's own workers — all of
-    a retaining pool's, and an on-demand pool's replacement for a connection
-    handed back broken or expired while a caller waits — and its failure
-    reaches the runtime only through the pool's dial record.
+    classified there — except a dial that timed out, which the native pool
+    raises as its own checkout timeout, so its classification reaches the
+    runtime through the dial record. Every other dial runs on the pool's own
+    workers — all of a retaining pool's, and an on-demand pool's replacement
+    for a connection handed back broken or expired while a caller waits — and
+    its failure reaches the runtime only through the pool's dial record.
 
     Both accounting methods are the native return. The native pool already
     tells the two apart by the connection's state: a closed connection is
-    counted as a bad return and its capacity replaced, and :meth:`discard` is
-    only ever handed one that is already closed.
+    counted as a bad return, and :meth:`discard` is only ever handed one that
+    is already closed. A retaining pool then dials a replacement; an on-demand
+    pool dials one only for a caller already waiting, and otherwise just frees
+    the capacity for the next checkout to dial.
     """
 
     __slots__ = ("_native",)
@@ -99,13 +103,14 @@ class DialObserver:
     itself; and ``__call__`` is the pool's ``configure``, initializing the
     connection that resulted. Each step that fails reports the failure and
     stops the attempt, so no failure is reported twice, and only
-    initialization reports a connection usable.
+    initialization reports a connection usable. An interrupt stops the attempt
+    with nothing reported, because it is no outcome of establishing one.
 
     Every hook runs on the thread making the attempt: a pool worker, or the
     caller an on-demand pool dials for. Classification happens before the
     report, so the record holds nothing while a failure is read. A connection
-    whose initialization is refused is closed here, because the native pool
-    neither keeps nor closes one its ``configure`` refused.
+    whose initialization is refused has its close attempted here, because the
+    native pool neither keeps nor closes one its ``configure`` refused.
     """
 
     __slots__ = ("_dial_record", "connection_class")
@@ -201,7 +206,7 @@ def open_pool(
 ) -> PostgresPool:
     """Create and open the native pool serving ``route`` for ``purpose``, its
     dials reporting to ``dial_record``, or raise the native failure having
-    closed what it built.
+    attempted to close what it built.
 
     A reservation pool dials ``endpoint`` with its credentials under
     :func:`~parallax.postgres._options.reservation_retention`, so it holds no

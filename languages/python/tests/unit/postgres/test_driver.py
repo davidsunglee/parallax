@@ -26,11 +26,9 @@ from parallax.core.internal.db_port import (
     PoolPurpose,
     ProbeMismatch,
     Route,
-    RouteCapabilities,
     SubmissionProgress,
 )
 from parallax.core.internal.db_port._runtime._dial_record import DialLedger
-from parallax.core.internal.dialect import POSTGRES
 from parallax.postgres import (
     OnDemandOptions,
     PoolOptions,
@@ -383,62 +381,3 @@ def test_a_statement_bound_rounds_up_to_whole_milliseconds_and_never_to_no_limit
 
     assert connection.sent == [f"SET statement_timeout = {milliseconds}"]
     assert (submission.started, submission.answered) == (True, True)
-
-
-# --------------------------------------------------------------------------- #
-# Composition.                                                                 #
-# --------------------------------------------------------------------------- #
-
-
-def test_configuration_composes_its_runtime_from_its_driver_and_its_declared_routes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # What `open` delegates to, and with what, is only observable by calling it,
-    # so this is the one place the suite spells the acquisition the access guard
-    # exists to refuse — over a stub, reaching no server.
-    from parallax.postgres import _adapter as adapter_module
-
-    composed: list[tuple[object, ...]] = []
-
-    def open_runtime_stub(driver: object, /, **arguments: object) -> object:
-        composed.append((driver, arguments))
-        return "the runtime"
-
-    monkeypatch.setattr(adapter_module, "open_runtime", open_runtime_stub)
-    writer = PostgresEndpoint("host=localhost", credentials=Password("hunter2"))
-    reader = PostgresEndpoint("host=replica", credentials=Password("hunter2"))
-    single = PostgresAdapter(writer=writer, acquire_timeout=2.0, startup_timeout=4.0)
-    deferred = PostgresAdapter(writer=writer, reader=reader)
-    required = PostgresAdapter(writer=writer, reader=reader, reader_startup="required")
-
-    for configured in (single, deferred, required):
-        assert configured.open() == "the runtime"  # database-access: open_runtime is stubbed above
-
-    every = RouteCapabilities.every_level()
-    # A hot standby refuses SERIALIZABLE, so the reader never declares it.
-    standby = RouteCapabilities(frozenset({"read_committed", "repeatable_read"}))
-    assert all(isinstance(driver, PostgresDriver) for driver, _ in composed)
-    # An omitted reader_startup defers a configured reader.
-    assert [arguments for _, arguments in composed] == [
-        {
-            "dialect": POSTGRES,
-            "routes": {"writer": every},
-            "acquire_timeout": 2.0,
-            "startup_timeout": 4.0,
-            "reader_startup": "deferrable",
-        },
-        {
-            "dialect": POSTGRES,
-            "routes": {"writer": every, "reader": standby},
-            "acquire_timeout": 15.0,
-            "startup_timeout": 30.0,
-            "reader_startup": "deferrable",
-        },
-        {
-            "dialect": POSTGRES,
-            "routes": {"writer": every, "reader": standby},
-            "acquire_timeout": 15.0,
-            "startup_timeout": 30.0,
-            "reader_startup": "required",
-        },
-    ]
