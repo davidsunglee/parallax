@@ -97,6 +97,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "settled_object",
         "flush_coverage_reads",
         "statement_object",
+        "statement_reaches",
         "tag",
         "uncovered_parts",
         "unit_resolving_reads",
