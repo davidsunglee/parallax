@@ -43,6 +43,7 @@ what the `rejected` cases pin — the refusal each language implementation must 
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -58,6 +59,7 @@ from .inheritance import (
     is_abstract,
     tag_of,
 )
+from .portable_literal import decode_timestamp
 from .storage_layout import is_scalar_collection
 from .temporality import temporal_axes
 from .value_object_resolve import (
@@ -165,6 +167,42 @@ def assignment_violation(
     )
 
 
+def _window_bound(instruction: Mapping[str, Any], name: str) -> dt.datetime | None:
+    value = instruction[name]
+    return decode_timestamp(value) if isinstance(value, str) else None
+
+
+def window_violation(entity: Entity, instruction: Mapping[str, Any]) -> str | None:
+    """Why a keyed or target instruction's window does not fit *entity*, or
+    ``None`` (`m-unit-work`): a Bitemporal target states ``validFrom``, and
+    ``until`` exactly where its verb is bounded, each a finite timestamp and
+    ``validFrom`` before ``until``; any other target states no window."""
+    mutation = str(instruction.get("mutation"))
+    bounded = mutation.endswith("Until")
+    bitemporal = any(axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts))
+    has_start = "validFrom" in instruction
+    has_end = "until" in instruction
+    if not bitemporal and (bounded or has_start or has_end):
+        return f"{entity.name}: this target takes no Valid-Time window"
+    if bitemporal and (not has_start or has_end != bounded):
+        return f"{entity.name}: {mutation!r} requires validFrom and " + (
+            "until" if bounded else "no until"
+        )
+    if not has_start:
+        return None
+    start = _window_bound(instruction, "validFrom")
+    if start is None:
+        return "validFrom must state a finite timestamp"
+    if not has_end:
+        return None
+    end = _window_bound(instruction, "until")
+    if end is None:
+        return "until must state a finite timestamp"
+    if start >= end:
+        return f"{entity.name}: validFrom must precede until"
+    return None
+
+
 def _target_key_violation(entity: Entity, row: dict[str, Any]) -> str | None:
     """Why a target write's *row* names no object of *entity*, or ``None``
     (`m-unit-work` *Target writes*).
@@ -193,6 +231,19 @@ def _refuse_target_key_value(entity: Entity, row: dict[str, Any]) -> None:
 
 def _key_attributes(entity: Entity) -> list[dict[str, Any]]:
     return [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
+
+
+def _target_name_violation(entity: Entity, row: dict[str, Any]) -> str | None:
+    """Why a target write's *row* names a member it may not state, judged by
+    name before any value (`m-unit-work`): an authored framework-owned member
+    first, then one *entity* does not declare."""
+    owned = sorted(framework_owned_names(entity).intersection(row))
+    if owned:
+        return f"{entity.name}.{owned[0]}: framework-owned fields may not be assigned"
+    unknown = undeclared_members(entity, row)
+    if unknown:
+        return f"{entity.name}.{unknown[0]}: names no assignable attribute or value object"
+    return None
 
 
 def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
@@ -244,12 +295,13 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
     The model decides all five, which the case schema cannot see: a key absent
     or null is refused first (:func:`_target_key_violation`); a temporal target
     is deleted by no target write and a Non-Temporal one is terminated by none;
-    a temporal target states ``ifTxStart`` and a versioned Non-Temporal one
+    the window is judged as every keyed one is (:func:`window_violation`); a
+    temporal target states ``ifTxStart`` and a versioned Non-Temporal one
     ``ifVersion``, while an unversioned one has no revision and takes no target
-    write; a Bitemporal target states ``validFrom``, and a Transaction-Time-Only
-    or Non-Temporal one no window. Only then is the row judged: its key's value
-    first, then the rest as :func:`target_row_violation` judges it, a
-    destructive write's naming the key alone.
+    write. Only then is the row judged: its member names
+    (:func:`_target_name_violation`), a destructive write's naming the key
+    alone, its key's value, then the rest as :func:`target_row_violation`
+    judges it.
     """
     mutation = instruction.get("mutation")
     row = instruction["row"]
@@ -259,6 +311,9 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     if mutation == ("delete" if axes else "terminate"):
         return f"a target write of {entity.name} takes no `{mutation}`"
+    window = window_violation(entity, instruction)
+    if window is not None:
+        return f"a target write of {entity.name} — {window}"
     versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
     revision = "ifTxStart" if axes else "ifVersion" if versioned else None
     if revision is None:
@@ -269,18 +324,17 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
             f"a target write of {entity.name} states {stated or 'no revision'}, "
             f"but its target takes `{revision}`"
         )
-    bitemporal = "valid-time" in axes
-    if bitemporal != ("validFrom" in instruction) or (not bitemporal and "until" in instruction):
-        takes = "a window from `validFrom`" if bitemporal else "no window"
-        return f"a target write of {entity.name} takes {takes}"
+    names = _target_name_violation(entity, row)
+    if names is not None:
+        return f"a target write of {entity.name} — {names}"
+    keys = {attribute["name"] for attribute in _key_attributes(entity)}
+    if mutation in ("delete", "terminate", "terminateUntil") and set(row) - keys:
+        return f"a target write of {entity.name} by `{mutation}` names its key alone"
     _refuse_target_key_value(entity, row)
     replaces = mutation in ("replace", "replaceUntil")
     violation = target_row_violation(entity, row, replaces=replaces)
     if violation is not None:
         return f"a target write of {entity.name} — {violation}"
-    keys = {attribute["name"] for attribute in _key_attributes(entity)}
-    if mutation in ("delete", "terminate", "terminateUntil") and set(row) - keys:
-        return f"a target write of {entity.name} by `{mutation}` names its key alone"
     return None
 
 
@@ -344,13 +398,19 @@ def validate_write(entity: Entity, row: dict[str, Any]) -> None:
 
 
 def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]) -> None:
-    """Judge an admitted keyed row's values without changing bare-row grading."""
+    """Judge an admitted keyed row's values without changing bare-row grading:
+    an opening's in declaration order, and any other row's key first, the
+    object it addresses (`m-unit-work`), then a replacement's other members in
+    declaration order and a partial row's in the order it states them."""
     owned = framework_owned_names(entity)
     attributes = {attribute["name"]: attribute for attribute in entity.attributes}
     occurrences = {occurrence["name"]: occurrence for occurrence in entity.value_objects}
     if mutation in {"insert", "insertUntil", "replace", "replaceUntil"}:
         replacing = mutation in {"replace", "replaceUntil"}
-        for name, attribute in attributes.items():
+        declared = list(attributes.items())
+        if replacing:
+            declared.sort(key=lambda item: not item[1].get("primaryKey"))
+        for name, attribute in declared:
             if name not in owned and not (replacing and attribute.get("readOnly")):
                 _validate_attribute(
                     row,

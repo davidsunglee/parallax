@@ -374,6 +374,10 @@ _KIND_FIRST: Final[tuple[_Row, ...]] = (
         PredicateWriteScenario(ACCOUNT_SELECTION, "replace", assignments="none"),
         _wire(_ACCOUNT_REPLACE),
     ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "amend", assignments="observation_key"),
+        _wire(_ACCOUNT_AMEND),
+    ),
 )
 
 
@@ -500,7 +504,52 @@ _SELECTION_ORDER: Final[tuple[_Row, ...]] = (
             )
         ),
     ),
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "amend", assignments="observation_key"),
+        _wire(
+            _refused(
+                UsageError,
+                "Person: predicate write row names undeclared member(s) ['observedVersion']",
+                code="write-instruction-invalid",
+            )
+        ),
+    ),
 )
+
+
+# --------------------------------------------------------------------------- #
+# A replacement's document is a write row, which never carries the reserved    #
+# observation control key: that is refused as the document is captured,       #
+# before the model resolves its Entity or weighs the target's kind.            #
+# --------------------------------------------------------------------------- #
+_OBSERVATION_KEY_ROW: Final = _refused(
+    UsageError,
+    "write row carries forbidden observation control key(s) ['observedVersion'] (the "
+    "transaction observation is attached at flush, never on the instruction)",
+    code="write-instruction-invalid",
+)
+
+_REPLACEMENT_ROW: Final[tuple[_Row, ...]] = (
+    _Row(
+        PredicateWriteScenario(PERSON_SELECTION, "replace", assignments="observation_key"),
+        _wire(_OBSERVATION_KEY_ROW),
+    ),
+    _Row(
+        PredicateWriteScenario(ACCOUNT_SELECTION, "replace", assignments="observation_key"),
+        _wire(_OBSERVATION_KEY_ROW),
+    ),
+    _Row(
+        PredicateWriteScenario(UNDECLARED_SELECTION, "replace", assignments="observation_key"),
+        _wire(_OBSERVATION_KEY_ROW),
+    ),
+)
+
+
+@pytest.mark.parametrize("row", _REPLACEMENT_ROW, ids=str)
+def test_a_replacement_row_naming_an_observation_key_is_refused_before_its_entity(
+    row: _Row,
+) -> None:
+    _assert_row(row)
 
 
 @pytest.mark.parametrize("row", _SELECTION_ORDER, ids=str)

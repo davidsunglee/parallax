@@ -1321,6 +1321,100 @@ def test_an_unclassified_target_defect_is_a_case_authoring_failure(
         run_case(_rejected_write_case(_vehicle(), write, READ_ONLY_WRITE_TARGET), None)
 
 
+def _account() -> Model:
+    return load_model(_COMPATIBILITY_ROOT, "models/account.yaml")
+
+
+def _position() -> Model:
+    return load_model(_COMPATIBILITY_ROOT, "models/position.yaml")
+
+
+@pytest.mark.parametrize(
+    ("model", "write", "detail"),
+    [
+        (
+            _account,
+            {"mutation": "amend", "entity": "Account", "row": {"id": "k", "version": 2}},
+            "framework-owned fields may not be assigned",
+        ),
+        (
+            _account,
+            {"mutation": "amend", "entity": "Account", "row": {"id": "k", "bogus": 1}},
+            "names no assignable",
+        ),
+        (
+            _account,
+            {"mutation": "delete", "entity": "Account", "row": {"id": "k", "owner": "Ada"}},
+            "names its key alone",
+        ),
+        (
+            _position,
+            {
+                "mutation": "amendUntil",
+                "entity": "Position",
+                "row": {"id": "k"},
+                "ifTxStart": "2024-01-01T00:00:00Z",
+                "validFrom": "2024-06-01T00:00:00Z",
+                "until": "2024-03-01T00:00:00Z",
+            },
+            "validFrom must precede until",
+        ),
+    ],
+    ids=["framework-owned-name", "undeclared-name", "destructive-extra", "reversed-window"],
+)
+def test_a_target_name_or_window_defect_precedes_its_key_literal(
+    model: Callable[[], Model], write: dict[str, Any], detail: str
+) -> None:
+    write = {"ifVersion": 1, **write} if model is _account else write
+    with pytest.raises(CaseFailure, match=detail):
+        run_case(_rejected_write_case(model(), write, NEUTRAL_LITERAL_TYPE_MISMATCH), None)
+
+
+def test_a_target_window_precedes_its_revision() -> None:
+    write = {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "validFrom": "x"}
+    with pytest.raises(CaseFailure, match="takes no Valid-Time window"):
+        run_case(_rejected_write_case(_account(), write, NEUTRAL_LITERAL_TYPE_MISMATCH), None)
+
+
+def test_a_keyed_destructive_row_states_its_key_alone() -> None:
+    write = {"mutation": "delete", "entity": "Account", "row": {"id": 1, "owner": "Ada"}}
+    with pytest.raises(CaseFailure, match="names its object by its key alone"):
+        run_case(_rejected_write_case(_account(), write, NEUTRAL_LITERAL_TYPE_MISMATCH), None)
+    with pytest.raises(KeyedWriteApplicabilityError, match="key alone"):
+        validate_keyed_write(_account().root_entity, {"mutation": "delete", "rows": [write["row"]]})
+    validate_keyed_write(
+        _account().root_entity,
+        {"mutation": "delete", "rows": [{"id": 1, "observedVersion": 3}]},
+    )
+
+
+def _late_key() -> Model:
+    entity: dict[str, Any] = {
+        "name": "Tally",
+        "namespace": "parallax.compatibility",
+        "table": "tally",
+        "attributes": [
+            {"name": "label", "type": "string"},
+            {"name": "id", "type": "int64", "primaryKey": True},
+        ],
+    }
+    return Model(path=Path("models/tally.yaml"), descriptor={"entity": entity})
+
+
+@pytest.mark.parametrize(
+    ("mutation", "rule"),
+    [
+        ("replace", NEUTRAL_LITERAL_TYPE_MISMATCH),
+        ("insert", WRITE_REQUIRED_ATTRIBUTE_MISSING),
+    ],
+)
+def test_a_keyed_replacement_judges_its_key_first_and_an_opening_in_member_order(
+    mutation: str, rule: str
+) -> None:
+    write = {"mutation": mutation, "entity": "Tally", "row": {"id": "k"}}
+    run_case(_rejected_write_case(_late_key(), write, rule), None)
+
+
 @pytest.mark.parametrize(
     ("write", "form"),
     [

@@ -229,8 +229,12 @@ everything it opened is removed, or a later insertion of the object supersedes i
 
  PAYLOAD    CompletePayload | PartialPayload under TYPED (coerce) or WIRE (decode)   preparation
               │
-              │ one entry per family: target, verb and window first, then the
-              │ payload's names, its key, and its other values
+              │ one entry per family, each in its own order: the target's
+              │ persistence; a target write's absent or null key, verb and
+              │ window, then revision; a keyed write's verb and window; a
+              │ predicate write's readless eligibility, predicate and family.
+              │ Then the payload's names, a keyed or target payload's key,
+              │ and its other values
               ▼
  PREPARED   PreparedKeyedInstruction | PreparedTargetInstruction
               | PreparedPredicateInstruction: exact target, owned managed rows, judged

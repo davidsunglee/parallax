@@ -120,8 +120,9 @@ class PredicateWriteAdapter(Protocol):
     Constructed around the caller's original selection and payload, judging
     nothing, so no representation refusal precedes the attempt's re-entry
     check. :meth:`prepare` is asked once, after it: it captures that input,
-    authors the canonical instruction, and returns what the one write
-    preparation produced for it, borrowing ``write_model`` for the call alone.
+    resolves its target, builds its payload, and returns what the one
+    predicate-write preparation produced for them, borrowing ``write_model``
+    for the call alone.
     """
 
     def prepare(

@@ -668,15 +668,17 @@ write target — the canonical Object Query node of that selection and its
 serialized document. The Typed call spells it one way, so every spelling but
 ``document`` is Wire alone."""
 
-type Assignments = Literal["ordinary", "undeclared", "none", "keyed"]
+type Assignments = Literal["ordinary", "undeclared", "none", "keyed", "observation_key"]
 """What an amendment assigns: the target's own member, a member the target does
-not declare, or nothing at all. The destructive and close verbs assign nothing
-whatever this states.
+not declare, nothing at all, or — a Wire document alone — the reserved
+``observedVersion`` control key, which names no member an amendment could
+assign. The destructive and close verbs assign nothing whatever this states.
 
 What a replacement states: ``ordinary`` is the target's whole state — a Typed
 instance, which always holds its key, and a Wire document stating none —
 ``keyed`` that document beside the key, ``undeclared`` beside a member the
-target does not declare, and ``none`` the empty document. Each but
+target does not declare, ``observation_key`` beside the reserved control key
+a write row never carries, and ``none`` the empty document. Each but
 ``ordinary`` is a Wire document alone."""
 
 type Start = Literal["omitted", "stated", "none", "naive", "unspellable"]
@@ -689,6 +691,7 @@ type Until = Literal["omitted", "stated", "none", "reversed", "equal", "naive", 
 plus a bound before :data:`VALID_FROM` and one at it."""
 
 _PREDICATE_KEY: Final = 1
+_OBSERVATION_KEY: Final = "observedVersion"
 _REVERSED_UNTIL: Final = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 _NAIVE_INSTANT: Final = dt.datetime(2024, 7, 1)
 _UNSPELLABLE_INSTANT: Final = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=14)))
@@ -1118,8 +1121,9 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
 
     A predicate shape spelled through a Wire target other than the canonical
     document is Wire alone, and so is a replacement stating anything but its
-    target's whole state; an ``unbound`` selection spelled as that document is
-    Typed alone, since its unfinished path has no document spelling.
+    target's whole state and an amendment naming the reserved control key; an
+    ``unbound`` selection spelled as that document is Typed alone, since its
+    unfinished path has no document spelling.
 
     A target shape is reachable where its representation spells it: a
     mapping key is Typed alone; the Wire-only documents, a published node handed
@@ -1128,8 +1132,10 @@ def reachable(scenario: WriteScenario, representation: Representation) -> bool:
     replacement is always addressed by an instance.
     """
     if isinstance(scenario, PredicateWriteScenario):
-        if scenario.wire_target != "document" or (
-            scenario.verb == "replace" and scenario.assignments != "ordinary"
+        if (
+            scenario.wire_target != "document"
+            or scenario.assignments == "observation_key"
+            or (scenario.verb == "replace" and scenario.assignments != "ordinary")
         ):
             return representation == "wire"
         return scenario.selection != "unbound" or representation == "typed"
@@ -1668,12 +1674,16 @@ def _wire_changes(scenario: PredicateWriteScenario) -> Mapping[str, object]:
             return {"undeclared": 1}
         case "none":
             return {}
+        case "observation_key":
+            return {_OBSERVATION_KEY: 1}
         case "keyed":
             raise AssertionError(f"{scenario}: an amendment's changes state no key")
 
 
 def _wire_state(scenario: PredicateWriteScenario) -> Mapping[str, object]:
     state = scenario.target.wire_state
+    if scenario.assignments == "observation_key":
+        return {**(state or {}), _OBSERVATION_KEY: 1}
     assert state is not None
     match scenario.assignments:
         case "ordinary":

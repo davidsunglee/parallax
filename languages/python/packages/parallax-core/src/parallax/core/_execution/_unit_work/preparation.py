@@ -218,7 +218,7 @@ class EntityPreparation:
         shape = self.selection.members.shape
         values = [self.selection.absent] * len(shape.members)
         unlisted: list[str] = []
-        for name, value in _named_members(members):
+        for name, value in members.items():
             position = shape.position(name)
             if position is None:
                 unlisted.append(name)
@@ -240,18 +240,13 @@ class EntityPreparation:
         overriding = not isinstance(key, Unstated)
         if overriding:
             stated.append((self.key_position, key))
-        for name, value in _named_members(members):
+        for name, value in members.items():
             position = shape.position(name)
             if position is None:
                 unlisted.append(name)
             elif not (overriding and position == self.key_position):
                 stated.append((position, value))
         return PartialPayload(tuple(stated), tuple(unlisted))
-
-
-def _named_members(members: Mapping[str, object]) -> Iterable[tuple[str, object]]:
-    refuse_observation_keys(members)
-    return members.items()
 
 
 class WritePreparation:

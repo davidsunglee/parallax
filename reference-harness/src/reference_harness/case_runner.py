@@ -103,6 +103,7 @@ from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
     KeyedWriteApplicabilityError,
     validate_keyed_assignment_members,
+    validate_keyed_identity,
     validate_keyed_write,
     validate_keyed_write_shape,
 )
@@ -1034,9 +1035,10 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     family"): a read-only family is refused whatever the instruction carries.
 
     Instruction applicability precedes the payload. Its row then runs
-    concrete-subtype shape, framework-owned assignment names, and undeclared
-    names. A sibling branch's attribute or hierarchy metadata keeps its specific
-    subtype classification rather than becoming a generic assignment refusal.
+    concrete-subtype shape, framework-owned assignment names, undeclared
+    names, and a destructive row's identity, before its values. A sibling
+    branch's attribute or hierarchy metadata keeps its specific subtype
+    classification rather than becoming a generic assignment refusal.
     """
     entity_name = write.get("entity")
     try:
@@ -1060,6 +1062,10 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"{case.path.name}: keyed instruction's row names {unknown}, which are not "
             f"attributes or value objects of {entity.name}"
         )
+    try:
+        validate_keyed_identity(entity, write["mutation"], row)
+    except KeyedWriteApplicabilityError as exc:
+        raise CaseFailure(f"{case.path.name}: {exc}") from exc
     validate_keyed_row_values(entity, write["mutation"], row)
 
 
@@ -1067,11 +1073,12 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
     """Run the target-instruction judgements against the entity the instruction names.
 
     Persistence admission precedes them (`m-unit-work` "Writes to a ReadOnly
-    family"). The key, verb, row, revision, and window are then judged by the
+    family"). The key, verb, window, revision, and row are then judged by the
     one :func:`~reference_harness.write_validate.target_write_violation` static
-    case validation also asks. A null key is the one judgement raising a rule of
-    the closed vocabulary; every other one carries none, so its detail is a
-    case-authoring failure, never a graded refusal.
+    case validation also asks. A null key and a key literal its type does not
+    decode are the judgements raising a rule of the closed vocabulary; every
+    other one carries none, so its detail is a case-authoring failure, never a
+    graded refusal.
     """
     entity_name = write.get("entity")
     try:

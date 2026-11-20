@@ -6,7 +6,8 @@ predicate-selected instruction's target and assignments. This one judges the
 **shape and assignment names of a keyed instruction** — its `mutation` and window
 against what its target's temporal profile admits, then its row's member names —
 refusing ``framework-owned-member-assigned`` when an opening, amendment, or
-replacement names a framework-owned member as caller authoring. Every authoring location a
+replacement names a framework-owned member as caller authoring, and a
+destructive row stating any member beside its key. Every authoring location a
 keyed instruction reaches this harness through asks it here, so no lane can be
 read as saying something different:
 
@@ -24,20 +25,19 @@ read as saying something different:
 
 from __future__ import annotations
 
-import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
 from .case import Entity, write_entry_rows
 from .inheritance import tag_of
-from .portable_literal import decode_timestamp
-from .temporality import temporal_axes
 from .value_object_resolve import RejectionError
-from .write_validate import framework_owned_names, undeclared_members
+from .write_validate import framework_owned_names, undeclared_members, window_violation
 
 FRAMEWORK_OWNED_MEMBER_ASSIGNED = "framework-owned-member-assigned"
 
 KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset({FRAMEWORK_OWNED_MEMBER_ASSIGNED})
+
+_DESTRUCTIVE_MUTATIONS = frozenset({"delete", "terminate", "terminateUntil"})
 
 
 def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> list[str]:
@@ -74,7 +74,7 @@ def validate_keyed_assignment_members(
 
     Concrete-subtype metadata names are judged by the caller first.
     """
-    if mutation in {"delete", "terminate", "terminateUntil"}:
+    if mutation in _DESTRUCTIVE_MUTATIONS:
         return
     owned = framework_owned_names(entity)
     tag = tag_of(entity.runtime_facts)
@@ -89,36 +89,32 @@ def validate_keyed_assignment_members(
 
 
 class KeyedWriteApplicabilityError(ValueError):
-    """A keyed operation or window does not fit its target."""
+    """A keyed operation, window, or destructive row does not fit its target."""
 
 
-def _keyed_bound(instruction: Mapping[str, Any], name: str) -> dt.datetime:
-    value = instruction[name]
-    instant = decode_timestamp(value) if isinstance(value, str) else None
-    if instant is None:
-        raise KeyedWriteApplicabilityError(f"{name} must state a finite timestamp")
-    return instant
+def validate_keyed_identity(entity: Entity, mutation: str, row: Mapping[str, Any]) -> None:
+    """Refuse a destructive row stating a member beside its key: it names its
+    object by that key alone (`m-unit-work`). No rule of the closed vocabulary
+    names the refusal, so it is a case-authoring failure. A name *entity* does
+    not declare is left to member honesty, and the flush-time
+    ``observedVersion`` names no member."""
+    if mutation not in _DESTRUCTIVE_MUTATIONS:
+        return
+    members = {attribute["name"] for attribute in entity.attributes}
+    members.update(value_object["name"] for value_object in entity.value_objects)
+    keys = {attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")}
+    beside = sorted(name for name in row if name in members - keys)
+    if beside:
+        raise KeyedWriteApplicabilityError(
+            f"{entity.name}: a keyed {mutation!r} names its object by its key alone, and its "
+            f"row also states {beside}"
+        )
 
 
 def _validate_keyed_window(entity: Entity, instruction: Mapping[str, Any]) -> None:
-    mutation = str(instruction.get("mutation"))
-    bounded = mutation.endswith("Until")
-    bitemporal = any(axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts))
-    has_start = "validFrom" in instruction
-    has_end = "until" in instruction
-    if not bitemporal and (bounded or has_start or has_end):
-        raise KeyedWriteApplicabilityError(f"{entity.name}: this target takes no Valid-Time window")
-    if bitemporal and (not has_start or has_end != bounded):
-        raise KeyedWriteApplicabilityError(
-            f"{entity.name}: {mutation!r} requires validFrom and "
-            + ("until" if bounded else "no until")
-        )
-    if has_start:
-        start = _keyed_bound(instruction, "validFrom")
-        if has_end:
-            end = _keyed_bound(instruction, "until")
-            if start >= end:
-                raise KeyedWriteApplicabilityError(f"{entity.name}: validFrom must precede until")
+    violation = window_violation(entity, instruction)
+    if violation is not None:
+        raise KeyedWriteApplicabilityError(violation)
 
 
 def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -> None:
@@ -143,14 +139,16 @@ def validate_keyed_write(
     handle, so a concrete subtype inherits the root's temporality unchanged
     (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
 
-    This judges instruction shape and the framework-owned assignment names of each
-    row the entry carries: a writeSequence step's ``rows`` or a submission's one
-    ``row``. A caller also judging subtype shape and membership, as the rejected
-    lane does, asks :func:`validate_keyed_write_shape` and
-    :func:`validate_keyed_assignment_members` itself around those judgments.
+    This judges instruction shape, the framework-owned assignment names, and a
+    destructive row's identity of each row the entry carries: a writeSequence
+    step's ``rows`` or a submission's one ``row``. A caller also judging subtype
+    shape and membership, as the rejected lane does, asks
+    :func:`validate_keyed_write_shape`, :func:`validate_keyed_assignment_members`,
+    and :func:`validate_keyed_identity` itself around those judgments.
     """
     validate_keyed_write_shape(entity, instruction)
-    mutation = instruction.get("mutation")
+    mutation = str(instruction.get("mutation"))
     for row in write_entry_rows(instruction):
         if isinstance(row, Mapping):
-            validate_keyed_assignment_members(entity, str(mutation), row)
+            validate_keyed_assignment_members(entity, mutation, row)
+            validate_keyed_identity(entity, mutation, row)

@@ -3,9 +3,9 @@ takes only the payload shape its verb states."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 
 import pytest
 
@@ -21,7 +21,7 @@ from parallax.core._execution._unit_work.preparation import (
     WriteRepresentation,
 )
 from parallax.core.internal import predicate as predicate_algebra
-from parallax.core.internal.base import Int32, UsageError
+from parallax.core.internal.base import Int32, InvalidValueError, UsageError
 from parallax.core.internal.document_codec._plan import AuthoringPlan
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity
@@ -79,7 +79,17 @@ def test_a_typed_opening_reads_a_one_shot_payload_once() -> None:
 
 
 @pytest.mark.parametrize("family", ["keyed", "target"])
-def test_a_typed_replacement_reads_a_one_shot_payload_once_past_a_later_key(family: str) -> None:
+def test_a_typed_replacement_reads_a_one_shot_payload_once_past_a_later_key(
+    family: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    splits: list[object] = []
+    split = wi._split_key  # pyright: ignore[reportPrivateUsage]
+
+    def counted(*args: Any) -> tuple[object, Iterable[object]]:
+        splits.append(args)
+        return split(*args)
+
+    monkeypatch.setattr(wi, "_split_key", counted)
     payload = CompletePayload(_once("L", 7, Decimal("1.00"), 3))
     if family == "keyed":
         prepared = wi.prepare_keyed_write(
@@ -98,6 +108,7 @@ def test_a_typed_replacement_reads_a_one_shot_payload_once_past_a_later_key(fami
             until=None,
         ).row
     assert named_members(row) == {"label": "L", "id": 7, "price": Decimal("1.00")}
+    assert len(splits) == 1
 
 
 @pytest.mark.parametrize("mutation", ["insert", "replace"])
@@ -245,6 +256,24 @@ def test_a_predicate_replacement_judges_and_drops_a_stated_key() -> None:
         _PREPARATION, WIRE, "replace", _PLAIN, _ALL, CompletePayload(("L", 7))
     )
     assert named_members(prepared.row) == {"label": "L"}
+
+
+def test_a_predicate_replacement_judges_its_key_in_member_order() -> None:
+    payload = (_ABSENT, "seven")
+    with raises_code(InvalidValueError, "write-required-attribute-missing", match=r"Plain\.label"):
+        wi.prepare_predicate_write(
+            _PREPARATION, WIRE, "replace", _PLAIN, _ALL, CompletePayload(payload)
+        )
+    with raises_code(UsageError, "neutral-literal-type-mismatch", match=r"Plain\.id"):
+        wi.prepare_keyed_write(
+            _PREPARATION,
+            WIRE,
+            "replace",
+            _PLAIN,
+            CompletePayload(payload),
+            valid_from=None,
+            until=None,
+        )
 
 
 def test_a_predicate_amendment_stating_the_key_is_refused() -> None:

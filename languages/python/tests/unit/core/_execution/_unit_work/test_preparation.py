@@ -16,9 +16,7 @@ from parallax.core._execution._unit_work.preparation import (
     WritePreparation,
 )
 from parallax.core.internal import inheritance
-from parallax.core.internal.base import UsageError
 from tests._support.bindings import TEST_BINDING
-from tests._support.errors import raises_code
 from tests._support.mirrored_models import ACCOUNT_MODEL
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -86,14 +84,12 @@ def test_a_stated_key_stands_for_any_key_the_names_state() -> None:
     assert prepared.key_name == "id"
 
 
-@pytest.mark.parametrize("control", ["observedVersion", "observedTxStart", "observedValidStart"])
 @pytest.mark.parametrize("shape", ["complete", "partial"])
-def test_a_payload_naming_an_observation_control_is_refused(control: str, shape: str) -> None:
+def test_a_payload_keeps_an_observation_control_as_an_unlisted_name(shape: str) -> None:
     prepared = _account()
     build = (
         prepared.complete_payload_from_names
         if shape == "complete"
         else prepared.partial_payload_from_names
     )
-    with raises_code(UsageError, "write-instruction-invalid", match=control):
-        build({"id": 7, control: 1})
+    assert build({"id": 7, "observedVersion": 1}).unlisted_names == ("observedVersion",)

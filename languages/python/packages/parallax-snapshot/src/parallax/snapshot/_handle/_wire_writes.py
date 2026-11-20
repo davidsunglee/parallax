@@ -36,6 +36,7 @@ from parallax.core._execution._unit_work.preparation import (
     EntityPreparation,
     PartialPayload,
     WritePreparation,
+    refuse_observation_keys,
 )
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.internal import predicate as predicate_algebra
@@ -168,13 +169,13 @@ def wire_keyed_write(
 
     The order is the Keyed Write Validation Order, which this verb enters rather
     than states: the document's own shape, then the source and its pin, then
-    preparation — the verb's applicability to the target and the window, the
-    key members the document states, and only then every named member's
-    legality and value — all before the strategy is derived or any evidence
-    resolved. An amendment naming no member is the empty set, dropped only once
-    its source is admitted, so ``{}`` never lets an ineligible source pass;
-    every member it does name is assigned, whatever value the source published
-    for it.
+    a reserved observation key, then preparation — the verb's applicability to
+    the target and the window, every named member's legality, the source's key
+    and any key the document restates, and only then every other value — all
+    before the strategy is derived or any evidence resolved. An amendment
+    naming no member is the empty set, dropped only once its source is
+    admitted, so ``{}`` never lets an ineligible source pass; every member it
+    does name is assigned, whatever value the source published for it.
     """
     attempt.keyed_write(WireKeyedWriteSource(observed, changes), verb, until=until)
 
@@ -229,6 +230,8 @@ class WirePredicateWriteAdapter:
             document = _published_replacement(meta, target, entity, payload)
         else:
             document = _authored_changes(mutation, payload)
+            if mutation in REPLACE_MUTATIONS:
+                refuse_observation_keys(document)
             target = instructions.resolve_target(meta, selection.entity)
         prepared = write_model.preparation.entity(target.identity)
         return instructions.prepare_predicate_write(
@@ -316,6 +319,7 @@ class WireTargetWriteAdapter:
                 + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
                 + f", and {type(target).__name__} is neither",
             )
+        refuse_observation_keys(row)
         prepared = write_model.preparation.entity(entity.identity)
         return TargetWriteInput(
             entity,
@@ -465,6 +469,7 @@ class WireKeyedWriteSource:
         if authored is None:
             document = _published_writable(preparation.meta, entity, node, copy=False)
         else:
+            refuse_observation_keys(authored)
             document = authored
             restated_key = authored.get(key_name, UNSTATED)
         return instructions.prepare_keyed_write(
@@ -533,6 +538,7 @@ class WireKeyedInsertSource:
         caller's authoring: a framework-owned member is refused, because the
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
+        refuse_observation_keys(self._payload)
         entity = resolved.entity
         return instructions.prepare_insert(
             preparation,
