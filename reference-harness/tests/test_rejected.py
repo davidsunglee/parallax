@@ -21,6 +21,8 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 import re
 from collections.abc import Callable
@@ -37,6 +39,8 @@ from reference_harness.case import (
     Model,
     dialect_executed_cases,
     discover_cases,
+    frozen_view,
+    load_case,
     load_model,
 )
 from reference_harness.case_assertions import CaseFailure
@@ -1365,9 +1369,10 @@ def test_an_instruction_not_whole_against_its_form_is_refused_before_any_judgeme
 def test_a_corpus_keyed_instruction_missing_its_mutation_fails_its_run() -> None:
     # The corpus schema sweep refuses this document too; the run refuses it without it.
     path = _COMPATIBILITY_ROOT / "cases" / "m-unit-work-066-rejected-read-only-keyed-insert.yaml"
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded = load_case(_COMPATIBILITY_ROOT, path)
+    raw = copy.deepcopy(loaded.raw)
     del raw["when"]["write"]["mutation"]
-    case = Case(path=path, raw=raw, model=load_model(_COMPATIBILITY_ROOT, raw["model"]))
+    case = dataclasses.replace(loaded, raw=frozen_view(raw))
     with pytest.raises(CaseFailure, match="is not a whole `keyedWriteInstruction`"):
         run_case(case, None)
 
