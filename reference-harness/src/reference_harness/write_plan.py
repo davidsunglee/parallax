@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -35,7 +35,6 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
-from ._sql_placeholders import bound_placeholder_index, parse_indexed_statement
 from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
 from .case import Case, Entity, states_revision, write_entry_rows
 from .case_assertions import CaseFailure, write_value_equal
@@ -113,11 +112,7 @@ or ``None`` where the case's history does not tell."""
 
 
 def unit_resolving_reads(
-    case: Case,
-    entries: list[dict[str, Any]],
-    *,
-    acquired_start: AcquiredStart | None = None,
-    empty: Sequence[bool] | None = None,
+    case: Case, entries: list[dict[str, Any]], *, acquired_start: AcquiredStart | None = None
 ) -> int:
     """The resolving reads ONE choreography unit owes: one per target Entity whose
     existing-row keyed writes address a row this unit did not itself open.
@@ -140,9 +135,7 @@ def unit_resolving_reads(
     cell of its current row (:func:`binds_from_stated_start`) owes none and
     settles at planning. An amendment assigning nothing
     is dropped with no database work, so it owes no acquisition or coverage and
-    ends no run of shared reads. ``empty`` marks, position by position, each
-    entry such an amendment where its caller has already classified them;
-    otherwise each is classified here (:func:`assigns_nothing`).
+    ends no run of shared reads.
 
     A target entry is a scenario submission stating a revision, or a
     writeSequence target step as :attr:`~reference_harness.case.Case.write_sequence`
@@ -155,15 +148,14 @@ def unit_resolving_reads(
     coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]] = {}
     targeted: dict[tuple[str, tuple[Any, ...]], tuple[Entity, list[str]]] = {}
     settled: list[SettledObject] = []
-    for position, entry in enumerate(entries):
+    for entry in entries:
         entity = _entry_entity(case, entry)
         keys = _entry_object_keys(case, entry)
-        dropped = assigns_nothing(entity, entry) if empty is None else empty[position]
-        written = [] if dropped else _settled_objects(entry, keys)
+        written = _settled_objects(entity, entry, keys)
         settled.extend(written)
         if entry.get("target") is True or states_revision(entry):
             acquires = _acquires(case, entity)
-            if acquires and not dropped:
+            if acquires and not assigns_nothing(entity, entry):
                 acquired.update(keys)
             if entity.is_temporal:
                 window = _target_window(entity, entry, acquires, acquired_start)
@@ -261,8 +253,10 @@ def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:
 
 
 def _settled_objects(
-    entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
+    entity: Entity, entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
 ) -> list[SettledObject]:
+    if assigns_nothing(entity, entry):
+        return []
     region = (entry.get("validFrom"), entry.get("until"))
     return [settled_object(key, str(entry.get("mutation")), region) for key in keys]
 
@@ -1108,16 +1102,12 @@ def _existing_row_write(statement: str, dialect: str) -> _ExistingRowWrite | Non
     object and gates on nothing.
     """
     with contextlib.suppress(sqlglot.ParseError):
-        return _existing_row_write_of(sqlglot.parse_one(statement, read=sqlglot_dialect(dialect)))
-    return None
-
-
-def _existing_row_write_of(tree: Expr | None) -> _ExistingRowWrite | None:
-    if not isinstance(tree, (exp.Update, exp.Delete)):
-        return None
-    table, where = _dml_target_of(tree), tree.args.get("where")
-    if table is not None and isinstance(where, exp.Where):
-        return _ExistingRowWrite(table, tuple(_conjuncts(where.this)))
+        tree = sqlglot.parse_one(statement, read=sqlglot_dialect(dialect))
+        if not isinstance(tree, (exp.Update, exp.Delete)):
+            return None
+        table, where = _dml_target_of(tree), tree.args.get("where")
+        if table is not None and isinstance(where, exp.Where):
+            return _ExistingRowWrite(table, tuple(_conjuncts(where.this)))
     return None
 
 
@@ -1246,68 +1236,6 @@ def statement_object(statement: str, binds: list[Any], dialect: str) -> ObjectAd
     if write is None or key_column is None or offset is None or offset >= len(binds):
         return None
     return ObjectAddress(write.table, key_column, binds[offset])
-
-
-def statement_reaches(
-    statement: str,
-    binds: list[Any],
-    dialect: str,
-    table: PhysicalTable,
-    key_column: str,
-    key: Any,
-) -> bool:
-    """Whether the existing-row *statement* writes *table* with *key* among the
-    values its own predicate binds to *key_column*: an equality, a membership
-    listing its keys, or one array compared through ``any`` — the objects a
-    collapsed write over a membership of keys reaches, though it renders no
-    one-object address (:func:`statement_object`).
-
-    Only the key column's own operands count, because every other conjunct — the
-    table-per-hierarchy tag guard, the temporal bounds, an optimistic gate —
-    binds values that name no object.
-    """
-    write = _existing_row_write_of(parse_indexed_statement(statement, dialect))
-    if write is None or not _names_table(write.table, table):
-        return False
-    return any(
-        write_value_equal(value, key)
-        for conjunct in write.conjuncts
-        for index, is_array in _key_bind_indices(conjunct, key_column)
-        if index < len(binds)
-        for value in (
-            binds[index] if is_array and isinstance(binds[index], list) else [binds[index]]
-        )
-    )
-
-
-def _key_bind_indices(conjunct: Expr, key_column: str) -> Iterator[tuple[int, bool]]:
-    """The bind indices *conjunct* compares *key_column* with, each beside whether
-    it binds an array of keys: ``<key> = ?``, ``<key> = any(<array>)``, or
-    ``<key> in (?, …)``, the column on either side of an equality."""
-    if isinstance(conjunct, exp.In) and _is_column(conjunct.this, key_column):
-        operands = [(listed, False) for listed in conjunct.expressions]
-    elif isinstance(conjunct, exp.EQ):
-        column, value = conjunct.left, conjunct.right
-        if not isinstance(column, exp.Column):
-            column, value = value, column
-        if not _is_column(column, key_column):
-            return
-        is_array = isinstance(value, exp.Any)
-        operands = [(value.this if is_array else value, is_array)]
-    else:
-        return
-    for operand, is_array in operands:
-        index = bound_placeholder_index(operand)
-        if index is not None:
-            yield index, is_array
-
-
-def _is_column(operand: Expr, declared: str) -> bool:
-    return (
-        isinstance(operand, exp.Column)
-        and isinstance(operand.this, exp.Identifier)
-        and _names(operand.this, declared)
-    )
 
 
 # --- the optimistic gates a write appends to its address -------------------------
