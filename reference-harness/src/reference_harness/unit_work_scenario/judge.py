@@ -989,13 +989,11 @@ def _sole_settled_row(
 ) -> dict[str, Any]:
     """The ONE row a settled write entry authors.
 
-    The plural half is `m-unit-work`'s own singleton — a temporal entry chains
-    one milestone, and an observed write of any profile is evidence about one row
-    — and it is asked of the SAME
+    The entry is judged by the SAME
     :func:`~reference_harness.keyed_write_validate.validate_keyed_write` every
-    other lane asks it of, so this lane cannot refuse a different set of entries;
-    what is local here is only the consequence — a settled entry must hand over
-    exactly one row, because the named find handed over exactly one value.
+    other lane asks, so this lane cannot refuse a different set of entries; what
+    is local here is only the row count — a settled entry hands over exactly one
+    row, because the named find handed over exactly one value.
     """
     try:
         validate_keyed_write(entity, entry)

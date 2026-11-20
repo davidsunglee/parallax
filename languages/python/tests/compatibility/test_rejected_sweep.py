@@ -104,17 +104,17 @@ def test_reachable_rejected_population_spans_every_when_kind() -> None:
 def _write_form(write: dict[str, Any]) -> str:
     if "target" in write:
         return "predicate"
-    if "rows" in write:
-        return "keyed"
-    return "target" if "row" in write else "bare"
+    if "row" not in write:
+        return "bare"
+    return "target" if {"ifVersion", "ifTxStart"} & write.keys() else "keyed"
 
 
 def test_reachable_rejected_population_spans_every_write_form() -> None:
     # `when.write` is itself four-formed, dispatched in order on the members the
-    # input carries: `target` is a predicate-selected instruction, `rows` a whole
-    # keyed instruction, `row` a whole target instruction, anything else the bare
-    # neutral write row. Each case reaches preparation differently, so each needs a
-    # reachable witness of its own.
+    # input carries: `target` is a predicate-selected instruction, a `row` stating
+    # a revision a whole target instruction and one stating none a whole keyed
+    # instruction, anything else the bare neutral write row. Each case reaches
+    # preparation differently, so each needs a reachable witness of its own.
     forms: set[str] = set()
     for case in _REACHABLE_REJECTED:
         write = cast("dict[str, Any]", case_document(case).get("when") or {}).get("write")

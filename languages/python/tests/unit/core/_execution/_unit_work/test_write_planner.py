@@ -672,30 +672,6 @@ def test_updates_that_are_all_key_only_are_all_eliminated() -> None:
     assert len(plan_steps(_plan(buffer, _WALLET))) == 0
 
 
-def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimination() -> None:
-    # Row-level elimination never rescues a plural temporal instruction into a
-    # legal singleton: dropping the key-only row would silently discard one of
-    # the two milestone chains the author wrote, which is exactly the reduction
-    # `m-unit-work` requires an implementation to refuse.
-    update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1}, {"id": 2, "value": Decimal("9.00")})
-    )
-    with pytest.raises(UsageError, match="temporal target carries 2 rows"):
-        _plan([update], _BALANCE)
-
-
-def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_eliminated() -> None:
-    # The same contract when elimination would take the WHOLE instruction: a
-    # plural temporal update every row of which is key-only must still be
-    # refused, because `m-unit-work`'s singleton rule admits no exception and an
-    # empty plan would report that two authored milestone chains were fine. The
-    # mixed-row shape above cannot pin this: there, a surviving row keeps the
-    # instruction alive on its way to the refusal.
-    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1}, {"id": 2}))
-    with pytest.raises(UsageError, match="temporal target carries 2 rows"):
-        _plan([update], _BALANCE)
-
-
 @pytest.mark.parametrize("repeats", [1, 2])
 @pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
 def test_a_temporal_update_naming_only_its_key_is_still_eliminated(

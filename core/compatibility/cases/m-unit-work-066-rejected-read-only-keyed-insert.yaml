@@ -5,12 +5,12 @@ when:
   write:
     mutation: insert
     entity: parallax.compatibility.ScalarThing
-    rows:
-      - id: 2
-        f32: 1.5
-        f64: 2.25
-        payload: "01020304"
-        localTime: "12:34:56"
-        externalId: "123e4567-e89b-12d3-a456-426614174000"
+    row:
+      id: 2
+      f32: 1.5
+      f64: 2.25
+      payload: "01020304"
+      localTime: "12:34:56"
+      externalId: "123e4567-e89b-12d3-a456-426614174000"
 then:
   rejectedRule: read-only-write-target

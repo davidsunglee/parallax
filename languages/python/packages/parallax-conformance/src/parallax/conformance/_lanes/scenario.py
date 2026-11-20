@@ -5,7 +5,7 @@ import datetime as dt
 import functools
 import itertools
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Final, Literal, Never, cast, get_args
 
 from parallax.conformance import _case_ingress, case_format, models
@@ -77,7 +77,6 @@ from parallax.core.internal.base import (
     normalize_instant,
 )
 from parallax.core.internal.concurrency import (
-    INITIAL_VERSION,
     ConcurrencyPreference,
     concurrency_facet_of,
 )
@@ -350,14 +349,6 @@ def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
     return bool(family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
 
 
-def _build_temporal_instruction(submission: Submission, prepare: WirePreparer) -> _ResolvedWrite:
-    instruction = submission.instruction
-    assert isinstance(instruction, KeyedWriteInstruction)
-    prepared = prepare(instruction)
-    assert isinstance(prepared, PreparedKeyedInstruction)
-    return _ResolvedWrite(prepared, None)
-
-
 def is_predicate_write_step(raw_write: object) -> bool:
     """Whether a scenario write step's own ``write`` field is a single
     STRUCTURED PREDICATE-write instruction (`mutation` / `target` / optional
@@ -419,37 +410,19 @@ def _check_statement_count_consistency(
         )
 
 
-def _seed_insert_version(
-    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
-) -> dict[str, object]:
-    """Seed the derived version only for compile's prepared insert validation."""
-    if mutation != "insert":
-        return dict(row)
-    version_attr = _version_attribute(model, entity_name)
-    if version_attr is None or version_attr.name in row:
-        return dict(row)
-    return {**row, version_attr.name: INITIAL_VERSION}
-
-
 def _build_instructions(
     entry: Mapping[str, object],
     model: AcceptedMetamodel,
     prepare: WirePreparer,
     submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
-    entity_name = _keyed_entry_entity(entry)
+    _keyed_entry_entity(entry)
     parsed = read_submissions(model, [entry]) if submissions is None else submissions
     if "row" in entry:
         return [_ResolvedWrite(prepare(parsed[0].instruction), None)]
-    if _is_temporal_entity(model, entity_name):
-        return [_build_temporal_instruction(parsed[0], prepare)]
-    mutation = cast("str", entry["mutation"])
     result: list[_ResolvedWrite] = []
     for submission in parsed:
-        instruction = submission.instruction
-        assert isinstance(instruction, KeyedWriteInstruction)
-        row = _seed_insert_version(model, entity_name, mutation, instruction.rows[0])
-        prepared = prepare(replace(instruction, rows=(row,)))
+        prepared = prepare(submission.instruction)
         assert isinstance(prepared, PreparedKeyedInstruction)
         result.append(_ResolvedWrite(prepared, submission.declared_observation))
     return result

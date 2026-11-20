@@ -89,14 +89,12 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
     # normative rule name the predicate resolver uses — a different package and
     # a different exception class, one rule.
     model = _model()
-    keyed = instructions.deserialize(
-        {"mutation": "delete", "entity": "Person", "rows": [{"id": 1}]}
-    )
+    keyed = instructions.deserialize({"mutation": "delete", "entity": "Person", "row": {"id": 1}})
     with raises_code(UsageError, "reference-ambiguous-entity-name"):
         instructions.prepare_typed_write(keyed, write_preparation_of(model))
 
     canonical = instructions.deserialize(
-        {"mutation": "delete", "entity": "a.Person", "rows": [{"id": 1}]}
+        {"mutation": "delete", "entity": "a.Person", "row": {"id": 1}}
     )
     instructions.prepare_typed_write(canonical, write_preparation_of(model))
 

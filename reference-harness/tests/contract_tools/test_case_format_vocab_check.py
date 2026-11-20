@@ -58,7 +58,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 100
+    assert len(prose) == 99
     assert "framework-owned-member-assigned" in prose
     assert "relationship-join-type-mismatch" in prose
     assert {
@@ -79,7 +79,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
     assert "scalar-collection-unquantified" in prose
     assert "string-predicate-non-string-member" in prose  # the non-string-member rule
     assert "subtype-write-sibling-attribute" in prose  # a Subtype-write-rule bullet
-    assert "temporal-keyed-write-multi-row" in prose  # the Instruction-rule bullet
+    assert "temporal-keyed-write-multi-row" not in prose
     assert "set-based-write-target-unsupported" in prose  # the predicate Instruction rule
     assert "inheritance-missing-root" in prose  # a Model-rules paragraph entry
     assert "inheritance-missing-concrete-subtype" in prose  # the family-membership rule
@@ -101,7 +101,7 @@ def test_real_prose_vocabulary_is_the_full_rule_set() -> None:
 
 def test_real_schema_enum_is_the_full_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 100
+    assert len(rules) == 99
     assert "framework-owned-member-assigned" in rules
     assert "metamodel-temporal-member-reserved" in rules
     assert "relationship-join-type-mismatch" in rules
@@ -125,7 +125,7 @@ def test_real_schema_enum_is_the_full_rule_set() -> None:
     assert "reference-ambiguous-entity-name" in rules
     assert "subtype-selection-duplicate-alternative" in rules
     assert "subtype-selection-overlapping-alternatives" in rules
-    assert "temporal-keyed-write-multi-row" in rules
+    assert "temporal-keyed-write-multi-row" not in rules
     assert "set-based-write-target-unsupported" in rules
     assert "inheritance-missing-concrete-subtype" in rules
     assert "inheritance-concrete-subtype-with-children" in rules

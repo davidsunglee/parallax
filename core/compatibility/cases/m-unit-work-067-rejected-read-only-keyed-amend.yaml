@@ -6,7 +6,6 @@ when:
   write:
     mutation: amend
     entity: parallax.compatibility.ScalarThing
-    rows:
-      - { id: 1 }
+    row: { id: 1 }
 then:
   rejectedRule: read-only-write-target

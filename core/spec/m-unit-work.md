@@ -147,8 +147,8 @@ how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
 `m-conformance-adapter` reference that shape rather than redefining it. There are three:
 
 - a **keyed** instruction — a `mutation` on one `entity` carrying the flat
-  attribute-named neutral write input (`rows`), authorized by the source it was
-  stated through: `insert` opens a row, `amend` assigns the members its row
+  attribute-named neutral write input of one object (`row`), authorized by the
+  source it was stated through: `insert` opens a row, `amend` assigns the members its row
   names, `replace` states the object's complete writable state
   (*Source-authorized replacement*), and `delete` / `terminate` end it, each
   with its bounded `*Until` form where one exists;
@@ -191,7 +191,7 @@ so a canonical owner names the write's exact target while a bare one two
 namespaces share resolves nowhere and is refused — never silently matched against
 the target's local name.
 
-Three structural rules keep the instruction framework-honest:
+Two structural rules keep the instruction framework-honest:
 
 - **The instant surface is dimension-explicit.** A Bitemporal write's authored
   Valid-Time lower bound is `validFrom`; bounded writes use `until` for the
@@ -212,24 +212,6 @@ Three structural rules keep the instruction framework-honest:
   (ADR 0013). Neither milestone coordinate is a row cell at any location: a
   temporal write observes a whole predecessor milestone, which no flat row cell can
   name.
-- **A temporal keyed instruction carries exactly one row.** A keyed instruction on a
-  **temporal** target — one whose inheritance family derives an As-Of Axis, which for a
-  descendant is the root's declaration it inherits unchanged (`m-inheritance`:
-  temporality is family-level metadata only the root may declare) — **MUST** carry a
-  single row. Each row of a milestone chain closes its own current milestone,
-  settles against its own Temporal Observation, and
-  opens its own successors, and a temporal entity never collapses into a set-based
-  statement (*Collapse is a membership decision*), so several rows under one
-  instruction denote several independent chains rather than one wider write. An implementation **MUST** refuse
-  such an instruction rather than settle its first row: reducing it would silently
-  discard the rows the author wrote and invent an observation-to-row mapping the
-  instruction cannot express. The row count a keyed instruction may carry therefore
-  depends on the target, which is why the neutral schema states the general
-  one-or-more bound and defers this case to the model. The refusal's own witness is
-  `m-unit-work-016`, a `rejected` case whose `when.write` is a whole keyed
-  instruction rather than a row — the one case shape in which the instruction is
-  itself the input under test (`m-case-format`), classified
-  `temporal-keyed-write-multi-row`.
 
 A conforming implementation **MUST** round-trip every canonical instruction
 document losslessly (`serialize(deserialize(x)) == x`), the write-side of the
@@ -265,16 +247,14 @@ predicate-selected write then refuses a versioned or temporal target
 judged. A keyed or target write is judged for applicability: a temporal
 target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
-refuses a milestone verb; and a temporal keyed instruction carries one row. Only
-then is the payload judged — a keyed row's subtype shape, members, and values, or
-a predicate-selected write's predicate, family refusal, and payload: an
-amendment's every assignment member resolved, in authored order, before any
-value is judged, and a replacement's row naming declared members only, then
-completed and judged as every replacement is (*Source-authorized replacement*).
-A keyed instruction's rows are judged one row at a time, so an instruction
-carrying several is refused at its first refused row. Within a row its member
-names — its subtype shape, then an authored framework-owned or an undeclared
-member — are judged before any of its values. A keyed amendment's named
+refuses a milestone verb. Only then is the payload judged — a keyed row's
+subtype shape, members, and values, or a predicate-selected write's predicate,
+family refusal, and payload: an amendment's every assignment member resolved, in
+authored order, before any value is judged, and a replacement's row naming
+declared members only, then completed and judged as every replacement is
+(*Source-authorized replacement*). Within a row its member names — its subtype
+shape, then an authored framework-owned or an undeclared member — are judged
+before any of its values. A keyed amendment's named
 members are assignments, including in its `amendUntil` form. Assigning a
 [framework-owned member](m-metamodel.md#attributes-and-primary-keys) — the optimistic-lock
 version or an As-Of Axis endpoint — **MUST** be refused during preparation as
@@ -330,7 +310,7 @@ judged against the effective mode, never a local declaration, so a descendant th
 declares nothing is refused when its root is `ReadOnly`.
 
 The judgment follows target resolution and precedes every other judgment of the
-write: a keyed or target write's applicability, row count, and revision
+write: a keyed or target write's applicability and revision
 arguments, a predicate-selected write's readless-target, predicate, and family
 refusals, and every payload rule, so no verb, window, revision, predicate, or
 payload could make the write admissible and none is weighed. A target spelling
@@ -1480,20 +1460,8 @@ a keyed verb authors. It has exactly three arms:
   observed two different states, so the state-keyed arm's own reason does not
   apply and the object is the correct grain.
 
-A claim addresses one object, so a keyed instruction naming **several** rows
-reaches no arm's scope: it has no single Object Key and no single observed state,
-and an implementation **MUST NOT** claim it at either grain. Only a caller
-holding a pre-formed multi-row instruction can author one; a keyed verb writes
-the one row the value it was handed names. An implementation **MUST** refuse
-such an instruction whatever evidence its caller supplies. Without evidence,
-neither a read nor an insertion's authority licenses it, so nothing admits it as
-a write. Evidence supplied with it cannot travel with it: one observation is
-evidence about **one** row, so the pairing is refused rather than the evidence
-dropped.
-
-That refusal is a judgment about the write's own admitted form, and both it and
-the refusal of an arriving intent the buffer's existing claim cannot absorb are made
-**before** the write is buffered, each leaving the claim ledger and the buffer as
+The refusal of an arriving intent the buffer's existing claim cannot absorb is
+made **before** the write is buffered, leaving the claim ledger and the buffer as
 it found them. An implementation **MUST NOT** record a write's claim before the
 write has passed the admitted-form judgments that precede buffering: a caller
 that catches such a refusal and continues in the same unit of work would otherwise

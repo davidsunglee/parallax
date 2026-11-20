@@ -97,32 +97,43 @@ def _synthetic_keyed_rejected(write: dict[str, object], model: str) -> case_form
 
 
 def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_target() -> None:
-    # A keyed instruction brings its own handle, so the rule is judged against the
-    # entity the instruction names rather than the model's default write root —
-    # which here is `Tenant`, neither of the two entities written below. The same
-    # plural rows are refused on the temporal entity and accepted on the
-    # non-temporal one, so the handle, not the model, is what decided it.
-    plural_temporal: dict[str, object] = {
-        "mutation": "amend",
-        "entity": "Lease",
-        "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
-    }
-    plural_non_temporal: dict[str, object] = {
-        "mutation": "amend",
-        "entity": "LeaseNote",
-        "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
-    }
+    # A keyed instruction brings its own handle, so its row is judged against the
+    # entity it names rather than the model's default write root — which here is
+    # `Tenant`, neither of the two entities written below. The same row is refused
+    # as a framework-owned assignment on the temporal entity, whose axis declares
+    # `txStart`, and as an undeclared member on the non-temporal one.
+    row = {"id": 2, "txStart": "2024-03-01T00:00:00.000000Z"}
+    temporal: dict[str, object] = {"mutation": "amend", "entity": "Lease", "row": row}
+    non_temporal: dict[str, object] = {"mutation": "amend", "entity": "LeaseNote", "row": row}
     model = "models/lease.yaml"
     assert (
-        rejected.run_rejected_case(_synthetic_keyed_rejected(plural_temporal, model))
-        == "temporal-keyed-write-multi-row"
+        rejected.run_rejected_case(_synthetic_keyed_rejected(temporal, model))
+        == "framework-owned-member-assigned"
     )
+    with pytest.raises(UnclassifiedEngineError, match="txStart"):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(non_temporal, model))
+
+
+def test_run_rejected_case_reads_a_row_without_a_revision_as_a_keyed_instruction() -> None:
+    # The serde's own discriminator: with no revision, a `row` document is keyed,
+    # so a keyed-only verb is admitted to its target's judgment.
+    write: dict[str, object] = {
+        "mutation": "amend",
+        "entity": "Lease",
+        "row": {"id": 1, "term": "annual"},
+    }
     with pytest.raises(UnclassifiedEngineError, match="accepted a write"):
-        rejected.run_rejected_case(_synthetic_keyed_rejected(plural_non_temporal, model))
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/lease.yaml"))
+
+
+def test_run_rejected_case_reads_a_retired_plural_keyed_form_as_a_bare_row() -> None:
+    write: dict[str, object] = {"mutation": "amend", "entity": "Lease", "rows": [{"id": 1}]}
+    with pytest.raises(UnclassifiedEngineError, match="rows"):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/lease.yaml"))
 
 
 def test_run_rejected_case_raises_for_a_malformed_keyed_instruction() -> None:
-    malformed: dict[str, object] = {"mutation": "amend", "rows": [{"id": 1}]}
+    malformed: dict[str, object] = {"mutation": "amend", "row": {"id": 1}}
     with pytest.raises(UnclassifiedEngineError, match="missing required key"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(malformed, "models/position.yaml"))
 
@@ -317,21 +328,6 @@ def test_run_rejected_case_raises_when_when_carries_model_and_write() -> None:
 _SCALAR_THING = "parallax.compatibility.ScalarThing"
 
 
-def test_a_keyed_write_sets_its_case_clock_context_aside() -> None:
-    # `at` is harness Clock context, never an instruction field, so it is filtered
-    # before the instruction is built rather than refused as an unexpected key.
-    write: dict[str, object] = {
-        "mutation": "amend",
-        "entity": _SCALAR_THING,
-        "rows": [{"id": 1}],
-        "at": "2024-03-01T00:00:00.000000Z",
-    }
-    assert (
-        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/scalars.yaml"))
-        == "read-only-write-target"
-    )
-
-
 @pytest.mark.parametrize(
     "write",
     [
@@ -339,18 +335,24 @@ def test_a_keyed_write_sets_its_case_clock_context_aside() -> None:
         {
             "mutation": "amend",
             "entity": _SCALAR_THING,
-            "rows": [{"id": 1}],
+            "row": {"id": 1},
             "target": {"entity": _SCALAR_THING, "predicate": {"true": {}}},
         },
+        {
+            "mutation": "amend",
+            "entity": _SCALAR_THING,
+            "row": {"id": 1},
+            "at": "2024-03-01T00:00:00.000000Z",
+        },
     ],
-    ids=["rows-and-row", "rows-and-target"],
+    ids=["rows-and-row", "row-and-target", "case-clock-context"],
 )
 def test_a_mixture_of_instruction_carriers_is_malformed_rather_than_graded(
     write: dict[str, object],
 ) -> None:
-    # Each would be a persistence refusal if the extra carrier were discarded, so
-    # the mixture must fail the case before any case-only member is set aside.
-    with pytest.raises(UnclassifiedEngineError, match=r"row|ambiguous|unexpected"):
+    # Each would be a persistence refusal if the extra member were discarded, so
+    # the document fails the case as no write-instruction form.
+    with pytest.raises(UnclassifiedEngineError, match="unexpected key"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/scalars.yaml"))
 
 
@@ -360,7 +362,7 @@ def test_an_unclassified_instruction_refusal_fails_the_case() -> None:
     write: dict[str, object] = {
         "mutation": "amend",
         "entity": "Lease",
-        "rows": [{"id": 1, "notAMember": 1}],
+        "row": {"id": 1, "notAMember": 1},
     }
     with pytest.raises(UnclassifiedEngineError, match="notAMember"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/lease.yaml"))

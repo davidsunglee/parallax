@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Final, cast
 
 from parallax.conformance import _case_ingress
@@ -74,7 +74,8 @@ type Outcome = Buffered | Executed | Refused
 def read_submissions(
     model: AcceptedMetamodel, write: object, *, step: int | None = None
 ) -> tuple[Submission, ...]:
-    """Parse each entry once; split rows while retaining declarations and insertion pointers."""
+    """Parse each entry's one-row instructions in order, each retaining its entry's
+    pointer and declarations and its own row's declared observation."""
     entries = (
         [cast("Mapping[str, object]", write)]
         if isinstance(write, Mapping)
@@ -83,56 +84,56 @@ def read_submissions(
     submissions: list[Submission] = []
     for position, entry in enumerate(entries):
         pointer = f"/scenario/{step}/write/{position}" if step is not None else f"/write/{position}"
-        observations: list[VersionObservation | None] = []
-        document = {
-            name: value
-            for name, value in entry.items()
-            if name
-            in {
-                "mutation",
-                "entity",
-                "rows",
-                "row",
-                "target",
-                "assignments",
-                "ifVersion",
-                "ifTxStart",
-                "validFrom",
-                "until",
-            }
-        }
-        if "rows" in entry:
-            entity, mutation = cast("str", entry["entity"]), cast("str", entry["mutation"])
-            rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-            if _is_temporal_entity(model, entity):
-                _temporal_entry_row(entity, mutation, rows)
-            document["rows"] = [
-                _without_observation_controls(model, entity, mutation, row) for row in rows
-            ]
-            observations = [
-                VersionObservation(observed_version=cast("int", row["observedVersion"]))
-                if row.get("observedVersion") is not None
-                else None
-                for row in rows
-            ]
-        instruction = _case_ingress.normalize_case_write(instructions.deserialize(document), model)
-        split = (
-            tuple(replace(instruction, rows=(row,)) for row in instruction.rows)
-            if isinstance(instruction, KeyedWriteInstruction)
-            else (instruction,)
-        )
-        for index, one in enumerate(split):
+        document = {name: value for name, value in entry.items() if name in _INSTRUCTION_MEMBERS}
+        for one, observation in _entry_instructions(model, entry, document):
             submissions.append(
                 Submission(
-                    one,
+                    _case_ingress.normalize_case_write(instructions.deserialize(one), model),
                     pointer,
                     entry.get("on"),
                     entry.get("expectError"),
-                    observations[index] if observations else None,
+                    observation,
                     step,
                 )
             )
     return tuple(submissions)
+
+
+# The members a case write entry carries into its canonical instruction documents;
+# every other member, such as the Clock's `at`, is case context.
+_INSTRUCTION_MEMBERS: Final = frozenset(
+    {
+        "mutation",
+        "entity",
+        "row",
+        "target",
+        "assignments",
+        "ifVersion",
+        "ifTxStart",
+        "validFrom",
+        "until",
+    }
+)
+
+
+def _entry_instructions(
+    model: AcceptedMetamodel, entry: Mapping[str, object], document: Mapping[str, object]
+) -> Iterable[tuple[Mapping[str, object], VersionObservation | None]]:
+    """The instruction documents ``entry`` submits, each with the observation its
+    row declares: one keyed document per row of a keyed entry's ``rows``, else
+    ``document`` alone."""
+    if "rows" not in entry:
+        return ((document, None),)
+    entity, mutation = cast("str", entry["entity"]), cast("str", entry["mutation"])
+    return tuple(
+        (
+            {**document, "row": _without_observation_controls(model, entity, mutation, row)},
+            VersionObservation(observed_version=cast("int", row["observedVersion"]))
+            if row.get("observedVersion") is not None
+            else None,
+        )
+        for row in cast("Sequence[Mapping[str, object]]", entry["rows"])
+    )
 
 
 class WireSubmitter:
@@ -252,20 +253,6 @@ def _version_attribute(model: AcceptedMetamodel, entity_name: str) -> AttributeI
 
 def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
     return bool(family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
-
-
-def _temporal_entry_row(
-    entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
-) -> Mapping[str, object]:
-    if len(raw_rows) != 1:
-        raise UnclassifiedEngineError(
-            f"{entity_name!r} {mutation!r}: a temporal write entry carries ONE row "
-            f"({len(raw_rows)} authored) — each row closes its own milestone and chains its "
-            "own successors, and a temporal entity never collapses into a set-based statement "
-            "(m-unit-work 'A temporal keyed instruction carries exactly one row'); author one "
-            "entry per row"
-        )
-    return raw_rows[0]
 
 
 def _observation_refusal(
@@ -641,12 +628,7 @@ def _buffer_wire_insert(
 ) -> WireEntity:
     valid_from, until = instruction.valid_from, instruction.until
     entity = case_entity(model, instruction.entity)
-    version = _version_attribute(model, instruction.entity)
-    payload = {
-        name: value
-        for name, value in instruction.rows[0].items()
-        if version is None or name != version.name
-    }
+    payload = dict(instruction.rows[0])
     opened = (
         tx.wire.insert(
             entity.identity.canonical,

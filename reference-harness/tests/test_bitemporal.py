@@ -188,6 +188,20 @@ def test_temporal_write_input_at_corruption_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
+def test_a_temporal_write_step_of_several_rows_is_not_graded_from_its_first() -> None:
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _temporal_write_input_cases()
+            if c.path.stem.startswith("m-temporal-write-001")
+        )
+    )
+    step = next(s for s in case.write_sequence if s.get("rows"))
+    step["rows"] = [*step["rows"], dict(step["rows"][0])]
+    with pytest.raises(CaseFailure, match="author a temporal step per row"):
+        _assert_write_input_columns(case, "postgres")
+
+
 def _setup_document_case(prefix: str = "m-temporal-write-011") -> Case:
     return copy.deepcopy(
         next(case for case in _temporal_write_input_cases() if case.path.stem.startswith(prefix))

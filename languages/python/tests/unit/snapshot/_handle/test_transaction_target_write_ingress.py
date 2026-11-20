@@ -35,7 +35,7 @@ from parallax.core.internal.base import InvalidValueError, UsageError
 from parallax.core.internal.entity import AttributeAssignment, DomainModel
 from parallax.core.internal.entity._expressions import AttributeRef
 from parallax.core.internal.entity._model import model_of
-from parallax.core.internal.unit_work import TargetWriteInstruction
+from parallax.core.internal.unit_work import KeyedWriteInstruction, TargetWriteInstruction
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire import WireTransactionView
 from tests._support import mirrored_models as mm
@@ -691,8 +691,8 @@ def test_a_stated_none_start_is_refused_rather_than_read_as_omission(verb: str) 
 @pytest.mark.parametrize(
     "document",
     [
-        {"mutation": "update", "entity": "Account", "rows": [{"id": 1}]},
-        {"mutation": "updateUntil", "entity": "Account", "rows": [{"id": 1}]},
+        {"mutation": "update", "entity": "Account", "row": {"id": 1}},
+        {"mutation": "updateUntil", "entity": "Account", "row": {"id": 1}},
         {"mutation": "update", "entity": "Account", "row": {"id": 1}, "ifVersion": 1},
         {
             "mutation": "update",
@@ -726,9 +726,9 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
 
 
 @pytest.mark.parametrize("mutation", ["amend", "delete"])
-def test_a_target_document_states_exactly_one_revision(mutation: str) -> None:
-    with raises_code(UsageError, "write-instruction-invalid", match="states no revision"):
-        deserialize({"mutation": mutation, "entity": "Account", "row": {"id": 1}})
+def test_a_document_stating_no_revision_is_a_keyed_write(mutation: str) -> None:
+    instruction = deserialize({"mutation": mutation, "entity": "Account", "row": {"id": 1}})
+    assert isinstance(instruction, KeyedWriteInstruction)
 
 
 @pytest.mark.parametrize(
@@ -751,12 +751,12 @@ def test_a_destructive_target_document_round_trips(document: dict[str, object]) 
 
 
 def test_a_source_write_and_a_keyed_replacement_are_canonical_tokens() -> None:
-    keyed = deserialize({"mutation": "replace", "entity": "Account", "rows": [{"id": 1}]})
+    keyed = deserialize({"mutation": "replace", "entity": "Account", "row": {"id": 1}})
     bounded = deserialize(
         {
             "mutation": "replaceUntil",
             "entity": "Account",
-            "rows": [{"id": 1}],
+            "row": {"id": 1},
             "validFrom": "2024-01-01T00:00:00Z",
             "until": "2024-02-01T00:00:00Z",
         }

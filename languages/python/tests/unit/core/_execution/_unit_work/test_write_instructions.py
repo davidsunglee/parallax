@@ -129,7 +129,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "Noether", "balance": 5.00}],
+            "row": {"id": 9, "owner": "Noether", "balance": 5.00},
         },
     ),
     (
@@ -137,7 +137,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "amend",
             "entity": "Account",
-            "rows": [{"id": 1, "balance": 0.00}],
+            "row": {"id": 1, "balance": 0.00},
         },
     ),
     (
@@ -145,7 +145,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "delete",
             "entity": "Account",
-            "rows": [{"id": 9}],
+            "row": {"id": 9},
         },
     ),
     (
@@ -153,7 +153,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Balance",
-            "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
+            "row": {"id": 9, "acctNum": "D", "value": 100.00},
         },
     ),
     (
@@ -161,7 +161,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "terminate",
             "entity": "Balance",
-            "rows": [{"id": 9}],
+            "row": {"id": 9},
         },
     ),
     (
@@ -169,7 +169,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Position",
-            "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
+            "row": {"id": 9, "acctNum": "D", "value": 100.00},
             "validFrom": _B1,
         },
     ),
@@ -178,7 +178,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insertUntil",
             "entity": "Position",
-            "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
+            "row": {"id": 9, "acctNum": "D", "value": 100.00},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -188,7 +188,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "amendUntil",
             "entity": "Position",
-            "rows": [{"id": 9, "value": 150.00}],
+            "row": {"id": 9, "value": 150.00},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -198,7 +198,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "terminateUntil",
             "entity": "Position",
-            "rows": [{"id": 9}],
+            "row": {"id": 9},
             "validFrom": _B1,
             "until": _B2,
         },
@@ -208,7 +208,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "Noether", "balance": 5.00}],
+            "row": {"id": 9, "owner": "Noether", "balance": 5.00},
         },
     ),
     (
@@ -216,7 +216,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": 1}],
+            "row": {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": 1},
         },
     ),
     (
@@ -333,6 +333,13 @@ def test_serde_round_trip(doc: dict[str, Any]) -> None:
     assert wi.serialize(wi.deserialize(doc)) == doc
 
 
+@pytest.mark.parametrize("rows", [(), ({"id": 1}, {"id": 2})], ids=["no-row", "two-rows"])
+def test_a_keyed_document_is_serialized_only_from_one_row(rows: tuple[dict[str, int], ...]) -> None:
+    instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", rows=rows)
+    with pytest.raises(ValueError, match=f"carries {len(rows)}"):
+        wi.serialize(instruction)
+
+
 def test_keyed_rows_are_frozen_views() -> None:
     instruction = wi.KeyedWriteInstruction(mutation="delete", entity="Account", rows=({"id": 9},))
     with pytest.raises(TypeError):
@@ -350,7 +357,7 @@ def test_transaction_time_alias_is_rejected() -> None:
             {
                 "mutation": "insert",
                 "entity": "Balance",
-                "rows": [{"id": 9, "value": 100.00}],
+                "row": {"id": 9, "value": 100.00},
                 "at": _B2,
             }
         )
@@ -371,22 +378,34 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
             {
                 "mutation": "amend",
                 "entity": "Account",
-                "rows": [{"id": 1, "balance": 0.00, forbidden: 3}],
+                "row": {"id": 1, "balance": 0.00, forbidden: 3},
             }
         )
 
 
-def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
-    with raises_code(UsageError, "write-instruction-invalid", match="ambiguous"):
+def test_mixed_retired_and_shapeless_instructions_are_rejected() -> None:
+    # A predicate `target` decides the shape first, so a keyed carrier beside it
+    # is an unexpected member rather than a second reading of the document.
+    with raises_code(
+        UsageError, "write-instruction-invalid", match=r"predicate write: unexpected key\(s\)"
+    ):
         wi.deserialize(
             {
                 "mutation": "delete",
                 "entity": "Account",
-                "rows": [{"id": 1}],
+                "row": {"id": 1},
                 "target": {"entity": "Account", "predicate": {"true": {}}},
             }
         )
-    with raises_code(UsageError, "write-instruction-invalid", match=r"`rows`.*`target`.*or `row`"):
+    with raises_code(
+        UsageError,
+        "write-instruction-invalid",
+        match=r"keyed write: unexpected key\(s\) \['rows'\]",
+    ):
+        wi.deserialize({"mutation": "delete", "entity": "Account", "rows": [{"id": 1}]})
+    with raises_code(
+        UsageError, "write-instruction-invalid", match=r"missing required key\(s\) \['row'\]"
+    ):
         wi.deserialize({"mutation": "delete", "entity": "Account"})
     with raises_code(UsageError, "write-instruction-invalid", match="must be a mapping"):
         wi.deserialize([1, 2, 3])
@@ -395,33 +414,35 @@ def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
 @pytest.mark.parametrize(
     "doc, match",
     [
-        ({"entity": "Account", "rows": [{"id": 1}]}, "missing required"),
+        ({"entity": "Account", "row": {"id": 1}}, "missing required"),
         (
-            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "note": "x"},
+            {"mutation": "insert", "entity": "Account", "row": {"id": 1}, "note": "x"},
             "unexpected key",
         ),
         (
-            {"mutation": "nope", "entity": "Account", "rows": [{"id": 1}]},
+            {"mutation": "nope", "entity": "Account", "row": {"id": 1}},
             "`mutation` must be one of",
         ),
-        ({"mutation": "insert", "entity": "", "rows": [{"id": 1}]}, "non-empty entity name"),
-        ({"mutation": "insert", "entity": "Account", "rows": []}, "non-empty list"),
-        ({"mutation": "insert", "entity": "Account", "rows": [1]}, "each row must be a mapping"),
+        ({"mutation": "insert", "entity": "", "row": {"id": 1}}, "non-empty entity name"),
         (
-            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "until": _B2},
+            {"mutation": "insert", "entity": "Account", "row": [{"id": 1}]},
+            "keyed write: `row` must be a mapping",
+        ),
+        (
+            {"mutation": "insert", "entity": "Account", "row": {"id": 1}, "until": _B2},
             "MUST NOT carry `until`",
         ),
         (
             {
                 "mutation": "insertUntil",
                 "entity": "Position",
-                "rows": [{"id": 1}],
+                "row": {"id": 1},
                 "validFrom": _B1,
             },
             "MUST carry both",
         ),
         (
-            {"mutation": "insert", "entity": "Account", "rows": [{"id": 1}], "validFrom": ""},
+            {"mutation": "insert", "entity": "Account", "row": {"id": 1}, "validFrom": ""},
             "non-empty instant string",
         ),
     ],
@@ -550,9 +571,12 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
 @pytest.mark.parametrize(
     "doc, match",
     [
-        ({"mutation": "amend", "entity": "Account", "row": [1]}, "`row` must be a mapping"),
         (
-            {"mutation": "insert", "entity": "Account", "row": {"id": 1}},
+            {"mutation": "amend", "entity": "Account", "row": [1], "ifVersion": 1},
+            "`row` must be a mapping",
+        ),
+        (
+            {"mutation": "insert", "entity": "Account", "row": {"id": 1}, "ifVersion": 1},
             "`mutation` must be one of",
         ),
         (
@@ -574,11 +598,23 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
             "states both `ifVersion` and `ifTxStart`",
         ),
         (
-            {"mutation": "replace", "entity": "Account", "row": {"id": 1}, "until": _B2},
+            {
+                "mutation": "replace",
+                "entity": "Account",
+                "row": {"id": 1},
+                "ifVersion": 1,
+                "until": _B2,
+            },
             "MUST NOT carry `until`",
         ),
         (
-            {"mutation": "replaceUntil", "entity": "Position", "row": {"id": 1}, "until": _B2},
+            {
+                "mutation": "replaceUntil",
+                "entity": "Position",
+                "row": {"id": 1},
+                "ifTxStart": _B1,
+                "until": _B2,
+            },
             "MUST carry both",
         ),
         (
@@ -586,20 +622,27 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
             "non-empty instant string",
         ),
         (
-            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "note": "x"},
+            {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": 1, "note": 1},
             "unexpected key",
         ),
         (
-            {"mutation": "amend", "entity": "Account", "row": {"id": 1, "observedVersion": 2}},
+            {
+                "mutation": "amend",
+                "entity": "Account",
+                "row": {"id": 1, "observedVersion": 2},
+                "ifVersion": 1,
+            },
             "forbidden observation control key",
         ),
         (
-            {"mutation": "amend", "entity": "Account", "rows": [{"id": 1}], "row": {"id": 1}},
-            "ambiguous",
-        ),
-        (
-            {"mutation": "delete", "entity": "Account", "row": {"id": 1}},
-            "states no revision",
+            {
+                "mutation": "amend",
+                "entity": "Account",
+                "rows": [{"id": 1}],
+                "row": {"id": 1},
+                "ifVersion": 1,
+            },
+            r"unexpected key\(s\) \['rows'\]",
         ),
     ],
 )
@@ -917,7 +960,7 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
     serialized = wi.serialize(instruction)
     assert serialized["validFrom"] == "2024-01-01T00:00:00.000000Z"
     wire_prepared = wi.prepare_wire_write(
-        wi.deserialize({**serialized, "rows": [{"id": 1, "value": "5.00"}]}),
+        wi.deserialize({**serialized, "row": {"id": 1, "value": "5.00"}}),
         write_preparation_of(_POSITION),
     )
     assert isinstance(wire_prepared, wi.PreparedKeyedInstruction)
@@ -986,13 +1029,13 @@ def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() ->
     # a bare spelling two namespaces share names the normative rule and reports
     # the canonical spellings that would resolve, while a name the model does
     # not declare at all stays the plain well-formedness refusal.
-    keyed = wi.deserialize({"mutation": "delete", "entity": "SharedVariant", "rows": [{"id": 1}]})
+    keyed = wi.deserialize({"mutation": "delete", "entity": "SharedVariant", "row": {"id": 1}})
     with raises_code(UsageError, "reference-ambiguous-entity-name") as excinfo:
         wi.prepare_typed_write(keyed, write_preparation_of(_SHARED_LOCAL_NAME))
     assert "archive.SharedVariant" in str(excinfo.value)
     assert "catalog.SharedVariant" in str(excinfo.value)
 
-    unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
+    unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "row": {"id": 1}})
     with raises_code(UsageError, "write-instruction-invalid", match="declares no entity 'Ghost'"):
         wi.prepare_typed_write(unknown, write_preparation_of(_SHARED_LOCAL_NAME))
 
@@ -1006,33 +1049,13 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target() -> None:
     # The verb names the alternative that keeps the caller's row effect,
     # spelled for the surface the call arrived on, so the refusal is asserted
     # in full.
-    write = wi.deserialize({"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]})
+    write = wi.deserialize({"mutation": "terminate", "entity": "Account", "row": {"id": 1}})
     with raises_code(UsageError, "write-instruction-invalid") as raised:
         wi.prepare_wire_write(write, write_preparation_of(_ACCOUNT))
     assert raised.value.args[1] == (
         "Non-temporal objects like 'Account' do not support 'terminate', which closes "
         "a row's history instead of removing it. Use 'delete' instead."
     )
-
-
-def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
-    # The converse half of the target-profile quadrant above. Each row of a
-    # milestone chain closes its own milestone, settles against its own
-    # observation, and opens its own successors, so several rows under one
-    # instruction denote several chains rather than one wider write
-    # (m-unit-work). The refusal carries a `rule`, since the corpus grades it as
-    # a named pre-SQL rejection.
-    plural = wi.deserialize(
-        {
-            "mutation": "amend",
-            "entity": "Position",
-            "rows": [{"id": 1, "value": 5}, {"id": 2, "value": 6.00}],
-            "validFrom": _B1,
-        }
-    )
-    with pytest.raises(UsageError, match="carries 2 rows") as exc:
-        wi.prepare_typed_write(plural, write_preparation_of(_POSITION))
-    assert exc.value.code == wi.TEMPORAL_KEYED_WRITE_MULTI_ROW
 
 
 def test_a_versioned_target_is_refused_before_its_framework_owned_assignment() -> None:
@@ -1196,7 +1219,7 @@ def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 1, "owner": "Newton", "balance": 5.00, "shoe_size": 9}],
+            "row": {"id": 1, "owner": "Newton", "balance": 5.00, "shoe_size": 9},
         }
     )
     with raises_code(UsageError, "write-instruction-invalid", match="shoe_size"):
@@ -1207,7 +1230,7 @@ def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
     # m-value-object-044's own payload: the required top-level `destination`
     # value object is entirely absent.
     keyed = wi.deserialize(
-        {"mutation": "insert", "entity": "Shipment", "rows": [{"id": 5, "name": "Express"}]}
+        {"mutation": "insert", "entity": "Shipment", "row": {"id": 5, "name": "Express"}}
     )
     with raises_code(UsageError, "write-required-value-object-missing"):
         wi.prepare_typed_write(keyed, write_preparation_of(_MODELS["shipment"]))
@@ -1235,7 +1258,7 @@ def test_a_document_bound_must_be_a_finite_canonical_timestamp(bound: str, rule:
             {
                 "mutation": "amendUntil",
                 "entity": "Position",
-                "rows": [{"id": 1, "value": 1}],
+                "row": {"id": 1, "value": 1},
                 "validFrom": _B1,
                 "until": bound,
             }
@@ -1247,7 +1270,7 @@ def test_the_schema_admits_no_infinite_authored_bound() -> None:
     document = {
         "mutation": "amendUntil",
         "entity": "Position",
-        "rows": [{"id": 1, "value": 1}],
+        "row": {"id": 1, "value": 1},
         "validFrom": _B1,
         "until": "infinity",
     }
@@ -1476,13 +1499,6 @@ def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
     keyed = wi.keyed_instruction_from_target(prepared)
     assert keyed.mutation == mutation
     assert keyed.valid_time_window is prepared.valid_time_window
-
-
-@_PRODUCERS
-def test_a_plural_temporal_keyed_write_is_refused_before_its_members(prepare: Any) -> None:
-    plural = wi.KeyedWriteInstruction("amend", "Balance", ({"id": 1, "nonsense": 1}, {"id": 2}))
-    with raises_code(UsageError, "temporal-keyed-write-multi-row"):
-        prepare(plural, _BALANCE)
 
 
 def test_a_constructed_deletion_assigns_nothing() -> None:
@@ -1785,28 +1801,6 @@ _OUTRANKED: list[tuple[str, _Build, AcceptedMetamodel, str, str]] = [
         _POSITION,
         "Position",
         "write-instruction-invalid",
-    ),
-    (
-        "temporal-multi-row",
-        lambda entity: _keyed(
-            "amend",
-            entity,
-            {"id": 1, "value": "1.00"},
-            {"id": 2, "value": "2.00"},
-            valid_from=_I1,
-        ),
-        _POSITION,
-        "Position",
-        "temporal-keyed-write-multi-row",
-    ),
-    (
-        "transaction-time-multi-row",
-        lambda entity: _keyed(
-            "amend", entity, {"id": 1, "value": "1.00"}, {"id": 2, "value": "2.00"}
-        ),
-        _BALANCE,
-        "Balance",
-        "temporal-keyed-write-multi-row",
     ),
     (
         "missing-revision",

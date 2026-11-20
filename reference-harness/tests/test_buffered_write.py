@@ -10,15 +10,14 @@ imposed. A golden-graded scenario's buffer may also carry target submissions,
 and a state-graded one also readless predicate writes and refused submissions.
 
 The structural half (one-or-more keyed entries, no predicate entry) is the JSON
-Schema's; the two model-aware rules JSON Schema cannot express — member-name
-honesty and the temporal singleton (`m-unit-work`: an entry on a temporal entity
-carries exactly one row) — are the harness validator's. These DB-free probes pin
-both halves: the general keyed shapes — a single write, a mixed multi-object
-flush, a buffer over different entities / different keys, and the three
-same-transaction coalescing witnesses — are ACCEPTED; a predicate entry is
+Schema's; the model-aware rules JSON Schema cannot express, such as member-name
+honesty, are the harness validator's. These DB-free probes pin both halves: the
+general keyed shapes — a single write, a mixed multi-object flush, a buffer over
+different entities / different keys, a temporal entry of several rows, and the
+three same-transaction coalescing witnesses — are ACCEPTED; a predicate entry is
 REJECTED in a golden-graded case (schema), and a materializing one outside a
-state-graded case (harness); and a row naming a non-member or a plural temporal
-entry is REJECTED (harness).
+state-graded case (harness); and a row naming a non-member is REJECTED
+(harness).
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ _SEQUENCE = _defs("models/buffered-sequence-layout-twin-columns.yaml")
 def _accepted(instructions: list[Any], entity_defs: list[dict[str, Any]]) -> bool:
     """A buffer is ACCEPTED only when BOTH layers pass — the schema structural shape
     (one-or-more submissions) and the harness's model-aware
-    checks (member-name honesty, the temporal singleton, framework provenance), asked
+    checks (member-name honesty, keyed applicability, framework provenance), asked
     here for an UNGROUPED step."""
     schema_ok = next(_buffered_validator().iter_errors(instructions), None) is None
     harness_errors: list[str] = []
@@ -534,16 +533,10 @@ def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: P
     )
 
 
-# --- a temporal entry carries exactly one row (m-unit-work) ---------------------
+# --- each row of an entry is its own keyed instruction (m-unit-work) ------------
 
 
-def test_a_plural_temporal_buffer_entry_is_rejected() -> None:
-    # Each row of a milestone chain closes its own milestone, settles against its
-    # own observation, and chains its own successors, so a temporal keyed instruction
-    # carries exactly one row. The shared `rows` array admits a plural authoring
-    # because the bound depends on whether the target is temporal, which only the
-    # model knows — so the rule is decided here, at the authoring boundary both
-    # implementations read, rather than separately inside each.
+def test_a_plural_temporal_buffer_entry_is_accepted() -> None:
     probe = [
         {
             "mutation": "amend",
@@ -552,35 +545,7 @@ def test_a_plural_temporal_buffer_entry_is_rejected() -> None:
             "at": "2024-06-01T00:00:00+00:00",
         }
     ]
-    assert next(_buffered_validator().iter_errors(probe), None) is None
-    errors: list[str] = []
-    _validate_buffered_write(probe, _BALANCE, _OP, "probe", errors)
-    assert any("exactly one" in error and "Balance" in error for error in errors)
-
-
-def test_a_plural_non_temporal_buffer_entry_is_accepted() -> None:
-    # The contrast: a non-temporal entry legitimately carries several rows — the
-    # set-based flush `m-batch-write` collapses. Only the temporal target's own
-    # milestone chain forbids it.
-    probe = [
-        {
-            "mutation": "amend",
-            "entity": "Account",
-            "rows": [{"id": 1, "balance": 5.0}, {"id": 2, "balance": 5.0}],
-        }
-    ]
-    assert _accepted(probe, _ACCOUNT)
-
-
-def test_whole_tree_validation_rejects_a_plural_temporal_buffer_entry(tmp_path: Path) -> None:
-    def mutate(case: dict[str, Any]) -> None:
-        case["when"]["scenario"][0]["write"][0]["rows"].append({"id": 2, "value": 1.0})
-
-    errors = _corrupt_witness(tmp_path, mutate)
-    assert any(
-        "m-temporal-write-008" in error and "exactly one" in error and "Balance" in error
-        for error in errors
-    )
+    assert _accepted(probe, _BALANCE)
 
 
 def test_a_value_object_document_with_any_keys_shares_its_buffer() -> None:

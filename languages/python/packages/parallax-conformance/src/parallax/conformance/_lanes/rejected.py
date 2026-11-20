@@ -123,7 +123,7 @@ def run_rejected_case(case: case_format.Case) -> str:
     the case schema names a rule by is that rule, and any other refusal, or
     acceptance, fails the case.
 
-    Membership can decide the form only because `target`, `rows`, and `row` are
+    Membership can decide the form only because `target` and `row` are
     RESERVED from a bare row at this position (`compatibility-case.schema.json`
     `$defs/bareWriteRow`): none is a domain member name here, so no row can be
     re-read as an instruction and no instruction as a row. It can decide it only
@@ -236,47 +236,20 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
     )
 
 
-# The members a keyed `when.write` carries into its canonical instruction; any
-# other member is case context, such as the Clock's `at`, and never an
-# instruction field (`m-unit-work`).
-_KEYED_INSTRUCTION_MEMBERS: Final[tuple[str, ...]] = (
-    "mutation",
-    "entity",
-    "rows",
-    "validFrom",
-    "until",
-)
-
-
 def _rejected_instruction(
     case: case_format.Case, authored: Mapping[str, object], model: AcceptedMetamodel
 ) -> instructions.WriteInstruction:
     """The instruction a rejected `when.write` puts under test.
 
-    A `target` names a predicate-selected instruction, deserialized whole, so a
-    predicate replacement's `row` stays its payload. Otherwise `rows` names a
-    keyed instruction, which brings its own `entity` handle: its document is
-    rebuilt from the instruction members alone, exactly as the
-    writeSequence/scenario producer rebuilds one, once the input is known to carry
-    no other instruction's carrier — filtering first would discard that carrier
-    and grade a malformed input as though it were well formed. Otherwise `row`
-    names a target instruction, deserialized whole. Anything else is the bare
-    neutral write row (①), which names no handle: it is resolved against the
-    model's default entity (:func:`_rejected_target`) and wrapped as a keyed
-    insert, its flush-time `observedVersion` context set aside.
+    A `target` or a singular `row` names a write-instruction document,
+    deserialized whole through the serde's own discriminator: `target` a
+    predicate-selected instruction, whose replacement's `row` stays its payload;
+    otherwise a stated revision a target instruction, else a keyed one. Anything
+    else is the bare neutral write row (①), which names no handle: it is resolved
+    against the model's default entity (:func:`_rejected_target`) and wrapped as a
+    keyed insert, its flush-time `observedVersion` context set aside.
     """
-    if "target" in authored:
-        return instructions.deserialize(authored)
-    if "rows" in authored:
-        if "row" in authored:
-            raise UnclassifiedEngineError(
-                f"{case.path.name}: a keyed `when.write` carries `rows` and also `row`, which "
-                "names another instruction form (m-case-format Rejected cases)"
-            )
-        return instructions.deserialize(
-            {key: authored[key] for key in _KEYED_INSTRUCTION_MEMBERS if key in authored}
-        )
-    if "row" in authored:
+    if "target" in authored or "row" in authored:
         return instructions.deserialize(authored)
     target = case_entity(model, _rejected_target(case, model))
     durable_row = {name: value for name, value in authored.items() if name != "observedVersion"}

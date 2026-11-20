@@ -9,7 +9,7 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 7, owner: Newton, balance: "5.00", version: 1 }
+            - { id: 7, owner: Newton, balance: "5.00" }
       rollback: true
       databaseCalls: 1
       note: apply an insert of a new account 7, then ROLL BACK — the insert is discarded

@@ -405,7 +405,7 @@ in decimal space under any authored `tolerance`.
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `amend`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `accessMode` its entrypoint selects and any of the three transaction options — `retry`, `concurrency`, `isolation` — THAT joining call explicitly requests) |
 | `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
-| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
+| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, or a predicate-selected, keyed, or target instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `amend` (default) or `delete` |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — a standalone/table-level defect, cross-entity family invariant, or relationship join type mismatch a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
@@ -1122,10 +1122,10 @@ MUST equal the sum of the `when.writeSequence` steps' declared statement counts,
 reads the sequence owes (*Resolving reads a write owes*, below). A grouped effect is one statement and
 one Database Call however many keyed effects it applies, so where PostgreSQL
 groups effects that MariaDB runs one statement each, the dialects' counts
-differ and the case is authored once per dialect. A step on a **temporal** entity carries **exactly one**
-neutral write input row (`m-unit-work`: each row closes its own milestone and
-chains its own successors, and a temporal entity never collapses into a set-based
-statement), so a chain per key is authored as a **step per key**. A
+differ and the case is authored once per dialect. A keyed step's `rows` is an
+authoring convenience: that many one-row keyed instructions (`m-unit-work` *Write
+instruction vocabulary*) of the step's `mutation` on its `entity`, submitted in
+order within the step's one choreography unit. A
 Transaction-Time-Only `amend` declaring **one** statement is the guard that keeps
 the current milestone every assigned value of which it already holds
 (`m-temporal-write` *Unchanged milestones*): its golden assigns `in_z` to itself on the
@@ -1710,9 +1710,9 @@ buffered, batched, ordered writes), each addressed by its own pointer
 write-instruction `$defs` rather than redefining them; a keyed or target
 entry layers only the `at` / `validFrom` / `until` authoring surface and the
 entry's own `on` and `expectError`. In a golden-graded case every entry is a **keyed** instruction
-(`mutation` + `entity` + `rows`, the case-format analogue of
-`write-instruction.schema.json`'s `keyedWriteInstruction`) its verb accepts,
-never a source-authorized `replace` / `replaceUntil`, or a **target** submission
+(`mutation` + `entity` + `rows`, that many one-row
+`write-instruction.schema.json` `keyedWriteInstruction`s submitted in order) its
+verb accepts, never a source-authorized `replace` / `replaceUntil`, or a **target** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
 `targetWriteInstruction`) whose cost the document alone states: the only
 submission of its group naming its object, of an object no earlier find of its
@@ -1747,12 +1747,9 @@ to **no** DML (`databaseCalls: 0`, no `statements`). The two-keyed same-object
 insert-then-amend / insert-then-delete pair is that rule's **single-object special
 case**, not a separate shape. The JSON Schema pins only the structural shape (one or
 more keyed entries); it imposes **no** cross-entry same-object equality, and the
-retained static checks are per-entry **member-name honesty** (each keyed row key
-names a declared attribute / value object of its entity) and the **temporal
-singleton** (`m-unit-work`: an entry on a temporal entity carries exactly one row,
-since each row chains its own milestones — author several rows as several
-entries). Both are model-aware, which is why neither is expressible in the JSON
-Schema. Coalescing and
+retained static check is per-entry **member-name honesty** (each keyed row key
+names a declared attribute / value object of its entity), which is model-aware
+and so not expressible in the JSON Schema. Coalescing and
 foreign-key-ordering correctness are proven where they always were — the step's
 golden SQL executed verbatim, plus `tableState` / `expectRows`.
 
@@ -2538,16 +2535,19 @@ invalid" semantics as a language-neutral pre-SQL rejection.
 A `when.write` is one of four inputs, and an implementation **MUST** dispatch on
 the members the input itself carries, in this order — never on the case's tags,
 filename, or named rule, which no adapter is obliged to read before validating. A
-`target` names a **predicate-selected instruction**; otherwise a `rows` array
-names a whole **keyed instruction**; otherwise a singular `row` names a **target
-instruction** (`write-instruction.schema.json` `targetWriteInstruction`, the
-`m-unit-work` *Target writes* form); anything else is the **bare neutral write
-row** (①). The order is what keeps a predicate replacement, which carries its
-complete writable state as a `row` beside its `target`, a predicate-selected
-instruction. Each explicit form is validated whole against its own definition, so
-an input mixing the carriers of two forms — `target` with `rows`, or `rows` with
+`target` names a **predicate-selected instruction**; otherwise a singular `row`
+names a **target instruction** (`write-instruction.schema.json`
+`targetWriteInstruction`, the `m-unit-work` *Target writes* form) when it states a
+revision (`ifVersion` or `ifTxStart`), and a **keyed instruction**
+(`keyedWriteInstruction`) when it states none; anything else is the **bare
+neutral write row** (①). Each of the three instructions is a write-instruction
+document dispatched exactly as its serde dispatches one. The order is what keeps
+a predicate replacement, which carries its complete writable state as a `row`
+beside its `target`, a predicate-selected instruction. Each explicit form is
+validated whole against its own definition, so an input carrying members no one
+form states together — an `entity` beside a `target`, or a `rows` list beside a
 `row` — is **invalid** rather than graded as whichever form the dispatch reached
-first: discarding the other carrier would turn an authoring mistake into a case
+first: discarding the other members would turn an authoring mistake into a case
 that grades a rule it never meant to reach. The four differ in what supplies the
 entity handle, which is why the distinction is load-bearing rather than cosmetic:
 the three instructions name their own target, so a validator checks the payload
@@ -2569,13 +2569,13 @@ has nothing to say about. An array carries no member to dispatch on, so admittin
 one here would leave each implementation to invent an answer — the schema refuses
 it, and both graders refuse it by shape before asking for a member.
 
-`target`, `rows`, and `row` are therefore **reserved** at this position: a bare
-write row authors none of them, exactly as it authors neither half of an observed
+`target` and `row` are therefore **reserved** at this position: a bare write row
+authors neither of them, exactly as it authors neither half of an observed
 milestone's own edge coordinate. A row is a row only because nothing on it names
 an instruction, so without the reservation the row form would admit every
 instruction, the three instruction forms would decide nothing, and a legitimate
-row for an entity whose model declares a `many` value object named `rows` would be
-re-read by every dispatcher as a keyed instruction. Such a row is **refused**
+row for an entity whose model declares a member named `row` would be re-read by
+every dispatcher as an instruction. Such a row is **refused**
 rather than reclassified — a silent reclassification turns an authoring mistake
 into a case that grades a rule it never meant to reach — and its entity is written
 through the keyed form, which names its own handle. The reservation is
@@ -2589,8 +2589,8 @@ keyed instruction reaches an implementation through `when.writeSequence` or a
 `when.scenario` step's own buffer, and a target instruction through a scenario's
 target submission, where the state or golden SQL it produces is what grades it.
 The rejected lane emits no SQL, so it is the one lane in which the instruction
-itself — its verb, its target, its revision, and its row count together — is the
-input under test rather than a row's contents.
+itself — its verb, its target, and its revision together — is the input under
+test rather than a row's contents.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
 MUST — the `m-predicate` predicate rules (bound ordering, and the path and
@@ -2747,17 +2747,6 @@ against any row's contents):
   construction to [`m-temporal-write`](m-temporal-write.md). Carried state is
   not a caller assignment.
 
-- `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
-  carries more than one row. Each row of a milestone chain closes its own current
-  milestone, settles against its own Temporal Observation, and opens its own
-  successors, and a temporal target never collapses into a set-based statement
-  (`m-unit-work` *Collapse is a membership decision*), so several rows under one
-  instruction denote several independent chains rather than one wider write (`m-unit-work` "A temporal keyed
-  instruction carries exactly one row"). Refusing is the rule: settling the first
-  row would silently discard the rest and invent an observation-to-row mapping the
-  instruction cannot express. The row count a keyed instruction may carry depends
-  on whether its target is temporal, which the schema cannot see, so the neutral
-  schema states the general one-or-more bound and this decides it.
 - `set-based-write-target-unsupported` — a **predicate-selected** instruction
   whose target is versioned or temporal. Each object such a target holds is
   written against an observation of it — its version, or the milestone the write
@@ -2915,15 +2904,14 @@ position, so no rule of the closed vocabulary is *about* it, and grading the row
 regardless would report whichever rule some other member happens to violate — the
 case would pass while testing something it never claimed. Such a row is therefore a
 **case-authoring failure**, refused before the walk and never classified as a
-`rejectedRule`, exactly as the keyed instruction form's rows are. The one key that is
+`rejectedRule`, exactly as a keyed instruction's row is. The one key that is
 not a member is `observedVersion`, which the shared row vocabulary admits as
 flush-time context. The refusal is asked **after** the Subtype-write rules below,
 which own the family-specific names a row may not carry and classify them.
 
-A keyed instruction first admits its target, operation, window, and row count
-under [`m-unit-work`](m-unit-work.md). Only then are its rows judged, one row
-completely before the next: subtype shape, assignment names and member honesty,
-then values. An admitted keyed `amend` of a concrete subtype carrying a sibling
+A keyed instruction first admits its target, operation, and window under
+[`m-unit-work`](m-unit-work.md). Only then is its row judged: subtype shape,
+assignment names and member honesty, then values. An admitted keyed `amend` of a concrete subtype carrying a sibling
 branch's attribute is therefore `subtype-write-sibling-attribute`, as a bare row
 carrying that name is. A bare row has no operation or window to admit and keeps
 the full-document grading above.

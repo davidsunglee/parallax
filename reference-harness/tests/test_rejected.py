@@ -63,7 +63,6 @@ from reference_harness.inheritance import (
 )
 from reference_harness.keyed_write_validate import (
     FRAMEWORK_OWNED_MEMBER_ASSIGNED,
-    TEMPORAL_KEYED_WRITE_MULTI_ROW,
     KeyedWriteApplicabilityError,
     validate_keyed_write,
 )
@@ -872,31 +871,14 @@ def _rejected_keyed_doc(instruction: dict[str, Any], rule: str) -> Case:
     return Case(path=Path("m-unit-work-999-x.yaml"), raw=raw, model=_lease_model())
 
 
-def test_keyed_write_rejects_plural_rows_on_a_temporal_target() -> None:
+def test_keyed_writes_accept_plural_rows_on_a_temporal_target() -> None:
+    # Each row is its own one-row keyed instruction, so a temporal target admits
+    # several in one step.
     instruction = {
         "mutation": "amend",
         "entity": "Lease",
         "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
     }
-    with pytest.raises(RejectionError) as exc:
-        validate_keyed_write(_lease_model().entity("Lease"), instruction)
-    assert exc.value.rule == TEMPORAL_KEYED_WRITE_MULTI_ROW
-
-
-def test_keyed_write_accepts_plural_rows_on_a_non_temporal_target() -> None:
-    # The contrast that makes the rule the TARGET's: the same plural shape against
-    # a non-temporal entity of the same model is the set-based flush m-batch-write
-    # collapses, not a refusal.
-    instruction = {
-        "mutation": "amend",
-        "entity": "LeaseNote",
-        "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
-    }
-    validate_keyed_write(_lease_model().entity("LeaseNote"), instruction)
-
-
-def test_keyed_write_accepts_a_single_row_on_a_temporal_target() -> None:
-    instruction = {"mutation": "amend", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]}
     validate_keyed_write(_lease_model().entity("Lease"), instruction)
 
 
@@ -973,7 +955,7 @@ def test_keyed_assignment_judges_every_non_temporal_row() -> None:
     assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
 
 
-def test_rejected_keyed_assignment_refuses_earlier_owned_name_before_later_unknown_name() -> None:
+def test_rejected_keyed_assignment_refuses_an_owned_name_before_an_unknown_name() -> None:
     case = Case(
         path=Path("m-concurrency-999-row-order.yaml"),
         raw={
@@ -984,7 +966,7 @@ def test_rejected_keyed_assignment_refuses_earlier_owned_name_before_later_unkno
                 "write": {
                     "mutation": "amend",
                     "entity": "parallax.compatibility.Account",
-                    "rows": [{"id": 1, "version": 7}, {"id": 2, "unknown": 9}],
+                    "row": {"id": 1, "version": 7, "unknown": 9},
                 }
             },
             "then": {"rejectedRule": FRAMEWORK_OWNED_MEMBER_ASSIGNED},
@@ -995,11 +977,11 @@ def test_rejected_keyed_assignment_refuses_earlier_owned_name_before_later_unkno
 
 
 def test_runner_fails_when_a_keyed_instruction_is_accepted() -> None:
-    # A single-row temporal instruction authored as rejected: the validator accepts
+    # An admissible temporal amendment authored as rejected: the validator accepts
     # it, so the expected pre-SQL rejection never happens.
     case = _rejected_keyed_doc(
-        {"mutation": "amend", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]},
-        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+        {"mutation": "amend", "entity": "Lease", "row": {"id": 1, "term": "annual"}},
+        FRAMEWORK_OWNED_MEMBER_ASSIGNED,
     )
     with pytest.raises(CaseFailure, match="did not match its pre-SQL refusal"):
         run_case(case, None)
@@ -1010,8 +992,8 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
     # so an unknown handle is an authoring failure rather than a silent fallback to
     # the model's default write root.
     case = _rejected_keyed_doc(
-        {"mutation": "amend", "entity": "Sublease", "rows": [{"id": 1}, {"id": 2}]},
-        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+        {"mutation": "amend", "entity": "Sublease", "row": {"id": 1}},
+        FRAMEWORK_OWNED_MEMBER_ASSIGNED,
     )
     with pytest.raises(CaseFailure, match="does not declare"):
         run_case(case, None)
@@ -1019,14 +1001,11 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
 
 def test_keyed_instruction_applicability_precedes_undeclared_members() -> None:
     case = _rejected_keyed_doc(
-        {
-            "mutation": "amend",
-            "entity": "Lease",
-            "rows": [{"id": 1, "notAMember": 7}, {"id": 2, "notAMember": 8}],
-        },
-        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+        {"mutation": "delete", "entity": "Lease", "row": {"id": 1, "notAMember": 7}},
+        FRAMEWORK_OWNED_MEMBER_ASSIGNED,
     )
-    run_case(case, None)
+    with pytest.raises(CaseFailure, match="a temporal target takes no delete"):
+        run_case(case, None)
 
 
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])
@@ -1205,17 +1184,17 @@ def _rejected_write_case(model: Model, write: dict[str, Any], rule: str) -> Case
         # A keyed insert at the abstract root: persistence precedes the subtype rules.
         (
             _family_model("read-only"),
-            {"mutation": "insert", "entity": "Archive", "rows": [{"id": 1, "title": "t"}]},
+            {"mutation": "insert", "entity": "Archive", "row": {"id": 1, "title": "t"}},
         ),
         # A keyed amendment naming a sibling branch's member.
         (
             _family_model("read-only"),
-            {"mutation": "amend", "entity": "Letter", "rows": [{"id": 1, "parcel": "p"}]},
+            {"mutation": "amend", "entity": "Letter", "row": {"id": 1, "parcel": "p"}},
         ),
         # A keyed amendment naming no declared member: persistence precedes honesty.
         (
             _standalone_model("read-only"),
-            {"mutation": "amend", "entity": "Ledger", "rows": [{"id": 1, "nothing": 1}]},
+            {"mutation": "amend", "entity": "Ledger", "row": {"id": 1, "nothing": 1}},
         ),
     ],
     ids=["bare-row", "keyed-abstract-root", "keyed-sibling-member", "keyed-undeclared-member"],
@@ -1227,7 +1206,7 @@ def test_the_runner_judges_persistence_before_every_other_write_check(
 
 
 def test_the_runner_keeps_read_write_ordering_unchanged() -> None:
-    write = {"mutation": "insert", "entity": "Archive", "rows": [{"id": 1, "title": "t"}]}
+    write = {"mutation": "insert", "entity": "Archive", "row": {"id": 1, "title": "t"}}
     run_case(_rejected_write_case(_family_model(None), write, ABSTRACT_WRITE_TARGET), None)
 
 
@@ -1362,19 +1341,19 @@ def test_a_mixture_of_instruction_carriers_is_refused_before_any_judgement(
 ) -> None:
     # Each is a write to a read-only family, so grading whichever form the dispatch
     # reached first would report the very rule the case names.
-    with pytest.raises(CaseFailure, match="different instruction forms"):
+    with pytest.raises(CaseFailure, match="no one instruction form states together"):
         run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
 
 
 def test_a_member_named_row_inside_an_instruction_keeps_its_meaning() -> None:
-    # The reservation is positional, so a keyed instruction's own rows name a domain
+    # The reservation is positional, so a keyed instruction's own row names a domain
     # member `row` freely; the instruction is still keyed and still judged first by
     # its family's Persistence Mode.
     model = _standalone_model("read-only")
     entity = dict(model.descriptor["entity"])
     entity["attributes"] = [*entity["attributes"], {"name": "row", "type": "int32"}]
     model = Model(path=model.path, descriptor={"entity": entity})
-    write = {"mutation": "amend", "entity": "Ledger", "rows": [{"id": 1, "row": 2}]}
+    write = {"mutation": "amend", "entity": "Ledger", "row": {"id": 1, "row": 2}}
     run_case(_rejected_write_case(model, write, READ_ONLY_WRITE_TARGET), None)
 
 
@@ -2558,47 +2537,6 @@ def test_keyed_operation_and_window_precede_framework_owned_assignments(
         )
 
 
-@pytest.mark.parametrize(
-    ("mutation", "first_row", "earlier_rule"),
-    [
-        ("amend", {"id": 1, "owner": 7}, "neutral-literal-type-mismatch"),
-        ("replace", {"id": 1}, "write-required-attribute-missing"),
-        (
-            "amend",
-            {"id": {"computed": "maxPlusOne"}, "owner": "Ada"},
-            "neutral-literal-type-mismatch",
-        ),
-        (
-            "replace",
-            {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "100.00"},
-            "neutral-literal-type-mismatch",
-        ),
-    ],
-)
-def test_rejected_keyed_rows_finish_values_before_a_later_owned_assignment(
-    mutation: str, first_row: dict[str, Any], earlier_rule: str
-) -> None:
-    case = Case(
-        path=Path("m-concurrency-999-earlier-row-values.yaml"),
-        raw={
-            "model": "models/account.yaml",
-            "tags": ["m-concurrency"],
-            "shape": "rejected",
-            "when": {
-                "write": {
-                    "mutation": mutation,
-                    "entity": "parallax.compatibility.Account",
-                    "rows": [first_row, {"id": 2, "version": 7}],
-                }
-            },
-            "then": {"rejectedRule": FRAMEWORK_OWNED_MEMBER_ASSIGNED},
-        },
-        model=load_model(_COMPATIBILITY_ROOT, "models/account.yaml"),
-    )
-    with pytest.raises(CaseFailure, match=earlier_rule):
-        run_case(case, None)
-
-
 def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
     case = Case(
         path=Path("m-concurrency-999-inapplicable-window.yaml"),
@@ -2610,7 +2548,7 @@ def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
                 "write": {
                     "mutation": "amendUntil",
                     "entity": "parallax.compatibility.Account",
-                    "rows": [{"id": 1, "version": 7}],
+                    "row": {"id": 1, "version": 7},
                     "validFrom": "2024-01-01T00:00:00Z",
                     "until": "2024-02-01T00:00:00Z",
                 }

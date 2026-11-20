@@ -325,7 +325,7 @@ def _validate_buffered_write(
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
     The schema pins the STRUCTURAL shape (an ordered buffer of one-or-more KEYED
-    instructions; predicate-selected entries are excluded). This adds the two
+    instructions; predicate-selected entries are excluded). This adds the
     model-aware checks JSON Schema cannot express and the wire harness would otherwise
     skip (it executes the flushed golden SQL, never the buffered instructions):
 
@@ -333,13 +333,8 @@ def _validate_buffered_write(
       objects of its entity, so a buffered write cannot silently name a non-member
       (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`). Asked
       after instruction applicability, before the row's values.
-    * **the temporal singleton** — an entry on a temporal entity carries exactly ONE
-      row (`m-unit-work` "A temporal keyed instruction carries exactly one row"),
-      since each row closes its own milestone, settles against its own observation, and
-      chains its own successors. The row count a keyed entry may carry depends on
-      whether its target is temporal, which only the model knows, so the schema
-      states the general one-or-more bound and the singleton is decided by
-      :func:`~reference_harness.keyed_write_validate.validate_keyed_write` — the
+    * **keyed applicability and assignment names** — decided by
+      :func:`~reference_harness.keyed_write_validate.validate_keyed_write`, the
       SAME function the `rejected` lane's keyed `when.write` reaches, so a buffer
       entry and a rejected instruction cannot be judged differently.
     Same-object coalescing is NOT a structural property of the buffer: a general buffer

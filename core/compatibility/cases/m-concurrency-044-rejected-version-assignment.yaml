@@ -5,7 +5,6 @@ when:
   write:
     mutation: amend
     entity: parallax.compatibility.Account
-    rows:
-      - { id: 1, version: 2 }
+    row: { id: 1, version: 2 }
 then:
   rejectedRule: framework-owned-member-assigned
