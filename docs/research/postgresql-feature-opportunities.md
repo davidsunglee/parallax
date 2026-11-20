@@ -105,11 +105,22 @@ root.storage_health()
 
 Parallax should report rather than run `VACUUM`: the binding specification places provisioning and migration execution with deployment tooling. This item is PostgreSQL-shaped. InnoDB purges on its own and offers persistent-statistics settings as its nearest knob; MongoDB needs nothing comparable.
 
-### 4. Indexes on document-resident members
+### 4. Indexes on members stored inside a Structured Column
 
-[`m-storage-layout`](../../core/spec/m-storage-layout.md#physical-indices) refuses an index naming a document-resident Attribute and leaves document-path indexes to a separate design. Until then, a predicate on a document member scans the table. The item matters as much as the Relational Document Layout is used in production.
+An Index component is a local Attribute of its Entity, so nothing stored inside a Structured Column can be indexed and a predicate on it scans the table. That covers both layouts:
+
+- **`Columns`, the default.** Each top-level Value Object is one Structured Column holding every nested Value Object and inner Attribute at any depth ([`m-value-object`](../../core/spec/m-value-object.md)). A dotted path such as `Customer.address.geo.country` is filterable and never indexable.
+- **`Document`.** Every member outside the direct roles lives in the layout's one Structured Column. [`m-storage-layout`](../../core/spec/m-storage-layout.md#physical-indices) refuses an index naming one and leaves document-path indexes to a separate design.
+
+Both lower through the same nested extraction form, so one index design serves both. The `Columns` case is the larger audience, since it needs no layout opt-in.
 
 ```yaml
+# Columns layout: a leaf inside a nested Value Object
+indices:
+  - name: customer_by_country
+    attributes: [address.geo.country]
+
+# Document layout: a document-resident member
 layout: { document: { column: payload } }
 indices:
   - name: order_by_customer
@@ -123,7 +134,8 @@ indices:
 | MongoDB | An ordinary dotted-path index |
 
 - **Most portable item.** MongoDB has no other kind of index, so this declaration is a prerequisite for the MongoDB prototype (COR-39) and document-collection storage (COR-49).
-- **Precondition.** Document reads bind path segments as parameters, and an expression index matches only the literal expression. The segments derive from the model rather than from a caller, so rendering them as literals is safe.
+- **Precondition.** Nested reads bind path segments as parameters — one per segment on PostgreSQL, one whole path on MariaDB ([`m-dialect`](../../core/spec/m-dialect.md#nested-extraction-form-m-value-object)) — and an expression index matches only the literal expression. The segments derive from the model rather than from a caller, so rendering them as literals is safe.
+- **Collections are a separate, harder case.** A `many` Value Object member and a scalar collection Attribute are filtered through a quantifier, which PostgreSQL lowers to `exists (… jsonb_array_elements(…))`. No index serves that form: a GIN index needs a containment (`@>`) spelling, so indexing collections means changing the emitted read as well as adding the index. MongoDB's multikey index covers it natively.
 
 ### 5. Partitioning
 
@@ -149,6 +161,23 @@ entities:
 | MariaDB | `partition by key`, `hash`, or `range`, under the same rule that a unique key contains the partition column. Its native current-and-history split exists only for system-versioned tables, which Parallax does not use |
 | MongoDB | `by: key` is a hashed shard key. There is no current-and-history analogue beyond archive collections |
 
+- **Opt-in, never a default.** Measured on PostgreSQL 18.6 against the same table unpartitioned — 2 million rows, 400,000 keys with five milestones each, all in cache, one prepared-statement client, `jit=off`:
+
+  | Statement | Unpartitioned | 16 hash partitions |
+  |---|---|---|
+  | Current row of one key | 0.006 ms | 0.016 ms |
+  | Current rows of 10 keys (`id = any(…)`) | 0.018 ms | 0.141 ms |
+  | Current rows of 10 values of an indexed non-key column | 0.062 ms | 0.230 ms |
+  | Seek page of 50 ordered by key | 0.016 ms | 0.079 ms |
+  | Grouped update of 200 keys joined to a relation | 2.04 ms | 2.32 ms |
+  | Insert of 200 rows | 1.98 ms | 1.45 ms |
+  | Total size | 399 MB | 447 MB |
+  | Relations | 4 | 68 |
+
+  Key reads cost 3–8× more at this size, because a multi-key read probes every partition its keys hash to and an ordered page merges all sixteen. The grouped update prunes per joined row and loses little; inserts gain from smaller GiST trees. The benefits — vacuum per partition, shallower indexes — appear only on tables far larger than memory.
+- **Authored unique indexes.** PostgreSQL refuses a unique index on a partitioned table unless it contains the partition key, so an authored unique Index that omits the model key cannot be created. A binding should refuse partitioning for such an Entity.
+- **Online index builds.** `create index concurrently` is refused on a partitioned table; item 2 would have to build per partition and attach.
+- **Fixed count.** Changing the partition count means rewriting the table, and a hash partition cannot be dropped to retire old history.
 - **The split's open decision.** Losing the cross-partition exclusion would revive the question ADR 0079 deferred: the in-statement lineage guard becomes the only protection against a current row opened inside closed history.
 - **Row movement.** A close would delete from the current partition and insert into history. A concurrent locker of the moved row fails with an error about the tuple having moved to another partition; its SQLSTATE and Parallax's classification of it are untested.
 - **Item 1 first.** A current-row index delivers most of the read benefit of the split without this trade.
