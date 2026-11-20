@@ -2742,8 +2742,9 @@ against any row's contents):
   family-wide and root-owned, so a write at any position of a ReadOnly family,
   abstract positions included, is this rule rather than `abstract-write-target`.
 
-- `framework-owned-member-assigned` — a keyed amendment or replacement names an
-  optimistic-lock version or As-Of Axis endpoint as a caller assignment.
+- `framework-owned-member-assigned` — a keyed opening, amendment, or
+  replacement, or a bare row, which states an opening, names an optimistic-lock
+  version or As-Of Axis endpoint as caller authoring.
   Preparation refuses the member name before its value, using the derived
   framework-owned designation ([`m-metamodel`](m-metamodel.md)); assignment
   admissibility belongs to [`m-unit-work`](m-unit-work.md), version ownership to
@@ -2911,7 +2912,9 @@ case would pass while testing something it never claimed. Such a row is therefor
 `rejectedRule`, exactly as a keyed instruction's row is. The one key that is
 not a member is `observedVersion`, which the shared row vocabulary admits as
 flush-time context. The refusal is asked **after** the Subtype-write rules below,
-which own the family-specific names a row may not carry and classify them.
+which own the family-specific names a row may not carry and classify them, and
+after an authored framework-owned name (the table's last row), which is a
+declared member the row may not name.
 
 A keyed instruction first admits its target, operation, and window under
 [`m-unit-work`](m-unit-work.md). Only then is its row judged: subtype shape,
@@ -2941,7 +2944,7 @@ one of the classes below. The cells are the complete enumeration:
 | Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | accepted document | — | `write-value-type-mismatch` |
 | Value Object `one`, `nullable: true` | accepted | accepted | accepted document | — | `write-value-type-mismatch` |
 | Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | accepted list of documents, `[]` included | — | `write-value-type-mismatch` |
-| framework-owned Attribute | accepted | accepted | accepted | accepted | accepted |
+| framework-owned Attribute | accepted | `framework-owned-member-assigned` | `framework-owned-member-assigned` | `framework-owned-member-assigned` | `framework-owned-member-assigned` |
 
 Reading the columns:
 
@@ -2960,8 +2963,11 @@ Reading the columns:
   resolved codec reports a type mismatch. It is not absence: the member was named.
 - A **framework-owned** Attribute (the optimistic-lock version, an As-Of Axis
   endpoint, a table-per-hierarchy tag column) is outside the walk entirely: the
-  framework supplies its value, so its absence is no caller omission. A payload that
-  *carries* the tag column violates the concrete-subtype protocol above instead.
+  framework supplies its value, so its absence is no caller omission. A row that
+  *names* the version or an endpoint authors it, which is refused by that name,
+  after the Subtype-write rules and before member honesty and every value,
+  whatever value it states. A payload that *carries* the tag column violates the
+  concrete-subtype protocol above instead.
 
 The kinds compose: a nested Attribute or Value Object inside a present document
 answers to its own row of the table, so the three rules hold "at any depth" by

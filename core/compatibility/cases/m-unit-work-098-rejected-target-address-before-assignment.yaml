@@ -1,5 +1,4 @@
-# A target payload's key addresses its object and is the first value judged:
-# the key naming no object is refused before the out-of-space balance beside it.
+# Judged assignment-first, this amendment is refused `neutral-literal-out-of-space`.
 model: models/account.yaml
 tags: [m-unit-work, write, rejected, target-write, slice-snapshot-1]
 shape: rejected

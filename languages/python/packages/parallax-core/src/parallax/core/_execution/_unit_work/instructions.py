@@ -942,6 +942,7 @@ def prepare_keyed_write(
     payload = _payload_with_assignments(
         preparation.meta, entity_preparation, target, family, payload, assignments
     )
+    key, payload = _payload_key(entity_preparation, payload)
     row = _managed_row(
         preparation,
         entity_preparation,
@@ -950,6 +951,7 @@ def prepare_keyed_write(
         mutation,
         payload,
         "keyed",
+        address=key,
         restated_key=restated_key,
     )
     return _prepared_keyed_instruction(
@@ -987,7 +989,14 @@ def prepare_target_write(
         preparation.meta, entity_preparation, target, family, payload, assignments
     )
     row = _managed_row(
-        preparation, entity_preparation, target, representation, mutation, payload, "target"
+        preparation,
+        entity_preparation,
+        target,
+        representation,
+        mutation,
+        payload,
+        "target",
+        address=key,
     )
     return _prepared_target_instruction(
         mutation, _assigns(entity_preparation, row), target, row, window, expectation
@@ -1010,7 +1019,8 @@ def prepare_predicate_write(
     members its payload or ``assignments`` state and only then their values.
 
     An amendment names no key, since the predicate selects the objects it
-    writes; a replacement's key is judged and then dropped.
+    writes; a replacement's key addresses nothing, so it is judged in member
+    order among the other values and then dropped.
     """
     entity_preparation, family = _writable_preparation(preparation, target)
     judge_readless_target(preparation.meta, target, family, mutation)
@@ -1066,11 +1076,7 @@ def _judged_target_key(
 ) -> tuple[object, CompletePayload | PartialPayload]:
     """The key a target write's payload states, refused where it names no
     object, beside the payload still holding every value it stated."""
-    if isinstance(payload, CompletePayload):
-        key, values = _split_key(entity_preparation, payload.values)
-        payload = CompletePayload(values, payload.unlisted_names)
-    else:
-        key = _stated_key(entity_preparation, payload)
+    key, payload = _payload_key(entity_preparation, payload)
     if key is entity_preparation.selection.absent:
         raise key_absent_refusal(target.identity, mutation)
     if key is None:
@@ -1268,14 +1274,17 @@ def _managed_row(
     payload: CompletePayload | PartialPayload,
     described: str,
     *,
+    address: object = UNSTATED,
     restated_key: object = UNSTATED,
 ) -> ManagedRow:
     """``payload`` judged as the row ``mutation`` writes: every member name
-    first, then the key that addresses the object, then the rest.
+    first, then ``address``, the key ``payload`` states for a write that
+    addresses one object, then the rest.
 
-    An opening's key is content its Entity may allocate, not an address, so
-    an opening is judged in member order. A complete payload's values are read
-    once, and copied only where their names must be judged before them.
+    An opening's key is content its Entity may allocate, and a predicate
+    write's addresses nothing, so either is judged in member order. A complete
+    payload's values are read once, and copied only where their names must be
+    judged before them.
     """
     if mutation in INSERT_MUTATIONS or mutation in REPLACE_MUTATIONS:
         complete = _as_complete(payload, mutation)
@@ -1301,8 +1310,7 @@ def _managed_row(
             )
         if mutation in INSERT_MUTATIONS:
             return _opening_row(entity_preparation, target, representation, values)
-        key, values = _split_key(entity_preparation, values)
-        admitted = _admitted_key(entity_preparation, target, representation, key, restated_key)
+        admitted = _admitted_key(entity_preparation, target, representation, address, restated_key)
         return _replacement_row(entity_preparation, target, representation, values, admitted)
     partial = _as_partial(payload, mutation)
     _judge_payload_names(
@@ -1318,8 +1326,7 @@ def _managed_row(
     destructive = mutation in DESTRUCTIVE_MUTATIONS
     if destructive:
         _refuse_members_beside_key(entity_preparation, target, mutation, partial, described)
-    key = _stated_key(entity_preparation, partial)
-    admitted = _admitted_key(entity_preparation, target, representation, key, restated_key)
+    admitted = _admitted_key(entity_preparation, target, representation, address, restated_key)
     if destructive or partial.judged_at_edit:
         return _stated_row(entity_preparation, target, representation, partial.stated, admitted)
     return _amendment_row(entity_preparation, target, representation, partial.stated, admitted)
@@ -1441,6 +1448,17 @@ def _stated_key(entity_preparation: EntityPreparation, payload: PartialPayload) 
     )
 
 
+def _payload_key(
+    entity_preparation: EntityPreparation, payload: CompletePayload | PartialPayload
+) -> tuple[object, CompletePayload | PartialPayload]:
+    """The key ``payload`` states, or the preparation's ``absent``, beside the
+    payload still holding every value it stated."""
+    if isinstance(payload, CompletePayload):
+        key, values = _split_key(entity_preparation, payload.values)
+        return key, CompletePayload(values, payload.unlisted_names)
+    return _stated_key(entity_preparation, payload), payload
+
+
 def _split_key(
     entity_preparation: EntityPreparation, values: Iterable[object]
 ) -> tuple[object, Iterable[object]]:
@@ -1462,13 +1480,14 @@ def _admitted_key(
     restated_key: object,
 ) -> tuple[int, object] | None:
     """The key cell that addresses the object, the first value a payload has
-    judged, beside its position; ``None`` where the payload leaves the key
-    unstated or null for its row to judge.
+    judged, beside its position; ``None`` where the write addresses no object
+    by its payload's key, or leaves that key unstated or null for its row to
+    judge.
 
     A key its caller restated beside it is converted next and must name the
     same object, before any other value is judged.
     """
-    if key is entity_preparation.selection.absent or key is None:
+    if isinstance(key, Unstated) or key is entity_preparation.selection.absent or key is None:
         return None
     position = entity_preparation.key_position
     cell = _key_cell(entity_preparation, target, representation, key)
