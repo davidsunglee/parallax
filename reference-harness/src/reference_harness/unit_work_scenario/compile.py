@@ -182,11 +182,13 @@ class _UngroupedWrite(_Step):
     autocommit connection, or applied and discarded in a session of its own.
 
     ``entries`` are its buffered keyed instructions, carried in the neutral form
-    write grading takes them in, exactly as :class:`_GroupedWrite`'s are, and
-    ``affected_rows`` is the count a direct predicate write states.
+    write grading takes them in, exactly as :class:`_GroupedWrite`'s are, beside
+    the same entries read as ``submissions``, and ``affected_rows`` is the count
+    a direct predicate write states.
     """
 
     entries: tuple[dict[str, Any], ...]
+    submissions: tuple[Submission, ...]
     rolls_back: bool
     affected_rows: int | None
 
@@ -324,7 +326,16 @@ def compile_scenario(case: Case) -> CompiledScenario:
     ]
     _assert_submission_sources(case, steps, submissions)
     if not state_graded:
-        _assert_golden_submissions(case, steps, submissions)
+        _assert_golden_submissions(
+            case,
+            steps,
+            [
+                submission
+                for step in steps
+                if isinstance(step, (_GroupedWrite, _UngroupedWrite))
+                for submission in step.submissions
+            ],
+        )
     units = _unit_fates(case, steps, state_graded=state_graded)
     if state_graded:
         _assert_state_graded_document(case, steps, submissions)
@@ -349,14 +360,15 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
     _assert_identity_anchor(case, index, step)
     if "write" in step:
         entries = _write_entries(step)
+        submissions = _submissions(case, index, entries)
         affected_rows = step.get("expectAffectedRows")
         if group is not None:
             write = step["write"]
             runs_flush = isinstance(write, Mapping) and not _writes_nothing(case, write)
-            return _GroupedWrite(
-                *common, entries, _submissions(case, index, entries), affected_rows, runs_flush
-            )
-        return _UngroupedWrite(*common, entries, step.get("rollback") is True, affected_rows)
+            return _GroupedWrite(*common, entries, submissions, affected_rows, runs_flush)
+        return _UngroupedWrite(
+            *common, entries, submissions, step.get("rollback") is True, affected_rows
+        )
 
     return _RowPublishingStep(*common, _Golden(tuple(step.get("flush") or ())))
 
@@ -434,7 +446,7 @@ _POINTER = re.compile(r"^/scenario/(\d+)/write/(\d+)$")
 def _submissions(
     case: Case, index: int, entries: tuple[dict[str, Any], ...]
 ) -> tuple[Submission, ...]:
-    """Each entry of a grouped write step as the submission it is."""
+    """Each entry of a write step as the submission it is."""
     return tuple(
         _submission(case, index, position, entry) for position, entry in enumerate(entries)
     )
@@ -544,12 +556,13 @@ def _assert_golden_submissions(
     document (`m-case-format` *Buffered keyed write instructions*). A predicate
     or refused submission has no golden statement that grading could align it
     with. A target submission is admitted where what it costs follows from the
-    document alone: it is the only submission of its group naming its object,
-    and no earlier find of the group may have returned a row of that object
-    (:func:`_observes`), so nothing pending or observed stands in for its
+    document alone: it is the only submission of its unit of work naming its
+    object, and no earlier find of that unit may have returned a row of that
+    object (:func:`_observes`), so nothing pending or observed stands in for its
     acquisition or composes with it; and under Locking its Entity has no Valid
     Time, since the coverage a Bitemporal acquisition holds is stored state the
-    document does not state.
+    document does not state. A unit is a `uow` group, or an ungrouped write step
+    alone.
     """
     for submission in submissions:
         if submission.kind == "target" and submission.refusal is None:
@@ -572,7 +585,6 @@ def _assert_golden_target(
     entity, key = target.entity, target.key
     assert entity is not None and key is not None  # a target submission names its object
     where = f"{case.path.name}: {target.pointer}"
-    group = steps[target.step].group
     if case.concurrency_mode == "locking" and any(
         axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts)
     ):
@@ -581,7 +593,11 @@ def _assert_golden_target(
             f"coverage only a `grading: state` scenario leaves unstated."
         )
     for other in submissions:
-        if other is not target and steps[other.step].group == group and other.names(entity, key):
+        if (
+            other is not target
+            and _one_unit(steps, target.step, other.step)
+            and other.names(entity, key)
+        ):
             raise CaseFailure(
                 f"{where} is a target submission of an object {other.pointer} also writes in "
                 f"its group, which only a `grading: state` scenario carries."
@@ -589,13 +605,20 @@ def _assert_golden_target(
     for step in steps[: target.step]:
         if (
             isinstance(step, _RowPublishingStep)
-            and step.group == group
+            and _one_unit(steps, target.step, step.index)
             and _observes(case, step, entity, key)
         ):
             raise CaseFailure(
                 f"{where} is a target submission of an object scenario[{step.index}] of its "
                 f"group observed, which only a `grading: state` scenario carries."
             )
+
+
+def _one_unit(steps: tuple[_CompiledStep, ...], first: int, second: int) -> bool:
+    """Whether steps *first* and *second* belong to one unit of work: one step,
+    or two of one `uow` group."""
+    group = steps[first].group
+    return first == second or (group is not None and steps[second].group == group)
 
 
 def _observes(case: Case, step: _RowPublishingStep, entity: Entity, key: Mapping[str, Any]) -> bool:

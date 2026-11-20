@@ -377,7 +377,9 @@ def _instant(value: Any) -> tuple[int, dt.datetime]:
 
 def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
     """Cross-check each settled write step's golden against the observed state the
-    find it names recorded (`m-case-format` *Settling against a grouped find*).
+    find it names recorded (`m-case-format` *Settling against a grouped find*),
+    or the revision its target caller states. An ungrouped write step is its own
+    unit of work, so its own golden is the Flush delivering its buffer.
 
     The observed state is resolved INDEPENDENTLY of the golden, from the named
     find step's own ``expectRows`` — the rows that read returned, which is exactly
@@ -442,6 +444,17 @@ def _assert_settled_write(scenario: CompiledScenario, dialect: str) -> None:
             with reported_against(case, flush.site):
                 _assert_settled_flush(
                     case, flush.site, golden.pairs(dialect), submissions, refused, dialect
+                )
+    for step in scenario.steps:
+        if isinstance(step, _UngroupedWrite) and any(map(_aligns, step.submissions)):
+            with reported_against(case, step.index):
+                _assert_settled_flush(
+                    case,
+                    step.index,
+                    step.statements.pairs(dialect),
+                    step.submissions,
+                    None,
+                    dialect,
                 )
 
 

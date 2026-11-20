@@ -130,6 +130,41 @@ def test_an_ungrouped_target_write_resolves_no_source(damaged_case: CaseLoader, 
     assert_judged(case)
 
 
+def _ungrouped(case: Case) -> Case:
+    for step in case.when["scenario"]:
+        step.pop("uow", None)
+    return case
+
+
+@pytest.mark.parametrize("name", [_OPTIMISTIC, _TERMINATED], ids=["amendments", "terminations"])
+def test_an_ungrouped_target_aligns_with_its_callers_start(
+    damaged_case: CaseLoader, name: str
+) -> None:
+    case = _ungrouped(damaged_case(name))
+    case.when["scenario"][0]["write"][0]["ifTxStart"] = "2023-12-02T00:00:00.000000Z"
+    with pytest.raises(CaseFailure, match="gated on its caller's stated start"):
+        assert_judged(case)
+
+
+def test_an_ungrouped_target_of_an_object_its_step_writes_again_stays_state_graded(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _ungrouped(damaged_case(_OPTIMISTIC))
+    write: list[dict[str, Any]] = case.when["scenario"][0]["write"]
+    write.append({**write[0], "row": {"id": 1, "amount": 115}})
+    with pytest.raises(CaseFailure, match="also writes in its group"):
+        assert_judged(case)
+
+
+def test_an_ungrouped_locking_bitemporal_target_stays_state_graded(
+    damaged_case: CaseLoader,
+) -> None:
+    case = _ungrouped(damaged_case(_MIXED))
+    case.when["uow"]["concurrency"] = "locking"
+    with pytest.raises(CaseFailure, match="Locking target submission of a Bitemporal Entity"):
+        assert_judged(case)
+
+
 def test_a_write_through_a_pending_insert_composes_with_it_and_reads_nothing(
     damaged_case: CaseLoader,
 ) -> None:
