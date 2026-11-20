@@ -398,9 +398,12 @@ before any authorization setup or modeled work, under the acquisition's own
 budget and as the lease's first submission, so it spends the one replacement
 opportunity that submission carries. The first proof that succeeds makes the
 reader `verified`. A proof whose identity or decoding positively does not match
-makes it `refused`, terminally: from then on every acquisition on it fails as
-preparation failure, chained to that refusal, and no proof that succeeds
-concurrently can admit work after it or undo it. A proof that fails for any
+makes a reader that is still pending `refused`, terminally: from then on every
+acquisition on it fails as preparation failure, chained to that refusal, and no
+proof that succeeds concurrently can admit work after it or undo it. The first
+of those two outcomes decides the reader: a mismatch reported after a
+concurrent proof has made it `verified` fails only its own acquisition, as
+preparation failure. A proof that fails for any
 other reason fails only its own acquisition and changes no readiness, and a
 credential or authentication refusal met on a pending reader is the same
 ordinary acquisition failure it is on a verified one. A deferral and each later
@@ -555,9 +558,11 @@ implementation's restricted resource reporting rather than replacing it.
 
 Over retained capacity, a credential refusal MUST NOT end readiness early.
 Establishment is retried for as long as the readiness budget allows, exactly as
-a preparation refusal is, and readiness fails when that budget is spent —
-naming the refusal rather than the wait, and distinguishing a credential that
-was never produced from a connection that was produced and then refused. A
+a preparation refusal is, unless a limit the adapter's configuration places on
+retrying failed establishment ends it first. Either way readiness fails when
+that budget is spent — naming the refusal rather than the wait, and
+distinguishing a credential that was never produced from a connection that was
+produced and then refused. A
 mode that establishes on the acquiring thread meets a credential or preparation
 refusal there instead, and readiness fails at once with the same naming and
 distinction: nothing above the mode's own establishment retries it. A later
