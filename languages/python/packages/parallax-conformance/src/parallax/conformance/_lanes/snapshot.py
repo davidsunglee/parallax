@@ -15,7 +15,6 @@ from parallax.conformance._database_control import (
 from parallax.conformance._lanes.scenario import (
     LOWERING_ERRORS,
     CaseContext,
-    case_wire_preparer,
     entry_instant,
     execute_keyed_unit,
     is_predicate_write_step,
@@ -43,6 +42,7 @@ from parallax.conformance._mechanism.model_facts import (
 )
 from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.core._execution._keyed_writes import validate_source_pin
+from parallax.core._execution._planning import build_write_preparation
 from parallax.core.internal import inheritance, relationship
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import (
@@ -132,7 +132,7 @@ def compile_scenario(
     options = case_format.database_options(case)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
-    prepare = case_wire_preparer(model)
+    preparation = build_write_preparation(model)
     emissions: list[Emission] = []
     try:
         for index, step in enumerate(steps):
@@ -144,7 +144,7 @@ def compile_scenario(
                     statements = lower_writes(
                         entries,
                         model,
-                        prepare,
+                        preparation,
                         case_binding(case),
                         concurrency,
                         entry_instant(entries[0]),

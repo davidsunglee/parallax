@@ -22,8 +22,8 @@ from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroup
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
@@ -83,7 +83,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
@@ -139,17 +139,18 @@ def _update(
     evidence: RetainedObservation, valid_from: dt.datetime, until: dt.datetime
 ) -> AdmittedWrite:
     mutation: KeyedMutation = "amendUntil"
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            mutation, "SequenceSpan", ({"id": 1, "amount": 300},), valid_from, until
+            mutation, "SequenceSpan", {"id": 1, "amount": 300}, valid_from, until
         ),
         write_preparation_of(_SPANS),
+        WIRE,
     )
     return admitted_write(prepared, evidence, evidence.key.object)
 
 
 def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "SequenceSpan",
@@ -159,6 +160,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
             until=until,
         ),
         write_preparation_of(_SPANS),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return target_write(prepared, inheritance.inheritance_facet_of(_SPANS))
@@ -393,11 +395,10 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
 
 
 def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_instant() -> None:
-    prepared = prepare_wire_write(
-        KeyedWriteInstruction(
-            "amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR
-        ),
+    prepared = prepare_instruction(
+        KeyedWriteInstruction("amendUntil", "SequenceSpan", {"id": 1, "amount": 300}, _MAR, _APR),
         write_preparation_of(_SPANS),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     span = ObjectKey(_SPAN, (("id", 1),))

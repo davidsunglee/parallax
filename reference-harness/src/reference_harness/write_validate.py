@@ -44,7 +44,6 @@ what the `rejected` cases pin — the refusal each language implementation must 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from functools import partial
 from typing import Any
 
 from .case import Entity
@@ -170,23 +169,30 @@ def _target_key_violation(entity: Entity, row: dict[str, Any]) -> str | None:
     """Why a target write's *row* names no object of *entity*, or ``None``
     (`m-unit-work` *Target writes*).
 
-    The row names its object by every primary-key member, each stating a value
-    that member admits. A null one is refused by the key's own non-null type,
-    so it raises its classified ``write-required-attribute-missing``
-    :class:`RejectionError`, the observable a `rejected` case grades, rather
-    than answering a detail.
+    The row names its object by every primary-key member, none of them null. A
+    null one is refused by the key's own non-null type, so it raises its
+    classified ``write-required-attribute-missing`` :class:`RejectionError`, the
+    observable a `rejected` case grades, rather than answering a detail.
     """
-    for attribute in entity.attributes:
-        if not attribute.get("primaryKey"):
-            continue
+    for attribute in _key_attributes(entity):
         path = f"{entity.name}.{attribute['name']}"
         if attribute["name"] not in row:
             return f"{path}: a target write states every primary-key member"
-        judge = partial(_validate_attribute, row, attribute, path=path)
-        detail = _violation_detail(judge, keep=frozenset({WRITE_REQUIRED_ATTRIBUTE_MISSING}))
-        if detail is not None:
-            return detail
+        if row[attribute["name"]] is None:
+            _validate_attribute(row, attribute, path=path)
     return None
+
+
+def _refuse_target_key_value(entity: Entity, row: dict[str, Any]) -> None:
+    """Refuse a stated primary-key member whose literal its type does not
+    admit, by its classified ``neutral-literal-*`` rule: the key is the first
+    value a target payload judges (`m-unit-work`)."""
+    for attribute in _key_attributes(entity):
+        _validate_attribute(row, attribute, path=f"{entity.name}.{attribute['name']}")
+
+
+def _key_attributes(entity: Entity) -> list[dict[str, Any]]:
+    return [attribute for attribute in entity.attributes if attribute.get("primaryKey")]
 
 
 def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool) -> str | None:
@@ -235,30 +241,24 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
     """Why a target instruction's key, verb, row, revision or window does
     not fit its target, or ``None`` (`m-unit-work` *Target writes*).
 
-    The model decides all five, which the case schema cannot see: a key naming
-    no object is refused first (:func:`_target_key_violation`); a temporal
-    target is deleted by no target write and a Non-Temporal one is terminated
-    by none; the rest of the row is judged as :func:`target_row_violation`
-    judges it, and a destructive write's names the key alone; a temporal
-    target states ``ifTxStart`` and a versioned Non-Temporal one
+    The model decides all five, which the case schema cannot see: a key absent
+    or null is refused first (:func:`_target_key_violation`); a temporal target
+    is deleted by no target write and a Non-Temporal one is terminated by none;
+    a temporal target states ``ifTxStart`` and a versioned Non-Temporal one
     ``ifVersion``, while an unversioned one has no revision and takes no target
     write; a Bitemporal target states ``validFrom``, and a Transaction-Time-Only
-    or Non-Temporal one no window.
+    or Non-Temporal one no window. Only then is the row judged: its key's value
+    first, then the rest as :func:`target_row_violation` judges it, a
+    destructive write's naming the key alone.
     """
     mutation = instruction.get("mutation")
-    key_violation = _target_key_violation(entity, instruction["row"])
+    row = instruction["row"]
+    key_violation = _target_key_violation(entity, row)
     if key_violation is not None:
         return f"a target write of {entity.name} — {key_violation}"
     axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
     if mutation == ("delete" if axes else "terminate"):
         return f"a target write of {entity.name} takes no `{mutation}`"
-    replaces = mutation in ("replace", "replaceUntil")
-    violation = target_row_violation(entity, instruction["row"], replaces=replaces)
-    if violation is not None:
-        return f"a target write of {entity.name} — {violation}"
-    keys = {attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")}
-    if mutation in ("delete", "terminate", "terminateUntil") and set(instruction["row"]) - keys:
-        return f"a target write of {entity.name} by `{mutation}` names its key alone"
     versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
     revision = "ifTxStart" if axes else "ifVersion" if versioned else None
     if revision is None:
@@ -273,6 +273,14 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
     if bitemporal != ("validFrom" in instruction) or (not bitemporal and "until" in instruction):
         takes = "a window from `validFrom`" if bitemporal else "no window"
         return f"a target write of {entity.name} takes {takes}"
+    _refuse_target_key_value(entity, row)
+    replaces = mutation in ("replace", "replaceUntil")
+    violation = target_row_violation(entity, row, replaces=replaces)
+    if violation is not None:
+        return f"a target write of {entity.name} — {violation}"
+    keys = {attribute["name"] for attribute in _key_attributes(entity)}
+    if mutation in ("delete", "terminate", "terminateUntil") and set(row) - keys:
+        return f"a target write of {entity.name} by `{mutation}` names its key alone"
     return None
 
 
@@ -353,8 +361,8 @@ def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]
             _validate_occurrence(row, occurrence, path=f"{entity.name}.{name}")
         return
     key_names = {name for name, attribute in attributes.items() if attribute.get("primaryKey")}
-    ordered = [name for name in row if name not in key_names] + [
-        name for name in row if name in key_names
+    ordered = [name for name in row if name in key_names] + [
+        name for name in row if name not in key_names
     ]
     for name in ordered:
         if name in attributes and name not in owned:

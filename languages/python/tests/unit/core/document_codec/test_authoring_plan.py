@@ -245,15 +245,24 @@ def test_a_catalog_compiles_one_plan_per_shape_and_one_converter_per_type() -> N
     )
 
 
-def test_authored_values_read_a_payload_in_member_order() -> None:
-    assert _plan().authored_values({"name": "Ada", "id": 7}) == (
-        7,
-        "Ada",
-        _ABSENT,
-        _ABSENT,
-        _ABSENT,
-        _ABSENT,
+_ADMITTED: Final = object()
+
+
+def test_a_complete_row_states_an_admitted_cell_as_given_without_converting_its_raw() -> None:
+    row = _plan().complete_row(
+        ("not-an-id", "Ada", _ABSENT, _ABSENT, _ABSENT, _ABSENT),
+        lane=_WIRE,
+        required=_REQUIRED,
+        admitted=(0, _ADMITTED),
     )
+    assert row.cells[0] is _ADMITTED
+    assert row.presence & 0b11 == 0b11
+
+
+def test_a_partial_row_states_an_admitted_cell_as_given_whatever_its_pairs_state() -> None:
+    row = _plan().partial_row(((1, "Ada"), (0, "not-an-id")), lane=_WIRE, admitted=(0, _ADMITTED))
+    assert row.cells == (_ADMITTED, "Ada")
+    assert row.presence == 0b11
 
 
 @pytest.mark.parametrize(
@@ -409,15 +418,17 @@ def test_a_lane_converts_one_exact_definition_apart_from_its_neutral_type() -> N
     assert row.cells == ("own", ("b",))
 
 
-def test_a_single_scalars_lane_converter_is_the_one_its_rows_are_admitted_with() -> None:
-    catalog = AuthoringCatalog(_LANES, absent=_ABSENT)
-    plan = catalog.plan(_ROW)
-    (key, *_) = _ROW.members
+def test_a_single_scalars_cell_is_the_one_its_row_authors() -> None:
+    plan = _plan()
+    raws = ("2024-01-01T00:00:00.000000Z", 7)
 
-    assert plan.scalar_converter(_WIRE, 0) is catalog.converter(
-        _WIRE, cast("ScalarDefinition", key)
+    assert (
+        plan.scalar_cell(_WIRE, 2, raws[0])
+        == plan.partial_row(((2, raws[0]),), lane=_WIRE).cells[0]
     )
-    assert plan.scalar_converter(_TYPED, 1)("Ada") == "Ada"
+    with pytest.raises(AuthoringRefusal) as refused:
+        plan.scalar_cell(_TYPED, 1, raws[1])
+    assert refused.value.position == 1
     for position in (3, 4):
         with pytest.raises(ValueError, match="no single scalar"):
-            plan.scalar_converter(_WIRE, position)
+            plan.scalar_cell(_WIRE, position, "x")

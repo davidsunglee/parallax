@@ -16,7 +16,6 @@ from parallax.core._execution._keyed_writes import (
     OpenedKeyedWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    keyed_instruction,
 )
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work._write_ownership import (
@@ -30,8 +29,8 @@ from parallax.core._execution._unit_work.evidence import (
 )
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
+    KeyedWriteInstruction,
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
@@ -45,7 +44,7 @@ from parallax.core.internal.metamodel import (
 from parallax.core.internal.planned_step import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT, itself, scope
 
 _ADVICE: Final = KeyedWriteRefusalAdvice(
@@ -69,8 +68,9 @@ def _key(entity: EntityIdentity, account_id: int) -> ObjectKey:
 def _prepared(
     model: Metamodel, mutation: KeyedMutation, entity: CompiledEntity, row: Mapping[str, object]
 ) -> PreparedKeyedInstruction:
-    return prepare_typed_write(
-        keyed_instruction(mutation, entity.identity, row), write_preparation_of(model)
+    return prepare_instruction(
+        KeyedWriteInstruction(mutation, entity.identity.canonical, row),
+        write_preparation_of(model),
     )
 
 

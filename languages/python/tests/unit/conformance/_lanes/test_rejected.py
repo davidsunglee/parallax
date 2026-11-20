@@ -199,16 +199,13 @@ def test_run_rejected_case_raises_when_model_unexpectedly_accepted() -> None:
         rejected.run_rejected_case(_synthetic_rejected(valid_model))
 
 
-def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
-    valid_write: dict[str, object] = {
-        "write": {"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}
-    }
+def _bare_account_insert(row: dict[str, object]) -> case_format.Case:
     document: dict[str, object] = {
         "model": "models/account.yaml",
-        "when": valid_write,
+        "when": {"write": row},
         "then": {"rejectedRule": "x"},
     }
-    case = case_format.Case(
+    return case_format.Case(
         path=Path("m-unit-work-998-synthetic-rejected.yaml"),
         case_id="m-unit-work-998",
         shape="rejected",
@@ -216,8 +213,17 @@ def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
         model="models/account.yaml",
         document=document,
     )
+
+
+def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
+    case = _bare_account_insert({"id": 1, "owner": "Ada", "balance": "100.00"})
     with pytest.raises(UnclassifiedEngineError, match="accepted a write"):
         rejected.run_rejected_case(case)
+
+
+def test_a_bare_insert_row_stating_the_version_is_refused_as_authoring_it() -> None:
+    case = _bare_account_insert({"id": 1, "owner": "Ada", "balance": "100.00", "version": 1})
+    assert rejected.run_rejected_case(case) == "framework-owned-member-assigned"
 
 
 def test_run_rejected_case_raises_for_a_malformed_query() -> None:

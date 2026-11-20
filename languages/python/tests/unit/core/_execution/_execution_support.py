@@ -13,7 +13,6 @@ from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.write_items import KeyedInsert
 from parallax.core.internal.db_port import DatabaseAdapter, RoutePolicy
@@ -27,7 +26,7 @@ from parallax.core.internal.unit_work import (
 )
 from tests._support.bindings import TEST_BINDING
 from tests._support.root_ownership import own_root
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 ACCOUNT: Final = MODELS["account"]
 FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -78,11 +77,11 @@ def scope(
 
 def account_insert(account_id: int = 7) -> KeyedInsert:
     """One admitted Account insert, buffered by a case straight into a unit of work."""
-    prepared = prepare_typed_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
             "insert",
             "Account",
-            ({"id": account_id, "owner": "Newton", "balance": 5},),
+            {"id": account_id, "owner": "Newton", "balance": 5},
         ),
         write_preparation_of(model_of(ACCOUNT)),
     )

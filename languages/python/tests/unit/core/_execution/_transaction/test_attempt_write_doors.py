@@ -1,12 +1,13 @@
 """The Transaction Attempt's write doors select the bounded verb from the
-caller's raw ``until``, and the target door states the canonical instruction,
-once for every representation."""
+caller's raw ``until``, and the target door hands target preparation the
+adapter's input under the caller's revision and window, once for every
+representation."""
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Set
-from typing import Any, Final, Literal, NoReturn, cast
+from collections.abc import Callable
+from typing import Any, Final, NoReturn, cast
 
 import pytest
 
@@ -23,12 +24,20 @@ from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefus
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     TargetMutation,
-    TargetWriteInstruction,
+    WriteAssignment,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
+    WIRE,
+    PartialPayload,
+    TargetRevisionArguments,
+    WritePreparation,
+    WriteRepresentation,
+)
+from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import CompiledEntity, Metamodel, entity_by_name
 from tests._support.db_port import ScriptedAdapter, Transact
-from tests.unit.core._execution._execution_support import itself, scope
+from tests.unit.core._execution._execution_support import ACCOUNT, itself, scope
 
 _START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _UNTIL: Final = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
@@ -48,6 +57,10 @@ def _account(model: Metamodel) -> CompiledEntity:
     entity = entity_by_name(model, "Account")
     assert entity is not None
     return entity
+
+
+_TARGET: Final = _account(model_of(ACCOUNT))
+_KEY: Final = PartialPayload(((0, 7),))
 
 
 class _KeyedSource:
@@ -111,35 +124,41 @@ class _TargetAdapter:
 
 
 type Converted = tuple[
-    Literal["typed", "wire"],
-    TargetWriteInstruction,
-    Set[str] | None,
-    Callable[[], Mapping[str, object]] | None,
+    WriteRepresentation,
+    TargetMutation,
+    CompiledEntity,
+    PartialPayload,
+    tuple[WriteAssignment, ...],
+    TargetRevisionArguments,
+    dt.datetime | None,
+    dt.datetime | None,
 ]
 
 
 @pytest.fixture
 def converted(monkeypatch: pytest.MonkeyPatch) -> list[Converted]:
-    """What the target door hands the leaf converter it selects, preparation
-    ending the call there."""
+    """What the target door hands target preparation, which ends the call
+    there."""
     calls: list[Converted] = []
 
-    def converter(representation: Literal["typed", "wire"]) -> Callable[..., NoReturn]:
-        def prepare(
-            instruction: TargetWriteInstruction,
-            preparation: WritePreparation,
-            *,
-            authored_members: Set[str] | None,
-            members: Callable[[], Mapping[str, object]] | None,
-            target: object = None,
-        ) -> NoReturn:
-            calls.append((representation, instruction, authored_members, members))
-            raise _Prepared
+    def prepare(
+        preparation: WritePreparation,
+        representation: WriteRepresentation,
+        mutation: TargetMutation,
+        target: CompiledEntity,
+        payload: PartialPayload,
+        *,
+        assignments: tuple[WriteAssignment, ...],
+        revision: TargetRevisionArguments,
+        valid_from: dt.datetime | None,
+        until: dt.datetime | None,
+    ) -> NoReturn:
+        calls.append(
+            (representation, mutation, target, payload, assignments, revision, valid_from, until)
+        )
+        raise _Prepared
 
-        return prepare
-
-    monkeypatch.setattr(attempt_module, "prepare_typed_write", converter("typed"))
-    monkeypatch.setattr(attempt_module, "prepare_wire_write", converter("wire"))
+    monkeypatch.setattr(attempt_module, "prepare_target_write", prepare)
     return calls
 
 
@@ -190,53 +209,44 @@ def test_a_target_write_selects_its_bounded_verb_from_until(
     expected: Selected,
 ) -> None:
     asked: list[TargetMutation] = []
-    adapter = _TargetAdapter(TargetWriteInput("Account", {"id": 7}, "typed"), asked)
+    adapter = _TargetAdapter(TargetWriteInput(_TARGET, TYPED, _KEY), asked)
 
     def fn(tx: TxnAttempt) -> None:
         with pytest.raises(_Prepared):
             tx.target_write(adapter, verb, until=until)
 
     scope(ScriptedAdapter(Transact())).transact(fn, itself)
-    [(_, instruction, _, _)] = converted
+    [(_, mutation, _, _, _, _, _, bound)] = converted
     assert asked == [expected[0]]
-    assert (instruction.mutation, instruction.until) == expected
-
-
-def _members() -> Mapping[str, object]:
-    return {"owner": "Newton"}
+    assert (mutation, bound) == expected
 
 
 @pytest.mark.parametrize(
     ("answer", "revision", "stated"),
     [
         (
-            TargetWriteInput(
-                "Account",
-                {"id": 7, "balance": 5},
-                "wire",
-                authored_members=frozenset({"id", "balance"}),
-            ),
+            TargetWriteInput(_TARGET, WIRE, PartialPayload(((0, 7), (2, 5)))),
             {"version": 3},
-            (3, None, ("version",)),
+            TargetRevisionArguments(3, None, ("version",)),
         ),
         (
-            TargetWriteInput("Account", {"id": 7}, "typed", members=_members),
+            TargetWriteInput(_TARGET, TYPED, _KEY, (WriteAssignment("Account.owner", "N"),)),
             {"tx_start": None},
-            (None, None, ("tx_start",)),
+            TargetRevisionArguments(None, None, ("tx_start",)),
         ),
         (
-            TargetWriteInput("Account", {"id": 7}, "typed"),
+            TargetWriteInput(_TARGET, TYPED, _KEY),
             {"version": 4, "tx_start": _START},
-            (4, _START, ("version", "tx_start")),
+            TargetRevisionArguments(4, _START, ("version", "tx_start")),
         ),
-        (TargetWriteInput("Account", {"id": 7}, "wire"), {}, (None, None, ())),
+        (TargetWriteInput(_TARGET, WIRE, _KEY), {}, TargetRevisionArguments(None, None, ())),
     ],
 )
 def test_the_target_door_states_the_adapters_input_under_the_callers_revision_and_window(
     converted: list[Converted],
     answer: TargetWriteInput,
     revision: dict[str, object],
-    stated: tuple[object, object, tuple[str, ...]],
+    stated: TargetRevisionArguments,
 ) -> None:
     def fn(tx: TxnAttempt) -> None:
         with pytest.raises(_Prepared):
@@ -249,22 +259,16 @@ def test_the_target_door_states_the_adapters_input_under_the_callers_revision_an
             )
 
     scope(ScriptedAdapter(Transact())).transact(fn, itself)
-    if_version, if_tx_start, names = stated
     assert converted == [
         (
             answer.representation,
-            TargetWriteInstruction(
-                "amendUntil",
-                answer.entity,
-                answer.row,
-                cast("int | None", if_version),
-                cast("dt.datetime | None", if_tx_start),
-                _START,
-                _UNTIL,
-                names,
-            ),
-            answer.authored_members,
-            answer.members,
+            "amendUntil",
+            answer.target,
+            answer.payload,
+            answer.assignments,
+            stated,
+            _START,
+            _UNTIL,
         )
     ]
 

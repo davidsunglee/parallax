@@ -23,9 +23,8 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
     PreparedKeyedInstruction,
-    prepare_typed_write,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import TYPED, WIRE, WriteRepresentation
 from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.planned_step.managed_row import ManagedRow
@@ -34,7 +33,7 @@ from parallax.snapshot import TxnContext
 from parallax.snapshot._publication._wire import WireEntity
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._transact_support import FIXED, db_for
 from tests.unit.snapshot._handle._vessel_model import VESSEL, Ferry
 
@@ -97,12 +96,7 @@ def _buffered(write: Callable[[TxnContext], object], model: DomainModel = _MODEL
         return record
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            instructions, "prepare_typed_insert", recorded(instructions.prepare_typed_insert)
-        )
-        patch.setattr(
-            instructions, "prepare_wire_insert", recorded(instructions.prepare_wire_insert)
-        )
+        patch.setattr(instructions, "prepare_insert", recorded(instructions.prepare_insert))
         db_for(model, ScriptedAdapter(Transact(Write()))).transact(write)
     ((row,),) = (instruction.rows for instruction in prepared)
     return row
@@ -303,16 +297,16 @@ def test_a_wire_payload_is_judged_in_member_order_not_its_key_order() -> None:
     db_for(_MODEL, ScriptedAdapter(Transact())).transact(fn)
 
 
-# Each preparation lane beside its spelling of a Decimal.
-_PREPARERS: tuple[tuple[Callable[..., object], Callable[[str], object]], ...] = (
-    (prepare_typed_write, Decimal),
-    (prepare_wire_write, str),
+# Each representation beside its spelling of a Decimal.
+_PREPARERS: tuple[tuple[WriteRepresentation, Callable[[str], object]], ...] = (
+    (TYPED, Decimal),
+    (WIRE, str),
 )
 
 
-@pytest.mark.parametrize(("prepare", "decimal"), _PREPARERS, ids=_LANE_IDS)
+@pytest.mark.parametrize(("representation", "decimal"), _PREPARERS, ids=_LANE_IDS)
 def test_a_rows_names_are_judged_before_its_values(
-    prepare: Callable[..., object], decimal: Callable[[str], object]
+    representation: WriteRepresentation, decimal: Callable[[str], object]
 ) -> None:
     row = {"id": 1, "weight": decimal("2.505"), "label": "L", "count": 3, "bogus": 1}
     with raises_code(
@@ -320,59 +314,26 @@ def test_a_rows_names_are_judged_before_its_values(
         "write-instruction-invalid",
         match=r"Parcel: keyed write row names undeclared member\(s\) \['bogus'\]",
     ) as refused:
-        prepare(KeyedWriteInstruction("insert", _PARCEL, (row,)), write_preparation_of(_META))
+        prepare_instruction(
+            KeyedWriteInstruction("insert", _PARCEL, row),
+            write_preparation_of(_META),
+            representation,
+        )
     assert not isinstance(refused.value, InvalidValueError)
 
 
-@pytest.mark.parametrize(("prepare", "decimal"), _PREPARERS, ids=_LANE_IDS)
+@pytest.mark.parametrize(("representation", "decimal"), _PREPARERS, ids=_LANE_IDS)
 def test_a_rows_declaration_order_decides_whatever_its_key_order(
-    prepare: Callable[..., object], decimal: Callable[[str], object]
+    representation: WriteRepresentation, decimal: Callable[[str], object]
 ) -> None:
     row = {"count": 2**40, "id": 1, "label": "L", "weight": decimal("2.505")}
     with pytest.raises(UsageError, match=r"Parcel\.weight: ") as refused:
-        prepare(KeyedWriteInstruction("insert", _PARCEL, (row,)), write_preparation_of(_META))
+        prepare_instruction(
+            KeyedWriteInstruction("insert", _PARCEL, row),
+            write_preparation_of(_META),
+            representation,
+        )
     assert "count" not in str(refused.value)
-
-
-@pytest.mark.parametrize(("prepare", "decimal"), _PREPARERS, ids=_LANE_IDS)
-@pytest.mark.parametrize(
-    ("first", "refusal"),
-    [
-        ({"id": 1, "label": "L", "count": 2**40}, r"Parcel\.count: "),
-        (
-            {"id": 1, "label": "L", "count": 3, "weight": None},
-            r"Parcel\.weight: required attribute is absent \(or null\)$",
-        ),
-    ],
-    ids=["invalid-value", "missing-required"],
-)
-def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
-    prepare: Callable[..., object],
-    decimal: Callable[[str], object],
-    first: dict[str, object],
-    refusal: str,
-) -> None:
-    first = {"weight": decimal("2.50"), **first}
-    second = {"id": 2, "weight": decimal("2.50"), "label": "L", "count": 3, "bogus": 1}
-    with pytest.raises(UsageError, match=refusal) as refused:
-        prepare(
-            KeyedWriteInstruction("insert", _PARCEL, (first, second)),
-            write_preparation_of(_META),
-        )
-    assert "bogus" not in str(refused.value)
-
-
-@pytest.mark.parametrize(("prepare", "decimal"), _PREPARERS, ids=_LANE_IDS)
-def test_a_later_rows_failure_is_heard_once_every_earlier_row_is_admitted(
-    prepare: Callable[..., object], decimal: Callable[[str], object]
-) -> None:
-    first = {"id": 1, "weight": decimal("2.50"), "label": "L", "count": 3}
-    second = {"id": 2, "weight": decimal("2.50"), "count": 3}
-    with pytest.raises(UsageError, match=r"Parcel\.label: required attribute"):
-        prepare(
-            KeyedWriteInstruction("insert", _PARCEL, (first, second)),
-            write_preparation_of(_META),
-        )
 
 
 # --------------------------------------------------------------------------- #

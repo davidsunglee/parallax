@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence, Set
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from parallax.core._execution._family import family_view
@@ -9,7 +9,6 @@ from parallax.core._execution._keyed_writes import (
     OpenedKeyedWrite,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    keyed_instruction,
     retained,
 )
 from parallax.core._execution._options import OMITTED, Omitted
@@ -26,20 +25,23 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
-    PredicateWriteInstruction,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     TargetMutation,
-    WriteAssignment,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core._execution._unit_work.preparation import (
+    UNSTATED,
+    WIRE,
+    CompletePayload,
+    EntityPreparation,
+    PartialPayload,
+    WritePreparation,
+)
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.metamodel import CompiledEntity, EntityIdentity, Metamodel
 from parallax.core.internal.object_query._fluent import ObjectQuery
-from parallax.core.internal.planned_step import ObjectKey
-from parallax.core.internal.wire import decode_wire
 from parallax.snapshot._handle._sources import (
     resolve_keyed_insert,
     resolve_keyed_write_source,
@@ -182,10 +184,10 @@ class WirePredicateWriteAdapter:
 
     The Wire spelling of the ``_where`` family: a Typed selection or the
     canonical ``{entity, predicate}`` one, plus an authored changes document, a
-    replacement's data, or a node Parallax published, lowered to the SAME
-    :class:`~parallax.core.internal.unit_work.PredicateWriteInstruction` the Typed verbs
-    build. No second set-based write semantics are introduced — this adapter
-    only states the target and the payload differently.
+    replacement's data, or a node Parallax published, prepared by the SAME
+    predicate-write preparation the Typed verbs reach. No second set-based write
+    semantics are introduced — this adapter only states the target and the
+    payload differently.
 
     Inert when constructed. Once :meth:`prepare` is asked, the selection and the
     payload are captured and judged for shape before anything is resolved from
@@ -193,12 +195,12 @@ class WirePredicateWriteAdapter:
     Typed adapter's path (:func:`typed_selection`); a selection document's
     shape runs to the bottom of its predicate, so a malformed node is
     `m-predicate`'s own refusal rather than whatever the model happens to say
-    about the Entity or the payload beside it. Each change is an assignment
-    owned by the selection's own Entity spelling. A replacement's node — checked
-    before the mapping case, since a node is itself a mapping — must be one
-    Parallax published for the selection's own Entity, and states the writable
-    state it published, borrowed rather than copied. Preparation then judges
-    the target, the predicate, every member, and only then their values.
+    about the Entity or the payload beside it. Each change names a member of
+    the selection's own Entity. A replacement's node — checked before the
+    mapping case, since a node is itself a mapping — must be one Parallax
+    published for the selection's own Entity, and states the writable state it
+    published, borrowed rather than copied. Preparation then judges the target,
+    the predicate, every member, and only then their values.
     """
 
     __slots__ = ("_payload", "_target")
@@ -221,33 +223,31 @@ class WirePredicateWriteAdapter:
             )
         )
         payload = self._payload
-        if mutation in REPLACE_MUTATIONS:
-            row = (
-                _published_replacement(meta, selection, payload)
-                if isinstance(payload, WireEntity)
-                else _authored_changes(mutation, payload)
-            )
-            instruction = PredicateWriteInstruction(mutation, selection, row=row)
+        if mutation in REPLACE_MUTATIONS and isinstance(payload, WireEntity):
+            entity = published_entity(meta, payload, "`replace_where`")
+            target = instructions.resolve_target(meta, selection.entity)
+            document = _published_replacement(meta, target, entity, payload)
         else:
-            authored = _authored_changes(mutation, payload)
-            instruction = PredicateWriteInstruction(
-                mutation,
-                selection,
-                tuple(
-                    WriteAssignment(f"{selection.entity}.{member}", value)
-                    for member, value in authored.items()
-                ),
-            )
-        return instructions.prepare_wire_write(instruction, write_model.preparation)
+            document = _authored_changes(mutation, payload)
+            target = instructions.resolve_target(meta, selection.entity)
+        prepared = write_model.preparation.entity(target.identity)
+        return instructions.prepare_predicate_write(
+            write_model.preparation,
+            WIRE,
+            mutation,
+            target,
+            selection.predicate,
+            prepared.complete_payload_from_names(document)
+            if mutation in REPLACE_MUTATIONS
+            else prepared.partial_payload_from_names(document),
+        )
 
 
 def _published_replacement(
-    meta: Metamodel, selection: PredicateSelection, node: WireEntity
+    meta: Metamodel, target: CompiledEntity, entity: CompiledEntity, node: WireEntity
 ) -> Mapping[str, object]:
-    """The writable state ``node`` published, once it is judged a node of the
-    Entity ``selection`` writes."""
-    entity = published_entity(meta, node, "`replace_where`")
-    target = instructions.resolve_target(meta, selection.entity)
+    """The writable state ``node``, published for ``entity``, holds, once it is
+    judged a node of ``target``."""
     if entity.identity != target.identity:
         raise UsageError(
             instructions.WRITE_INSTRUCTION_INVALID,
@@ -274,9 +274,9 @@ class WireTargetWriteAdapter:
     in for it.
 
     Inert when constructed. Once :meth:`write_input` is asked, the addressing
-    and the document's own shape are judged; the attempt's canonical
-    instruction then refuses a reserved observation key, and preparation
-    judges the target, the key, the window, the revision, and the payload.
+    and the document's own shape are judged, then the Entity resolved and a
+    reserved observation key refused; preparation judges the target, the key,
+    the window, the revision, and the payload.
     """
 
     __slots__ = ("_document", "_target")
@@ -297,8 +297,8 @@ class WireTargetWriteAdapter:
                     f"a Wire `{mutation}` of an Entity spelling states the data it writes",
                 )
             described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
-            entity_name = target
             row = _authored_document(document, described)
+            entity = instructions.resolve_target(meta, target)
         elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
             if not isinstance(document, Omitted):
                 raise UsageError(
@@ -308,7 +308,6 @@ class WireTargetWriteAdapter:
                     "Entity instead",
                 )
             entity = published_entity(meta, target, f"`{mutation}`")
-            entity_name = entity.identity.canonical
             row = _published_writable(meta, entity, target, copy=False)
         else:
             raise UsageError(
@@ -317,7 +316,14 @@ class WireTargetWriteAdapter:
                 + (" or a node Parallax published" if mutation in REPLACE_MUTATIONS else "")
                 + f", and {type(target).__name__} is neither",
             )
-        return TargetWriteInput(entity_name, row, "wire", authored_members=row.keys())
+        prepared = write_model.preparation.entity(entity.identity)
+        return TargetWriteInput(
+            entity,
+            WIRE,
+            prepared.complete_payload_from_names(row)
+            if mutation in REPLACE_MUTATIONS
+            else prepared.partial_payload_from_names(row),
+        )
 
 
 def _target_document(mutation: TargetMutation) -> str:
@@ -394,65 +400,6 @@ def _mutable_copy(value: object) -> object:
     return value
 
 
-def _prepared_wire_write(
-    preparation: WritePreparation,
-    mutation: KeyedMutation,
-    entity: CompiledEntity,
-    row: Mapping[str, object],
-    authored: Set[str] | None,
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedInstruction:
-    """One authored single-row keyed instruction, decoded and judged by Unit
-    Work's sole Wire judgment.
-
-    ``authored`` names the members the caller explicitly wrote — an opening
-    payload's keys, judged as insert authoring, or a change document's keys,
-    judged as assignments — never the source identity an amendment's row
-    carries beside them; or ``members`` produces those assignments once the
-    target and window admit the write.
-    """
-    prepared = instructions.prepare_wire_write(
-        keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
-        preparation,
-        authored_members=authored,
-        members=members,
-    )
-    return prepared
-
-
-def _published_identity(
-    meta: Metamodel, entity: CompiledEntity, node: WireEntity
-) -> dict[str, object]:
-    """The object ``node`` names, in the spelling it was published in.
-
-    The row an instruction is built from is authored, so its identity members
-    are read back off the published node under the family key's own name — the
-    name every Object Key of the family pairs its value with.
-    """
-    name = family_view(meta, entity).primary_key.identity.name
-    return {name: node[name]}
-
-
-def _published_address(
-    meta: Metamodel, entity: CompiledEntity, node: WireEntity, object_key: ObjectKey | None
-) -> tuple[tuple[str, object], ...]:
-    """The key members the source's object is addressed by, as managed values.
-
-    Read off the Object Key its evidence or authority names where it carries
-    one. A node that carries neither — published by a read of no writable
-    attempt, so its write is refused once prepared — names the object by its
-    published key alone, decoded through the key's declared type.
-    """
-    if object_key is not None:
-        return object_key.primary_key
-    key = family_view(meta, entity).primary_key
-    name = key.identity.name
-    return ((name, decode_wire(key.type, node[name])),)
-
-
 class WireKeyedWriteSource:
     """The Wire Keyed Write Source: what a published row and an authored
     document answer the keyed write ingress.
@@ -498,46 +445,37 @@ class WireKeyedWriteSource:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
-        """The instruction this document authors: the source's identity plus
-        every member the document states, its key members set aside once they
-        are judged to name the source's own object.
+        """The write this document authors, prepared: the source's identity
+        plus every member the document states, a key the document restates
+        judged to name the source's own object and then set aside.
 
         The stated members are the literal assignment set, whatever the source
         published under them, and only the authored side is judged, because
         every rule preparation applies is a rule about what the CALLER wrote. A
         replacement handed no document states the source's published writable
-        state instead, which stands alone exactly as a stated document does.
+        state instead, which stands alone exactly as a stated document does,
+        its key the source's own.
         """
-        model = preparation.meta
         node = retained(self._source)
         entity = resolved.entity
-        object_key = resolved.object_key
+        prepared = preparation.entity(entity.identity)
+        key_name = prepared.key_name
         authored = self._authored
+        restated_key: object = UNSTATED
         if authored is None:
-            authored = _published_writable(model, entity, node, copy=False)
-        identity = _published_identity(model, entity, node)
-        if not any(name in authored for name in identity):
-            return _prepared_wire_write(
-                preparation,
-                mutation,
-                entity,
-                {**identity, **authored},
-                authored.keys(),
-                valid_from=valid_from,
-                until=until,
-            )
-        stated = authored
-        return _prepared_wire_write(
+            document = _published_writable(preparation.meta, entity, node, copy=False)
+        else:
+            document = authored
+            restated_key = authored.get(key_name, UNSTATED)
+        return instructions.prepare_keyed_write(
             preparation,
+            WIRE,
             mutation,
             entity,
-            identity,
-            None,
+            _keyed_payload(prepared, mutation, document, node[key_name]),
+            restated_key=restated_key,
             valid_from=valid_from,
             until=until,
-            members=lambda: instructions.addressed_members(
-                preparation, entity, _published_address(model, entity, node, object_key), stated
-            ),
         )
 
 
@@ -595,11 +533,13 @@ class WireKeyedInsertSource:
         caller's authoring: a framework-owned member is refused, because the
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
-        return instructions.prepare_wire_insert(
+        entity = resolved.entity
+        return instructions.prepare_insert(
             preparation,
+            WIRE,
             mutation,
-            resolved.entity,
-            self._payload,
+            entity,
+            preparation.entity(entity.identity).complete_payload_from_names(self._payload),
             valid_from=valid_from,
             until=until,
         )
@@ -616,6 +556,19 @@ class WireKeyedInsertSource:
             row.selection.absent,
             opened.insertion,
         )
+
+
+def _keyed_payload(
+    prepared: EntityPreparation,
+    mutation: KeyedMutation,
+    document: Mapping[str, object],
+    key: object,
+) -> CompletePayload | PartialPayload:
+    """``document`` as the payload of a keyed write of the object ``key``
+    names."""
+    if mutation in REPLACE_MUTATIONS:
+        return prepared.complete_payload_from_names(document, key=key)
+    return prepared.partial_payload_from_names(document, key=key)
 
 
 def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, EntityIdentity]:

@@ -125,6 +125,7 @@ def test_reachable_rejected_population_spans_every_write_form() -> None:
 
 def test_framework_owned_assignment_witnesses_are_in_the_rejected_population() -> None:
     suffixes = {
+        "rejected-authored-version-insert",
         "rejected-version-assignment",
         "rejected-tx-start-assignment",
         "rejected-tx-end-assignment",
@@ -140,4 +141,7 @@ def test_framework_owned_assignment_witnesses_are_in_the_rejected_population() -
     assert {
         suffix for suffix in suffixes if any(case.path.stem.endswith(suffix) for case in witnesses)
     } == suffixes
-    assert all(_write_form(case_document(case)["when"]["write"]) == "keyed" for case in witnesses)
+    assert {_write_form(case_document(case)["when"]["write"]) for case in witnesses} == {
+        "keyed",
+        "bare",
+    }

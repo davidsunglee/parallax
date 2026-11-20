@@ -21,7 +21,6 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import AcquireRows, RowConsumer, RowRequest
@@ -58,7 +57,7 @@ from parallax.core.internal.unit_work import (
     object_key,
     settled_evidence,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 __all__ = [
     "NO_COUNTED_STEPS",
@@ -152,7 +151,7 @@ def observed_buffer(
     handles: dict[ObjectKey, InsertionIdentity] = {}
     for item in buffer:
         if isinstance(item, KeyedWriteInstruction):
-            prepared = prepare_typed_write(item, write_preparation_of(model))
+            prepared = prepare_instruction(item, write_preparation_of(model))
             key = object_key(prepared, model)
             observation = None if key is None or not observations else observations.get(key)
             if key is not None and observation is not None:

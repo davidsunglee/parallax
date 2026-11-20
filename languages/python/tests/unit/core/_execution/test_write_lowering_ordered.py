@@ -24,7 +24,6 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._write_lowering import (
     lowered,
@@ -82,7 +81,7 @@ from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, unobserved_write
 from tests._support.sweep_goldens import WRITE_EXERCISED
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -271,7 +270,7 @@ def _wallet_effects(*keys: int) -> tuple[PlannedUpdate, PlannedDelete]:
 def _planned(
     meta: Metamodel, instruction: KeyedWriteInstruction | PredicateWriteInstruction
 ) -> PlannedStep:
-    prepared = prepare_typed_write(instruction, write_preparation_of(meta))
+    prepared = prepare_instruction(instruction, write_preparation_of(meta))
     assert not isinstance(prepared, PreparedTargetInstruction)
     planner = build_write_planner(bound_model(meta))
     if isinstance(prepared, PreparedPredicateInstruction):

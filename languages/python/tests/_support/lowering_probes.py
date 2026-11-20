@@ -6,15 +6,15 @@ Each settled step lowers alone through the shipped seam
 Planned Step, whatever statements execution then groups them into. A unit test
 usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core._execution._planning.build_write_planner`
-builds — as the buffer it means, one admitted write per row of a keyed
-instruction, or as the one statement a predicate-selected write executes as, and
+builds — as the buffer it means, one admitted write per keyed instruction of a
+sequence, or as the one statement a predicate-selected write executes as, and
 hands back the lowered statements in order.
 """
 
 from __future__ import annotations
 
-import dataclasses
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
+from typing import cast
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
     WriteInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.internal.concurrency import ConcurrencyPreference
@@ -50,7 +49,7 @@ from tests._support.planner_probes import (
     observed_write,
     plan_steps,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 __all__ = ["lower_instruction", "lower_instruction_steps", "lowered_steps"]
 
@@ -65,7 +64,7 @@ def lowered_steps(
 
 
 def lower_instruction(
-    instruction: WriteInstruction,
+    instruction: WriteInstruction | Sequence[KeyedWriteInstruction],
     model: Metamodel,
     dialect: Dialect = POSTGRES,
     concurrency: ConcurrencyPreference = "locking",
@@ -85,7 +84,7 @@ def lower_instruction(
 
 
 def lower_instruction_steps(
-    instruction: WriteInstruction,
+    instruction: WriteInstruction | Sequence[KeyedWriteInstruction],
     model: Metamodel,
     dialect: Dialect = POSTGRES,
     concurrency: ConcurrencyPreference = "locking",
@@ -101,7 +100,7 @@ def lower_instruction_steps(
 
 
 def _stream(
-    instruction: WriteInstruction,
+    instruction: WriteInstruction | Sequence[KeyedWriteInstruction],
     model: Metamodel,
     dialect: Dialect,
     concurrency: ConcurrencyPreference,
@@ -111,7 +110,7 @@ def _stream(
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
     planner = build_write_planner(bound_model(model))
-    prepared = _prepared(instruction, model)
+    prepared = None if isinstance(instruction, Sequence) else _prepared(instruction, model)
     if isinstance(prepared, PreparedPredicateInstruction):
         assert observation is None  # a readless predicate write observes nothing
         steps: tuple[PlannedStep, ...] = (
@@ -120,13 +119,13 @@ def _stream(
             ),
         )
     else:
-        if len(prepared.rows) == 1:
-            writes = [observed_write(prepared, model, observation)]
+        if prepared is None:
+            assert observation is None  # an observation is evidence about one object
+            writes = observed_buffer(
+                cast("Sequence[KeyedWriteInstruction]", instruction), model, None
+            )
         else:
-            assert isinstance(instruction, KeyedWriteInstruction)
-            assert observation is None  # an observation is evidence about one row
-            rows = [dataclasses.replace(instruction, rows=(row,)) for row in instruction.rows]
-            writes = observed_buffer(rows, model, None)
+            writes = [observed_write(prepared, model, observation)]
         steps = plan_steps(
             planner.finalize(
                 WritePlanningRequest(
@@ -143,7 +142,7 @@ def _stream(
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedInstruction:
-    prepared = prepare_typed_write(instruction, write_preparation_of(model))
+    prepared = prepare_instruction(instruction, write_preparation_of(model))
     assert not isinstance(
         prepared, PreparedTargetInstruction
     )  # a target write buffers through its UoW

@@ -17,9 +17,9 @@ from parallax.core._execution._unit_work.flush_facts import FlushFacts
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     TargetWriteInstruction,
-    prepare_wire_write,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import NonTemporalSettlement
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,
@@ -53,7 +53,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -132,7 +132,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
     # bound method or closure reaching one.
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
     ownership = OpenedRows(frozenset())
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "Position",
@@ -142,6 +142,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             until=_MAR,
         ),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     plan = build_write_planner(bound_model(_POSITION)).finalize(
@@ -187,13 +188,13 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
         KeyedWriteInstruction(
             "insert",
             "Position",
-            ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+            {"id": 1, "acctNum": "A", "value": Decimal("1.00")},
             valid_from=_JAN,
         ),
         KeyedWriteInstruction(
             "amendUntil",
             "Position",
-            ({"id": 1, "value": Decimal("2.00")},),
+            {"id": 1, "value": Decimal("2.00")},
             valid_from=_JAN,
             until=_MAR,
         ),
@@ -217,9 +218,9 @@ def test_a_non_temporal_plan_retains_its_settled_writes_and_neither_producer_nor
     account = next(entity.identity for entity in _ACCOUNT.entities)
     writes = [
         KeyedWriteInstruction(
-            "insert", "Account", ({"id": 2, "owner": "Ada", "balance": Decimal("1.00")},)
+            "insert", "Account", {"id": 2, "owner": "Ada", "balance": Decimal("1.00")}
         ),
-        KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("5.00")},)),
+        KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("5.00")}),
     ]
     plan = build_write_planner(bound_model(_ACCOUNT)).finalize(
         WritePlanningRequest(

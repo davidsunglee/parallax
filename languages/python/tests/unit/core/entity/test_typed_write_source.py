@@ -432,7 +432,7 @@ def test_an_authored_row_reaches_only_the_members_its_chain_touched() -> None:
     object.__setattr__(shape, "members", _UnwalkedMembers(shape.members))
     edited = _account().edit(balance=Decimal("175.00"))
 
-    authored = edited.__parallax_authored_pairs__(shape, mm.Account.identity, entry.key)
+    authored = edited.__parallax_authored_pairs__(shape, mm.Account.identity, entry.key_position)
 
     assert authored is not None
     assert [(shape.members[position].name, held) for position, held in authored] == [
@@ -440,7 +440,10 @@ def test_an_authored_row_reaches_only_the_members_its_chain_touched() -> None:
         ("id", 1),
     ]
     assert (
-        _account().edit().__parallax_authored_pairs__(shape, mm.Account.identity, entry.key) is None
+        _account()
+        .edit()
+        .__parallax_authored_pairs__(shape, mm.Account.identity, entry.key_position)
+        is None
     )
 
 

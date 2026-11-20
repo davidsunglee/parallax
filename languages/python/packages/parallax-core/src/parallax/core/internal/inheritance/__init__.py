@@ -203,10 +203,9 @@ def reject_predicate_write(entity: CompiledEntity) -> None:
     a predicate-selected write is set-based BY CONSTRUCTION (there is no row at
     all, keyed or otherwise), so this needs no row inspection and never
     synthesizes a fake keyless row just to trigger
-    :func:`validate_subtype_write`'s own branch. Its caller is prepared-write
-    production, shared by
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_typed_write` and
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_wire_write`, so no
+    :func:`validate_subtype_write`'s own branch. Its caller is the one
+    predicate-write preparation every ingress reaches,
+    :func:`~parallax.core._execution._unit_work.instructions.prepare_predicate_write`, so no
     ingress can classify an inheritance-family predicate write differently and
     no prepared product names one. A
     no-op for a non-participant ``entity`` (every entity outside an

@@ -10,7 +10,7 @@ from typing import Final, Literal, Never, cast, get_args
 
 from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance._actual_wire import ActualWireProjection
-from parallax.conformance._case_ingress import WirePreparer
+from parallax.conformance._case_ingress import prepare_case_write
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
@@ -52,7 +52,6 @@ from parallax.conformance._wire_submission import (
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._planning import build_write_planner, build_write_preparation
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
@@ -60,6 +59,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFinished,
@@ -138,7 +138,6 @@ __all__ = [
     "CaseContext",
     "GroupReport",
     "LoweredStep",
-    "case_wire_preparer",
     "compile_scenario_case",
     "compile_write_sequence_case",
     "entry_instant",
@@ -219,13 +218,6 @@ INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 # requires one regardless (`m-unit-work`) — the harness proves the value is
 # never inspected, so any nonempty constant serves every one identically.
 _PLANNING_ACTOR: Final[SubjectActor] = SubjectActor("conformance-compile-lane")
-
-
-def case_wire_preparer(model: AcceptedMetamodel) -> WirePreparer:
-    """Strict Wire preparation against the one write preparation every write
-    of ``model`` is judged against, built as production builds it."""
-    preparation = build_write_preparation(model)
-    return lambda instruction: instructions.prepare_wire_write(instruction, preparation)
 
 
 def _pinned_clock(tx_instant: str) -> FixedClock:
@@ -413,13 +405,15 @@ def _check_statement_count_consistency(
 def _build_instructions(
     entry: Mapping[str, object],
     model: AcceptedMetamodel,
-    prepare: WirePreparer,
+    preparation: WritePreparation,
     submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
     _keyed_entry_entity(entry)
     parsed = read_submissions(model, [entry]) if submissions is None else submissions
     return [
-        _ResolvedWrite(prepare(submission.instruction), submission.declared_observation)
+        _ResolvedWrite(
+            prepare_case_write(submission.instruction, preparation), submission.declared_observation
+        )
         for submission in parsed
     ]
 
@@ -444,7 +438,7 @@ def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
 def _resolve_entries(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
-    prepare: WirePreparer,
+    preparation: WritePreparation,
     submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
     """Resolve compile submissions into the writes a simulated unit buffers."""
@@ -455,7 +449,7 @@ def _resolve_entries(
         count = len(cast("Sequence[object]", entry["rows"])) if "rows" in entry else 1
         own = parsed[position : position + count]
         position += count
-        resolved.extend(_build_instructions(entry, model, prepare, own))
+        resolved.extend(_build_instructions(entry, model, preparation, own))
     return resolved
 
 
@@ -693,7 +687,7 @@ def _refuse_row_acquisition(request: object, consumer: object, /) -> Never:
 def lower_writes(
     entries: Sequence[Mapping[str, object]],
     model: AcceptedMetamodel,
-    prepare: WirePreparer,
+    preparation: WritePreparation,
     binding: DatabaseBinding,
     concurrency: ConcurrencyPreference,
     tx_instant: str,
@@ -706,7 +700,7 @@ def lower_writes(
     are graded against (:func:`_check_statement_count_consistency`). A
     ``rollback`` transaction still flushes."""
     translated = read_submissions(model, entries)
-    resolved = _resolve_entries(entries, model, prepare, translated)
+    resolved = _resolve_entries(entries, model, preparation, translated)
     with _simulated_unit(model, binding, concurrency, tx_instant, rollback=rollback) as unit:
         for write in resolved:
             unit.buffer(write)
@@ -716,11 +710,11 @@ def lower_writes(
 
 
 def _prepared_case_predicate_write(
-    raw_write: Mapping[str, object], model: AcceptedMetamodel, prepare: WirePreparer
+    raw_write: Mapping[str, object], model: AcceptedMetamodel, preparation: WritePreparation
 ) -> PreparedPredicateInstruction:
     (submission,) = read_submissions(model, raw_write)
     assert isinstance(submission.instruction, PredicateWriteInstruction)
-    prepared = prepare(submission.instruction)
+    prepared = prepare_case_write(submission.instruction, preparation)
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
 
@@ -837,7 +831,7 @@ def _lower_scenario_step(
     if is_predicate_write_step(raw_write):
         statements = _lower_predicate_write_step(
             _prepared_case_predicate_write(
-                cast("Mapping[str, object]", raw_write), context.model, context.prepare
+                cast("Mapping[str, object]", raw_write), context.model, context.preparation
             ),
             context.model,
             context.binding,
@@ -849,7 +843,7 @@ def _lower_scenario_step(
     statements = lower_writes(
         entries,
         context.model,
-        context.prepare,
+        context.preparation,
         context.binding,
         context.concurrency,
         entry_instant(entries[0]),
@@ -899,13 +893,13 @@ def _lower_group(
             if is_predicate_write_step(raw_write):
                 unit.execute_predicate(
                     _prepared_case_predicate_write(
-                        cast("Mapping[str, object]", raw_write), model, context.prepare
+                        cast("Mapping[str, object]", raw_write), model, context.preparation
                     )
                 )
                 continue
             entries = write_entries(raw_write)
             submissions = read_submissions(model, entries)
-            for write in _resolve_entries(entries, model, context.prepare, submissions):
+            for write in _resolve_entries(entries, model, context.preparation, submissions):
                 unit.buffer(write)
     shares = presented(starts, unit.statements, "a simulated `uow` group")
     return [
@@ -993,7 +987,7 @@ def _write_sequence_lowered(
     (`m-case-format`), so a keyed write's Version Observation comes from its row's own
     ``observedVersion`` control key."""
     model = load_case_metamodel(case)
-    prepare = case_wire_preparer(model)
+    preparation = build_write_preparation(model)
     del dialect_name  # the case's PostgreSQL binding names the one dialect this lane lowers for
     binding = case_binding(case)
     concurrency = case_document.concurrency(case)
@@ -1004,7 +998,7 @@ def _write_sequence_lowered(
                 lower_writes(
                     [entry],
                     model,
-                    prepare,
+                    preparation,
                     binding,
                     concurrency,
                     entry_instant(entry),
@@ -1275,12 +1269,12 @@ class CaseContext:
     concurrency: ConcurrencyPreference
     requests: case_format.TransactionKeywords
     options: TxnOptions
-    prepare: WirePreparer = field(init=False, repr=False, compare=False)
+    preparation: WritePreparation = field(init=False, repr=False, compare=False)
     resolved: ResolvedBinding = field(init=False, repr=False, compare=False)
     """The case model under the binding its serving model was prepared under."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "prepare", case_wire_preparer(self.model))
+        object.__setattr__(self, "preparation", build_write_preparation(self.model))
         object.__setattr__(self, "resolved", ResolvedBinding(self.model, self.binding))
 
 
@@ -1934,9 +1928,7 @@ def _landed_conflict_rows(
     keys = [
         attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
     ]
-    rows = (
-        cast("KeyedWriteInstruction", submission.instruction).rows[0] for submission in submissions
-    )
+    rows = (cast("KeyedWriteInstruction", submission.instruction).row for submission in submissions)
     addressed = {
         tuple(decode_wire(attr.type, cast("WireValue", row[attr.identity.name])) for attr in keys)
         for row in rows

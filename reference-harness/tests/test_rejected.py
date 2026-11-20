@@ -944,9 +944,11 @@ def test_no_document_admits_a_framework_owned_assignment(value: dict[str, Any]) 
     assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
 
 
-def test_keyed_insert_preserves_framework_owned_carried_state() -> None:
+def test_keyed_insert_refuses_an_authored_framework_owned_member() -> None:
     entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
-    validate_keyed_write(entity, {"mutation": "insert", "rows": [{"id": 1, "version": 7}]})
+    with pytest.raises(RejectionError) as caught:
+        validate_keyed_write(entity, {"mutation": "insert", "rows": [{"id": 1, "version": 7}]})
+    assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
 
 
 def test_keyed_assignment_judges_every_non_temporal_row() -> None:

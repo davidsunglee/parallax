@@ -34,6 +34,7 @@ from parallax.conformance.vo_models import (
     Shipment,
 )
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core.internal.base import INFINITY, TemporalBound, UsageError
 from parallax.core.internal.database_binding import ResolvedBinding, sequence_ddl
 from parallax.core.internal.db_port import (
@@ -69,7 +70,7 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests._support.sweep_goldens import write_golden_statements
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 _RESERVE: Final = POSTGRES.reserve_sequence()
@@ -720,10 +721,10 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
     instruction = (
         instructions.deserialize(authored)
         if "target" in authored
-        else KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
+        else KeyedWriteInstruction("insert", target.identity.canonical, authored)
     )
     with pytest.raises(UsageError) as exc_info:
-        instructions.prepare_wire_write(instruction, write_preparation_of(model))
+        prepare_instruction(instruction, write_preparation_of(model), WIRE)
     assert exc_info.value.code == expected_rule
 
 
@@ -850,6 +851,36 @@ REJECTED_READ_ONLY_WRITES: dict[str, tuple[str, Callable[[TxnContext], object]]]
         lambda tx: tx.insert(Publication(id=2, title="Annual report")),
     ),
 }
+
+
+# --------------------------------------------------------------------------- #
+# The Wire payload-order rejects: each Wire verb refuses the SAME payload the   #
+# corpus's rejected lane prepares, naming the SAME classified rule, and writes  #
+# nothing (`api_suite.EXAMPLES`' own entries are these exact snippets).         #
+# --------------------------------------------------------------------------- #
+REJECTED_WIRE_PAYLOADS: dict[str, Callable[[TxnContext], object]] = {
+    "m-unit-work-098": lambda tx: tx.wire.amend_if(
+        "Account",
+        {"id": "bad-key", "balance": "99999999999999999999.00"},
+        version=1,
+    ),
+    "m-unit-work-099": lambda tx: tx.wire.insert(
+        "Account", {"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}
+    ),
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(REJECTED_WIRE_PAYLOADS))
+def test_idiomatic_wire_payload_rejects_the_corpus_rule(case_id: str) -> None:
+    expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
+    port = _KeyedSeedPort()
+    db = own_root(
+        Database.connect(port, MODELS["account"], binding=TEST_BINDING)
+    ).using_database_login()
+    with pytest.raises(UsageError) as exc_info:
+        db.transact(REJECTED_WIRE_PAYLOADS[case_id])
+    assert exc_info.value.code == expected_rule
+    assert not port.wrote
 
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_READ_ONLY_WRITES))

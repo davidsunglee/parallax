@@ -247,29 +247,34 @@ predicate-selected write then refuses a versioned or temporal target
 judged. A keyed or target write is judged for applicability: a temporal
 target refuses `delete`; the window must be stated as the verb's form requires,
 admitted by the target's temporal profile, and ordered; a non-temporal target
-refuses a milestone verb. Only then is the payload judged — a keyed row's
+refuses a milestone verb. Only then is the payload judged — a keyed payload's
 subtype shape, members, and values, or a predicate-selected write's predicate,
 family refusal, and payload: an amendment's every assignment member resolved, in
-authored order, before any value is judged, and a replacement's row naming
+authored order, before any value is judged, and a replacement's payload naming
 declared members only, then completed and judged as every replacement is
-(*Source-authorized replacement*). Within a row its member names — its subtype
-shape, then an authored framework-owned or an undeclared member — are judged
-before any of its values. A keyed amendment's named
+(*Source-authorized replacement*). Within a payload its member names — its
+subtype shape, then an authored framework-owned or an undeclared member — are
+judged before any of its values. A keyed amendment's named
 members are assignments, including in its `amendUntil` form. Assigning a
 [framework-owned member](m-metamodel.md#attributes-and-primary-keys) — the optimistic-lock
 version or an As-Of Axis endpoint — **MUST** be refused during preparation as
 `framework-owned-member-assigned`, regardless of its value. This does not
 refuse framework-computed values carried by internal Planned Rows or treat
 `validFrom`, `until`, or target revision arguments as row assignments.
-A complete row — an opening's
-(`insert`, `insertUntil`) or a replacement's, keyed, target, or
-predicate-selected — then has its values judged in declaration order, a missing
-required member and an inadmissible value found in one pass and the first one
-met refused. A partial row — an amendment's assignments, or the identity a
-destructive write addresses — has its values judged in the order its author
-states them, each assigned member's assignment rule before its value and the
-members addressing the object after every assignment. A row is judged in that
-order on every ingress, whatever order a complete row states its members in.
+A payload is the members one write states, and preparation judges it into the
+managed row the write carries. A keyed or target payload's primary key
+addresses the object it writes, and is the first of its values judged, before
+any other member's value. A complete payload — an opening's (`insert`,
+`insertUntil`) or a replacement's, keyed, target, or predicate-selected — then
+has its other values judged in declaration order, a missing required member and
+an inadmissible value found in one pass and the first one met refused; an
+opening's key is content its Entity may allocate rather than an address, so an
+opening is judged in declaration order throughout. A partial payload — an
+amendment's assignments, or the identity a destructive write addresses — has its
+other values judged in the order its author states them, each assigned member's
+assignment rule before its value. A destructive payload states its key alone,
+and any other member it states is refused. A payload is judged in that order on
+every ingress, whatever order it states its members in.
 Serialized input is decoded as above; typed input applies
 `m-core.coerceNeutralInput` followed by managed membership and retains
 developer-facing mismatch errors. The policy follows from the ingress, never from

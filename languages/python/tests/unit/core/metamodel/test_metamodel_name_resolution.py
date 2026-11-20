@@ -42,7 +42,7 @@ from parallax.descriptor._adapter import unresolved_metamodel
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.sql import compile_read
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 
 def _entity(name: str, namespace: str) -> records.Entity:
@@ -91,12 +91,12 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
     model = _model()
     keyed = instructions.deserialize({"mutation": "delete", "entity": "Person", "row": {"id": 1}})
     with raises_code(UsageError, "reference-ambiguous-entity-name"):
-        instructions.prepare_typed_write(keyed, write_preparation_of(model))
+        prepare_instruction(keyed, write_preparation_of(model))
 
     canonical = instructions.deserialize(
         {"mutation": "delete", "entity": "a.Person", "row": {"id": 1}}
     )
-    instructions.prepare_typed_write(canonical, write_preparation_of(model))
+    prepare_instruction(canonical, write_preparation_of(model))
 
 
 def _query(target: str, includes: tuple[IncludePathNode, ...] = ()) -> ObjectQueryNode:

@@ -12,7 +12,7 @@ import pytest
 from parallax.core import Bitemporal
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import write_planner as planner_module
-from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedWrite,
@@ -61,7 +61,7 @@ from tests._support.planner_probes import (
     plan_steps,
     unobserved_write,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._shared_coverage_support import MODEL as SHARED_MODEL
@@ -138,7 +138,7 @@ def _groups(plan: WritePlan) -> list[WriteGroup]:
 
 
 def _amend_wallet(key: int, balance: str) -> KeyedWriteInstruction:
-    return KeyedWriteInstruction("amend", "Wallet", ({"id": key, "balance": Decimal(balance)},))
+    return KeyedWriteInstruction("amend", "Wallet", {"id": key, "balance": Decimal(balance)})
 
 
 def _keys(step: PlannedStep) -> tuple[object, ...]:
@@ -251,7 +251,7 @@ def test_a_repeated_object_starts_the_next_group_however_far_below_the_bound() -
     preparation = write_preparation_of(_WALLET)
     buffer = [
         unobserved_write(
-            prepare_typed_write(_amend_wallet(key, f"{index}.00"), preparation), _WALLET
+            prepare_instruction(_amend_wallet(key, f"{index}.00"), preparation), _WALLET
         )
         for index, key in enumerate(keys)
     ]
@@ -262,7 +262,7 @@ def test_a_repeated_object_starts_the_next_group_however_far_below_the_bound() -
 
 def test_a_group_runs_every_writes_non_insert_steps_before_any_of_their_inserts() -> None:
     buffer = [
-        KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},))
+        KeyedWriteInstruction("amend", "Balance", {"id": key, "value": Decimal("2.00")})
         for key in (3, 1, 2)
     ]
     plan = _plan(buffer, _BALANCE, _observed(_BALANCE, buffer, _balance_observation))
@@ -276,7 +276,7 @@ def test_a_bitemporal_amendment_keeps_its_own_successors_in_order_behind_every_c
         KeyedWriteInstruction(
             "amend",
             "Position",
-            ({"id": key, "value": Decimal("2.0")},),
+            {"id": key, "value": Decimal("2.0")},
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
         for key in (7, 5)
@@ -310,11 +310,11 @@ def test_a_batch_brings_every_key_it_writes_to_the_distinct_object_check(
     # reach the planner as admitted, without admission coalescing the later
     # write of key 2 into the earlier one.
     buffer = [
-        unobserved_write(prepare_typed_write(instruction, write_preparation_of(_WALLET)), _WALLET)
+        unobserved_write(prepare_instruction(instruction, write_preparation_of(_WALLET)), _WALLET)
         for instruction in (
             _amend_wallet(1, "5.00"),
             _amend_wallet(2, "5.00"),
-            KeyedWriteInstruction("amend", "Wallet", ({"id": later, "owner": "Z"},)),
+            KeyedWriteInstruction("amend", "Wallet", {"id": later, "owner": "Z"}),
         )
     ]
     plan = _finalize(buffer, _WALLET)
@@ -334,9 +334,9 @@ def test_an_insert_batch_brings_every_key_it_opens_to_the_distinct_object_check(
     # again, so the two cannot share a group, whichever ranks first.
     plan = _plan(
         [
-            KeyedWriteInstruction("insert", "Dog", ({"id": 1, "name": "Rex"},)),
-            KeyedWriteInstruction("insert", "Dog", ({"id": 2, "name": "Fido"},)),
-            KeyedWriteInstruction("insert", "Cat", ({"id": later, "name": "Tom"},)),
+            KeyedWriteInstruction("insert", "Dog", {"id": 1, "name": "Rex"}),
+            KeyedWriteInstruction("insert", "Dog", {"id": 2, "name": "Fido"}),
+            KeyedWriteInstruction("insert", "Cat", {"id": later, "name": "Tom"}),
         ],
         _ANIMAL,
     )
@@ -349,7 +349,7 @@ def test_one_key_value_names_one_object_per_family_not_per_key_name() -> None:
     unrelated = _plan(
         [
             _amend_wallet(1, "5.00"),
-            KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("5.00")},)),
+            KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("5.00")}),
         ],
         _LEDGERS,
         {ObjectKey(_entity(_LEDGERS, "Account"), (("id", 1),)): VersionObservation(1)},
@@ -357,9 +357,9 @@ def test_one_key_value_names_one_object_per_family_not_per_key_name() -> None:
     assert _sizes(unrelated) == [2]
     one_family = _plan(
         [
-            KeyedWriteInstruction("amend", "Dog", ({"id": 1, "name": "Rex"},)),
-            KeyedWriteInstruction("amend", "Cat", ({"id": 1, "name": "Tom"},)),
-            KeyedWriteInstruction("amend", "Cat", ({"id": 2, "name": "Kit"},)),
+            KeyedWriteInstruction("amend", "Dog", {"id": 1, "name": "Rex"}),
+            KeyedWriteInstruction("amend", "Cat", {"id": 1, "name": "Tom"}),
+            KeyedWriteInstruction("amend", "Cat", {"id": 2, "name": "Kit"}),
         ],
         _ANIMAL,
     )
@@ -368,8 +368,8 @@ def test_one_key_value_names_one_object_per_family_not_per_key_name() -> None:
 
 def test_a_write_with_no_step_joins_its_group_and_completes_with_it() -> None:
     buffer = [
-        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("1.00")},)),
-        KeyedWriteInstruction("amend", "Balance", ({"id": 2, "value": Decimal("2.00")},)),
+        KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("1.00")}),
+        KeyedWriteInstruction("amend", "Balance", {"id": 2, "value": Decimal("2.00")}),
     ]
     plan = _plan(
         buffer,
@@ -389,7 +389,7 @@ def test_a_deferred_write_is_a_span_of_its_own_between_the_groups_around_it() ->
         return KeyedWriteInstruction(
             "amend",
             "Position",
-            ({"id": key, "value": Decimal("2.0")},),
+            {"id": key, "value": Decimal("2.0")},
             valid_from=dt.datetime(year, month, 1, tzinfo=dt.UTC),
         )
 
@@ -420,11 +420,12 @@ def _fragmented(*keys: int, entity: type[Bitemporal] = ShareCols) -> list[Admitt
 def _inside(key: int) -> AdmittedWrite:
     """A write of object ``key`` its observation covers, so it binds at planning."""
     observed = rectangle(ShareCols, key, 0, None, 0)
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "amendUntil", ShareCols.identity.canonical, ({"id": key, "amount": 9},), day(0), day(1)
+            "amendUntil", ShareCols.identity.canonical, {"id": key, "amount": 9}, day(0), day(1)
         ),
         write_preparation_of(SHARED_MODEL),
+        WIRE,
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -433,11 +434,12 @@ def _inside(key: int) -> AdmittedWrite:
 def _terminated(key: int) -> AdmittedWrite:
     """A termination of object ``key`` reaching past what it observed."""
     observed = frag_rows(ShareCols, key, 1)[0]
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            "terminateUntil", ShareCols.identity.canonical, ({"id": key},), day(0), day(2)
+            "terminateUntil", ShareCols.identity.canonical, {"id": key}, day(0), day(2)
         ),
         write_preparation_of(SHARED_MODEL),
+        WIRE,
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -462,9 +464,10 @@ def _target(
     if entity == "Balance":
         values = {"id": key} if verb == "terminate" else {"id": key, "value": "9.00"}
     return target_write(
-        prepare_wire_write(
+        prepare_instruction(
             TargetWriteInstruction(verb, entity, values, if_tx_start=_JAN, valid_from=valid_from),
             write_preparation_of(model),
+            WIRE,
         ),
         inheritance.inheritance_facet_of(model),
     )
@@ -515,7 +518,7 @@ def test_a_span_never_skips_a_group_of_another_entity_or_a_write_bound_at_planni
 
 
 def test_a_transaction_time_only_span_never_skips_a_write_bound_at_planning() -> None:
-    observed = KeyedWriteInstruction("amend", "Balance", ({"id": 4, "value": Decimal("2.00")},))
+    observed = KeyedWriteInstruction("amend", "Balance", {"id": 4, "value": Decimal("2.00")})
     buffer = [*_transaction_time_targets(1), observed, *_transaction_time_targets(2, 3)]
     plan = _finalize(
         observed_buffer(buffer, _BALANCE, _observed(_BALANCE, [observed], _balance_observation)),
@@ -634,12 +637,10 @@ def test_the_ranges_of_one_entity_and_lock_share_one_read_key_in_their_flush(
 def test_a_group_lays_its_updates_out_shape_by_shape_and_records_their_spans() -> None:
     buffer = [
         _amend_wallet(1, "1.00"),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "owner": "Bo"},)),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 2, "owner": "Bo"}),
         _amend_wallet(3, "3.00"),
-        KeyedWriteInstruction("amend", "Wallet", ({"id": 4, "owner": "Di"},)),
-        KeyedWriteInstruction(
-            "amend", "Wallet", ({"id": 5, "owner": "Ed", "balance": Decimal("5")},)
-        ),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 4, "owner": "Di"}),
+        KeyedWriteInstruction("amend", "Wallet", {"id": 5, "owner": "Ed", "balance": Decimal("5")}),
     ]
     (group,) = _groups(_plan(buffer, _WALLET))
     assert [_keys(step) for step in group.steps] == [(1,), (3,), (2,), (4,), (5,)]
@@ -648,7 +649,7 @@ def test_a_group_lays_its_updates_out_shape_by_shape_and_records_their_spans() -
 
 def test_a_group_of_temporal_amendments_spans_their_closes_ahead_of_their_inserts() -> None:
     buffer = [
-        KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},))
+        KeyedWriteInstruction("amend", "Balance", {"id": key, "value": Decimal("2.00")})
         for key in (1, 2)
     ]
     (group,) = _groups(_plan(buffer, _BALANCE, _observed(_BALANCE, buffer, _balance_observation)))

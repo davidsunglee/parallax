@@ -8,8 +8,8 @@ from dataclasses import replace
 from parallax.core import Bitemporal
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
@@ -22,7 +22,7 @@ from parallax.core.internal.inheritance import inheritance_facet_of
 from parallax.core.internal.planned_step import PredecessorRow
 from parallax.core.internal.planned_step.keys import TemporalObjectStateKey
 from parallax.core.internal.unit_work import TargetWriteInstruction
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._positional_row_support import positional_row
 from tests.unit.core._shared_coverage_support import MODEL, T0, day, observation, rectangle
 
@@ -30,7 +30,7 @@ from tests.unit.core._shared_coverage_support import MODEL, T0, day, observation
 def covered_target_instruction(entity: type[Bitemporal], key: int) -> PreparedTargetInstruction:
     """A target write of object ``key`` over ``[d_0, d_1)`` stating the
     Transaction-Time start ``T0`` of the stored rectangle ``[d_0, ∞)``."""
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             entity.identity.canonical,
@@ -40,6 +40,7 @@ def covered_target_instruction(entity: type[Bitemporal], key: int) -> PreparedTa
             until=day(1),
         ),
         write_preparation_of(MODEL),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared

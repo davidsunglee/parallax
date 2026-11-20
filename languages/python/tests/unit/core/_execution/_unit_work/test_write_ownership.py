@@ -34,8 +34,8 @@ from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     KeyedInsert,
@@ -67,7 +67,7 @@ from parallax.core.internal.unit_work import KeyedWriteInstruction, admitted_wri
 from tests._support.errors import raises_code
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import admit_licensed, source_registry
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -89,15 +89,16 @@ _REPEATER = KeyedWriteRefusalAdvice(
 
 
 def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
             "insert" if until is None else "insertUntil",
             "WherePosition",
-            ({"id": 1, "acctNum": "A", "value": "1.00"},),
+            {"id": 1, "acctNum": "A", "value": "1.00"},
             start,
             until,
         ),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _KEY)
@@ -188,9 +189,10 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> Insert
     opening whole through the identity it issued, answering that identity."""
     identity = admission.admit_insert(_insert(start), insertion_advice=None)
     assert identity is not None
-    termination = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start),
+    termination = prepare_instruction(
+        KeyedWriteInstruction("terminate", "WherePosition", {"id": 1}, start),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(termination, PreparedKeyedInstruction)
     admit_licensed(admission, admitted_write(termination, None, _KEY, insertion=identity))
@@ -357,9 +359,10 @@ def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() ->
     assert follows and second is not first
     assert ownership.insertion_anchor(first) is NO_INSERTION_AUTHORITY
     assert ownership.insertion_anchor(second) == TimeInterval(_APR, INFINITY)
-    amendment = prepare_wire_write(
-        KeyedWriteInstruction("amend", "WherePosition", ({"id": 1, "value": "2.00"},), _FEB),
+    amendment = prepare_instruction(
+        KeyedWriteInstruction("amend", "WherePosition", {"id": 1, "value": "2.00"}, _FEB),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(amendment, PreparedKeyedInstruction)
     with raises_code(UsageError, INSERTION_AUTHORITY_INVALID, match="no longer stands"):
@@ -374,19 +377,21 @@ def test_an_ended_opening_retires_its_identity_and_its_reinsertion_follows_it() 
     identity, _follows = ownership.open_insertion(
         insert, pending_removal=None, removes_object=False, insertion_advice=_OPENER
     )
-    replacement = prepare_wire_write(
+    replacement = prepare_instruction(
         KeyedWriteInstruction(
             "replaceUntil",
             "WherePosition",
-            ({"id": 1, "acctNum": "B", "value": "2.00"},),
+            {"id": 1, "acctNum": "B", "value": "2.00"},
             _FEB,
             _SEP,
         ),
         write_preparation_of(_POSITION),
+        WIRE,
     )
-    destruction = prepare_wire_write(
-        KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _FEB, _SEP),
+    destruction = prepare_instruction(
+        KeyedWriteInstruction("terminateUntil", "WherePosition", {"id": 1}, _FEB, _SEP),
         write_preparation_of(_POSITION),
+        WIRE,
     )
     assert isinstance(replacement, PreparedKeyedInstruction)
     assert isinstance(destruction, PreparedKeyedInstruction)

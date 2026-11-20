@@ -1,5 +1,5 @@
 """Keyed write-row validation (m-value-object write validation), graded through
-``prepare_typed_write`` over a hand-built multi-type synthetic model: the
+Typed keyed preparation over a hand-built multi-type synthetic model: the
 declared-composite walk's own branches, depth-0 entity-attribute required-ness,
 sparse-mutation leniency at every level, to-many value-object array walking, and
 the full m-core neutral-type vocabulary at the DEVELOPER input-policy boundary
@@ -16,12 +16,18 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from parallax.core._execution._unit_work.instructions import prepare_typed_write
+from parallax.core._execution._unit_work.instructions import (
+    AMEND_MUTATIONS,
+    prepare_keyed_write,
+    resolve_target,
+)
+from parallax.core._execution._unit_work.preparation import TYPED
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import (
     BOOLEAN,
@@ -59,7 +65,7 @@ from parallax.core.internal.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.internal.unit_work import KeyedMutation, KeyedWriteInstruction
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 # A synthetic multi-type entity: every scalar neutral type as a NULLABLE
@@ -169,8 +175,23 @@ def _prepare(
     *,
     mutation: KeyedMutation = "insert",
 ) -> None:
-    prepare_typed_write(
-        KeyedWriteInstruction(mutation, entity, (row,)), write_preparation_of(model)
+    """``row`` written by ``mutation`` as a Typed caller states it: an
+    amendment's members as an edit chain states them, already judged as
+    assignments."""
+    preparation = write_preparation_of(model)
+    if mutation not in AMEND_MUTATIONS:
+        prepare_instruction(KeyedWriteInstruction(mutation, entity, row), preparation)
+        return
+    target = resolve_target(model, entity)
+    payload = preparation.entity(target.identity).partial_payload_from_names(row)
+    prepare_keyed_write(
+        preparation,
+        TYPED,
+        mutation,
+        target,
+        replace(payload, judged_at_edit=True),
+        valid_from=None,
+        until=None,
     )
 
 

@@ -24,8 +24,8 @@ from parallax.core._execution._unit_work import row_acquisition as acquisition_m
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadKey,
@@ -54,7 +54,7 @@ from parallax.core.internal.unit_work import (
 from tests._support.bindings import bound_model
 from tests._support.errors import raises_code
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import formed, records, target
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
@@ -114,9 +114,10 @@ def _account(account_id: int) -> PredecessorRow:
 
 
 def _account_patch() -> PreparedTargetInstruction:
-    return prepare_wire_write(
+    return prepare_instruction(
         TargetWriteInstruction("amend", "Account", {"id": 1, "balance": "9.00"}, if_version=3),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
 
 

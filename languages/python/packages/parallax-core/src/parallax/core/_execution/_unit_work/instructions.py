@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence, Set
-from dataclasses import dataclass, replace
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from itertools import chain, islice
 from types import MappingProxyType
-from typing import Final, Literal, cast, overload
+from typing import Final, Literal, cast
 
 from parallax.core._execution._unit_work._errors import WRITE_KEY_ABSENT
 from parallax.core._execution._unit_work.preparation import (
-    TYPED_LANE,
-    WIRE_LANE,
+    TYPED,
+    UNSTATED,
+    WRITE_INSTRUCTION_INVALID,
+    CompletePayload,
     EntityPreparation,
+    PartialPayload,
+    StatedMember,
+    TargetRevisionArguments,
+    Unstated,
     WritePreparation,
+    WriteRepresentation,
+    refuse_observation_keys,
 )
 from parallax.core.internal import inheritance, temporal_read
 from parallax.core.internal import predicate as predicate_algebra
@@ -32,9 +41,7 @@ from parallax.core.internal.batch_write import (
 )
 from parallax.core.internal.document_codec._plan import AuthoringRefusal
 from parallax.core.internal.metamodel import (
-    WRITE_ASSIGNMENT_CODES,
     WRITE_ASSIGNMENT_VALUE_TYPE_MISMATCH,
-    AttributeMetadata,
     AuthoringViolation,
     CompiledEntity,
     EntityIdentity,
@@ -42,9 +49,7 @@ from parallax.core.internal.metamodel import (
     MemberShape,
     Multiplicity,
     PersistenceMode,
-    PrimaryKey,
     ScalarDefinition,
-    ValueObjectMetadata,
     entity_by_name,
     judge_assignment,
 )
@@ -100,17 +105,14 @@ __all__ = [
     "WriteAssignment",
     "WriteInstruction",
     "WriteRejectionCode",
-    "addressed_members",
-    "assigned_members",
     "derive_keyed_instruction",
     "deserialize",
     "key_absent_refusal",
     "keyed_instruction_from_target",
-    "prepare_typed_insert",
-    "prepare_typed_keyed_write",
-    "prepare_typed_write",
-    "prepare_wire_insert",
-    "prepare_wire_write",
+    "prepare_insert",
+    "prepare_keyed_write",
+    "prepare_predicate_write",
+    "prepare_target_write",
     "resolve_target",
     "serialize",
 ]
@@ -190,17 +192,6 @@ BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
 alike; every other form carries no `until` — its window runs `[validFrom,
 infinity)`, or the target is non-temporal."""
 
-# The framework-owned transaction observation is NOT durable instruction state, so
-# these control keys are forbidden on a write row. All THREE that
-# `write-instruction.schema.json`'s own `writeRow` forbids: the observed version,
-# and BOTH halves of the observed milestone's own edge coordinate. Omitting either
-# half would let a row carry a coordinate the instruction cannot mean — the
-# milestone a temporal write observes is resolved at flush, never authored.
-_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
-    {"observedVersion", "observedTxStart", "observedValidStart"}
-)
-
-
 type WriteRejectionCode = Literal[
     "write-instruction-invalid",
     "set-based-write-target-unsupported",
@@ -223,8 +214,6 @@ The two value-type mismatches and the two required-member codes are raised as
 :class:`~parallax.core.internal.base.InvalidValueError`.
 """
 
-WRITE_INSTRUCTION_INVALID: Final = "write-instruction-invalid"
-
 READ_ONLY_WRITE_TARGET: Final = "read-only-write-target"
 """Any write whose target family's effective Persistence Mode is ReadOnly
 (`m-unit-work`)."""
@@ -237,9 +226,8 @@ WRITE_VALUE_TYPE_MISMATCH: Final = "write-value-type-mismatch"
 
 @dataclass(frozen=True, slots=True)
 class KeyedWriteInstruction:
-    """An authored keyed write: a ``mutation`` on one ``entity`` carrying flat
-    attribute-named neutral write input (``rows``). Its canonical document states
-    exactly one ``row``, so only a single-row instruction serializes.
+    """An authored keyed write: a ``mutation`` on one ``entity`` carrying one
+    flat attribute-named neutral write ``row``.
 
     ``valid_from`` / ``until`` are the Valid-Time bounds; a
     bounded ``*Until`` mutation carries both, a plain temporal mutation carries only
@@ -250,27 +238,14 @@ class KeyedWriteInstruction:
 
     mutation: KeyedMutation
     entity: str
-    rows: tuple[Mapping[str, object], ...]
+    row: Mapping[str, object]
     valid_from: dt.datetime | None = None
     until: dt.datetime | None = None
 
     def __post_init__(self) -> None:
-        _refuse_observation_keys({name for row in self.rows for name in row})
-        frozen = tuple(
-            row if isinstance(row, MappingProxyType) else MappingProxyType(dict(row))
-            for row in self.rows
-        )
-        object.__setattr__(self, "rows", frozen)
-
-
-def _refuse_observation_keys(names: Set[str]) -> None:
-    forbidden = sorted(_FORBIDDEN_ROW_KEYS.intersection(names))
-    if forbidden:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-            "(the transaction observation is attached at flush, never on the instruction)",
-        )
+        refuse_observation_keys(self.row)
+        if not isinstance(self.row, MappingProxyType):
+            object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,13 +310,7 @@ class PredicateWriteInstruction:
                 WRITE_INSTRUCTION_INVALID,
                 f"predicate write: `{self.mutation}` states no whole state and carries no `row`",
             )
-        forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
-        if forbidden:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"predicate write: row carries forbidden observation control key(s) {forbidden} "
-                "(a predicate-selected write observes nothing)",
-            )
+        refuse_observation_keys(self.row)
         if not isinstance(self.row, MappingProxyType):
             object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
 
@@ -355,10 +324,7 @@ class TargetWriteInstruction:
     ``replace``, and nothing for a deletion or termination. ``if_version`` and
     ``if_tx_start`` are the caller's revision condition exactly as stated,
     judged by preparation against the target's own revision kind; neither is
-    ever read off the row or off any read's evidence. ``stated`` names the
-    conditions a caller named, where its interface tells naming a condition —
-    even as ``None`` — from omitting it; ``None`` reads every condition
-    carrying a value as stated.
+    ever read off the row or off any read's evidence.
     """
 
     mutation: TargetMutation
@@ -368,16 +334,9 @@ class TargetWriteInstruction:
     if_tx_start: dt.datetime | None = None
     valid_from: dt.datetime | None = None
     until: dt.datetime | None = None
-    stated: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        forbidden = sorted(set(self.row) & _FORBIDDEN_ROW_KEYS)
-        if forbidden:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"target write: row carries forbidden observation control key(s) {forbidden} "
-                "(a target write's condition is its own revision argument, never a row member)",
-            )
+        refuse_observation_keys(self.row)
         if not isinstance(self.row, MappingProxyType):
             object.__setattr__(self, "row", MappingProxyType(dict(self.row)))
 
@@ -681,22 +640,14 @@ def _check_valid_time_bounds(
         )
 
 
-def _keyed_row(node: Mapping[str, object]) -> Mapping[str, object]:
+def _row(node: Mapping[str, object], shape: str) -> dict[str, object]:
     raw = node.get("row")
     if not isinstance(raw, Mapping):
-        raise UsageError(WRITE_INSTRUCTION_INVALID, "keyed write: `row` must be a mapping")
-    row = cast("Mapping[str, object]", raw)
-    forbidden = sorted(set(row) & _FORBIDDEN_ROW_KEYS)
-    if forbidden:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-            "(the transaction observation is attached at flush, never on the instruction)",
-        )
+        raise UsageError(WRITE_INSTRUCTION_INVALID, f"{shape}: `row` must be a mapping")
     # A neutral write-row value is opaque JSON (a scalar or a whole value-object
     # document); its metamodel role decides its meaning at preparation, not its
     # shape, so the serde keeps it verbatim.
-    return dict(row)
+    return dict(cast("Mapping[str, object]", raw))
 
 
 def _keyed(node: Mapping[str, object]) -> KeyedWriteInstruction:
@@ -706,14 +657,14 @@ def _keyed(node: Mapping[str, object]) -> KeyedWriteInstruction:
     _require(node, ("mutation", "entity", "row"), "keyed write")
     mutation = _mutation(node, _KEYED_MUTATIONS, "keyed write")
     entity = _entity_name(node, "entity", "keyed write")
-    row = _keyed_row(node)
+    row = _row(node, "keyed write")
     valid_from = _bound(node, "validFrom", "keyed write")
     until = _bound(node, "until", "keyed write")
     _check_valid_time_bounds(mutation, valid_from, until, "keyed write")
     return KeyedWriteInstruction(
         mutation=cast("KeyedMutation", mutation),
         entity=entity,
-        rows=(row,),
+        row=row,
         valid_from=valid_from,
         until=until,
     )
@@ -787,15 +738,8 @@ def _predicate(node: Mapping[str, object]) -> PredicateWriteInstruction:
         mutation=cast("PredicateMutation", mutation),
         target=target,
         assignments=_assignments(node) if payload == "assignments" else (),
-        row=_predicate_row(node) if payload == "row" else None,
+        row=_row(node, "predicate write") if payload == "row" else None,
     )
-
-
-def _predicate_row(node: Mapping[str, object]) -> Mapping[str, object]:
-    raw = node.get("row")
-    if not isinstance(raw, Mapping):
-        raise UsageError(WRITE_INSTRUCTION_INVALID, "predicate write: `row` must be a mapping")
-    return dict(cast("Mapping[str, object]", raw))
 
 
 def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
@@ -807,10 +751,7 @@ def _target_write(node: Mapping[str, object]) -> TargetWriteInstruction:
     _require(node, ("mutation", "entity", "row"), "target write")
     mutation = _mutation(node, _TARGET_MUTATIONS, "target write")
     entity = _entity_name(node, "entity", "target write")
-    raw = node.get("row")
-    if not isinstance(raw, Mapping):
-        raise UsageError(WRITE_INSTRUCTION_INVALID, "target write: `row` must be a mapping")
-    row = dict(cast("Mapping[str, object]", raw))
+    row = _row(node, "target write")
     if "ifVersion" in node and "ifTxStart" in node:
         raise UsageError(
             WRITE_INSTRUCTION_INVALID,
@@ -854,15 +795,10 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         _emit_bounds(target_body, instruction.valid_from, instruction.until)
         return target_body
     if isinstance(instruction, KeyedWriteInstruction):
-        if len(instruction.rows) != 1:
-            raise ValueError(
-                f"a keyed write instruction document states one row; this instruction "
-                f"carries {len(instruction.rows)}"
-            )
         keyed_body: dict[str, object] = {
             "mutation": instruction.mutation,
             "entity": instruction.entity,
-            "row": dict(instruction.rows[0]),
+            "row": dict(instruction.row),
         }
         _emit_bounds(keyed_body, instruction.valid_from, instruction.until)
         return keyed_body
@@ -955,423 +891,696 @@ def _non_temporal_milestone_refusal(
     )
 
 
-@overload
-def prepare_typed_write(
-    instruction: TargetWriteInstruction,
+def prepare_insert(
     preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedTargetInstruction: ...
-@overload
-def prepare_typed_write(
-    instruction: KeyedWriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedKeyedInstruction: ...
-@overload
-def prepare_typed_write(
-    instruction: PredicateWriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedPredicateInstruction: ...
-@overload
-def prepare_typed_write(
-    instruction: WriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedInstruction | PreparedTargetInstruction: ...
-def prepare_typed_write(
-    instruction: WriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedInstruction | PreparedTargetInstruction:
-    """Convert developer values once, then judge the write.
-
-    ``authored_members`` names the members a caller assigned explicitly rather
-    than through an edit chain that already judged them, so each is judged as
-    an assignment. ``members`` produces explicit assignments a keyed or
-    target write adds to its one row: it is asked only once the
-    target, the window, and any condition admit the write, so a fault in what
-    it judges is heard after theirs, and each member it answers is judged as
-    an assignment. ``target`` is the Entity a Typed caller already resolved the
-    instruction's spelling to."""
-    return _prepare_write(
-        instruction,
-        preparation,
-        lane=TYPED_LANE,
-        authored_members=authored_members,
-        members=members,
-        target=target,
-    )
-
-
-@overload
-def prepare_wire_write(
-    instruction: TargetWriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedTargetInstruction: ...
-@overload
-def prepare_wire_write(
-    instruction: KeyedWriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedKeyedInstruction: ...
-@overload
-def prepare_wire_write(
-    instruction: PredicateWriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedPredicateInstruction: ...
-@overload
-def prepare_wire_write(
-    instruction: WriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedInstruction | PreparedTargetInstruction: ...
-def prepare_wire_write(
-    instruction: WriteInstruction,
-    preparation: WritePreparation,
-    *,
-    authored_members: Set[str] | None = None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-    target: CompiledEntity | None = None,
-) -> PreparedInstruction | PreparedTargetInstruction:
-    """Decode one serialized instruction, then judge the write.
-
-    ``authored_members`` names the row members a Wire caller explicitly wrote:
-    an insert's payload keys, judged as insert authoring, or an update's change
-    keys, judged as assignments. A neutral instruction omits it, and its row is
-    judged as row content alone. A target write judges every member
-    its row states beside the key as an assignment either way. ``members``
-    follows :func:`prepare_typed_write`'s rule. ``target`` is the Entity the
-    instruction's spelling was already resolved to.
-    """
-    return _prepare_write(
-        instruction,
-        preparation,
-        lane=WIRE_LANE,
-        authored_members=authored_members,
-        members=members,
-        target=target,
-    )
-
-
-def _prepare_write(
-    instruction: WriteInstruction,
-    preparation: WritePreparation,
-    *,
-    lane: int,
-    authored_members: Set[str] | None,
-    members: Callable[[], Mapping[str, object]] | None,
-    target: CompiledEntity | None = None,
-) -> PreparedInstruction | PreparedTargetInstruction:
-    """The sole admissibility judgment of a write, each family's target first
-    and then its payload, so a call whose verb or window is wrong for its
-    target hears that before any complaint about what it carries — except a
-    target write's key naming no object, which is heard as soon as the target
-    admits the write.
-
-    The target's family Persistence Mode is judged before anything else about
-    the write, since no verb, window, revision, predicate, or payload could
-    make a write to a ReadOnly family admissible."""
-    model = preparation.meta
-    entity = (
-        target
-        if target is not None
-        else resolve_target(
-            model,
-            instruction.target.entity
-            if isinstance(instruction, PredicateWriteInstruction)
-            else instruction.entity,
-        )
-    )
-    position = _inheritance_entity_view(model, entity)
-    _judge_write_persistence(entity, position)
-    entry = preparation.entity(entity.identity)
-    if isinstance(instruction, TargetWriteInstruction):
-        return _prepare_target_write(
-            instruction,
-            model,
-            entity,
-            position,
-            entry,
-            lane=lane,
-            authored_members=authored_members,
-            members=members,
-        )
-    if isinstance(instruction, KeyedWriteInstruction):
-        return _prepare_keyed_write(
-            instruction,
-            model,
-            entity,
-            position,
-            entry,
-            lane=lane,
-            authored_members=authored_members,
-            members=members,
-        )
-    # A predicate write states its payload whole, and its readless target
-    # declares no framework-owned member for an authored one to name.
-    assert members is None
-    return _prepare_predicate_write(instruction, model, entity, position, entry, lane=lane)
-
-
-def prepare_typed_keyed_write(
-    preparation: WritePreparation,
+    representation: WriteRepresentation,
     mutation: KeyedMutation,
     target: CompiledEntity,
+    payload: CompletePayload,
     *,
-    values: Iterable[object] = (),
-    pairs: Iterable[tuple[int, object]] = (),
-    members: Callable[[], Mapping[str, object]] | None = None,
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
 ) -> PreparedKeyedInstruction:
-    """Judge one Typed keyed write of an existing object of ``target``: its
-    verb and window, then its row.
+    """Judge one opening of ``target``: its family's persistence, its verb and
+    window, then its payload's member names and its values in member order."""
+    if mutation not in INSERT_MUTATIONS:
+        raise ValueError(f"{mutation!r} opens no row")
+    entity_preparation, _ = _writable_preparation(preparation, target)
+    window = _admitted_window(preparation, target, mutation, valid_from, until, surface="keyed")
+    row = _managed_row(
+        preparation, entity_preparation, target, representation, mutation, payload, "keyed"
+    )
+    return _prepared_keyed_instruction(
+        mutation, _assigns(entity_preparation, row), target, (row,), window
+    )
 
-    A replacement states ``values``, one developer value per member of
-    ``target``'s member selection in that order and the preparation's
-    ``absent`` where the source holds none, judged as the object's complete
-    writable state in member order. Every other verb states ``pairs``, each
-    stated member's position beside its value in the order the source
-    authored them, the key among them; ``members`` produces the explicit
-    assignments an amendment adds to them once the target and window admit
-    the write, each judged as an assignment.
+
+def prepare_keyed_write(
+    preparation: WritePreparation,
+    representation: WriteRepresentation,
+    mutation: KeyedMutation,
+    target: CompiledEntity,
+    payload: CompletePayload | PartialPayload,
+    *,
+    assignments: Sequence[WriteAssignment] = (),
+    restated_key: object = UNSTATED,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> PreparedKeyedInstruction:
+    """Judge one keyed write of the existing object of ``target`` that
+    ``payload``'s key, its source's identity, names: its family's persistence,
+    its verb and window, ``assignments`` resolved into the payload, then the
+    payload's member names, its key, and its other values.
+
+    ``restated_key`` is a key the caller stated beside that identity, which
+    must name the same object and is then set aside.
     """
     if mutation in INSERT_MUTATIONS:
         raise ValueError(f"{mutation!r} opens a row")
-    model = preparation.meta
-    position = _inheritance_entity_view(model, target)
-    _judge_write_persistence(target, position)
-    entry = preparation.entity(target.identity)
-    shape = temporal_read.temporal_facet_of(model).shape(target.identity)
-    window = _judge_applicability(
-        model, target, shape, mutation, valid_from, until, surface="keyed"
+    entity_preparation, family = _writable_preparation(preparation, target)
+    window = _admitted_window(preparation, target, mutation, valid_from, until, surface="keyed")
+    payload = _payload_with_assignments(
+        preparation.meta, entity_preparation, target, family, payload, assignments
     )
-    if mutation in REPLACE_MUTATIONS:
-        omitted = entry.framework_owned | entry.read_only
-        if target.inheritance is not None:
-            values = tuple(values)
-            inheritance.validate_subtype_write(model, target, _stated_names(entry, values, omitted))
-        row = _replacement_row(entry, target, values, lane=TYPED_LANE, omitted=omitted)
-    elif members is not None:
-        addressed = tuple(pairs)
-        assigned = members()
-        stated = entry.selection.members.shape
-        assigned_pairs = tuple(
-            (cast("int", stated.position(name)), value) for name, value in assigned.items()
+    row = _managed_row(
+        preparation,
+        entity_preparation,
+        target,
+        representation,
+        mutation,
+        payload,
+        "keyed",
+        restated_key=restated_key,
+    )
+    return _prepared_keyed_instruction(
+        mutation, _assigns(entity_preparation, row), target, (row,), window
+    )
+
+
+def prepare_target_write(
+    preparation: WritePreparation,
+    representation: WriteRepresentation,
+    mutation: TargetMutation,
+    target: CompiledEntity,
+    payload: CompletePayload | PartialPayload,
+    *,
+    assignments: Sequence[WriteAssignment] = (),
+    revision: TargetRevisionArguments,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> PreparedTargetInstruction:
+    """Judge one caller-conditioned write of the object ``payload``'s key
+    names: its family's persistence, whether that key names an object at all,
+    its verb and window, its revision, then ``assignments`` resolved into the
+    payload, and the payload's member names, its key, and its other values.
+
+    The revision is judged ahead of the payload because it decides what the
+    write may be at all.
+    """
+    entity_preparation, family = _writable_preparation(preparation, target)
+    key, payload = _judged_target_key(entity_preparation, target, mutation, payload)
+    window = _admitted_window(preparation, target, mutation, valid_from, until, surface="target")
+    expectation = _target_expectation(preparation.meta, family, target, mutation, revision)
+    if representation is TYPED:
+        _refuse_structured_key(target, key)
+    payload = _payload_with_assignments(
+        preparation.meta, entity_preparation, target, family, payload, assignments
+    )
+    row = _managed_row(
+        preparation, entity_preparation, target, representation, mutation, payload, "target"
+    )
+    return _prepared_target_instruction(
+        mutation, _assigns(entity_preparation, row), target, row, window, expectation
+    )
+
+
+def prepare_predicate_write(
+    preparation: WritePreparation,
+    representation: WriteRepresentation,
+    mutation: PredicateMutation,
+    target: CompiledEntity,
+    selection: PredicateNode | PredicateInterpretation,
+    payload: CompletePayload | PartialPayload | None = None,
+    *,
+    assignments: Sequence[WriteAssignment] = (),
+) -> PreparedPredicateInstruction:
+    """Judge one predicate-selected write of every object of ``target``
+    ``selection`` selects: its family's persistence, whether ``target`` can be
+    written without being read, the predicate and the family, then the
+    members its payload or ``assignments`` state and only then their values.
+
+    An amendment names no key, since the predicate selects the objects it
+    writes; a replacement's key is judged and then dropped.
+    """
+    entity_preparation, family = _writable_preparation(preparation, target)
+    judge_readless_target(preparation.meta, target, family, mutation)
+    resolved = _resolved_selection(preparation.meta, target, selection)
+    if mutation not in ASSIGNMENT_MUTATIONS:
+        return _prepared_predicate_instruction(
+            mutation, resolved, empty_row(entity_preparation.selection)
         )
-        if target.inheritance is not None:
-            inheritance.validate_subtype_write(
-                model, target, _named_pairs(entry, (*addressed, *assigned_pairs))
-            )
-        row = _assigned_row(entry, target, (*assigned_pairs, *addressed), lane=TYPED_LANE)
+    payload = _payload_with_assignments(
+        preparation.meta, entity_preparation, target, family, payload, assignments
+    )
+    if mutation in AMEND_MUTATIONS and isinstance(payload, PartialPayload):
+        _refuse_key_assignment(entity_preparation, target, payload)
+    row = _managed_row(
+        preparation, entity_preparation, target, representation, mutation, payload, "predicate"
+    )
+    return _prepared_predicate_instruction(
+        mutation, resolved, row.without(1 << entity_preparation.key_position)
+    )
+
+
+def _writable_preparation(
+    preparation: WritePreparation, target: CompiledEntity
+) -> tuple[EntityPreparation, inheritance.InheritanceEntityView]:
+    """``target``'s preparation and family view, once its family's Persistence
+    Mode admits a write."""
+    family = _inheritance_entity_view(preparation.meta, target)
+    _judge_write_persistence(target, family)
+    return preparation.entity(target.identity), family
+
+
+def _admitted_window(
+    preparation: WritePreparation,
+    target: CompiledEntity,
+    mutation: str,
+    valid_from: object,
+    until: object,
+    *,
+    surface: _WriteSurface,
+) -> TimeInterval | None:
+    """The judged window of a keyed or target write, once its verb suits
+    ``target`` (:func:`_judge_applicability`)."""
+    model = preparation.meta
+    shape = temporal_read.temporal_facet_of(model).shape(target.identity)
+    return _judge_applicability(model, target, shape, mutation, valid_from, until, surface=surface)
+
+
+def _judged_target_key(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    mutation: str,
+    payload: CompletePayload | PartialPayload,
+) -> tuple[object, CompletePayload | PartialPayload]:
+    """The key a target write's payload states, refused where it names no
+    object, beside the payload still holding every value it stated."""
+    if isinstance(payload, CompletePayload):
+        key, values = _split_key(entity_preparation, payload.values)
+        payload = CompletePayload(values, payload.unlisted_names)
     else:
-        stated_pairs = tuple(pairs)
-        if target.inheritance is not None:
-            inheritance.validate_subtype_write(model, target, _named_pairs(entry, stated_pairs))
-        if mutation in AMEND_MUTATIONS and entry.framework_owned:
-            _refuse_owned_names(entry, target, stated_pairs, entry.framework_owned)
-        row = _sparse_row(entry, target, stated_pairs, lane=TYPED_LANE)
-    return _prepared_keyed_instruction(mutation, _assigns(entry, (row,)), target, (row,), window)
+        key = _stated_key(entity_preparation, payload)
+    if key is entity_preparation.selection.absent:
+        raise key_absent_refusal(target.identity, mutation)
+    if key is None:
+        raise key_null_refusal(target.identity, entity_preparation.key_name)
+    return key, payload
 
 
-def prepare_typed_insert(
-    preparation: WritePreparation,
-    mutation: KeyedMutation,
-    target: CompiledEntity,
-    values: Iterable[object],
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-) -> PreparedKeyedInstruction:
-    """Judge one Typed opening of ``target``: its verb and window, then its
-    row in member order.
-
-    ``values`` holds one developer value per member of ``target``'s member
-    selection, in that order, and the preparation's ``absent`` where the
-    instance holds none. A framework-owned member is read as unstated, since
-    the framework supplies it.
-    """
-    entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
-    if target.inheritance is not None:
-        values = tuple(values)
-        inheritance.validate_subtype_write(
-            preparation.meta,
-            target,
-            _opening_shape(entry, _stated_names(entry, values, entry.framework_owned)),
+def _refuse_structured_key(target: CompiledEntity, key: object) -> None:
+    """Refuse a Typed key that is a carrier of several values rather than one
+    scalar."""
+    if isinstance(key, Mapping | tuple | list | set | frozenset):
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{target.identity.name}: key is the object's one scalar primary-key value, "
+            f"and a {type(cast('object', key)).__name__} is no such value",
         )
-    row = _opened_row(entry, target, values, lane=TYPED_LANE)
-    return _prepared_keyed_instruction(
-        mutation, _assigns_beside_key((row,), position), target, (row,), window
-    )
 
 
-def prepare_wire_insert(
-    preparation: WritePreparation,
-    mutation: KeyedMutation,
+def _target_expectation(
+    model: AcceptedMetamodel,
+    family: inheritance.InheritanceEntityView,
     target: CompiledEntity,
-    payload: Mapping[str, object],
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-) -> PreparedKeyedInstruction:
-    """Judge one Wire opening of ``target`` from its captured Create Payload:
-    its observation keys, its verb and window, its member names, then its
-    values in member order.
+    mutation: str,
+    revision: TargetRevisionArguments,
+) -> TargetExpectation:
+    """The starting condition a target write states, judged against the
+    family's own revision kind (`m-concurrency`): a versioned family takes
+    ``version`` and a temporal one ``tx_start``.
 
-    Every payload key is the caller's authoring, so a framework-owned member
-    is refused before any value is decoded.
+    An unversioned Non-Temporal family has no revision a caller could state,
+    so it is refused before any argument is weighed. Otherwise stating more
+    than one is refused first, because no family has two revisions; then a
+    misstated kind, then a missing one, then the value itself — a stated
+    ``None`` included.
     """
-    _refuse_observation_keys(payload.keys())
-    entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
-    _judge_row_members(
-        preparation.meta, target, entry, _opening_shape(entry, payload), payload.keys(), "keyed"
-    )
-    row = _opened_row(entry, target, entry.plan.authored_values(payload), lane=WIRE_LANE)
-    return _prepared_keyed_instruction(
-        mutation, _assigns_beside_key((row,), position), target, (row,), window
-    )
-
-
-def _judged_opening(
-    preparation: WritePreparation,
-    mutation: KeyedMutation,
-    target: CompiledEntity,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-) -> tuple[EntityPreparation, inheritance.InheritanceEntityView, TimeInterval | None]:
-    """An opening's target judgments, in `m-unit-work`'s order: persistence,
-    then the verb and window."""
-    if mutation not in INSERT_MUTATIONS:
-        raise ValueError(f"{mutation!r} opens no row")
-    model = preparation.meta
-    position = _inheritance_entity_view(model, target)
-    _judge_write_persistence(target, position)
+    root = family.root
     shape = temporal_read.temporal_facet_of(model).shape(target.identity)
-    window = _judge_applicability(
-        model, target, shape, mutation, valid_from, until, surface="keyed"
+    if not _requires_observation(family, shape):
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{root.name}: {mutation!r} states a revision its caller observed, and "
+            f"{root.name!r} is unversioned and non-temporal, so it has none to state and no "
+            "write could detect a change since that observation; read it in the writing "
+            "transaction and write through that read instead",
+        )
+    stated = revision.stated
+    if len(stated) > 1:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{root.name}: {mutation!r} states {list(stated)}, and a target has one condition "
+            "to state",
+        )
+    required = "version" if _is_versioned(family) else "tx_start"
+    if stated and required not in stated:
+        (misstated,) = stated
+        raise UsageError(WRITE_INSTRUCTION_INVALID, _misstated(root, mutation, misstated, required))
+    if not stated:
+        raise UsageError(WRITE_INSTRUCTION_INVALID, _missing(root, mutation, required))
+    # A runtime caller may state a condition as any value, whatever the
+    # annotation promises, so each is judged as the object it is.
+    value = cast("object", revision.if_version if required == "version" else revision.if_tx_start)
+    if value is None:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{root.name}: {mutation!r} states {required}=None, which names no revision; state "
+            f"the {required} its caller observed",
+        )
+    if required == "version":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
+                f"{root.name}: {mutation!r} takes an integer version, and "
+                f"{type(value).__name__} is no version",
+            )
+        return ExpectedVersion(value)
+    return ExpectedTxStart(normalize_instant(_stated_instant(root, mutation, "tx_start", value)))
+
+
+def _resolved_selection(
+    model: AcceptedMetamodel,
+    target: CompiledEntity,
+    selection: PredicateNode | PredicateInterpretation,
+) -> ResolvedMutationSelection:
+    """``selection`` measured at ``target`` with the whole
+    ``validate_predicate`` vocabulary — a canonical node validated, an
+    interpreting adapter invoked once at the target's own position — and then
+    an inheritance-family target refused before any member, so ancestry
+    resolution never arises for one."""
+    validated = (
+        predicate_algebra.validate_predicate(target, selection, model)
+        if isinstance(selection, PredicateNode)
+        else selection(target, predicate_algebra.root_position(model, target))
     )
-    return preparation.entity(target.identity), position, window
+    inheritance.reject_predicate_write(target)
+    return ResolvedMutationSelection(target, validated)
 
 
-def _opened_row(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    raws: Iterable[object],
+def _payload_with_assignments(
+    model: AcceptedMetamodel,
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    family: inheritance.InheritanceEntityView,
+    payload: CompletePayload | PartialPayload | None,
+    assignments: Sequence[WriteAssignment],
+) -> CompletePayload | PartialPayload:
+    """``payload`` stating each of ``assignments`` after its own members, every
+    assignment resolved before any value is judged; no payload at all states
+    the assignments alone."""
+    if payload is None:
+        return PartialPayload(
+            _resolved_assignments(model, entity_preparation, target, family, assignments)
+        )
+    if not assignments:
+        return payload
+    partial = _as_partial(payload, "an assigning write")
+    assigned = _resolved_assignments(model, entity_preparation, target, family, assignments)
+    return PartialPayload((*partial.stated, *assigned), partial.unlisted_names)
+
+
+def _resolved_assignments(
+    model: AcceptedMetamodel,
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    family: inheritance.InheritanceEntityView,
+    assignments: Sequence[WriteAssignment],
+) -> tuple[StatedMember, ...]:
+    """The members ``assignments`` assign to one object of ``target``, in
+    authored order.
+
+    A reference names the member through its owner, RESOLVED rather than
+    compared as text: the owner must be ``target`` or one of its ancestors and
+    must itself declare or inherit the member, so an inherited member assigned
+    through its declaring ancestor applies while a descendant's, a sibling's,
+    or a stranger's member, or an ambiguous bare owner, is refused rather than
+    having its qualifier discarded. The key addresses the object and is never
+    assigned, and each member is assigned at most once.
+    """
+    ancestry = frozenset(family.ancestry)
+    shape = entity_preparation.selection.members.shape
+    resolved: list[StatedMember] = []
+    assigned: set[int] = set()
+    for assignment in assignments:
+        attr = assignment.attr
+        owner_spelling, _, name = attr.rpartition(".")
+        owner = entity_by_name(model, owner_spelling) if _ASSIGNMENT_REF.match(attr) else None
+        if (
+            owner is None
+            or owner.identity not in ancestry
+            or _member_selection(model, owner).binding(name) is None
+        ):
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
+                f"{target.identity.name}: assignment {attr!r} does not name a declared member "
+                f"of {target.identity.canonical}",
+            )
+        position = cast("int", shape.position(name))
+        if position == entity_preparation.key_position:
+            raise _key_assignment_refusal(entity_preparation, target)
+        if position in assigned:
+            raise UsageError(
+                WRITE_INSTRUCTION_INVALID,
+                f"{target.identity.name}: assignment {attr!r} is duplicated — each member may "
+                "be assigned at most once",
+            )
+        assigned.add(position)
+        resolved.append((position, assignment.value))
+    return tuple(resolved)
+
+
+def _refuse_key_assignment(
+    entity_preparation: EntityPreparation, target: CompiledEntity, payload: PartialPayload
+) -> None:
+    """Refuse a predicate amendment stating the key, which addresses nothing
+    there: the predicate selects the objects."""
+    if _stated_key(entity_preparation, payload) is not entity_preparation.selection.absent:
+        raise _key_assignment_refusal(entity_preparation, target)
+
+
+def _key_assignment_refusal(
+    entity_preparation: EntityPreparation, target: CompiledEntity
+) -> UsageError:
+    return UsageError(
+        WRITE_INSTRUCTION_INVALID,
+        f"{target.identity.canonical}.{entity_preparation.key_name}: primary-key fields may not "
+        "be assigned — the key addresses the object a write changes",
+    )
+
+
+def _managed_row(
+    preparation: WritePreparation,
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    mutation: str,
+    payload: CompletePayload | PartialPayload,
+    described: str,
     *,
-    lane: int,
+    restated_key: object = UNSTATED,
 ) -> ManagedRow:
-    """The row an opening states, ``raws`` judged in member order through
-    ``lane``'s plan, a refusal worded as a stated row's is.
+    """``payload`` judged as the row ``mutation`` writes: every member name
+    first, then the key that addresses the object, then the rest.
 
-    A framework-owned member is read as unstated whatever ``raws`` holds
+    An opening's key is content its Entity may allocate, not an address, so
+    an opening is judged in member order. A complete payload's values are read
+    once, and copied only where their names must be judged before them.
+    """
+    if mutation in INSERT_MUTATIONS or mutation in REPLACE_MUTATIONS:
+        complete = _as_complete(payload, mutation)
+        values = complete.values
+        authored = representation.complete_payload_cells == "authored"
+        if authored or target.inheritance is not None or complete.unlisted_names:
+            values = tuple(values)
+            carried = 0 if authored else _carried(entity_preparation, mutation)
+            absent = entity_preparation.selection.absent
+            _judge_payload_names(
+                preparation.meta,
+                entity_preparation,
+                target,
+                mutation,
+                (
+                    (position, raw)
+                    for position, raw in enumerate(values)
+                    if raw is not absent and not carried >> position & 1
+                ),
+                complete.unlisted_names,
+                authored=authored,
+                described=described,
+            )
+        if mutation in INSERT_MUTATIONS:
+            return _opening_row(entity_preparation, target, representation, values)
+        key, values = _split_key(entity_preparation, values)
+        admitted = _admitted_key(entity_preparation, target, representation, key, restated_key)
+        return _replacement_row(entity_preparation, target, representation, values, admitted)
+    partial = _as_partial(payload, mutation)
+    _judge_payload_names(
+        preparation.meta,
+        entity_preparation,
+        target,
+        mutation,
+        partial.stated,
+        partial.unlisted_names,
+        authored=not partial.judged_at_edit,
+        described=described,
+    )
+    destructive = mutation in DESTRUCTIVE_MUTATIONS
+    if destructive:
+        _refuse_members_beside_key(entity_preparation, target, mutation, partial, described)
+    key = _stated_key(entity_preparation, partial)
+    admitted = _admitted_key(entity_preparation, target, representation, key, restated_key)
+    if destructive or partial.judged_at_edit:
+        return _stated_row(entity_preparation, target, representation, partial.stated, admitted)
+    return _amendment_row(entity_preparation, target, representation, partial.stated, admitted)
+
+
+def _as_complete(payload: CompletePayload | PartialPayload, write: str) -> CompletePayload:
+    if not isinstance(payload, CompletePayload):
+        raise ValueError(f"{write!r} states a whole state, which a partial payload is not")
+    return payload
+
+
+def _as_partial(payload: CompletePayload | PartialPayload, write: str) -> PartialPayload:
+    if not isinstance(payload, PartialPayload):
+        raise ValueError(f"{write!r} states some members, which a complete payload is not")
+    return payload
+
+
+def _carried(entity_preparation: EntityPreparation, mutation: str) -> int:
+    """The members a carried complete payload holds that its caller never
+    authored: framework-owned ones, and in a replacement read-only ones too."""
+    if mutation in REPLACE_MUTATIONS:
+        return entity_preparation.framework_owned | entity_preparation.read_only
+    return entity_preparation.framework_owned
+
+
+def _judge_payload_names(
+    model: AcceptedMetamodel,
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    mutation: str,
+    stated: Iterable[StatedMember],
+    unlisted_names: tuple[str, ...],
+    *,
+    authored: bool,
+    described: str,
+) -> None:
+    """Refuse a payload naming a member its target's family cannot write: a
+    sibling-branch or derived member first, then a framework-owned one its
+    caller ``authored``, then one the target does not declare."""
+    if target.inheritance is not None:
+        stated = tuple(stated)
+        inheritance.validate_subtype_write(
+            model, target, _payload_names(entity_preparation, mutation, stated, unlisted_names)
+        )
+    if authored and entity_preparation.framework_owned:
+        _refuse_framework_owned_names(entity_preparation, target, stated)
+    if unlisted_names:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{target.identity.name}: {described} write row names undeclared member(s) "
+            f"{sorted(unlisted_names)}",
+        )
+
+
+def _payload_names(
+    entity_preparation: EntityPreparation,
+    mutation: str,
+    stated: Iterable[StatedMember],
+    unlisted_names: tuple[str, ...],
+) -> dict[str, None]:
+    """Every member a payload names, by name. An opening also names the key
+    its Entity allocates where the caller omitted it, since the insert states
+    that key before the row names its object."""
+    members = entity_preparation.selection.members.shape.members
+    names = {members[position].name: None for position, _ in stated}
+    names.update({name: None for name in unlisted_names})
+    allocation = entity_preparation.key_allocation
+    if allocation is not None and mutation in INSERT_MUTATIONS:
+        names.setdefault(members[allocation.position].name, None)
+    return names
+
+
+def _refuse_framework_owned_names(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    stated: Iterable[StatedMember],
+) -> None:
+    """Refuse the first framework-owned member ``stated`` names, by its
+    assignment rule and before any value is judged: its name alone refuses
+    it."""
+    owned = entity_preparation.framework_owned
+    for position, raw in stated:
+        if owned >> position & 1:
+            try:
+                entity_preparation.assignment_rules(position, raw)
+            except UsageError as error:
+                raise UsageError(
+                    FRAMEWORK_OWNED_MEMBER_ASSIGNED,
+                    f"{target.identity.canonical}.{error.args[1]}",
+                ) from error
+
+
+def _refuse_members_beside_key(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    mutation: str,
+    payload: PartialPayload,
+    described: str,
+) -> None:
+    """Refuse a destructive write stating any member but the key that names
+    its object."""
+    members = entity_preparation.selection.members.shape.members
+    key = entity_preparation.key_position
+    beside = sorted(members[position].name for position, _ in payload.stated if position != key)
+    if beside:
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{target.identity.name}: a {described} {mutation!r} names its object by its "
+            f"primary key alone, and this row also states {beside}",
+        )
+
+
+def _stated_key(entity_preparation: EntityPreparation, payload: PartialPayload) -> object:
+    """The key ``payload`` states, or the preparation's ``absent``."""
+    key = entity_preparation.key_position
+    return next(
+        (raw for position, raw in payload.stated if position == key),
+        entity_preparation.selection.absent,
+    )
+
+
+def _split_key(
+    entity_preparation: EntityPreparation, values: Iterable[object]
+) -> tuple[object, Iterable[object]]:
+    """The key complete ``values`` state, beside every value they state, a
+    one-shot input read only as far as its key."""
+    position = entity_preparation.key_position
+    if isinstance(values, tuple):
+        return values[position], values
+    remaining = iter(values)
+    prefix = tuple(islice(remaining, position + 1))
+    return prefix[position], chain(prefix, remaining)
+
+
+def _admitted_key(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    key: object,
+    restated_key: object,
+) -> tuple[int, object] | None:
+    """The key cell that addresses the object, the first value a payload has
+    judged, beside its position; ``None`` where the payload leaves the key
+    unstated or null for its row to judge.
+
+    A key its caller restated beside it is converted next and must name the
+    same object, before any other value is judged.
+    """
+    if key is entity_preparation.selection.absent or key is None:
+        return None
+    position = entity_preparation.key_position
+    cell = _key_cell(entity_preparation, target, representation, key)
+    if not isinstance(restated_key, Unstated) and (
+        _key_cell(entity_preparation, target, representation, restated_key) != cell
+    ):
+        raise UsageError(
+            WRITE_INSTRUCTION_INVALID,
+            f"{target.identity.canonical}.{entity_preparation.key_name}: the document names "
+            f"{restated_key!r}, and the source this write addresses is another object — a key "
+            "member addresses the write and never changes it",
+        )
+    return position, cell
+
+
+def _key_cell(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    raw: object,
+) -> object:
+    """``raw`` converted as the key, refused as a stated row's key is."""
+    try:
+        return entity_preparation.plan.scalar_cell(
+            representation.lane, entity_preparation.key_position, raw
+        )
+    except AuthoringRefusal as refusal:
+        error = _row_refusal(target, entity_preparation.selection.members.shape, refusal)
+        raise error from error.__cause__
+
+
+def _opening_row(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    values: Iterable[object],
+) -> ManagedRow:
+    """The row an opening states, ``values`` judged in member order.
+
+    A framework-owned member is read as unstated whatever ``values`` holds
     there: the framework supplies it when the row settles. A key the Entity
     allocates may be left unstated, for the insert to allocate, but is never
     stated as null.
     """
-    shape = entry.selection.members.shape
-    allocation = entry.key_allocation
+    allocation = entity_preparation.key_allocation
     try:
-        prepared = entry.plan.complete_row(
-            raws,
-            lane=lane,
-            required=entry.insert_required,
-            omitted=entry.framework_owned,
+        prepared = entity_preparation.plan.complete_row(
+            values,
+            lane=representation.lane,
+            required=entity_preparation.insert_required,
+            omitted=entity_preparation.framework_owned,
             nonnull=0 if allocation is None else 1 << allocation.position,
         )
     except AuthoringRefusal as refusal:
-        error = _row_refusal(entity, shape, refusal)
+        error = _row_refusal(target, entity_preparation.selection.members.shape, refusal)
         raise error from error.__cause__
-    return managed_row(entry.selection, prepared.cells, prepared.presence)
+    return managed_row(entity_preparation.selection, prepared.cells, prepared.presence)
 
 
-def _sparse_row(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    pairs: Sequence[tuple[int, object]],
-    *,
-    lane: int,
+def _stated_row(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    stated: tuple[StatedMember, ...],
+    admitted: tuple[int, object] | None,
 ) -> ManagedRow:
-    """The row stating exactly the members ``pairs`` positions, judged as
-    content in the order ``pairs`` states them, a refusal worded as a stated
-    row's is."""
-    shape = entry.selection.members.shape
+    """The row stating exactly the members ``stated`` positions, judged as
+    content in the order it states them: a destructive write's identity, or
+    the members an edit chain already judged as assignments."""
     try:
-        prepared = entry.plan.partial_row(pairs, lane=lane)
+        prepared = entity_preparation.plan.partial_row(
+            stated, lane=representation.lane, admitted=admitted
+        )
     except AuthoringRefusal as refusal:
-        error = _row_refusal(entity, shape, refusal)
+        error = _row_refusal(target, entity_preparation.selection.members.shape, refusal)
         raise error from error.__cause__
-    return managed_row(entry.selection, prepared.cells, prepared.presence)
+    return managed_row(entity_preparation.selection, prepared.cells, prepared.presence)
 
 
-def _assigned_row(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    pairs: Sequence[tuple[int, object]],
-    *,
-    lane: int,
-    owned_names_judged: bool = False,
+def _amendment_row(
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    stated: tuple[StatedMember, ...],
+    admitted: tuple[int, object] | None,
 ) -> ManagedRow:
-    """The row assigning one existing object the members ``pairs`` positions,
-    each beside the key judged as an assignment in that order, the key
-    addressing the object."""
+    """The row assigning one existing object the members ``stated``
+    positions, each beside the key judged as an assignment in that order."""
     try:
-        if not owned_names_judged and entry.framework_owned:
-            _refuse_owned_names(entry, entity, pairs, entry.framework_owned)
-        prepared = entry.plan.partial_row(
-            pairs,
-            lane=lane,
-            check=entry.assignment_rules,
+        prepared = entity_preparation.plan.partial_row(
+            stated,
+            lane=representation.lane,
+            check=entity_preparation.assignment_rules,
+            admitted=admitted,
         )
     except UsageError as error:
-        if error.code not in WRITE_ASSIGNMENT_CODES:
-            raise
-        raise _restated_assignment_refusal(entity, error) from error
+        raise _restated_assignment_refusal(target, error) from error
     except AuthoringRefusal as refusal:
-        refused = _assignment_refusal(entry, entity, refusal)
+        refused = _assignment_refusal(entity_preparation, target, refusal)
         raise refused from refused.__cause__
-    return managed_row(entry.selection, prepared.cells, prepared.presence)
+    return managed_row(entity_preparation.selection, prepared.cells, prepared.presence)
 
 
 def _replacement_row(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    raws: Iterable[object],
-    *,
-    lane: int,
-    omitted: int,
+    entity_preparation: EntityPreparation,
+    target: CompiledEntity,
+    representation: WriteRepresentation,
+    values: Iterable[object],
+    admitted: tuple[int, object] | None,
 ) -> ManagedRow:
     """The row stating one existing object's complete writable state,
-    ``raws`` judged in member order as assignments beside the key that
+    ``values`` judged in member order as assignments beside the key that
     addresses it.
 
     A replacement states that state whatever authorized it: an omitted
@@ -1379,52 +1588,31 @@ def _replacement_row(
     written empty, and an omitted ``many`` the empty collection, so no value
     is ever carried forward from the state it replaces. That state excludes
     framework-owned and read-only members, which are never completed, and a
-    member in ``omitted`` is read as unstated.
+    carried payload's own are read as unstated.
     """
+    excluded = entity_preparation.framework_owned | entity_preparation.read_only
     try:
-        owned = entry.framework_owned & ~omitted
-        if owned:
-            raws = tuple(raws)
-            absent = entry.selection.absent
-            stated = ((position, raw) for position, raw in enumerate(raws) if raw is not absent)
-            _refuse_owned_names(entry, entity, stated, owned)
-        prepared = entry.plan.complete_row(
-            raws,
-            lane=lane,
-            required=entry.replace_required,
-            omitted=omitted,
-            nulled=entry.replace_nulled,
-            excluded=entry.framework_owned | entry.read_only,
-            check=entry.assignment_rules,
+        prepared = entity_preparation.plan.complete_row(
+            values,
+            lane=representation.lane,
+            required=entity_preparation.replace_required,
+            omitted=excluded if representation.complete_payload_cells == "carried" else 0,
+            nulled=entity_preparation.replace_nulled,
+            excluded=excluded,
+            check=entity_preparation.assignment_rules,
+            admitted=admitted,
         )
     except UsageError as error:
-        if error.code not in WRITE_ASSIGNMENT_CODES:
-            raise
-        raise _restated_assignment_refusal(entity, error) from error
+        raise _restated_assignment_refusal(target, error) from error
     except AuthoringRefusal as refusal:
-        refused = _replacement_refusal(entry, entity, refusal)
+        refused = _replacement_refusal(entity_preparation, target, refusal)
         raise refused from refused.__cause__
-    return managed_row(entry.selection, prepared.cells, prepared.presence)
+    return managed_row(entity_preparation.selection, prepared.cells, prepared.presence)
 
 
-def _refuse_owned_names(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    pairs: Iterable[tuple[int, object]],
-    owned: int,
-) -> None:
-    """Refuse the first member of ``owned``, framework-owned ones, that
-    ``pairs`` states, by its assignment rule and before any value is judged:
-    its name alone refuses it."""
-    for position, raw in pairs:
-        if owned >> position & 1:
-            try:
-                entry.assignment_rules(position, raw)
-            except UsageError as error:
-                raise UsageError(
-                    FRAMEWORK_OWNED_MEMBER_ASSIGNED,
-                    f"{entity.identity.canonical}.{error.args[1]}",
-                ) from error
+def _assigns(entity_preparation: EntityPreparation, row: ManagedRow) -> bool:
+    """Whether ``row`` states a member beside the key."""
+    return row.presence & ~(1 << entity_preparation.key_position) != 0
 
 
 def _restated_assignment_refusal(entity: CompiledEntity, error: UsageError) -> UsageError:
@@ -1461,7 +1649,7 @@ def _assignment_refusal(
     stated row's at the key."""
     position = refusal.position
     shape = entry.selection.members.shape
-    if position == entry.key or is_decoding_refusal(refusal.cause):
+    if position == entry.key_position or is_decoding_refusal(refusal.cause):
         return _row_refusal(entity, shape, refusal)
     member = entry.selection.members.bindings[position]
     violation = refusal.violation
@@ -1559,71 +1747,6 @@ def joined_path(base: str, path: str) -> str:
     return f"{base}.{path}"
 
 
-def _opening_shape(entry: EntityPreparation, row: Mapping[str, object]) -> Mapping[str, object]:
-    """``row`` as an opening's shape is judged: stating the key its Entity
-    allocates where the caller omitted it, since the insert states that key
-    before the row names its object."""
-    allocation = entry.key_allocation
-    if allocation is None:
-        return row
-    key = entry.selection.members.shape.members[allocation.position].name
-    return row if key in row else {key: None, **row}
-
-
-def _stated_names(
-    entry: EntityPreparation, values: tuple[object, ...], omitted: int
-) -> dict[str, object]:
-    """The members ``values`` states outside ``omitted``, by name."""
-    absent = entry.selection.absent
-    return {
-        member.name: None
-        for position, (member, value) in enumerate(
-            zip(entry.selection.members.shape.members, values, strict=True)
-        )
-        if value is not absent and not omitted >> position & 1
-    }
-
-
-def _named_pairs(
-    entry: EntityPreparation, pairs: Iterable[tuple[int, object]]
-) -> dict[str, object]:
-    """The members ``pairs`` states, by name."""
-    members = entry.selection.members.shape.members
-    return {members[position].name: value for position, value in pairs}
-
-
-def _positioned(entry: EntityPreparation, row: Mapping[str, object]) -> list[tuple[int, object]]:
-    """``row``'s members, every one already judged declared, by position in
-    the order ``row`` states them, its key after them: the key addresses the
-    object every other member assigns."""
-    shape = entry.selection.members.shape
-    key = entry.key
-    pairs: list[tuple[int, object]] = []
-    addressed: tuple[tuple[int, object], ...] = ()
-    for name, value in row.items():
-        position = cast("int", shape.position(name))
-        if position == key:
-            addressed = ((position, value),)
-        else:
-            pairs.append((position, value))
-    pairs.extend(addressed)
-    return pairs
-
-
-def _assigns(entry: EntityPreparation, rows: tuple[ManagedRow, ...]) -> bool:
-    """Whether some row of ``rows`` states a member beside the key."""
-    beside = ~(1 << entry.key)
-    return any(row.presence & beside for row in rows)
-
-
-def _assigns_beside_key(
-    rows: tuple[ManagedRow, ...], position: inheritance.InheritanceEntityView
-) -> bool:
-    key = position.member_selection.index[position.primary_key.identity]
-    beside = ~(1 << key)
-    return any(row.presence & beside for row in rows)
-
-
 def _judge_write_persistence(
     entity: CompiledEntity, position: inheritance.InheritanceEntityView
 ) -> None:
@@ -1635,61 +1758,6 @@ def _judge_write_persistence(
             f"{entity.identity.canonical}: its family's Persistence Mode is ReadOnly, which "
             "accepts no persistence write of any kind",
         )
-
-
-def _prepare_keyed_write(
-    instruction: KeyedWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    *,
-    lane: int,
-    authored_members: Set[str] | None,
-    members: Callable[[], Mapping[str, object]] | None,
-) -> PreparedKeyedInstruction:
-    """Judge a keyed write: its verb and window against its target, then its
-    rows' subtype shape, members, and values."""
-    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
-    window = _judge_applicability(
-        model,
-        entity,
-        shape,
-        instruction.mutation,
-        instruction.valid_from,
-        instruction.until,
-        surface="keyed",
-    )
-    if members is not None:
-        assigned = members()
-        (row,) = instruction.rows
-        instruction = replace(instruction, rows=({**row, **assigned},))
-        authored_members = assigned.keys()
-    return _prepare_keyed_payload(
-        instruction,
-        model,
-        entity,
-        position,
-        entry,
-        window,
-        lane=lane,
-        authored_members=authored_members,
-    )
-
-
-def _prepare_predicate_write(
-    instruction: PredicateWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    *,
-    lane: int,
-) -> PreparedPredicateInstruction:
-    """Judge a predicate write: whether its target can be written without
-    being read at all, then its selecting predicate, family, and payload."""
-    judge_readless_target(model, entity, position, instruction.mutation)
-    return _prepare_predicate_payload(instruction, model, entity, position, entry, lane=lane)
 
 
 def _requires_observation(
@@ -1817,129 +1885,6 @@ def _judge_window(
     return TimeInterval(managed_from, managed_until)
 
 
-def _prepare_target_write(
-    instruction: TargetWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    *,
-    lane: int,
-    authored_members: Set[str] | None,
-    members: Callable[[], Mapping[str, object]] | None,
-) -> PreparedTargetInstruction:
-    """Judge a target write: whether it names its object at all, its verb and
-    window, then its revision arguments, then its payload.
-
-    A row stating no key, or a null one, names no object, so it is refused
-    before its verb is weighed; ``_prepare_write`` has already admitted the
-    family's Persistence Mode. The verb's applicability follows the keyed rule
-    (:func:`_judge_applicability`). The revision arguments are judged ahead of
-    the payload because they decide what the write may be at all — a target
-    with no revision, one whose revision kind the caller misstated, or one
-    whose required revision is missing is refused before any member it names
-    is weighed.
-    """
-    key = position.primary_key.identity.name
-    if key not in instruction.row:
-        raise key_absent_refusal(entity.identity, instruction.mutation)
-    if instruction.row[key] is None:
-        raise key_null_refusal(entity.identity, key)
-    shape = temporal_read.temporal_facet_of(model).shape(entity.identity)
-    window = _judge_applicability(
-        model,
-        entity,
-        shape,
-        instruction.mutation,
-        instruction.valid_from,
-        instruction.until,
-        surface="target",
-    )
-    expectation = _judge_target_expectation(position.root, shape, position, instruction)
-    if members is not None:
-        instruction = replace(instruction, row={**instruction.row, **members()})
-    row = _prepare_target_payload(
-        instruction, model, entity, position, entry, lane=lane, authored_members=authored_members
-    )
-    return _prepared_target_instruction(
-        instruction.mutation, _assigns(entry, (row,)), entity, row, window, expectation
-    )
-
-
-def _judge_target_expectation(
-    root: EntityIdentity,
-    shape: temporal_read.TemporalShape | None,
-    position: inheritance.InheritanceEntityView,
-    instruction: TargetWriteInstruction,
-) -> TargetExpectation:
-    """The starting condition a target write states, judged against the
-    family's own revision kind (`m-concurrency`): a versioned family takes
-    ``version`` and a temporal one ``tx_start``.
-
-    An unversioned Non-Temporal family has no revision a caller could state,
-    so it is refused before any argument is weighed. Otherwise stating more
-    than one is refused first, because no family has two revisions; then a
-    misstated kind, then a missing one, then the value itself — a stated
-    ``None`` included.
-    """
-    mutation = instruction.mutation
-    if not _requires_observation(position, shape):
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"{root.name}: {mutation!r} states a revision its caller observed, and "
-            f"{root.name!r} is unversioned and non-temporal, so it has none to state and no "
-            "write could detect a change since that observation; read it in the writing "
-            "transaction and write through that read instead",
-        )
-    stated = _stated_conditions(instruction)
-    if len(stated) > 1:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"{root.name}: {mutation!r} states {list(stated)}, and a target has one condition "
-            "to state",
-        )
-    required = "version" if _is_versioned(position) else "tx_start"
-    if stated and required not in stated:
-        (misstated,) = stated
-        raise UsageError(WRITE_INSTRUCTION_INVALID, _misstated(root, mutation, misstated, required))
-    if not stated:
-        raise UsageError(WRITE_INSTRUCTION_INVALID, _missing(root, mutation, required))
-    # A runtime caller may state a condition as any value, whatever the
-    # annotation promises, so each is judged as the object it is.
-    value = cast(
-        "object", instruction.if_version if required == "version" else instruction.if_tx_start
-    )
-    if value is None:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"{root.name}: {mutation!r} states {required}=None, which names no revision; state "
-            f"the {required} its caller observed",
-        )
-    if required == "version":
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{root.name}: {mutation!r} takes an integer version, and "
-                f"{type(value).__name__} is no version",
-            )
-        return ExpectedVersion(value)
-    return ExpectedTxStart(normalize_instant(_stated_instant(root, mutation, "tx_start", value)))
-
-
-def _stated_conditions(instruction: TargetWriteInstruction) -> tuple[str, ...]:
-    """The conditions a target write states: the ones its caller named where
-    its interface tells naming from omission, else every one carrying a
-    value."""
-    if instruction.stated is not None:
-        return instruction.stated
-    stated: tuple[str, ...] = ()
-    if instruction.if_version is not None:
-        stated += ("version",)
-    if instruction.if_tx_start is not None:
-        stated += ("tx_start",)
-    return stated
-
-
 _REVISIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "version": "the version of the state the write starts from as its caller last observed it",
@@ -1959,89 +1904,6 @@ def _misstated(root: EntityIdentity, mutation: str, stated: str, required: str) 
 
 def _missing(root: EntityIdentity, mutation: str, required: str) -> str:
     return f"{root.name}: {mutation!r} requires {required}, {_REVISIONS[required]}"
-
-
-def _prepare_target_payload(
-    instruction: TargetWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    *,
-    lane: int,
-    authored_members: Set[str] | None,
-) -> ManagedRow:
-    """A target write's row, judged.
-
-    The primary key names the object and is no assignment. A deletion or
-    termination names nothing else, so any other member it states is refused,
-    and its key is judged as a keyed destruction's identity row is. Every other
-    member an amendment or replacement states is judged as an assignment,
-    whatever produced the row — so a framework-owned, read-only, or ill-typed
-    member is refused as it is for an amendment. A replacement completes the
-    object's writable state exactly as a source-authorized one does
-    (:func:`_replacement_row`).
-    """
-    row = instruction.row
-    key = position.primary_key.identity.name
-    _judge_row_members(model, entity, entry, row, authored_members, "target")
-    mutation = instruction.mutation
-    if mutation in DESTRUCTIVE_MUTATIONS:
-        stated = sorted(name for name in row if name != key)
-        if stated:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.name}: a target {mutation!r} names its "
-                f"object by its primary key alone, and this row also states {stated}",
-            )
-        return _sparse_row(entry, entity, _positioned(entry, row), lane=lane)
-    if mutation in REPLACE_MUTATIONS:
-        return _replacement_row(
-            entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
-        )
-    return _assignment_payload(entry, entity, row, lane=lane)
-
-
-def _assignment_payload(
-    entry: EntityPreparation,
-    entity: CompiledEntity,
-    row: Mapping[str, object],
-    *,
-    lane: int,
-) -> ManagedRow:
-    """``row`` as the row assigning one existing object every member it
-    states beside the key, in the order ``row`` states them, its key
-    addressing that object."""
-    return _assigned_row(entry, entity, _positioned(entry, row), lane=lane)
-
-
-def _judge_row_members(
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    entry: EntityPreparation,
-    row: Mapping[str, object],
-    authored_members: Set[str] | None,
-    described: str,
-) -> None:
-    """Refuse a row whose members its target's family cannot write: a
-    sibling-branch or derived member first, then an authored framework-owned
-    one, then an undeclared one."""
-    inheritance.validate_subtype_write(model, entity, row)
-    if authored_members is not None and entry.framework_owned:
-        shape = entry.selection.members.shape
-        stated = (
-            (position, row.get(name))
-            for name in authored_members
-            if (position := shape.position(name)) is not None
-        )
-        _refuse_owned_names(entry, entity, stated, entry.framework_owned)
-    members = entry.selection.members.shape.by_name
-    unknown = sorted(name for name in row if name not in members)
-    if unknown:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            f"{entity.identity.name}: {described} write row names undeclared member(s) {unknown}",
-        )
 
 
 def _profile(shape: temporal_read.TemporalShape | None) -> str:
@@ -2067,283 +1929,6 @@ def _stated_instant(root: EntityIdentity, mutation: str, bound: str, value: obje
             f"and {type(value).__name__} is no `timestamp`",
         )
     return value
-
-
-def _prepare_keyed_payload(
-    instruction: KeyedWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    valid_time_window: TimeInterval | None,
-    *,
-    lane: int,
-    authored_members: Set[str] | None,
-) -> PreparedKeyedInstruction:
-    """Judge a keyed write's rows: subtype shape, members, then values, and
-    whether any of them assigns a member beside the key.
-
-    A keyed row key must name a member the target's family makes applicable —
-    ANCESTRY-EFFECTIVE, so a concrete subtype's write naming an inherited key is
-    declared. Sibling-branch and framework-owned-metadata fields are classified
-    more specifically, and first, by ``inheritance.validate_subtype_write``.
-
-    An opening's rows are judged one at a time, each row's names before its
-    values, so the first refused row is the one reported. An explicit Wire
-    insert payload may name an application-assigned primary key but never a
-    framework-owned member: the interval bounds are stamped from the Clock
-    Strategy and the version is derived. A neutral opening row states
-    content rather than authorship, so a framework-owned cell it carries is
-    read as unstated rather than refused. An amendment refuses framework-owned
-    member names before values. An explicit amendment judges each
-    assigned member as an assignment, and a replacement completes and judges
-    the object's whole writable state exactly as a caller-conditioned one does.
-    """
-    mutation = instruction.mutation
-    if mutation in INSERT_MUTATIONS:
-        opened: list[ManagedRow] = []
-        for row in instruction.rows:
-            _judge_row_members(model, entity, entry, row, authored_members, "keyed")
-            opened.append(_opened_row(entry, entity, entry.plan.authored_values(row), lane=lane))
-        rows = tuple(opened)
-        return _prepared_keyed_instruction(
-            mutation, _assigns_beside_key(rows, position), entity, rows, valid_time_window
-        )
-    if authored_members is not None and len(instruction.rows) != 1:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID,
-            "a keyed assignment set applies only to one addressed write row",
-        )
-    judged: list[ManagedRow] = []
-    for row in instruction.rows:
-        _judge_row_members(
-            model,
-            entity,
-            entry,
-            row,
-            row.keys() if mutation in AMEND_MUTATIONS else None,
-            "keyed",
-        )
-        if mutation in REPLACE_MUTATIONS:
-            judged.append(
-                _replacement_row(
-                    entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
-                )
-            )
-        elif authored_members is not None:
-            judged.append(
-                _assigned_row(
-                    entry,
-                    entity,
-                    _positioned(entry, row),
-                    lane=lane,
-                    owned_names_judged=mutation in AMEND_MUTATIONS,
-                )
-            )
-        else:
-            judged.append(_sparse_row(entry, entity, _positioned(entry, row), lane=lane))
-    rows = tuple(judged)
-    return _prepared_keyed_instruction(
-        mutation, _assigns(entry, rows), entity, rows, valid_time_window
-    )
-
-
-def _prepare_predicate_payload(
-    instruction: PredicateWriteInstruction,
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    entry: EntityPreparation,
-    *,
-    lane: int,
-) -> PreparedPredicateInstruction:
-    """Judge a predicate write's payload in `m-case-format`'s order: the
-    selecting predicate, the family refusal, then the row it assigns.
-
-    The predicate is measured with the whole ``validate_predicate``
-    vocabulary: a canonical node is validated, an interpreting adapter invoked,
-    once, at the target's own position. An inheritance-family target is then refused
-    (``subtype-write-set-based-unsupported``) before any member, so
-    ancestry resolution never arises for one.
-
-    An amendment's assignments form the one row it assigns every selected
-    object: each reference is judged before any value, and then the row is
-    judged member by member as an amendment of one object's row is. Assigning
-    nothing is the empty amendment, judged like any other. A replacement's row
-    names declared members only, and is completed and judged exactly as every
-    other replacement's is (:func:`_replacement_row`). A key it states addresses
-    nothing, since the predicate selects the rows, so it is dropped once the
-    row is judged and is never written.
-    """
-    predicate = instruction.target.predicate
-    validated = (
-        predicate_algebra.validate_predicate(entity, predicate, model)
-        if isinstance(predicate, PredicateNode)
-        else predicate(entity, predicate_algebra.root_position(model, entity))
-    )
-    inheritance.reject_predicate_write(entity)
-    selection = ResolvedMutationSelection(entity, validated)
-    if instruction.mutation not in ASSIGNMENT_MUTATIONS:
-        return _prepared_predicate_instruction(
-            instruction.mutation, selection, empty_row(entry.selection)
-        )
-    row = instruction.row
-    if row is None:
-        assigned = _row_from_assignments(model, entity, position, instruction.assignments)
-        managed = _assignment_payload(entry, entity, assigned, lane=lane)
-    else:
-        _judge_row_members(model, entity, entry, row, None, "predicate")
-        managed = _replacement_row(
-            entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
-        )
-    return _prepared_predicate_instruction(
-        instruction.mutation, selection, managed.without(1 << entry.key)
-    )
-
-
-def _row_from_assignments(
-    model: AcceptedMetamodel,
-    entity: CompiledEntity,
-    position: inheritance.InheritanceEntityView,
-    assignments: Sequence[WriteAssignment],
-) -> dict[str, object]:
-    """The member-name row ``assignments`` assign, in authored order.
-
-    A reference must name a member of the exact target, once, and never its
-    primary key, which a predicate-selected write never changes. The owner
-    segment is RESOLVED rather than compared as text, so a canonical spelling
-    names the target it denotes while an ambiguous bare one — which resolves
-    nowhere — stays refused.
-    """
-    selection = position.member_selection
-    row: dict[str, object] = {}
-    for assignment in assignments:
-        owner_spelling, _, name = assignment.attr.rpartition(".")
-        owner = entity_by_name(model, owner_spelling)
-        member = selection.binding(name)
-        if owner is None or owner.identity != entity.identity or member is None:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
-                f"declared member of {entity.identity.canonical}",
-            )
-        if name in row:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.name}: assignment {assignment.attr!r} is duplicated — each "
-                "member may be assigned at most once",
-            )
-        if isinstance(member, AttributeMetadata) and isinstance(member.primary_key, PrimaryKey):
-            _judge_prepared_assignment(entity, member, assignment.value)
-        row[name] = assignment.value
-    return row
-
-
-def _judge_prepared_assignment(
-    target: CompiledEntity,
-    member: _DeclaredMember,
-    value: object,
-) -> None:
-    """Judge one already-resolved assignment's designation, as the addressed
-    target's refusal.
-
-    The shared judgment names the member relative to its own owner, so the
-    reason is qualified with the target the write addressed.
-    """
-    try:
-        judge_assignment(member, value, known_violation=None, known_value_valid=True)
-    except UsageError as error:
-        raise UsageError(
-            WRITE_INSTRUCTION_INVALID, f"{target.identity.canonical}.{error.args[1]}"
-        ) from error
-
-
-def assigned_members(
-    model: AcceptedMetamodel, entity: CompiledEntity, assignments: Sequence[WriteAssignment]
-) -> dict[str, object]:
-    """The members ``assignments`` assign to one object of ``entity``, keyed by
-    name, each reference judged before any of them is flattened into a row.
-
-    A reference names the member through its owner: the owner must be
-    ``entity`` or one of its ancestors, and must itself declare or inherit the
-    member, so an inherited member assigned through its declaring ancestor
-    applies to a concrete descendant while a descendant's, a sibling's, or a
-    stranger's member is refused rather than having its qualifier discarded. Each member is
-    assigned at most once; a second assignment of it is refused rather than
-    silently overwriting the first. The values are judged as assignments when
-    the row they form is prepared.
-    """
-    position = _inheritance_entity_view(model, entity)
-    ancestry = frozenset(position.ancestry)
-    key = position.primary_key.identity.name
-    row: dict[str, object] = {}
-    for assignment in assignments:
-        attr = assignment.attr
-        owner_spelling, _, name = attr.rpartition(".")
-        owner = entity_by_name(model, owner_spelling) if _ASSIGNMENT_REF.match(attr) else None
-        if (
-            owner is None
-            or owner.identity not in ancestry
-            or _member_selection(model, owner).binding(name) is None
-        ):
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.name}: assignment {attr!r} does not name a member "
-                f"{entity.identity.canonical} declares or inherits",
-            )
-        if name == key:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.canonical}.{name}: primary-key fields may not be assigned — "
-                "the key addresses the object a write changes",
-            )
-        if name in row:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.name}: assignment {attr!r} is duplicated — each member may "
-                "be assigned at most once",
-            )
-        row[name] = assignment.value
-    return row
-
-
-def addressed_members(
-    preparation: WritePreparation,
-    entity: CompiledEntity,
-    address: tuple[tuple[str, object], ...],
-    document: Mapping[str, object],
-) -> Mapping[str, object]:
-    """``document``'s members other than the key, once every key member it
-    states is judged to name the object whose key members ``address`` pairs
-    with their values.
-
-    A source supplies the address a source-authorized write addresses, so a
-    key member its caller also states is addressing data the write checks and
-    then sets aside: never an assignment, a replacement member, or an override
-    of that address. Each is admitted by the Wire lane's own conversion for the
-    key first, so a key member that is no value of its type is refused as
-    such, and one naming another object is refused before anything is
-    buffered.
-    """
-    stated = {name: addressed for name, addressed in address if name in document}
-    prepared = preparation.entity(entity.identity)
-    convert = prepared.plan.scalar_converter(WIRE_LANE, prepared.key)
-    for name, addressed in stated.items():
-        try:
-            value = convert(document[name])
-        except UsageError as error:
-            raise located_refusal(error, f"{entity.identity.canonical}.{name}") from error
-        if value != addressed:
-            raise UsageError(
-                WRITE_INSTRUCTION_INVALID,
-                f"{entity.identity.canonical}.{name}: the document names {document[name]!r}, and "
-                "the source this write addresses is another object — a key member addresses "
-                "the write and never changes it",
-            )
-    return {name: member for name, member in document.items() if name not in stated}
-
-
-type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 
 
 def _inheritance_entity_view(

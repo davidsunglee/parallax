@@ -17,12 +17,12 @@ import pytest
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lanes import scenario
-from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
+from parallax.core._execution._planning import build_write_preparation
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
@@ -75,7 +75,7 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
         instruction = instructions.KeyedWriteInstruction(
             "insert",
             "parallax.compatibility.Account",
-            ({"id": 7, "owner": "Newton", "balance": value, "version": 1},),
+            {"id": 7, "owner": "Newton", "balance": value},
         )
         prepared = _prepare_case_write(instruction, model)
         assert isinstance(prepared, PreparedKeyedInstruction)
@@ -87,7 +87,7 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     instruction = instructions.KeyedWriteInstruction(
         "amend",
         "parallax.compatibility.Position",
-        ({"id": 1, "value": decimal.Decimal("5.00")},),
+        {"id": 1, "value": decimal.Decimal("5.00")},
         valid_from=stated,
     )
     prepared = _prepare_case_write(instruction, models.load_models()["position"])
@@ -98,7 +98,7 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
 
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
-    instruction = instructions.KeyedWriteInstruction("insert", "Missing", ({"id": 1},))
+    instruction = instructions.KeyedWriteInstruction("insert", "Missing", {"id": 1})
     with raises_code(UsageError, "write-instruction-invalid", match="declares no entity 'Missing'"):
         _prepare_case_write(instruction, models.load_models()["account"])
 
@@ -111,18 +111,16 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
     instruction = instructions.KeyedWriteInstruction(
         "insert",
         "parallax.compatibility.Sample",
-        (
-            {
-                "id": 1,
-                "label": "sample",
-                "profile": {
-                    "amount": "12.50",
-                    "origin": {"city": "Oslo", "since": "2026-01-01"},
-                    "entries": [{"kind": "opening", "price": "2.25", "future": None}],
-                    "future": {"opaque": True},
-                },
+        {
+            "id": 1,
+            "label": "sample",
+            "profile": {
+                "amount": "12.50",
+                "origin": {"city": "Oslo", "since": "2026-01-01"},
+                "entries": [{"kind": "opening", "price": "2.25", "future": None}],
+                "future": {"opaque": True},
             },
-        ),
+        },
     )
 
     prepared = _prepare_case_write(instruction, models.load_models()["document-codec"])
@@ -868,7 +866,9 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
 def _prepare_case_write(
     instruction: WriteInstruction, model: Metamodel
 ) -> PreparedInstruction | PreparedTargetInstruction:
-    return _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))
+    return _case_ingress.prepare_case_write(
+        _case_ingress.normalize_case_write(instruction, model), build_write_preparation(model)
+    )
 
 
 _LEDGER = models.accepted_model(

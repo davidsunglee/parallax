@@ -25,12 +25,19 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work import instructions as wi
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
+    WIRE,
+    CompletePayload,
+    PartialPayload,
+    WriteRepresentation,
+)
 from parallax.core.internal import predicate as predicate_algebra
-from parallax.core.internal.base import Int32, InvalidValueError, UsageError
+from parallax.core.internal.base import Int32, InvalidValueError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.planned_step.managed_row import ManagedRow, named_members
 from tests._support.errors import raises_code
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 _NS = "replacement.completion"
 
@@ -80,7 +87,7 @@ _COMPLETED: Final[Mapping[str, object]] = {
 
 
 def _keyed(row: Mapping[str, object]) -> wi.WriteInstruction:
-    return wi.KeyedWriteInstruction("replace", f"{_NS}.Ledger", (row,))
+    return wi.KeyedWriteInstruction("replace", f"{_NS}.Ledger", row)
 
 
 def _target(row: Mapping[str, object]) -> wi.WriteInstruction:
@@ -111,15 +118,11 @@ _FORMS: Final = pytest.mark.parametrize(
     ],
 )
 _LANES: Final = pytest.mark.parametrize(
-    ("prepare", "empty"),
-    [
-        pytest.param(wi.prepare_typed_write, (), id="typed"),
-        pytest.param(wi.prepare_wire_write, [], id="wire"),
-    ],
+    ("representation", "empty"),
+    [pytest.param(TYPED, (), id="typed"), pytest.param(WIRE, [], id="wire")],
 )
 
 type _Form = Callable[[Mapping[str, object]], wi.WriteInstruction]
-type _Prepare = Callable[..., Any]
 
 
 def _expected(addressed: bool) -> Mapping[str, object]:
@@ -132,10 +135,12 @@ def _expected(addressed: bool) -> Mapping[str, object]:
 @_FORMS
 @_LANES
 def test_an_omitted_nullable_member_is_written_null_and_an_omitted_many_empty(
-    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+    form: _Form, addressed: bool, representation: WriteRepresentation, empty: object
 ) -> None:
     del empty
-    prepared = prepare(form({"id": 1, "owner": "A"}), write_preparation_of(_MODEL))
+    prepared = prepare_instruction(
+        form({"id": 1, "owner": "A"}), write_preparation_of(_MODEL), representation
+    )
 
     assert named_members(_row(prepared)) == _expected(addressed)
 
@@ -143,11 +148,11 @@ def test_an_omitted_nullable_member_is_written_null_and_an_omitted_many_empty(
 @_FORMS
 @_LANES
 def test_stating_a_member_null_or_empty_is_the_same_replacement_as_omitting_it(
-    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+    form: _Form, addressed: bool, representation: WriteRepresentation, empty: object
 ) -> None:
     stated = {"id": 1, "owner": "A", "note": None, "tags": empty, "spot": None}
 
-    prepared = prepare(form(stated), write_preparation_of(_MODEL))
+    prepared = prepare_instruction(form(stated), write_preparation_of(_MODEL), representation)
 
     assert named_members(_row(prepared)) == _expected(addressed)
 
@@ -155,7 +160,7 @@ def test_stating_a_member_null_or_empty_is_the_same_replacement_as_omitting_it(
 @_FORMS
 @_LANES
 def test_an_omitted_required_member_is_refused(
-    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+    form: _Form, addressed: bool, representation: WriteRepresentation, empty: object
 ) -> None:
     del addressed, empty
     with raises_code(
@@ -163,13 +168,15 @@ def test_an_omitted_required_member_is_refused(
         "write-required-attribute-missing",
         match=r"owner: a replacement states every",
     ):
-        prepare(form({"id": 1, "note": "n"}), write_preparation_of(_MODEL))
+        prepare_instruction(
+            form({"id": 1, "note": "n"}), write_preparation_of(_MODEL), representation
+        )
 
 
 @_FORMS
 @_LANES
 def test_a_required_member_stated_null_is_refused_as_an_assignment(
-    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+    form: _Form, addressed: bool, representation: WriteRepresentation, empty: object
 ) -> None:
     del addressed, empty
     with raises_code(
@@ -177,11 +184,13 @@ def test_a_required_member_stated_null_is_refused_as_an_assignment(
         "write-assignment-value-type-mismatch",
         match=r"owner: required attribute is absent",
     ):
-        prepare(form({"id": 1, "owner": None}), write_preparation_of(_MODEL))
+        prepare_instruction(
+            form({"id": 1, "owner": None}), write_preparation_of(_MODEL), representation
+        )
 
 
 def _sealed_keyed(row: Mapping[str, object]) -> wi.WriteInstruction:
-    return wi.KeyedWriteInstruction("replace", f"{_NS}.Sealed", (row,))
+    return wi.KeyedWriteInstruction("replace", f"{_NS}.Sealed", row)
 
 
 def _sealed_target(row: Mapping[str, object]) -> wi.WriteInstruction:
@@ -208,10 +217,12 @@ _SEALED_FORMS: Final = pytest.mark.parametrize(
 @_SEALED_FORMS
 @_LANES
 def test_a_replacement_leaves_an_omitted_read_only_collection_unstated(
-    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+    form: _Form, addressed: bool, representation: WriteRepresentation, empty: object
 ) -> None:
     del empty
-    prepared = prepare(form({"id": 1, "owner": "A"}), write_preparation_of(_MODEL))
+    prepared = prepare_instruction(
+        form({"id": 1, "owner": "A"}), write_preparation_of(_MODEL), representation
+    )
 
     expected = {"id": 1, "owner": "A"} if addressed else {"owner": "A"}
     assert named_members(_row(prepared)) == expected
@@ -226,28 +237,11 @@ def test_a_typed_keyed_replacement_reads_a_held_read_only_collection_as_unstated
         entry.selection.members.shape, target.identity
     )
 
-    prepared = wi.prepare_typed_keyed_write(
-        preparation, "replace", target, values=values, valid_from=None, until=None
+    prepared = wi.prepare_keyed_write(
+        preparation, TYPED, "replace", target, CompletePayload(values), valid_from=None, until=None
     )
 
     assert named_members(_row(prepared)) == {"id": 1, "owner": "A"}
-
-
-@_LANES
-@pytest.mark.parametrize("mutation", ["replace", "amend"])
-def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
-    prepare: _Prepare, empty: object, mutation: wi.KeyedMutation
-) -> None:
-    del empty
-    first = {"id": 1, "owner": 7}
-    second = {"id": 2, "owner": "B", "bogus": 1}
-    with pytest.raises(UsageError, match=r"Ledger\.owner: ") as refused:
-        prepare(
-            wi.KeyedWriteInstruction(mutation, f"{_NS}.Ledger", (first, second)),
-            write_preparation_of(_MODEL),
-        )
-
-    assert "bogus" not in str(refused.value)
 
 
 class Meter(
@@ -281,8 +275,8 @@ def test_a_typed_keyed_replacement_of_a_subtype_states_its_whole_family_state() 
         entry.selection.members.shape, target.identity
     )
 
-    prepared = wi.prepare_typed_keyed_write(
-        preparation, "replace", target, values=values, valid_from=None, until=None
+    prepared = wi.prepare_keyed_write(
+        preparation, TYPED, "replace", target, CompletePayload(values), valid_from=None, until=None
     )
 
     assert named_members(_row(prepared)) == {"id": 1, "owner": "A", "span": 2}
@@ -291,14 +285,15 @@ def test_a_typed_keyed_replacement_of_a_subtype_states_its_whole_family_state() 
 def test_a_typed_keyed_amendment_of_a_subtype_judges_its_explicit_assignments() -> None:
     preparation = write_preparation_of(_FAMILY)
     target = _gauge_target()
-    key = preparation.entity(target.identity).key
+    key = preparation.entity(target.identity).key_position
 
-    prepared = wi.prepare_typed_keyed_write(
+    prepared = wi.prepare_keyed_write(
         preparation,
+        TYPED,
         "amend",
         target,
-        pairs=((key, 1),),
-        members=lambda: {"span": 3},
+        PartialPayload(((key, 1),)),
+        assignments=(wi.WriteAssignment(f"{_NS}.Gauge.span", 3),),
         valid_from=None,
         until=None,
     )
@@ -308,6 +303,12 @@ def test_a_typed_keyed_amendment_of_a_subtype_judges_its_explicit_assignments() 
 
 def test_a_typed_keyed_write_of_an_existing_object_opens_no_row() -> None:
     with pytest.raises(ValueError, match="opens a row"):
-        wi.prepare_typed_keyed_write(
-            write_preparation_of(_FAMILY), "insert", _gauge_target(), valid_from=None, until=None
+        wi.prepare_keyed_write(
+            write_preparation_of(_FAMILY),
+            TYPED,
+            "insert",
+            _gauge_target(),
+            PartialPayload(()),
+            valid_from=None,
+            until=None,
         )

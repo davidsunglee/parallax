@@ -613,7 +613,7 @@ def _instruction_key(
     attributes = [
         attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
     ]
-    row = instruction.rows[0]
+    row = instruction.row
     if not attributes or any(row.get(attr.identity.name) is None for attr in attributes):
         return None
     return ObjectKey(
@@ -634,7 +634,7 @@ def _buffer_wire_insert(
 ) -> WireEntity:
     valid_from, until = instruction.valid_from, instruction.until
     entity = case_entity(model, instruction.entity)
-    payload = dict(instruction.rows[0])
+    payload = dict(instruction.row)
     opened = (
         tx.wire.insert(
             entity.identity.canonical,
@@ -656,7 +656,7 @@ def _buffer_wire_keyed(
 ) -> None:
     key = _instruction_key(instruction, model)
     identity = dict(key.primary_key) if key is not None else {}
-    changes = {name: value for name, value in instruction.rows[0].items() if name not in identity}
+    changes = {name: value for name, value in instruction.row.items() if name not in identity}
     until = instruction.until
     match instruction.mutation:
         case "amend":

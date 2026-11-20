@@ -166,7 +166,7 @@ def test_an_edited_amendment_reads_its_key_once(monkeypatch: pytest.MonkeyPatch)
     )
 
     (read,) = reads
-    key = preparation_for(meta).entity(mm.Account.identity).key
+    key = preparation_for(meta).entity(mm.Account.identity).key_position
     assert read.count(key) == 1
 
 

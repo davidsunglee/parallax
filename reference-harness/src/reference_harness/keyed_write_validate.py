@@ -5,8 +5,8 @@ neutral write row's value-object documents, `predicate_write_validate` judges a
 predicate-selected instruction's target and assignments. This one judges the
 **shape and assignment names of a keyed instruction** — its `mutation` and window
 against what its target's temporal profile admits, then its row's member names —
-refusing ``framework-owned-member-assigned`` when an amendment or replacement
-names a framework-owned member as a caller assignment. Every authoring location a
+refusing ``framework-owned-member-assigned`` when an opening, amendment, or
+replacement names a framework-owned member as caller authoring. Every authoring location a
 keyed instruction reaches this harness through asks it here, so no lane can be
 read as saying something different:
 
@@ -68,11 +68,13 @@ def validate_keyed_assignment_members(
     mutation: str,
     row: Mapping[str, Any],
 ) -> None:
-    """Refuse caller assignments to framework-owned members before row values.
+    """Refuse a caller-authored framework-owned member before row values: an
+    opening's, an amendment's, or a replacement's, never a destructive write's
+    identity.
 
     Concrete-subtype metadata names are judged by the caller first.
     """
-    if mutation not in {"amend", "amendUntil", "replace", "replaceUntil"}:
+    if mutation in {"delete", "terminate", "terminateUntil"}:
         return
     owned = framework_owned_names(entity)
     tag = tag_of(entity.runtime_facts)

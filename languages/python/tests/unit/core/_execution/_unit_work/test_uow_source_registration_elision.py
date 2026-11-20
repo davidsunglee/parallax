@@ -30,7 +30,6 @@ from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core.internal.base import UsageError
 from parallax.core.internal.dialect import POSTGRES
@@ -48,7 +47,7 @@ from parallax.core.internal.unit_work import (
 )
 from tests._support.bindings import bound_model
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_evidence
@@ -165,8 +164,8 @@ class _Production:
             case _Write(label, mutation, members):
                 self._write(self.published[label], mutation, members)
             case _Insert(entity, members):
-                instruction = prepare_typed_write(
-                    KeyedWriteInstruction("insert", entity, (members,)),
+                instruction = prepare_instruction(
+                    KeyedWriteInstruction("insert", entity, members),
                     write_preparation_of(self.meta),
                 )
                 assert isinstance(instruction, PreparedKeyedInstruction)
@@ -206,9 +205,9 @@ class _Production:
     ) -> None:
         entity = self._entity(source)
         key = source.object_key
-        instruction = prepare_typed_write(
+        instruction = prepare_instruction(
             KeyedWriteInstruction(
-                mutation, entity.identity.name, ({**dict(key.primary_key), **members},)
+                mutation, entity.identity.name, {**dict(key.primary_key), **members}
             ),
             write_preparation_of(self.meta),
         )

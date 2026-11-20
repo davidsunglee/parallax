@@ -331,7 +331,7 @@ def test_one_key_value_objects_are_literal_submission_values(
         model, [_entry("insert", {"id": 1, "name": "Ada", "address": document}, entity="Customer")]
     )
     assert isinstance(submission.instruction, KeyedWriteInstruction)
-    assert submission.instruction.rows[0]["address"] == document
+    assert submission.instruction.row["address"] == document
 
 
 def test_a_later_declared_mismatch_prevents_the_hook_and_every_verb(
@@ -575,8 +575,7 @@ def test_read_submissions_refuses_a_keyed_entry_without_one_rows_carrier(
 def _sole_row(submission: Submission) -> dict[str, object]:
     instruction = submission.instruction
     assert isinstance(instruction, KeyedWriteInstruction)
-    (row,) = instruction.rows
-    return dict(row)
+    return dict(instruction.row)
 
 
 @pytest.mark.parametrize("named", [False, True])

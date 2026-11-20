@@ -216,23 +216,21 @@ everything it opened is removed, or a later insertion of the object supersedes i
    refuse_reentry → source.capture → source.resolve → ResolvedKeyedWriteSource
    → a standing insertion? SourceRegistry.insertion_anchor(insertion)
    → validate_provenance → validate_source_pin → source_start (Bitemporal start)
-   → source.prepare: keyed_instruction → KeyedWriteInstruction → prepare_*_write
+   → source.prepare: payload (TYPED or WIRE) → prepare_insert / prepare_keyed_write
      (an insert checks validate_source_pin before validate_provenance; a repeated
       insert is refused as it is buffered, after preparation)
 
  target: TxnAttempt.target_write                                               _attempt
-   refuse_reentry → stated_valid_from → adapter.write_input
-   → TargetWriteInstruction, its revision exactly as stated → prepare_*_write
+   refuse_reentry → adapter.write_input (target resolved, payload built)
+   → stated_valid_from → its revision exactly as stated → prepare_target_write
 
  predicate: TxnAttempt.predicate_write
-   refuse_reentry → adapter.prepare → prepare_*_write
+   refuse_reentry → adapter.prepare → prepare_predicate_write
 
- AUTHORED   WriteInstruction = KeyedWriteInstruction | PredicateWriteInstruction    instructions
-              | TargetWriteInstruction: entity by name, rows unjudged;
-              deserialize / serialize give its canonical document form (ADR 0024)
+ PAYLOAD    CompletePayload | PartialPayload under TYPED (coerce) or WIRE (decode)   preparation
               │
-              │ prepare_typed_write (coerce) / prepare_wire_write (decode)
-              │ → _prepare_write: target, verb and window first, then payload
+              │ one entry per family: target, verb and window first, then the
+              │ payload's names, its key, and its other values
               ▼
  PREPARED   PreparedKeyedInstruction | PreparedTargetInstruction
               | PreparedPredicateInstruction: exact target, owned managed rows, judged
@@ -380,7 +378,6 @@ removed and reinserted this way.
 - `parallax.snapshot._handle._typed_writes:TypedKeyedInsertSource.publish`
 - `parallax.snapshot._handle._wire_writes:WireKeyedInsertSource.publish`
 - `parallax.snapshot._publication._graph_view:inserted_value`
-- `parallax.core._execution._keyed_writes:keyed_instruction`
 - `parallax.core._execution._keyed_writes:stated_valid_from`
 - `parallax.core.execution_lifecycle._activity:refuse_reentry`
 - `parallax.core._execution._transaction._attempt:TargetWriteAdapter.write_input`
@@ -391,9 +388,13 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.instructions:TargetWriteInstruction`
 - `parallax.core._execution._unit_work.instructions:deserialize`
 - `parallax.core._execution._unit_work.instructions:serialize`
-- `parallax.core._execution._unit_work.instructions:prepare_typed_write`
-- `parallax.core._execution._unit_work.instructions:prepare_wire_write`
-- `parallax.core._execution._unit_work.instructions:_prepare_write`
+- `parallax.core._execution._unit_work.preparation:CompletePayload`
+- `parallax.core._execution._unit_work.preparation:PartialPayload`
+- `parallax.core._execution._unit_work.preparation:WriteRepresentation`
+- `parallax.core._execution._unit_work.instructions:prepare_insert`
+- `parallax.core._execution._unit_work.instructions:prepare_keyed_write`
+- `parallax.core._execution._unit_work.instructions:prepare_target_write`
+- `parallax.core._execution._unit_work.instructions:prepare_predicate_write`
 - `parallax.core._execution._unit_work.instructions:PreparedKeyedInstruction`
 - `parallax.core._execution._unit_work.instructions:PreparedTargetInstruction`
 - `parallax.core._execution._unit_work.instructions:PreparedPredicateInstruction`

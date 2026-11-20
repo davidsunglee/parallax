@@ -45,7 +45,6 @@ from typing import Final
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.write_items import ComposedWrite, KeyedInsert
 from parallax.core._execution._unit_work.write_plan import SettledWrite
@@ -62,7 +61,7 @@ from parallax.core.internal.unit_work import (
 from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, settled_writes
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit.memory_instruments import (
@@ -129,7 +128,7 @@ def _model(entities: int) -> Metamodel:
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[ComposedWrite]:
     return observed_buffer(
         [
-            KeyedWriteInstruction("amend", "Entity0", ({"id": row + 1, "value": row},))
+            KeyedWriteInstruction("amend", "Entity0", {"id": row + 1, "value": row})
             for row in range(count)
         ],
         model,
@@ -170,8 +169,8 @@ def _key_derivation_over(entities: int, *, prepared: bool) -> Seam:
     index over the model to answer with.
     """
     model = _model(entities)
-    raw = KeyedWriteInstruction("amend", "Entity0", ({"id": 1, "value": 2},))
-    instruction = prepare_typed_write(raw, write_preparation_of(model)) if prepared else raw
+    raw = KeyedWriteInstruction("amend", "Entity0", {"id": 1, "value": 2})
+    instruction = prepare_instruction(raw, write_preparation_of(model)) if prepared else raw
 
     def run(sample: Callable[[], None]) -> None:
         object_key(instruction, model)
@@ -196,7 +195,7 @@ def _source_free_inserts(writes: int) -> WritePlanningRequest:
             observed_buffer(
                 [
                     KeyedWriteInstruction(
-                        "insert", "Balance", ({"id": row + 1, "acctNum": "A", "value": row},)
+                        "insert", "Balance", {"id": row + 1, "acctNum": "A", "value": row}
                     )
                     for row in range(writes)
                 ],

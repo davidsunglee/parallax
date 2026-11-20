@@ -43,8 +43,10 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._family import comparison_shape
+from parallax.core._execution._planning import build_write_preparation
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core.internal.base import (
     INFINITY,
     UsageError,
@@ -88,7 +90,7 @@ from tests._support.db_port import (
 )
 from tests._support.errors import raises_code
 from tests._support.root_ownership import own_root
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
 from tests.unit._positional_row_support import positional_row
@@ -645,7 +647,7 @@ def test_the_engines_readless_case_adapter_refuses_before_execution(
         scenario._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the scenario lane's case-format preparation ingress
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             _READLESS_ENGINE_META,
-            scenario.case_wire_preparer(_READLESS_ENGINE_META),
+            build_write_preparation(_READLESS_ENGINE_META),
         )
 
 
@@ -703,7 +705,7 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction(
     )
     assert isinstance(instruction, PredicateWriteInstruction)
     with raises_code(kind, rule):
-        instructions.prepare_wire_write(instruction, write_preparation_of(model_of(model)))
+        prepare_instruction(instruction, write_preparation_of(model_of(model)), WIRE)
 
 
 class _Abandon(Exception):

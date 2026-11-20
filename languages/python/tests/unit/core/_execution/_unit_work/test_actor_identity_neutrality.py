@@ -10,7 +10,6 @@ from parallax.conformance import models
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
-    prepare_typed_write,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import ComposedWrite
@@ -45,7 +44,7 @@ from tests._support.bindings import bound_model
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import observed_buffer, plan_steps
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -116,13 +115,13 @@ def _assert_neutral(
 
 def test_a_non_temporal_insert_is_actor_neutral() -> None:
     insert = KeyedWriteInstruction(
-        "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)
+        "insert", "Account", {"id": 1, "owner": "Ada", "balance": Decimal("5.00")}
     )
     _assert_neutral([insert], _ACCOUNT)
 
 
 def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
-    update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("175.00")},))
+    update = KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("175.00")})
     key = object_key(update, _ACCOUNT)
     assert key is not None
     _assert_neutral(
@@ -136,8 +135,8 @@ def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
 def test_a_keyed_delete_is_actor_neutral() -> None:
     _assert_neutral(
         [
-            KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)),
-            KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)),
+            KeyedWriteInstruction("delete", "Wallet", {"id": 1}),
+            KeyedWriteInstruction("delete", "Wallet", {"id": 2}),
         ],
         _WALLET,
     )
@@ -153,7 +152,7 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
             ),
         ),
     )
-    prepared = prepare_typed_write(predicate, write_preparation_of(_WALLET))
+    prepared = prepare_instruction(predicate, write_preparation_of(_WALLET))
     assert isinstance(prepared, PreparedPredicateInstruction)
     planner = build_write_planner(bound_model(_WALLET))
     subject, login = (
@@ -175,10 +174,10 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
 def test_a_batched_insert_run_is_actor_neutral() -> None:
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)
+            "insert", "Wallet", {"id": 1, "owner": "Ada", "balance": Decimal("1")}
         ),
         KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2")},)
+            "insert", "Wallet", {"id": 2, "owner": "Bo", "balance": Decimal("2")}
         ),
     ]
     _assert_neutral(buffer, _WALLET)
@@ -186,7 +185,7 @@ def test_a_batched_insert_run_is_actor_neutral() -> None:
 
 def test_a_temporal_close_and_chain_is_actor_neutral() -> None:
     update = KeyedWriteInstruction(
-        "amend", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
+        "amend", "Balance", {"id": 1, "acctNum": "A", "value": Decimal("175.00")}
     )
     key = object_key(update, _BALANCE)
     assert key is not None

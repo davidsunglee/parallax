@@ -37,14 +37,13 @@ def object_key(
     """
     if isinstance(instruction, PreparedKeyedInstruction):
         return resolve_object_key(instruction, inheritance.inheritance_facet_of(model))
-    if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) != 1:
+    if not isinstance(instruction, KeyedWriteInstruction):
         return None
     entity = entity_by_name(model, instruction.entity)
     if entity is None:
         return None
     name = _key_attribute(entity, inheritance.inheritance_facet_of(model)).name
-    row = instruction.rows[0]
-    return _identity(entity, name, row.get(name, _UNSTATED))
+    return _identity(entity, name, instruction.row.get(name, _UNSTATED))
 
 
 def resolve_object_key(

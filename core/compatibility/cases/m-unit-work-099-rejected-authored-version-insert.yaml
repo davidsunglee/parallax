@@ -1,0 +1,13 @@
+# A Wire insert payload authoring the framework-owned version is refused: the
+# version an opening settles at is derived, never stated.
+model: models/account.yaml
+tags: [m-unit-work, m-concurrency, write, rejected, slice-snapshot-1]
+shape: rejected
+when:
+  write:
+    id: 7
+    owner: Newton
+    balance: "5.00"
+    version: 1
+then:
+  rejectedRule: framework-owned-member-assigned

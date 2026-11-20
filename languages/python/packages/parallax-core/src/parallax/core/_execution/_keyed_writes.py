@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast
 
@@ -28,11 +27,13 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     WRITE_INSTRUCTION_INVALID,
     KeyedMutation,
-    KeyedWriteInstruction,
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.keys import object_key
-from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core._execution._unit_work.preparation import (
+    TargetRevisionArguments,
+    WritePreparation,
+)
 from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
@@ -51,9 +52,7 @@ __all__ = [
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
-    "TargetRevisionArguments",
     "keyed_insert",
-    "keyed_instruction",
     "keyed_write",
     "retained",
     "stated_valid_from",
@@ -287,9 +286,9 @@ class KeyedWriteSource(Protocol):
     wrong about — a Wire change document's own shape; nothing at all for a Typed
     value, whose shape its class fixes. :meth:`resolve` answers the source facts.
     :meth:`prepare` is handed the write preparation of the model :meth:`resolve`
-    was, the same mutation, and its answer; it acquires the authored row — the identity plus every
-    member the caller expressed, and nothing else — builds the instruction with
-    the caller's raw bounds, and has core preparation judge it, target and
+    was, the same mutation, and its answer; it acquires the authored payload —
+    the identity plus every member the caller expressed, and nothing else — and
+    has core preparation judge it with the caller's raw bounds, target and
     window first, then payload. A representation that addresses members by the
     source's object reads it off ``resolved``.
     """
@@ -335,23 +334,6 @@ class KeyedInsertSource(Protocol):
     ) -> PreparedKeyedInstruction: ...
 
 
-def keyed_instruction(
-    mutation: KeyedMutation,
-    entity: EntityIdentity,
-    row: Mapping[str, object],
-    *,
-    valid_from: dt.datetime | None = None,
-    until: dt.datetime | None = None,
-) -> KeyedWriteInstruction:
-    """One single-row authored keyed instruction.
-
-    The bounds ride the instruction's dimension-explicit fields as the caller
-    passed them, never the row: an As-Of Axis endpoint is framework-owned, and
-    preparation judges the window against the target.
-    """
-    return KeyedWriteInstruction(mutation, entity.canonical, (row,), valid_from, until)
-
-
 def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     """Reject a mutation sourced from a view pinned at a FINITE Transaction-Time
     instant (`m-temporal-read`'s finite-pin mutation row): raise
@@ -391,17 +373,6 @@ def retained[T](filed: T | None) -> T:
     """
     assert filed is not None
     return filed
-
-
-@dataclass(frozen=True, slots=True)
-class TargetRevisionArguments:
-    """The revision keywords a caller-conditioned write was handed, unjudged, as
-    the canonical instruction carries them beside the names its caller stated,
-    so preparation can judge presence apart from value in its fixed order."""
-
-    if_version: int | None
-    if_tx_start: dt.datetime | None
-    stated: tuple[str, ...]
 
 
 def target_revision_arguments(

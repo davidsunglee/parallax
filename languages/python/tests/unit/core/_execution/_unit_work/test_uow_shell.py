@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import gc
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from types import TracebackType
@@ -43,9 +43,9 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
     TargetWriteInstruction,
-    prepare_typed_write,
-    prepare_wire_write,
+    derive_keyed_instruction,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CoverageReadRequest,
@@ -127,7 +127,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import (
     WherePosition,
@@ -199,9 +199,19 @@ def _run[T](
 
 
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(write, write_preparation_of(model))
+    prepared = prepare_instruction(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
+
+
+def _plural_keyed(
+    writes: Sequence[KeyedWriteInstruction], model: Metamodel
+) -> PreparedKeyedInstruction:
+    """``writes`` as the one derived plural write a collapse produces."""
+    first, *others = (_prepared_keyed(write, model) for write in writes)
+    return derive_keyed_instruction(
+        first, (*first.rows, *(row for other in others for row in other.rows))
+    )
 
 
 def _account_insert(account_id: int) -> KeyedInsert:
@@ -210,7 +220,7 @@ def _account_insert(account_id: int) -> KeyedInsert:
             KeyedWriteInstruction(
                 "insert",
                 "Account",
-                ({"id": account_id, "owner": "N", "balance": Decimal("5.00")},),
+                {"id": account_id, "owner": "N", "balance": Decimal("5.00")},
             ),
             _ACCOUNT,
         ),
@@ -317,7 +327,7 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
                 KeyedWriteInstruction(
                     "insert",
                     "Account",
-                    ({"id": 1, "owner": "N", "balance": Decimal("5.00"), "version": 1},),
+                    {"id": 1, "owner": "N", "balance": Decimal("5.00"), "version": 1},
                 ),
                 _ACCOUNT,
             ),
@@ -335,12 +345,15 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
     # would carry `id 2` to the same new version and expect two affected rows.
     with pytest.raises(ValueError, match="addresses 2 rows"):
         admitted_write(
-            _prepared_keyed(
-                KeyedWriteInstruction(
-                    "amend",
-                    "Account",
-                    ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
-                ),
+            _plural_keyed(
+                [
+                    KeyedWriteInstruction(
+                        "amend", "Account", {"id": 1, "balance": Decimal("0.00")}
+                    ),
+                    KeyedWriteInstruction(
+                        "amend", "Account", {"id": 2, "balance": Decimal("0.00")}
+                    ),
+                ],
                 _ACCOUNT,
             ),
             RetainedObservation(_account_state(1, 7), VersionObservation(observed_version=7), None),
@@ -359,12 +372,15 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
         )
     with pytest.raises(ValueError, match="addresses 2 rows"):
         admitted_write(
-            _prepared_keyed(
-                KeyedWriteInstruction(
-                    "amend",
-                    "Account",
-                    ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
-                ),
+            _plural_keyed(
+                [
+                    KeyedWriteInstruction(
+                        "amend", "Account", {"id": 1, "balance": Decimal("0.00")}
+                    ),
+                    KeyedWriteInstruction(
+                        "amend", "Account", {"id": 2, "balance": Decimal("0.00")}
+                    ),
+                ],
                 _ACCOUNT,
             ),
             None,
@@ -379,7 +395,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
     # issued — or one a later insertion of the object superseded — is refused
     # rather than settled.
     update = _prepared_keyed(
-        KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
+        KeyedWriteInstruction("amend", "Account", {"id": 1, "balance": Decimal("1.00")}),
         _ACCOUNT,
     )
 
@@ -429,7 +445,7 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
             _inserted(
                 _BALANCE,
                 KeyedWriteInstruction(
-                    "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("1.00")},)
+                    "insert", "Balance", {"id": 9, "acctNum": "D", "value": Decimal("1.00")}
                 ),
             ),
             insertion_advice=None,
@@ -439,7 +455,7 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
             _inserted(
                 _BALANCE,
                 KeyedWriteInstruction(
-                    "insert", "Balance", ({"id": 10, "acctNum": "E", "value": Decimal("2.00")},)
+                    "insert", "Balance", {"id": 10, "acctNum": "E", "value": Decimal("2.00")}
                 ),
             ),
             insertion_advice=None,
@@ -570,7 +586,7 @@ def _account_write(
         row["balance"] = Decimal("1.00")
     evidence = VersionObservation(observed_version=version)
     return admitted_write(
-        _prepared_keyed(KeyedWriteInstruction(mutation, "Account", (row,)), _ACCOUNT),
+        _prepared_keyed(KeyedWriteInstruction(mutation, "Account", row), _ACCOUNT),
         RetainedObservation(_account_state(account_id, version), evidence, None),
         corpus_object_key("Account", ("id", account_id)),
     )
@@ -580,7 +596,7 @@ def _balance_update(key: int) -> LicensedWrite[StateObserved | UnversionedLocked
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
     return admitted_write(
         _prepared_keyed(
-            KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)),
+            KeyedWriteInstruction("amend", "Balance", {"id": key, "value": Decimal("2.00")}),
             _BALANCE,
         ),
         RetainedObservation(_balance_state(key), observation, None),
@@ -610,7 +626,7 @@ def _person_write(
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
         row["name"] = "Grace"
-    prepared = _prepared_keyed(KeyedWriteInstruction(mutation, "Person", (row,)), _PERSON_META)
+    prepared = _prepared_keyed(KeyedWriteInstruction(mutation, "Person", row), _PERSON_META)
     key = corpus_object_key("Person", ("id", person_id))
     return admitted_write(
         prepared, key, key, source=object_source(key) if source is None else source
@@ -701,8 +717,12 @@ def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_
         with pytest.raises(ValueError, match="addresses 2 rows"):
             uow.buffer(
                 admitted_write(
-                    _prepared_keyed(
-                        KeyedWriteInstruction("delete", "Account", ({"id": 9}, {"id": 1})), _ACCOUNT
+                    _plural_keyed(
+                        [
+                            KeyedWriteInstruction("delete", "Account", {"id": 9}),
+                            KeyedWriteInstruction("delete", "Account", {"id": 1}),
+                        ],
+                        _ACCOUNT,
                     ),
                     RetainedObservation(
                         _account_state(1, 7), VersionObservation(observed_version=7), None
@@ -729,7 +749,7 @@ def _account_delete(
 ) -> LicensedWrite[InsertionAuthorized]:
     """A delete of the Account the insertion ``identity`` opened."""
     return _insertion_write(
-        identity, _ACCOUNT, KeyedWriteInstruction("delete", "Account", ({"id": account_id},))
+        identity, _ACCOUNT, KeyedWriteInstruction("delete", "Account", {"id": account_id})
     )
 
 
@@ -791,7 +811,7 @@ def _balance_insert(key: int) -> KeyedInsert:
     return _inserted(
         _BALANCE,
         KeyedWriteInstruction(
-            "insert", "Balance", ({"id": key, "acctNum": "A", "value": Decimal("1.00")},)
+            "insert", "Balance", {"id": key, "acctNum": "A", "value": Decimal("1.00")}
         ),
     )
 
@@ -808,7 +828,7 @@ def _balance_update_from(
     )
     return admitted_write(
         _prepared_keyed(
-            KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)),
+            KeyedWriteInstruction("amend", "Balance", {"id": key, "value": Decimal("2.00")}),
             _BALANCE,
         ),
         RetainedObservation(state, observation, None),
@@ -845,7 +865,7 @@ def _balance_terminate_from(
         corpus_object_key("Balance", ("id", key)), observation, _balance_shape()
     )
     return admitted_write(
-        _prepared_keyed(KeyedWriteInstruction("terminate", "Balance", ({"id": key},)), _BALANCE),
+        _prepared_keyed(KeyedWriteInstruction("terminate", "Balance", {"id": key}), _BALANCE),
         RetainedObservation(state, observation, None),
         state.object,
     )
@@ -982,7 +1002,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
     unclosable = _unclosable(
         _BALANCE,
-        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("2.00")},)),
+        KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal("2.00")}),
     )
 
     def body(uow: UnitOfWork) -> None:
@@ -1060,7 +1080,7 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
                 KeyedWriteInstruction(
                     "insertUntil",
                     "Position",
-                    ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+                    {"id": 1, "acctNum": "A", "value": Decimal("1.00")},
                     valid_from=_JAN,
                     until=_DEC,
                 ),
@@ -1073,7 +1093,7 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
         uow.buffer(
             admitted_write(
                 _prepared_keyed(
-                    KeyedWriteInstruction("terminate", "Position", ({"id": 1},), valid_from=_DEC),
+                    KeyedWriteInstruction("terminate", "Position", {"id": 1}, valid_from=_DEC),
                     _POSITION,
                 ),
                 claim,
@@ -1117,9 +1137,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
         uow.buffer(
             admitted_write(
                 _prepared_keyed(
-                    KeyedWriteInstruction(
-                        "amend", "Balance", ({"id": 1, "value": Decimal(value)},)
-                    ),
+                    KeyedWriteInstruction("amend", "Balance", {"id": 1, "value": Decimal(value)}),
                     _BALANCE,
                 ),
                 claim,
@@ -1148,7 +1166,7 @@ def _account_amend(
     account_id: int, claim: RetainedObservation
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
     row = {"id": account_id, "balance": Decimal("1.00")}
-    prepared = _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT)
+    prepared = _prepared_keyed(KeyedWriteInstruction("amend", "Account", row), _ACCOUNT)
     return admitted_write(prepared, claim, claim.key.object)
 
 
@@ -1178,7 +1196,7 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
         claims.append(deleted)
         uow.buffer(
             admitted_write(
-                _prepared_keyed(KeyedWriteInstruction("delete", "Account", ({"id": 3},)), _ACCOUNT),
+                _prepared_keyed(KeyedWriteInstruction("delete", "Account", {"id": 3}), _ACCOUNT),
                 deleted,
                 deleted.key.object,
             )
@@ -1222,7 +1240,7 @@ def _position_row(start: dt.datetime, tx_start: dt.datetime) -> PredecessorRow:
 
 
 def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "WherePosition",
@@ -1232,6 +1250,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetIn
             until=until,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -1240,15 +1259,16 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetIn
 def _observed_amendment(
     claim: RetainedObservation,
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    observed = prepare_wire_write(
+    observed = prepare_instruction(
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            ({"id": 1, "acctNum": "O"},),
+            {"id": 1, "acctNum": "O"},
             valid_from=_FEB,
             until=_APR,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(observed, PreparedKeyedInstruction)
     return admitted_write(observed, claim, claim.key.object)
@@ -1286,26 +1306,28 @@ def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the
 def _observed_value(
     claim: RetainedObservation, start: dt.datetime, until: dt.datetime
 ) -> LicensedWrite[StateObserved | UnversionedLocked]:
-    observed = prepare_wire_write(
+    observed = prepare_instruction(
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            ({"id": 1, "value": "175.00"},),
+            {"id": 1, "value": "175.00"},
             valid_from=start,
             until=until,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(observed, PreparedKeyedInstruction)
     return admitted_write(observed, claim, claim.key.object)
 
 
 def _account_target(version: int) -> PreparedTargetInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "6.00"}, if_version=version
         ),
         write_preparation_of(_ACCOUNT),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -1361,7 +1383,7 @@ def test_a_locking_target_write_holds_its_stated_revision_with_one_read() -> Non
 def _shell_predicate_write(
     assignments: tuple[WriteAssignment, ...] = (WriteAssignment("ShellTag.label", "q"),),
 ) -> PreparedPredicateInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -1373,6 +1395,7 @@ def _shell_predicate_write(
             assignments=assignments,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
@@ -1380,7 +1403,7 @@ def _shell_predicate_write(
 
 def _tag_insert(tag_id: int) -> KeyedInsert:
     return _inserted(
-        _PREDICATED, KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},))
+        _PREDICATED, KeyedWriteInstruction("insert", "ShellTag", {"id": tag_id, "label": "t"})
     )
 
 
@@ -1439,7 +1462,7 @@ def test_a_predicate_write_whose_buffered_writes_cancelled_executes_no_other_sta
         inserted = uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         assert uow.buffer(
             _insertion_write(
-                inserted, _PREDICATED, KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},))
+                inserted, _PREDICATED, KeyedWriteInstruction("delete", "ShellTag", {"id": 2})
             )
         ) is (BufferOutcome.CANCELLED_PENDING_INSERT)
         uow.execute_predicate(_shell_predicate_write())
@@ -1464,13 +1487,14 @@ def test_an_empty_predicate_write_answers_zero_and_leaves_the_buffer_pending(
     empty = (
         _shell_predicate_write(assignments=())
         if mutation == "amend"
-        else prepare_wire_write(
+        else prepare_instruction(
             PredicateWriteInstruction(
                 "replace",
                 PredicateSelection("ShellKey", predicate_algebra.TrueNode()),
                 row={},
             ),
             write_preparation_of(_PREDICATED),
+            WIRE,
         )
     )
     assert isinstance(empty, PreparedPredicateInstruction)
@@ -1525,7 +1549,7 @@ def test_a_planning_refusal_before_a_predicate_write_keeps_the_buffer_and_the_at
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
-            ({"id": 1, "acctNum": "O"},),
+            {"id": 1, "acctNum": "O"},
             valid_from=_FEB,
             until=_APR,
         ),
@@ -1669,13 +1693,13 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
     insert = KeyedWriteInstruction(
         "insert",
         "WherePosition",
-        ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+        {"id": 1, "acctNum": "A", "value": Decimal("1.00")},
         valid_from=_FEB,
     )
     edit = KeyedWriteInstruction(
-        "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
+        "amendUntil", "WherePosition", {"id": 1, "value": Decimal("2.00")}, _FEB, _APR
     )
-    destroy = KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG)
+    destroy = KeyedWriteInstruction("terminateUntil", "WherePosition", {"id": 1}, _JUN, _AUG)
     plan = build_write_planner(bound_model(_PREDICATED)).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -1740,7 +1764,7 @@ def test_a_held_predecessor_starting_later_is_refused_while_planning() -> None:
 
 
 def _late_position_target() -> PreparedTargetInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "WherePosition",
@@ -1750,6 +1774,7 @@ def _late_position_target() -> PreparedTargetInstruction:
             until=_AUG,
         ),
         write_preparation_of(_PREDICATED),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared

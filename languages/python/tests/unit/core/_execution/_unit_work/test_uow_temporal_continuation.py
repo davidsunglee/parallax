@@ -33,8 +33,8 @@ from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroup
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
-    prepare_wire_write,
 )
+from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     CoverageReadRequest,
     RowConsumer,
@@ -66,7 +66,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
-from tests._support.write_preparation import write_preparation_of
+from tests._support.write_preparation import prepare_instruction, write_preparation_of
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._stored_positions_support import StoredPositions
@@ -89,11 +89,12 @@ def _write(
     valid_from: dt.datetime, until: dt.datetime | None = None, **members: object
 ) -> PreparedKeyedInstruction:
     verb = "amend" if until is None else "amendUntil"
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         KeyedWriteInstruction(
-            verb, "WherePosition", ({"id": 1, **members},), valid_from=valid_from, until=until
+            verb, "WherePosition", {"id": 1, **members}, valid_from=valid_from, until=until
         ),
         write_preparation_of(_META),
+        WIRE,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -469,7 +470,7 @@ def test_rows_held_for_a_source_nothing_reaches_any_longer_are_released() -> Non
 def _target(
     valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime, **members: object
 ) -> PreparedTargetInstruction:
-    prepared = prepare_wire_write(
+    prepared = prepare_instruction(
         TargetWriteInstruction(
             "amendUntil",
             "WherePosition",
@@ -479,6 +480,7 @@ def _target(
             until=until,
         ),
         write_preparation_of(_META),
+        WIRE,
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
