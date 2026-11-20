@@ -26,8 +26,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Wallet
-          rows:
-            - { id: 1, balance: "175.00" }
+          row: { id: 1, balance: "175.00" }
       databaseCalls: 0
       note: buffer the keyed update of the locked row, ungated and advancing no version; the dependent find below flushes it
     - uow: fallback

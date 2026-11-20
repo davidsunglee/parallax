@@ -12,8 +12,7 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 7, owner: Newton, balance: "5.00" }
+          row: { id: 7, owner: Newton, balance: "5.00" }
       databaseCalls: 0
       note: buffer an insert of a brand-new account 7 inside the group; nothing flushes yet
     - uow: dependency

@@ -49,8 +49,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 2, balance: "999.00" }
+          row: { id: 2, balance: "999.00" }
       databaseCalls: 1
       note: the concurrent unit of work commits FIRST — a gated update of account 2, advancing its OWN observed version 1 -> 2; the group COMMITS after this, its last step
       statements:
@@ -61,12 +60,10 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 9, owner: Noether, balance: "5.00" }
+          row: { id: 9, owner: Noether, balance: "5.00" }
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 2, balance: "300.00" }
+          row: { id: 2, balance: "300.00" }
       databaseCalls: 2
       note: "our UoW inserts account 9 then hits a stale-version conflict on account 2 (gated on OUR OWN observed version 1, now stale) — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"
       statements:

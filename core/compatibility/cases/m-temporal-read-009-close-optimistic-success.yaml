@@ -38,8 +38,7 @@ when:
         - mutation: terminate
           "on": 0
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 2 }
+          row: { id: 2 }
           at: "2024-10-01T00:00:00.000000Z"
       databaseCalls: 1
       note: the close alone, gated on the observed in_z — a Transaction-Time-Only terminate chains no successor

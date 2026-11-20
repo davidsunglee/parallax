@@ -52,8 +52,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 1, acctNum: A, value: "175.00" }
+          row: { id: 1, acctNum: A, value: "175.00" }
           at: "2024-10-01T00:00:00.000000Z"
       databaseCalls: 2
       note: the close is ACCEPTED and commits — no gate predicate (locking mode), addressing the milestone still open on Transaction Time rather than the historical one the audit read returned

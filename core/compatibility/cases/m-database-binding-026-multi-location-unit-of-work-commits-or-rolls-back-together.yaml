@@ -44,8 +44,7 @@ when:
       write:
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 12 }
+          row: { id: 12 }
       databaseCalls: 0
       note: buffered, then delivered first by the predicate write's flush
     - uow: kept
@@ -76,16 +75,13 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 13, orderId: 7, sku: N-13, quantity: 1 }
+          row: { id: 13, orderId: 7, sku: N-13, quantity: 1 }
         - mutation: insert
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 7, name: Grouped, sku: G-7, qty: 2, price: "3.00", active: true, orderedOn: "2024-09-01" }
+          row: { id: 7, name: Grouped, sku: G-7, qty: 2, price: "3.00", active: true, orderedOn: "2024-09-01" }
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 14, orderId: 7, sku: N-14, quantity: 2 }
+          row: { id: 14, orderId: 7, sku: N-14, quantity: 2 }
       databaseCalls: 2
       note: the pre-commit flush inserts the parent order in `px`, then both line items in `px_crm` in one batched statement
       statements:
@@ -123,12 +119,10 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 11, sku: X-11 }
+          row: { id: 11, sku: X-11 }
         - mutation: insert
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 8, name: Abandoned, sku: G-8, qty: 1, price: "1.00", active: true, orderedOn: "2024-10-01" }
+          row: { id: 8, name: Abandoned, sku: G-8, qty: 1, price: "1.00", active: true, orderedOn: "2024-10-01" }
       databaseCalls: 0
       note: buffered, then delivered by the predicate write's flush, the insert's mutation phase in `px` before the update's in `px_crm`
     - uow: abandoned

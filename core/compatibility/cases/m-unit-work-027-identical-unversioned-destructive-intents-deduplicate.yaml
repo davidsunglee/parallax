@@ -10,12 +10,10 @@ when:
     - write:
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 21 }
+          row: { id: 21 }
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 21 }
+          row: { id: 21 }
       databaseCalls: 2
       note: both deletes settle against the row this step's own resolving read published, and the second says what the first already said, so ONE DELETE is emitted
       statements:

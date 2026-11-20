@@ -78,13 +78,13 @@ _WITNESS_AUDIT = [
     {
         "mutation": "insert",
         "entity": "Balance",
-        "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
+        "row": {"id": 9, "acctNum": "D", "value": 100.00},
         "at": "2024-06-01T00:00:00+00:00",
     },
     {
         "mutation": "amend",
         "entity": "Balance",
-        "rows": [{"id": 9, "value": 150.00}],
+        "row": {"id": 9, "value": 150.00},
         "at": "2024-06-01T00:00:00+00:00",
     },
 ]
@@ -93,14 +93,14 @@ _WITNESS_BITEMP = [
     {
         "mutation": "insert",
         "entity": "Position",
-        "rows": [{"id": 9, "acctNum": "D", "value": 100.00}],
+        "row": {"id": 9, "acctNum": "D", "value": 100.00},
         "validFrom": "2024-01-01T00:00:00+00:00",
         "at": "2024-01-01T00:00:00+00:00",
     },
     {
         "mutation": "amend",
         "entity": "Position",
-        "rows": [{"id": 9, "value": 150.00}],
+        "row": {"id": 9, "value": 150.00},
         "validFrom": "2024-01-01T00:00:00+00:00",
         "at": "2024-01-01T00:00:00+00:00",
     },
@@ -110,9 +110,9 @@ _WITNESS_UNIT_WORK = [
     {
         "mutation": "insert",
         "entity": "Account",
-        "rows": [{"id": 9, "owner": "Noether", "balance": 5.00}],
+        "row": {"id": 9, "owner": "Noether", "balance": 5.00},
     },
-    {"mutation": "delete", "entity": "Account", "rows": [{"id": 9}]},
+    {"mutation": "delete", "entity": "Account", "row": {"id": 9}},
 ]
 
 
@@ -139,7 +139,7 @@ def test_single_keyed_write_is_accepted() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 7, "owner": "N", "balance": 5.0}],
+            "row": {"id": 7, "owner": "N", "balance": 5.0},
         }
     ]
     assert _accepted(probe, _ACCOUNT)
@@ -152,10 +152,10 @@ def test_mixed_multi_object_flush_is_accepted() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
+            "row": {"id": 9, "owner": "N", "balance": 5.0},
         },
-        {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": 20.0}]},
-        {"mutation": "delete", "entity": "Account", "rows": [{"id": 3}]},
+        {"mutation": "amend", "entity": "Account", "row": {"id": 1, "balance": 20.0}},
+        {"mutation": "delete", "entity": "Account", "row": {"id": 3}},
     ]
     assert _accepted(probe, _ACCOUNT)
 
@@ -166,18 +166,16 @@ def test_buffer_over_different_entities_is_accepted() -> None:
         {
             "mutation": "insert",
             "entity": "Order",
-            "rows": [
-                {
-                    "id": 1,
-                    "name": "A",
-                    "qty": 1,
-                    "price": 1.0,
-                    "active": True,
-                    "orderedOn": "2024-01-01",
-                }
-            ],
+            "row": {
+                "id": 1,
+                "name": "A",
+                "qty": 1,
+                "price": 1.0,
+                "active": True,
+                "orderedOn": "2024-01-01",
+            },
         },
-        {"mutation": "delete", "entity": "OrderItem", "rows": [{"id": 1}]},
+        {"mutation": "delete", "entity": "OrderItem", "row": {"id": 1}},
     ]
     assert _accepted(probe, _ORDERS)
 
@@ -189,9 +187,9 @@ def test_buffer_over_different_primary_keys_is_accepted() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
+            "row": {"id": 9, "owner": "N", "balance": 5.0},
         },
-        {"mutation": "amend", "entity": "Account", "rows": [{"id": 2, "balance": 6.0}]},
+        {"mutation": "amend", "entity": "Account", "row": {"id": 2, "balance": 6.0}},
     ]
     assert _accepted(probe, _ACCOUNT)
 
@@ -207,7 +205,7 @@ def test_a_predicate_submission_over_a_versioned_target_is_refused() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "N", "balance": 5.0}],
+            "row": {"id": 9, "owner": "N", "balance": 5.0},
         },
         {"mutation": "delete", "target": {"entity": "Account", "predicate": {"true": {}}}},
     ]
@@ -272,7 +270,7 @@ _STATE_FIND = {"uow": "g", "objectQuery": {"target": "OrderItem", "predicate": {
 _STATE_INSERT = {
     "mutation": "insert",
     "entity": "OrderItem",
-    "rows": [{"id": 1, "quantity": 1, "sku": "A"}],
+    "row": {"id": 1, "quantity": 1, "sku": "A"},
 }
 
 _STATE_GRAPH_FIND = {
@@ -304,17 +302,6 @@ def _state_graded(steps: list[dict[str, Any]]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "steps",
     [
-        pytest.param(
-            [
-                {
-                    "uow": "g",
-                    "write": [
-                        {**_STATE_INSERT, "rows": [*_STATE_INSERT["rows"], {"id": 2, "sku": "B"}]}
-                    ],
-                }
-            ],
-            id="a-keyed-submission-of-two-rows",
-        ),
         pytest.param([{"uow": "g", "write": _PREDICATE_WRITE}], id="a-direct-predicate-write"),
         pytest.param([{"uow": "g", "write": "amend"}], id="a-write-label"),
         pytest.param(
@@ -441,11 +428,9 @@ def test_a_target_submission_states_the_condition_its_target_takes(
             _SEQUENCE,
             id="a-replacement-omitting-a-required-member",
         ),
-        pytest.param(_ACCOUNT_TARGET, _SEQUENCE, id="a-versioned-target-without-its-version"),
         pytest.param(
             {**_ACCOUNT_TARGET, "ifTxStart": _T0}, _SEQUENCE, id="a-versioned-target-by-its-start"
         ),
-        pytest.param(_TAG_TARGET, _SEQUENCE, id="an-unversioned-target"),
         pytest.param({**_TAG_TARGET, "ifVersion": 1}, _SEQUENCE, id="an-unversioned-revision"),
         pytest.param(
             {**_SPAN_TARGET, "mutation": "delete", "row": {"id": 1}, "ifTxStart": _T0},
@@ -494,7 +479,7 @@ def test_row_naming_a_non_member_is_rejected() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "N", "balance": 5.0, "bogus": 1}],
+            "row": {"id": 9, "owner": "N", "balance": 5.0, "bogus": 1},
         }
     ]
     errors: list[str] = []
@@ -524,7 +509,7 @@ def _corrupt_witness(tmp_path: Path, mutate: Any) -> list[str]:
 def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: Path) -> None:
     def mutate(case: dict[str, Any]) -> None:
         # Name a key on the buffered INSERT row that is not a declared Balance member.
-        case["when"]["scenario"][0]["write"][0]["rows"][0]["bogus"] = 1
+        case["when"]["scenario"][0]["write"][0]["row"]["bogus"] = 1
 
     errors = _corrupt_witness(tmp_path, mutate)
     assert any(
@@ -533,19 +518,24 @@ def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: P
     )
 
 
-# --- each row of an entry is its own keyed instruction (m-unit-work) ------------
+# --- a keyed submission is one keyed write instruction (m-case-format) ----------
 
 
-def test_a_plural_temporal_buffer_entry_is_accepted() -> None:
-    probe = [
-        {
-            "mutation": "amend",
-            "entity": "Balance",
-            "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
-            "at": "2024-06-01T00:00:00+00:00",
-        }
-    ]
-    assert _accepted(probe, _BALANCE)
+def test_a_keyed_submission_names_one_object_through_its_one_row() -> None:
+    # A later row naming the target submission's object would otherwise write that
+    # object beside the target submission while the entry reads as naming another.
+    validator = Draft202012Validator({"$ref": _CASE_URL}, registry=_REGISTRY)
+    insert = {"mutation": "insert", "entity": "OrderItem", "row": {"id": 3, "sku": "C"}}
+    hidden = {key: value for key, value in insert.items() if key != "row"} | {
+        "rows": [insert["row"], {"id": 1, "sku": "A"}]
+    }
+    assert (
+        next(validator.iter_errors(_scenario_document([insert, _TARGET_SUBMISSION])), None) is None
+    )
+    assert (
+        next(validator.iter_errors(_scenario_document([hidden, _TARGET_SUBMISSION])), None)
+        is not None
+    )
 
 
 def test_a_value_object_document_with_any_keys_shares_its_buffer() -> None:
@@ -557,9 +547,9 @@ def test_a_value_object_document_with_any_keys_shares_its_buffer() -> None:
         {
             "mutation": "amend",
             "entity": "Customer",
-            "rows": [{"id": 1, "address": {"increment": 1}}],
+            "row": {"id": 1, "address": {"increment": 1}},
         },
-        {"mutation": "delete", "entity": "Customer", "rows": [{"id": 2}]},
+        {"mutation": "delete", "entity": "Customer", "row": {"id": 2}},
     ]
     errors: list[str] = []
     _validate_buffered_write(probe, _defs("models/customer.yaml"), _OP, "probe", errors)

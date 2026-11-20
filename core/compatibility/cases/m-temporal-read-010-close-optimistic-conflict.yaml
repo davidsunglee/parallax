@@ -61,8 +61,7 @@ when:
         - mutation: amend
           "on": 1
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 2, value: "999.00" }
+          row: { id: 2, value: "999.00" }
           at: "2024-09-01T00:00:00.000000Z"
       databaseCalls: 2
       note: the concurrent unit of work commits FIRST — its close gated on the in_z it observed, then the chained successor from the same instant; the group COMMITS after this, its last step
@@ -80,8 +79,7 @@ when:
         - mutation: terminate
           "on": 0
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 2 }
+          row: { id: 2 }
           at: "2024-10-01T00:00:00.000000Z"
       databaseCalls: 1
       note: "our close gates on OUR observed in_z 2024-02-01, which the concurrent commit closed — 0 rows; the commit's flush fails and the group ROLLS BACK after this, its last step"

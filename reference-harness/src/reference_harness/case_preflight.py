@@ -312,8 +312,8 @@ def _carrier_rows(
     *,
     fallback: Entity | None,
 ) -> None:
-    """A keyed carrier's ``rows``, a target carrier's ``row``, or a bare
-    row read as the ``fallback`` Entity's."""
+    """A carrier's ``row`` or a writeSequence step's ``rows``, read as its
+    Entity's, or a bare row read as the ``fallback`` Entity's."""
     entity_name = carrier.get("entity")
     rows = carrier.get("rows")
     row = carrier.get("row")

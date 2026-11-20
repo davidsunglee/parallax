@@ -82,7 +82,10 @@ def _bound(binds: Sequence[object]) -> list[object]:
 def _entry(
     mutation: str, row: Mapping[str, object], *, entity: str = "Account", **controls: object
 ) -> dict[str, object]:
-    return {"mutation": mutation, "entity": entity, "rows": [row], **controls}
+    """A keyed scenario submission, or the one-row writeSequence entry a row
+    declaring an observed version belongs to."""
+    carrier = {"rows": [row]} if "observedVersion" in row else {"row": row}
+    return {"mutation": mutation, "entity": entity, **carrier, **controls}
 
 
 def _one(model: AcceptedMetamodel, entry: Mapping[str, object], *, step: int = 1) -> Submission:
@@ -193,26 +196,21 @@ def test_a_named_empty_find_refuses_even_with_another_same_key_read() -> None:
 
 @pytest.mark.parametrize("key", [90, 91])
 @pytest.mark.parametrize("named", [False, True])
-def test_own_insertion_and_multi_row_pointer_need_no_read(key: int, named: bool) -> None:
+def test_own_insertion_and_its_pointer_need_no_read(key: int, named: bool) -> None:
     port = FakeWritePort(affected_script=[2])
 
     def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
         insertions = read_submissions(
             model,
             [
-                {
-                    "mutation": "insert",
-                    "entity": "Account",
-                    "rows": [
-                        {"id": value, "owner": "Ada", "balance": "10.00"} for value in (90, 91)
-                    ],
-                }
+                _entry("insert", {"id": value, "owner": "Ada", "balance": "10.00"})
+                for value in (90, 91)
             ],
             step=0,
         )
         for insertion in insertions:
             assert submitter.submit(insertion) == Buffered()
-        controls = {"on": "/scenario/0/write/0"} if named else {}
+        controls = {"on": f"/scenario/0/write/{key - 90}"} if named else {}
         assert (
             submitter.submit(
                 _one(model, _entry("amend", {"id": key, "owner": "Grace"}, **controls))
@@ -377,24 +375,20 @@ def test_unit_insertions_publish_in_order_before_a_dependent_submission(
     hooks: list[int] = []
 
     def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
-        insert = {
-            "mutation": "insert",
-            "entity": "Account",
-            "rows": [
-                {"id": 90, "owner": "Ada", "balance": "10.00"},
-                {"id": 91, "owner": "Ada", "balance": "10.00"},
-            ],
-        }
+        inserts = [
+            _entry("insert", {"id": value, "owner": "Ada", "balance": "10.00"})
+            for value in (90, 91)
+        ]
         dependent = _entry(
             "amend",
             {"id": 91, "owner": "Grace"}
             | ({} if declared is None else {"observedVersion": declared}),
-            **({"on": "/scenario/2/write/0"} if named else {}),
+            **({"on": "/scenario/2/write/1"} if named else {}),
         )
         submitter.submit_unit(
             read_submissions(
                 model,
-                [insert, dependent, _entry("amend", {"id": 1, "observedVersion": 1})],
+                [*inserts, dependent, _entry("amend", {"id": 1, "observedVersion": 1})],
                 step=2,
             ),
             before_writes=lambda: hooks.append(len(port.reads)),
@@ -535,13 +529,12 @@ def test_read_submissions_splits_a_multi_row_entry_and_keeps_each_declaration() 
                 ],
             }
         ],
-        step=5,
     )
     assert [
         s.declared_observation.observed_version if s.declared_observation else None
         for s in submissions
     ] == [3, 7]
-    assert [s.pointer for s in submissions] == ["/scenario/5/write/0"] * 2
+    assert [s.pointer for s in submissions] == ["/write/0"] * 2
     assert [_sole_row(s) for s in submissions] == [
         {"id": 1, "owner": "Grace"},
         {"id": 2, "owner": "Ada"},
@@ -560,12 +553,9 @@ def test_read_submissions_splits_a_temporal_entry_into_ordered_one_row_writes() 
                 "at": "2024-09-01T00:00:00+00:00",
             }
         ],
-        step=3,
     )
     assert [_sole_row(s) for s in submissions] == [{"id": 2, "value": 1.0}, {"id": 1, "value": 2.0}]
-    assert [(s.pointer, s.declared_observation) for s in submissions] == [
-        ("/scenario/3/write/0", None)
-    ] * 2
+    assert [(s.pointer, s.declared_observation) for s in submissions] == [("/write/0", None)] * 2
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from ..case import Case, Entity, entry_pairs, entry_statements, names_earlier_step
+from ..case import (
+    Case,
+    Entity,
+    entry_pairs,
+    entry_statements,
+    names_earlier_step,
+    states_revision,
+)
 from ..case_assertions import CaseFailure, write_value_equal
 from ..database_binding import PhysicalTable
 from ..inheritance import Family
@@ -435,13 +442,13 @@ def _submissions(
 
 def _submission(case: Case, index: int, position: int, entry: Mapping[str, Any]) -> Submission:
     kind: SubmissionKind = (
-        "predicate" if "target" in entry else "target" if "row" in entry else "keyed"
+        "predicate" if "target" in entry else "target" if states_revision(entry) else "keyed"
     )
     entity: Entity | None = None
     key: Mapping[str, Any] | None = None
     if kind != "predicate":
         entity = case.model.entity(str(entry.get("entity", "")))
-        row = entry.get("row") if kind == "target" else (entry.get("rows") or [None])[0]
+        row = entry.get("row")
         if isinstance(row, Mapping):
             key = {
                 attribute["name"]: row.get(attribute["name"])

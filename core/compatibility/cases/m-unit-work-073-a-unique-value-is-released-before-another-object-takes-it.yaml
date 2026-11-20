@@ -28,8 +28,8 @@ when:
         - { id: 102, person_id: 2, number: P-BBB }
     - uow: handoff
       write:
-        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, rows: [{ id: 101, personId: 3 }] }
-        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, rows: [{ id: 102, personId: 1 }] }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, row: { id: 101, personId: 3 } }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Passport, row: { id: 102, personId: 1 } }
       databaseCalls: 2
       note: passport 102 takes the holder passport 101 gives up, so each effect keeps its authored place and neither shares a statement; run the other way round, the second write's value is still held and the unique key refuses it
       statements:

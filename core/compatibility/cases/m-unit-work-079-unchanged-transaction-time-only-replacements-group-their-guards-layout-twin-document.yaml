@@ -13,8 +13,8 @@ when:
   scenario:
     - uow: seed
       write:
-        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 3, amount: 100, memo: { note: n7 } }], at: "2024-10-01T00:00:00.000000Z" }
-        - { mutation: insert, entity: parallax.compatibility.KeptLog, rows: [{ id: 4, amount: 100, memo: { note: n8 } }], at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, row: { id: 3, amount: 100, memo: { note: n7 } }, at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: insert, entity: parallax.compatibility.KeptLog, row: { id: 4, amount: 100, memo: { note: n8 } }, at: "2024-10-01T00:00:00.000000Z" }
       databaseCalls: 1
       note: open logs 3 and 4 at October
       statements:

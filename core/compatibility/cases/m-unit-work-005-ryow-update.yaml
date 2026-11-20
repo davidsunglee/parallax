@@ -28,8 +28,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 1, balance: "175.00" }
+          row: { id: 1, balance: "175.00" }
       databaseCalls: 0
       note: buffer a keyed update of account 1 (balance 175.00), advancing the OBSERVED version 1 -> 2; the dependent find below flushes it
     - uow: observed-update

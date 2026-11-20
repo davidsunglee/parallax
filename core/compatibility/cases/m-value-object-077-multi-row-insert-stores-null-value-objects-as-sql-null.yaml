@@ -10,12 +10,16 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Customer
-          rows:
-            - { id: 301, name: Bea, address: null }
-            - id: 302
-              name: Cai
-              address: { street: 2 Birch Rd, city: null, geo: null, phones: [] }
-            - { id: 303, name: Dag, address: null }
+          row: { id: 301, name: Bea, address: null }
+        - mutation: insert
+          entity: parallax.compatibility.Customer
+          row:
+            id: 302
+            name: Cai
+            address: { street: 2 Birch Rd, city: null, geo: null, phones: [] }
+        - mutation: insert
+          entity: parallax.compatibility.Customer
+          row: { id: 303, name: Dag, address: null }
       databaseCalls: 1
       statements:
         - sql:

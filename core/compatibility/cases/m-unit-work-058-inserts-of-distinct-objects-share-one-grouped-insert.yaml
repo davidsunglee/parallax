@@ -11,16 +11,13 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 13, orderId: 7, sku: N-13, quantity: 1 }
+          row: { id: 13, orderId: 7, sku: N-13, quantity: 1 }
         - mutation: insert
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 7, name: Grouped, sku: G-7, qty: 2, price: "3.00", active: true, orderedOn: "2024-09-01" }
+          row: { id: 7, name: Grouped, sku: G-7, qty: 2, price: "3.00", active: true, orderedOn: "2024-09-01" }
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 14, orderId: 7, sku: N-14, quantity: 2 }
+          row: { id: 14, orderId: 7, sku: N-14, quantity: 2 }
       databaseCalls: 2
       note: one flush; the parent Order first, then both line items in one statement, each row its own Planned Insert; the unit of work commits after this, its last step
       statements:

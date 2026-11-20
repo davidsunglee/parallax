@@ -67,7 +67,7 @@ def test_case_keyed_write_references_canonical_defs() -> None:
     keyed = _CASE["$defs"]["keyedWrite"]["properties"]
     assert _ref_at(keyed, "mutation").endswith(f"{_WRITE_ID}#/$defs/keyedMutation")
     assert _ref_at(keyed, "entity").endswith(f"{_WRITE_ID}#/$defs/entityName")
-    assert keyed["rows"]["items"]["$ref"].endswith(f"{_WRITE_ID}#/$defs/writeRow")
+    assert keyed["row"]["$ref"].endswith(f"{_WRITE_ID}#/$defs/writeRow")
 
 
 def test_case_write_admits_the_canonical_target_instruction_by_reference() -> None:

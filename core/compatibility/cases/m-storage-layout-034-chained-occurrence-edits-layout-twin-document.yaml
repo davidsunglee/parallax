@@ -10,15 +10,15 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 2
-              spec:
-                title: Meridian
-                note: second
-                origin: { country: SE }
-                stops:
-                  - { port: Bergen }
-                  - { port: Kiel }
+          row:
+            id: 2
+            spec:
+              title: Meridian
+              note: second
+              origin: { country: SE }
+              stops:
+                - { port: Bergen }
+                - { port: Kiel }
       databaseCalls: 2
       note: the first edit restates the whole occurrence to add a stop
       statements:
@@ -72,12 +72,12 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 2
-              spec:
-                title: Meridian
-                stops:
-                  - { port: Kiel }
+          row:
+            id: 2
+            spec:
+              title: Meridian
+              stops:
+                - { port: Kiel }
       databaseCalls: 2
       note: the second edit names two members, so it destroys what the first edit had just stored
       statements:

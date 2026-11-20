@@ -15,12 +15,10 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 9, owner: Noether, balance: "5.00" }
+          row: { id: 9, owner: Noether, balance: "5.00" }
         - mutation: delete
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 9 }
+          row: { id: 9 }
       databaseCalls: 0
       note: the buffered INSERT of new account 9 then the buffered DELETE of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
     - objectQuery:

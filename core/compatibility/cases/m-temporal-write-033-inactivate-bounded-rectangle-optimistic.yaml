@@ -42,8 +42,7 @@ when:
         - mutation: terminateUntil
           "on": 0
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 1 }
+          row: { id: 1 }
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"

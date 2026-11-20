@@ -28,8 +28,7 @@ when:
       write:
         - mutation: delete
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 3 }
+          row: { id: 3 }
       databaseCalls: 0
       note: "buffer a gated delete of the OBSERVED account 3, which the find below flushes; the group's fate is rolledBack"
     - uow: doomed-delete

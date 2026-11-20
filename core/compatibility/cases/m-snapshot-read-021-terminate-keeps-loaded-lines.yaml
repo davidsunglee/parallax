@@ -35,8 +35,7 @@ when:
     - write:
         - mutation: terminate
           entity: parallax.compatibility.InvoiceLine
-          rows:
-            - { id: 1001 }
+          row: { id: 1001 }
           at: "2024-08-01T00:00:00.000000Z"
       databaseCalls: 2
       note: close the current milestone of the very line the loaded `lines` view holds - one close statement plus the resolving read the keyed terminate owes

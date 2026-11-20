@@ -10,12 +10,10 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 21, quantity: 9 }
+          row: { id: 21, quantity: 9 }
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 21 }
+          row: { id: 21 }
       databaseCalls: 2
       note: the two writes settle against the row this step's own resolving read published, and the delete supersedes the buffered assignment, so the flush emits ONE DELETE and no UPDATE
       statements:

@@ -169,7 +169,7 @@ def _ledger_update(
             {
                 "mutation": "amend",
                 "entity": "parallax.compatibility.Ledger",
-                "rows": [{"id": 2, "value": value}],
+                "row": {"id": 2, "value": value},
                 "at": at,
             }
         ],
@@ -308,7 +308,7 @@ def _ledger_insert(at: str) -> dict[str, object]:
             {
                 "mutation": "insert",
                 "entity": "parallax.compatibility.Ledger",
-                "rows": [{"id": 9, "acctNum": "D", "value": decimal.Decimal("100.00")}],
+                "row": {"id": 9, "acctNum": "D", "value": decimal.Decimal("100.00")},
                 "at": at,
             }
         ],
@@ -321,7 +321,7 @@ def _ledger_chain_update(
 ) -> dict[str, object]:
     """The sibling of :func:`_ledger_update` retargeted at the inserted id 9."""
     step = _ledger_update(value, at, uow=uow, rollback=rollback)
-    cast("list[dict[str, object]]", step["write"])[0]["rows"] = [{"id": 9, "value": value}]
+    cast("list[dict[str, object]]", step["write"])[0]["row"] = {"id": 9, "value": value}
     return step
 
 
@@ -351,7 +351,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
                 {
                     "mutation": "amend",
                     "entity": "Account",
-                    "rows": [{"id": 1, "observedVersion": 1}],
+                    "row": {"id": 1, "observedVersion": 1},
                 }
             ],
             "databaseCalls": 1,
@@ -424,7 +424,7 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         },
         {
             "uow": "a",
-            "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
+            "write": [{"mutation": "amend", "entity": "Account", "row": {"id": 1}}],
         },
     ]
     with pytest.raises(UnclassifiedEngineError, match="interleave beyond the witnessed"):
@@ -487,7 +487,7 @@ def _account_insert(account_id: int) -> dict[str, object]:
     return {
         "mutation": "insert",
         "entity": "Account",
-        "rows": [{"id": account_id, "owner": "Noether", "balance": "5.00"}],
+        "row": {"id": account_id, "owner": "Noether", "balance": "5.00"},
     }
 
 
@@ -586,11 +586,11 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
                 "scenario": [
                     {
                         "write": [
-                            {"mutation": "delete", "entity": "OrderItem", "rows": [{"id": 12}]},
+                            {"mutation": "delete", "entity": "OrderItem", "row": {"id": 12}},
                             {
                                 "mutation": "amend",
                                 "entity": "OrderItem",
-                                "rows": [{"id": 12, "sku": "Z"}],
+                                "row": {"id": 12, "sku": "Z"},
                             },
                         ]
                     }
@@ -794,7 +794,7 @@ def test_scenario_compile_wraps_a_lowering_failure_as_engine_error() -> None:
                             {
                                 "mutation": "insert",
                                 "entity": "Account",
-                                "rows": [{"id": 1, "no": 2}],
+                                "row": {"id": 1, "no": 2},
                             }
                         ]
                     }
@@ -1875,12 +1875,12 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
                     {
                         "mutation": "amend",
                         "entity": "OrderItem",
-                        "rows": [{"id": 21, "quantity": 9}],
+                        "row": {"id": 21, "quantity": 9},
                     },
                     {
                         "mutation": "delete",
                         "entity": "parallax.compatibility.OrderItem",
-                        "rows": [{"id": 22}],
+                        "row": {"id": 22},
                     },
                 ],
                 "databaseCalls": 3,
@@ -2116,7 +2116,7 @@ def test_a_compiled_group_writes_through_its_latest_insertion_across_flushes() -
     def write(mutation: str, **row: object) -> dict[str, object]:
         return {
             "uow": "g",
-            "write": [{"mutation": mutation, "entity": "Account", "rows": [{"id": 9, **row}]}],
+            "write": [{"mutation": mutation, "entity": "Account", "row": {"id": 9, **row}}],
         }
 
     find = _account_find_step(9)
@@ -2169,16 +2169,14 @@ def test_each_write_of_a_compiled_group_is_admitted_on_its_own_evidence() -> Non
                             {
                                 "mutation": "amend",
                                 "entity": "OrderItem",
-                                "rows": [{"id": 21, "quantity": 9}],
+                                "row": {"id": 21, "quantity": 9},
                             }
                         ],
                     },
                     find,
                     {
                         "uow": "g",
-                        "write": [
-                            {"mutation": "delete", "entity": "OrderItem", "rows": [{"id": 21}]}
-                        ],
+                        "write": [{"mutation": "delete", "entity": "OrderItem", "row": {"id": 21}}],
                     },
                 ]
             },
@@ -2199,7 +2197,7 @@ def test_each_write_of_a_compiled_group_is_admitted_on_its_own_evidence() -> Non
 
 
 def _account_amend(account_id: int, **members: object) -> dict[str, object]:
-    return {"mutation": "amend", "entity": "Account", "rows": [{"id": account_id, **members}]}
+    return {"mutation": "amend", "entity": "Account", "row": {"id": account_id, **members}}
 
 
 def _submitted(monkeypatch: pytest.MonkeyPatch) -> list[PreparedKeyedInstruction]:
@@ -2360,11 +2358,11 @@ def test_a_state_graded_replay_replaces_refusals_and_failure_location() -> None:
         {
             "uow": "g",
             "write": [
-                {"mutation": "delete", "entity": "Account", "rows": [{"id": 1}], "on": 0},
+                {"mutation": "delete", "entity": "Account", "row": {"id": 1}, "on": 0},
                 {
                     "mutation": "amend",
                     "entity": "Account",
-                    "rows": [{"id": 1, "owner": "Bo"}],
+                    "row": {"id": 1, "owner": "Bo"},
                     "on": 0,
                     "expectError": "write-evidence-already-claimed",
                 },
@@ -2420,7 +2418,7 @@ def test_an_insertion_pointer_survives_composition_and_production_flushes(
             {
                 "mutation": "amend",
                 "entity": "Account",
-                "rows": [{"id": 90, "balance": "9.00"}],
+                "row": {"id": 90, "balance": "9.00"},
                 "on": "/scenario/0/write/0",
             }
         ],
@@ -2437,7 +2435,7 @@ def test_an_insertion_pointer_survives_composition_and_production_flushes(
             "write": [
                 {
                     **cast("list[dict[str, object]]", update["write"])[0],
-                    "rows": [{"id": 90, "owner": "Ada"}],
+                    "row": {"id": 90, "owner": "Ada"},
                 }
             ],
         }
@@ -2476,7 +2474,7 @@ def test_an_insertion_pointer_cannot_cross_a_group_boundary(state_graded: bool) 
                 {
                     "mutation": "amend",
                     "entity": "Account",
-                    "rows": [{"id": 90, "owner": "Ada"}],
+                    "row": {"id": 90, "owner": "Ada"},
                     "on": "/scenario/0/write/0",
                 }
             ],

@@ -33,8 +33,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 2, balance: "999.00" }
+          row: { id: 2, balance: "999.00" }
       databaseCalls: 0
       note: buffer the gated update advancing the OBSERVED version 1 -> 2; the writer's next find flushes it
     - uow: writer

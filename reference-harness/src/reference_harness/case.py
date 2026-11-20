@@ -599,6 +599,22 @@ def _database_login_selection(
     return DatabaseLoginSelection()
 
 
+def states_revision(entry: Mapping[str, Any]) -> bool:
+    """Whether a write entry naming its Entity is a target write: it states a
+    revision (``ifVersion`` or ``ifTxStart``), exactly as write-instruction serde
+    tells a target document from a keyed one."""
+    return "ifVersion" in entry or "ifTxStart" in entry
+
+
+def write_entry_rows(entry: Mapping[str, Any]) -> list[Any]:
+    """The neutral write rows a keyed or target entry carries: a writeSequence
+    step's ordered ``rows``, or a scenario submission's one ``row``."""
+    rows = entry.get("rows")
+    if isinstance(rows, list):
+        return rows
+    return [entry["row"]] if "row" in entry else []
+
+
 def conflict_write_rows(attempt: dict[str, Any]) -> list[dict[str, Any]]:
     """The ordered neutral write rows one conflict attempt authors (``write``).
 

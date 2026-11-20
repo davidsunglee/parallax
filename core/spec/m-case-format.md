@@ -1122,10 +1122,12 @@ MUST equal the sum of the `when.writeSequence` steps' declared statement counts,
 reads the sequence owes (*Resolving reads a write owes*, below). A grouped effect is one statement and
 one Database Call however many keyed effects it applies, so where PostgreSQL
 groups effects that MariaDB runs one statement each, the dialects' counts
-differ and the case is authored once per dialect. A keyed step's `rows` is an
-authoring convenience: that many one-row keyed instructions (`m-unit-work` *Write
-instruction vocabulary*) of the step's `mutation` on its `entity`, submitted in
-order within the step's one choreography unit. A
+differ and the case is authored once per dialect. A keyed step's `rows` is a
+writeSequence authoring convenience: that many one-row keyed instructions
+(`m-unit-work` *Write instruction vocabulary*) of the step's `mutation` on its
+`entity`, submitted in order within the step's one choreography unit. A scenario
+write states each keyed instruction as its own submission instead (*Buffered keyed
+write instructions*, below). A
 Transaction-Time-Only `amend` declaring **one** statement is the guard that keeps
 the current milestone every assigned value of which it already holds
 (`m-temporal-write` *Unchanged milestones*): its golden assigns `in_z` to itself on the
@@ -1707,14 +1709,18 @@ instruction: `/scenario/<n>/write` is then a list of **one or more submissions**
 a single unit of work accumulates and **flushes together** (`m-unit-work`
 buffered, batched, ordered writes), each addressed by its own pointer
 `/scenario/<n>/write/<k>`. Each entry **references** the canonical
-write-instruction `$defs` rather than redefining them; a keyed or target
-entry layers only the `at` / `validFrom` / `until` authoring surface and the
-entry's own `on` and `expectError`. In a golden-graded case every entry is a **keyed** instruction
-(`mutation` + `entity` + `rows`, that many one-row
-`write-instruction.schema.json` `keyedWriteInstruction`s submitted in order) its
-verb accepts, never a source-authorized `replace` / `replaceUntil`, or a **target** submission
-(`row` with exactly one of `ifVersion` and `ifTxStart`, the
-`targetWriteInstruction`) whose cost the document alone states: the only
+write-instruction `$defs` rather than redefining them: a keyed or target entry
+is one serialized write instruction — `mutation`, `entity`, its one `row`, and
+`validFrom` / `until` — beside only the case context `at` and the entry's own `on`
+and `expectError`, so one pointer names one verb call writing one object. The
+entries are told apart as write-instruction serde tells documents apart: a
+`target` names a **predicate** write, a `row` stating a revision (`ifVersion` or
+`ifTxStart`) a **target** submission, and a `row` stating none a **keyed** one. In
+a golden-graded case every entry is a **keyed** instruction (the
+`write-instruction.schema.json` `keyedWriteInstruction`) its verb accepts, never a
+source-authorized `replace` / `replaceUntil`, or a **target** submission (the
+`targetWriteInstruction`, stating exactly one of `ifVersion` and `ifTxStart`)
+whose cost the document alone states: the only
 submission of its group naming its object, of an object no earlier find of its
 group may have returned a row of, and, under the Locking strategy, of an Entity
 with no Valid Time (*Resolving reads a write owes*). A find may have returned a
@@ -1757,11 +1763,11 @@ golden SQL executed verbatim, plus `tableState` / `expectRows`.
 - write:                                    # an ordered keyed buffer (here, the coalescing special case)
     - mutation: insert
       entity: Balance
-      rows: [{ id: 9, acctNum: D, value: 100.00 }]
+      row: { id: 9, acctNum: D, value: 100.00 }
       at: "2024-06-01T00:00:00+00:00"       # Transaction-Time Clock context, not an instruction field
     - mutation: amend
       entity: Balance
-      rows: [{ id: 9, value: 150.00 }]
+      row: { id: 9, value: 150.00 }
       at: "2024-06-01T00:00:00+00:00"
   databaseCalls: 1                             # same-object fold ⇒ ONE final-value INSERT (value 150)
 ```
@@ -1803,9 +1809,7 @@ A scenario declaring top-level **`grading: state`** is graded on the state
 it states. Such a case states its inputs — its steps and their submissions — the
 refusal each submission's verb raises, each group's fate (*Unit fates*, below), and
 the **complete** final `then.tableState`: every row, current and history, of every
-table a submission writes. Its steps are finds and buffered write steps, and each
-keyed submission writes one row, so that its pointer names one verb call and the
-one value an insert answers. A step carries only what such a step is run by or
+table a submission writes. Its steps are finds and buffered write steps. A step carries only what such a step is run by or
 graded on — a find its `objectQuery`, `equivalentEncodings`, `stream` and
 `expectRows`, a write step its `write`, and either its `uow` — beside `databaseCalls`,
 which MAY be stated and is not graded, and `note`. Any other step member is refused:

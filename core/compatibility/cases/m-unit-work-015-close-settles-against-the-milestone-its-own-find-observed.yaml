@@ -54,8 +54,7 @@ when:
         - mutation: amend
           "on": 0
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 1, value: "150.00" }
+          row: { id: 1, value: "150.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           at: "2024-10-01T00:00:00.000000Z"
       databaseCalls: 4

@@ -43,18 +43,18 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.Customer
-          rows:
-            - id: 1
-              address:
-                street: 1 Park Ave
-                city: Bergen
-                geo:
-                  country: "NO"
-                  elevation: 10.5
-                  point: { lat: 59.9, lon: 10.7 }
-                phones:
-                  - { type: work, number: '555-9999' }
-                  - { type: home, number: '555-1234' }
+          row:
+            id: 1
+            address:
+              street: 1 Park Ave
+              city: Bergen
+              geo:
+                country: "NO"
+                elevation: 10.5
+                point: { lat: 59.9, lon: 10.7 }
+              phones:
+                - { type: work, number: '555-9999' }
+                - { type: home, number: '555-1234' }
       databaseCalls: 2
       note: rewrite the very document the loaded `customer` view holds - a changed city AND the two phones in the opposite order
       statements:

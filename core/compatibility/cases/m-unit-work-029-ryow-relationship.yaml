@@ -45,12 +45,10 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 13, orderId: 1, sku: D-130, quantity: 6 }
+          row: { id: 13, orderId: 1, sku: D-130, quantity: 6 }
         - mutation: amend
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 11, sku: Rewritten }
+          row: { id: 11, sku: Rewritten }
       databaseCalls: 0
       note: add a line item to the very relationship the find above materialized and rewrite one it already held; both settle inside the group, so neither owes a resolving read, and the find below flushes both
     - uow: observed-items

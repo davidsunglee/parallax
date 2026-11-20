@@ -49,7 +49,7 @@ def _state_graded(steps: list[dict[str, Any]], units: dict[str, Any]) -> case_fo
 
 
 def _update(row: dict[str, Any], **entry: Any) -> dict[str, Any]:
-    return {"mutation": "amend", "entity": "Account", "rows": [row], **entry}
+    return {"mutation": "amend", "entity": "Account", "row": row, **entry}
 
 
 @pytest.mark.parametrize(

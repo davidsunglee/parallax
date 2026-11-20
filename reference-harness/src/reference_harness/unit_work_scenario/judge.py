@@ -249,7 +249,7 @@ def _step_coverage(
         valid_axis = axes.get("valid-time")
         if origin is None or valid_axis is None or entry.get("validFrom") is None:
             continue
-        row = _sole_settled_row(case, step.index, entity, entry)
+        row = _settled_row(case, step.index, entity, entry)
         _, pk, _set_cols, _observed = classify_write_row(
             case, entity, row, mutation=entry["mutation"], opening=True
         )
@@ -491,7 +491,7 @@ def _assert_settled_flush(
             continue
         entry = dict(submission.entry)
         entity = case.model.entity(entry["entity"])
-        row = _sole_settled_row(case, index, entity, entry)
+        row = _settled_row(case, index, entity, entry)
         temporal = bool(temporal_axes(entity.runtime_facts))
         _, pk, _set_cols, _observed = classify_write_row(
             case, entity, row, mutation=entry["mutation"], opening=temporal
@@ -984,30 +984,19 @@ def _settled_generation(
     return row[version_col]
 
 
-def _sole_settled_row(
-    case: Case, index: int, entity: Entity, entry: dict[str, Any]
-) -> dict[str, Any]:
-    """The ONE row a settled write entry authors.
+def _settled_row(case: Case, index: int, entity: Entity, entry: dict[str, Any]) -> dict[str, Any]:
+    """The one row a settled write entry authors, the one value its find handed over.
 
     The entry is judged by the SAME
     :func:`~reference_harness.keyed_write_validate.validate_keyed_write` the
     buffered and writeSequence entries ask, so this lane cannot refuse a different
-    set of entries; what is local here is only the row count — a settled entry
-    hands over exactly one row, because the named find handed over exactly one
-    value.
+    set of entries.
     """
     try:
         validate_keyed_write(entity, entry)
     except (RejectionError, KeyedWriteApplicabilityError) as exc:
         raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc}") from exc
-    rows = entry.get("rows")
-    if not isinstance(rows, list) or len(rows) != 1:
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a write entry carrying "
-            f"{len(rows) if isinstance(rows, list) else 0} rows against a find — a settled "
-            f"entry carries ONE row, which is the one value that find handed over."
-        )
-    return rows[0]
+    return entry["row"]
 
 
 class _ObservedMilestone(NamedTuple):

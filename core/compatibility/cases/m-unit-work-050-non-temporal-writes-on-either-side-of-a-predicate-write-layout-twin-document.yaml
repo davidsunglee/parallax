@@ -27,8 +27,7 @@ when:
         - mutation: amend
           "on": 0
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 1, quantity: 1 }
+          row: { id: 1, quantity: 1 }
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
@@ -41,8 +40,7 @@ when:
         - mutation: amend
           "on": 0
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 1, quantity: 7 }
+          row: { id: 1, quantity: 7 }
       note: "quantity 1, the predicate write, which executes it first, then quantity 7 through the same source"
     - uow: versioned
       objectQuery:
@@ -59,8 +57,7 @@ when:
         - mutation: amend
           "on": 2
           entity: parallax.compatibility.SequenceAccount
-          rows:
-            - { id: 1, balance: 20 }
+          row: { id: 1, balance: 20 }
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
@@ -73,15 +70,13 @@ when:
         - mutation: amend
           "on": 2
           entity: parallax.compatibility.SequenceAccount
-          rows:
-            - { id: 1, memo: { note: after } }
+          row: { id: 1, memo: { note: after } }
       note: "two writes through the source of version 1, either side of a predicate write: the later one continues from the version the earlier one produced"
     - uow: inserted
       write:
         - mutation: insert
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 3, quantity: 1, label: new }
+          row: { id: 3, quantity: 1, label: new }
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
@@ -94,15 +89,13 @@ when:
         - mutation: amend
           "on": "/scenario/4/write/0"
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 3, quantity: 8 }
+          row: { id: 3, quantity: 8 }
       note: "the predicate write executes the insert first; the revision after it writes the row the insert opened"
     - uow: reinserted
       write:
         - mutation: insert
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 4, quantity: 1, label: x4 }
+          row: { id: 4, quantity: 1, label: x4 }
         - mutation: amend
           target:
             entity: parallax.compatibility.SequenceTag
@@ -115,12 +108,10 @@ when:
         - mutation: delete
           "on": "/scenario/5/write/0"
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 4 }
+          row: { id: 4 }
         - mutation: insert
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 4, quantity: 6, label: again }
+          row: { id: 4, quantity: 6, label: again }
       note: "the insert, the predicate write that executes it, its removal, then a fresh insert of the key"
 then:
   units:

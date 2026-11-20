@@ -32,8 +32,7 @@ when:
     - write:
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 11 }
+          row: { id: 11 }
       databaseCalls: 2
       note: destroy the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed delete owes
       statements:

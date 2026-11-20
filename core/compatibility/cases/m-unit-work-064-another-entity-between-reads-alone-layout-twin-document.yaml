@@ -44,9 +44,9 @@ when:
         - { id: 1, amount: 100, label: l, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
     - uow: correct
       write:
-        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 1, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
-        - { mutation: amend, "on": 1, entity: parallax.compatibility.CoverageLedger, rows: [{ id: 1, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
-        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 2, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, row: { id: 1, amount: 150 }, validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": 1, entity: parallax.compatibility.CoverageLedger, row: { id: 1, amount: 150 }, validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, row: { id: 2, amount: 150 }, validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
       databaseCalls: 9
       note: the ledger's write between the spans' ends their acquisition span, so each of the three objects reads its uncovered June onward alone, at its own turn
       statements:

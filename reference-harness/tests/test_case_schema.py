@@ -148,7 +148,7 @@ def _settled_write_scenario_case() -> dict[str, Any]:
                             "on": 0,
                             "mutation": "amend",
                             "entity": "Position",
-                            "rows": [{"id": 1, "value": 150.00}],
+                            "row": {"id": 1, "value": 150.00},
                             "validFrom": "2024-03-01T00:00:00+00:00",
                         }
                     ],

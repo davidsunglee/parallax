@@ -39,8 +39,7 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 1, name: Rewritten }
+          row: { id: 1, name: Rewritten }
       databaseCalls: 2
       note: commit an update to the very row the loaded `order` view holds - one DML statement plus the resolving read the keyed update owes
       statements:

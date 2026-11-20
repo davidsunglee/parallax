@@ -44,13 +44,11 @@ when:
         - mutation: amend
           "on": 0
           entity: parallax.compatibility.SequenceAccount
-          rows:
-            - { id: 1, memo: { note: after } }
+          row: { id: 1, memo: { note: after } }
         - mutation: amend
           "on": 2
           entity: parallax.compatibility.SequenceAccount
-          rows:
-            - { id: 1, balance: 30 }
+          row: { id: 1, balance: 30 }
       note: "step 0's source continues at version 2, where step 2's fresh source claims the same state: one write, advancing once"
     - uow: continued
       objectQuery:
@@ -67,8 +65,7 @@ when:
         - mutation: amend
           "on": 4
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 1, quantity: 7 }
+          row: { id: 1, quantity: 7 }
       note: "quantity 7"
     - uow: continued
       objectQuery:
@@ -85,8 +82,7 @@ when:
         - mutation: amend
           "on": 4
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 1, label: kept }
+          row: { id: 1, label: kept }
       note: "step 4's source still writes under the lock its read took, and assigns only its label"
     - uow: deleted
       objectQuery:
@@ -103,8 +99,7 @@ when:
         - mutation: delete
           "on": 8
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 2 }
+          row: { id: 2 }
       note: "delete tag 2"
     - uow: deleted
       objectQuery:
@@ -119,13 +114,11 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 2, quantity: 4, label: again }
+          row: { id: 2, quantity: 4, label: again }
         - mutation: amend
           "on": 8
           entity: parallax.compatibility.SequenceTag
-          rows:
-            - { id: 2, label: stale }
+          row: { id: 2, label: stale }
           expectError: write-evidence-consumed
       note: "a fresh insertion of the key revives nothing of the source the deletion ended"
 then:

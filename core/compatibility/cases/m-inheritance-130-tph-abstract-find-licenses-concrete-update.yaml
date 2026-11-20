@@ -30,8 +30,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Car
-          rows:
-            - { id: 1, name: Coupe }
+          row: { id: 1, name: Coupe }
       databaseCalls: 0
       note: no authored observedVersion - the gate binds the version step 0 observed; the find below flushes the update
     - uow: observe-and-update

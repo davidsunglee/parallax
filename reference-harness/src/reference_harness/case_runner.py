@@ -1368,8 +1368,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # (`mutation` / `entity` / `rows`), so it is judged through the SAME
         # validator the buffered scenario write reaches.
         try:
-            instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
-            validate_keyed_write(entity, instruction)
+            validate_keyed_write(entity, authored)
         except (RejectionError, KeyedWriteApplicabilityError) as exc:
             raise CaseFailure(
                 f"{case.path.name}: writeSequence step on {step['entity']}: {exc}"
