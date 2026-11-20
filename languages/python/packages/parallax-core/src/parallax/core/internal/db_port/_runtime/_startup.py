@@ -41,11 +41,11 @@ class _ReadinessFailure(Exception):
     An outage is a failure whose only finding is that no usable connection was
     obtained within the budget: the route was unreachable, its session was lost
     with no replacement refused as anything worse, a connection arrived only
-    after the budget, or the budget ran out with no refusal on record. Anything
-    else — a refused credential or login, a session the codecs cannot run
-    under, a probe that read back the wrong thing or another login, an
-    unconfirmed release, a full queue — says more than that, and deferral waits
-    out nothing more.
+    after the budget, or the budget ran out with nothing on record but an
+    unavailable dial. Anything else — a refused credential or login, a session
+    the codecs cannot run under, a probe that read back the wrong thing or
+    another login, an unconfirmed release, a full queue — says more than that,
+    and deferral waits out nothing more.
     """
 
     def __init__(self, error: DatabaseStartupError, *, outage: bool) -> None:
@@ -285,9 +285,9 @@ def _remaining_budget[C](
 
     Checked between phases rather than inside them: the budget stops the next
     step from starting and makes no claim about interrupting one already
-    running. Running out is an outage's symptom only where the route has no
-    refusal on record; otherwise that refusal is the failure, and deferral
-    does not wait it out.
+    running. Running out is an outage's symptom unless the route's latest
+    recorded dial failure is something other than unavailable; such a refusal
+    is the failure, and deferral does not wait it out.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
