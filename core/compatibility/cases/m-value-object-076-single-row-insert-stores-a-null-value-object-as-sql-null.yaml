@@ -8,8 +8,7 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Customer
-          rows:
-            - { id: 300, name: Ari, address: null }
+          row: { id: 300, name: Ari, address: null }
       databaseCalls: 1
       statements:
         - sql:

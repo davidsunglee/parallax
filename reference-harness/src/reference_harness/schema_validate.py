@@ -46,7 +46,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from referencing import Registry
 
-from .case import Entity, names_earlier_step, temporal_corruption_refusal
+from .case import Entity, names_earlier_step, states_revision, temporal_corruption_refusal
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
 from .inheritance import (
@@ -377,15 +377,10 @@ def _valid_keyed_entry_entity(
     try:
         validate_keyed_write_shape(entity, instruction)
     except (RejectionError, KeyedWriteApplicabilityError) as exc:
-        surface = "target write" if "row" in instruction else "keyed write"
+        surface = "target write" if states_revision(instruction) else "keyed write"
         errors.append(f"{entry_label}: {surface}: {exc}")
         return None
-    row = instruction.get("row")
-    unknown = (
-        sorted(undeclared_members(entity, row))
-        if isinstance(row, dict)
-        else undeclared_row_members(entity, instruction)
-    )
+    unknown = undeclared_row_members(entity, instruction)
     if unknown:
         errors.append(
             f"{entry_label}: keyed write row names {unknown} which are not "
@@ -393,7 +388,9 @@ def _valid_keyed_entry_entity(
         )
         return None
     try:
-        condition = target_write_violation(entity, instruction) if isinstance(row, dict) else None
+        condition = (
+            target_write_violation(entity, instruction) if states_revision(instruction) else None
+        )
     except RejectionError as exc:
         condition = f"a target write of {entity.name} — {exc}"
     if condition is not None:

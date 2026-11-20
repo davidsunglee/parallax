@@ -804,7 +804,7 @@ _ORDER_NAME_UPDATE: list[dict[str, object]] = [
     {
         "mutation": "amend",
         "entity": "parallax.compatibility.Order",
-        "rows": [{"id": 1, "name": "Rewritten"}],
+        "row": {"id": 1, "name": "Rewritten"},
     }
 ]
 
@@ -849,7 +849,7 @@ _LEDGER_VALUE_UPDATE: list[dict[str, object]] = [
     {
         "mutation": "amend",
         "entity": "parallax.compatibility.Ledger",
-        "rows": [{"id": 2, "value": decimal.Decimal("300.00")}],
+        "row": {"id": 2, "value": decimal.Decimal("300.00")},
         "at": "2024-05-01T00:00:00+00:00",
     }
 ]
@@ -871,7 +871,7 @@ def test_run_scenario_case_propagates_public_write_validation() -> None:
         {
             "mutation": "amend",
             "entity": "parallax.compatibility.Order",
-            "rows": [{"id": 1, "nope": 3}],
+            "row": {"id": 1, "nope": 3},
         }
     ]
     port = _QueueWritePort(
@@ -1005,7 +1005,7 @@ def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None
                     {
                         "mutation": "amend",
                         "entity": "Order",
-                        "rows": [{"id": 1, "name": "Rewritten"}],
+                        "row": {"id": 1, "name": "Rewritten"},
                     }
                 ]
             },

@@ -419,7 +419,7 @@ def _versioned_settled_case(
                             "on": 0,
                             "mutation": "amend",
                             "entity": "Account",
-                            "rows": [{"id": 1, "balance": "175.00"}],
+                            "row": {"id": 1, "balance": "175.00"},
                         }
                     ],
                     "databaseCalls": 1,
@@ -471,7 +471,7 @@ def _reserved_version_column_case(*, advance: int) -> Case:
                             "on": 0,
                             "mutation": "amend",
                             "entity": "Account",
-                            "rows": [{"id": 1, "balance": "175.00"}],
+                            "row": {"id": 1, "balance": "175.00"},
                         }
                     ],
                     "databaseCalls": 1,
@@ -515,13 +515,13 @@ def _multi_object_settled_case(*, second_version: int = 5) -> Case:
                             "on": 0,
                             "mutation": "amend",
                             "entity": "Account",
-                            "rows": [{"id": 1, "balance": "175.00"}],
+                            "row": {"id": 1, "balance": "175.00"},
                         },
                         {
                             "on": 0,
                             "mutation": "amend",
                             "entity": "Account",
-                            "rows": [{"id": 2, "balance": "60.00"}],
+                            "row": {"id": 2, "balance": "60.00"},
                         },
                     ],
                     "databaseCalls": 2,
@@ -563,7 +563,7 @@ def _shared_table_settled_case(*, tag: str = "dog") -> Case:
                             "on": 0,
                             "mutation": "amend",
                             "entity": "parallax.compatibility.Dog",
-                            "rows": [{"id": 1, "barkVolume": 9}],
+                            "row": {"id": 1, "barkVolume": 9},
                         }
                     ],
                     "databaseCalls": 1,
@@ -685,7 +685,7 @@ def _settled_close_case(
                             # reads no coverage beyond it.
                             "mutation": "amendUntil",
                             "entity": "parallax.compatibility.DepositRate",
-                            "rows": [{"id": 1, "amount": "3.00"}],
+                            "row": {"id": 1, "amount": "3.00"},
                             "validFrom": "2024-03-01T00:00:00.000000Z",
                             "until": "2024-05-01T00:00:00.000000Z",
                             "at": at,
@@ -745,7 +745,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                             "on": on,
                             "mutation": "amend",
                             "entity": "Balance",
-                            "rows": [{"id": 1, "value": "150.00"}],
+                            "row": {"id": 1, "value": "150.00"},
                             "at": "2024-10-01T00:00:00.000000Z",
                         }
                     ],

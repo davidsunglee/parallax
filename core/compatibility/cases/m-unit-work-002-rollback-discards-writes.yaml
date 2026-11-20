@@ -28,8 +28,7 @@ when:
       write:
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 1, balance: "999.00" }
+          row: { id: 1, balance: "999.00" }
       databaseCalls: 1
       note: "apply a new balance for the OBSERVED account 1; the group's fate is rolledBack, so it ROLLS BACK after this, its last step"
       statements:

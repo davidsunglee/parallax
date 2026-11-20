@@ -8,14 +8,12 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 9, acctNum: D, value: "100.00" }
+          row: { id: 9, acctNum: D, value: "100.00" }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-01-01T00:00:00.000000Z"
         - mutation: terminateUntil
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 9 }
+          row: { id: 9 }
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-01-01T00:00:00.000000Z"

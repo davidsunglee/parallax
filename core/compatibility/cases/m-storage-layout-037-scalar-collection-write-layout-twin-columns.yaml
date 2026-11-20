@@ -13,18 +13,18 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.CollectionTwinItem
-          rows:
-            - id: 10
-              flags: [false, false]
-              amounts: ["0.10", "0.10"]
-              tags: [z, z, a]
-              detail:
-                labels: []
-              parts:
-                - sku: c
-                  marks: [7]
-                  note:
-                    words: [w, w]
+          row:
+            id: 10
+            flags: [false, false]
+            amounts: ["0.10", "0.10"]
+            tags: [z, z, a]
+            detail:
+              labels: []
+            parts:
+              - sku: c
+                marks: [7]
+                note:
+                  words: [w, w]
       databaseCalls: 1
       note: name some collections, with duplicates and nested in each occurrence kind, and omit the rest
       statements:
@@ -50,13 +50,13 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.CollectionTwinItem
-          rows:
-            - id: 1
-              tags: []
-              counts: [5, 5]
-              parts:
-                - sku: d
-                  marks: []
+          row:
+            id: 1
+            tags: []
+            counts: [5, 5]
+            parts:
+              - sku: d
+                marks: []
       databaseCalls: 2
       note: clear one collection, replace another, and replace the `many` occurrence holding nested collections
       statements:

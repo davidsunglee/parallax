@@ -28,8 +28,7 @@ when:
       write:
         - mutation: delete
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 3 }
+          row: { id: 3 }
       databaseCalls: 0
       note: buffer a delete of the observed account 3, gated on its observed version under the default preference; the dependent find below flushes it
     - uow: observed-delete

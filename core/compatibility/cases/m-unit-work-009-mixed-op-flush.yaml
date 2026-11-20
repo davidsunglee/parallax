@@ -46,16 +46,13 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 9, owner: Noether, balance: "5.00" }
+          row: { id: 9, owner: Noether, balance: "5.00" }
         - mutation: amend
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 1, balance: "20.00" }
+          row: { id: 1, balance: "20.00" }
         - mutation: delete
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 3 }
+          row: { id: 3 }
       databaseCalls: 0
       note: buffer an insert of account 9, an update of the observed account 1, and a delete of the observed account 3; the find below flushes all three
     - uow: mixed-flush

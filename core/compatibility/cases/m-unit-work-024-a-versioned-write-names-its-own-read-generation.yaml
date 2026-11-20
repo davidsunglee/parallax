@@ -31,8 +31,7 @@ when:
         - mutation: amend
           "on": 0
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 1, balance: "125.00" }
+          row: { id: 1, balance: "125.00" }
       databaseCalls: 0
       note: settle against generation one — the gate binds version 1 and the advance writes 2, in the update the read below flushes
     - uow: two-generations
@@ -59,8 +58,7 @@ when:
         - mutation: amend
           "on": 2
           entity: parallax.compatibility.Account
-          rows:
-            - { id: 1, balance: "175.00" }
+          row: { id: 1, balance: "175.00" }
       databaseCalls: 1
       note: settle against generation TWO — the gate binds version 2; naming step 0 would gate on a version the row has left
       statements:

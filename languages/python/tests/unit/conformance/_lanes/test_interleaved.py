@@ -240,7 +240,7 @@ def test_each_interleaved_groups_predicate_write_reports_the_count_its_verb_retu
                                 {
                                     "mutation": "insert",
                                     "entity": "Wallet",
-                                    "rows": [{"id": 9, "owner": "Turing", "balance": "5.00"}],
+                                    "row": {"id": 9, "owner": "Turing", "balance": "5.00"},
                                 }
                             ],
                         },
@@ -624,7 +624,7 @@ _UNBOUNDED_TERMINATE: Final[dict[str, object]] = {
         {
             "mutation": "terminate",
             "entity": "parallax.compatibility.Position",
-            "rows": [{"id": 1}],
+            "row": {"id": 1},
             "validFrom": "2024-01-01T00:00:00.000000Z",
             "at": "2024-10-01T00:00:00+00:00",
             "on": 0,

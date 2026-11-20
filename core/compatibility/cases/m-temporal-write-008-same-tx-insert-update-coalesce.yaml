@@ -15,13 +15,11 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 9, acctNum: D, value: "100.00" }
+          row: { id: 9, acctNum: D, value: "100.00" }
           at: "2024-06-01T00:00:00.000000Z"
         - mutation: amend
           entity: parallax.compatibility.Balance
-          rows:
-            - { id: 9, value: "150.00" }
+          row: { id: 9, value: "150.00" }
           at: "2024-06-01T00:00:00.000000Z"
       databaseCalls: 1
       note: the buffered INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new account 9 coalesce IN PLACE to ONE current-milestone INSERT carrying the final value 150 — no close, no superseded milestone

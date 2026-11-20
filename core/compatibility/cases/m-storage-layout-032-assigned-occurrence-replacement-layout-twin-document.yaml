@@ -11,12 +11,12 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 1
-              spec:
-                title: Pilot
-              marks:
-                - { code: Z }
+          row:
+            id: 1
+            spec:
+              title: Pilot
+            marks:
+              - { code: Z }
       databaseCalls: 2
       note: assign both occurrences, naming one leaf of the `one` and one element of the `many`
       statements:

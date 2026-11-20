@@ -10,19 +10,19 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 10
-              label: north
-              spec:
-                title: Atlas
-                note: first
-                origin: { country: "NO" }
-                stops:
-                  - { port: Oslo }
-                  - { port: Bergen }
-              marks:
-                - { code: A }
-                - { code: B }
+          row:
+            id: 10
+            label: north
+            spec:
+              title: Atlas
+              note: first
+              origin: { country: "NO" }
+              stops:
+                - { port: Oslo }
+                - { port: Bergen }
+            marks:
+              - { code: A }
+              - { code: B }
       databaseCalls: 1
       note: write every member of every shape — the nested `one`, the nested `many`, and the top-level `many`
       statements:
@@ -43,10 +43,10 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 11
-              spec:
-                title: Beta
+          row:
+            id: 11
+            spec:
+              title: Beta
       databaseCalls: 1
       note: omit `note` and every occurrence-valued member — the omitted `many` members still store the empty array
       statements:
@@ -61,11 +61,11 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 12
-              spec:
-                title: Gamma
-                note: null
+          row:
+            id: 12
+            spec:
+              title: Gamma
+              note: null
       databaseCalls: 1
       note: spell `note` as an explicit null — the same member, the other presence state
       statements:
@@ -81,9 +81,9 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.WriteTwinItem
-          rows:
-            - id: 13
-              label: delta
+          row:
+            id: 13
+            label: delta
       databaseCalls: 1
       note: name no occurrence at all — `spec` is absent while `marks` still stores the empty array
       statements:

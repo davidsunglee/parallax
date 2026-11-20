@@ -60,16 +60,14 @@ when:
         - mutation: amendUntil
           "on": 0
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 1, label: x }
+          row: { id: 1, label: x }
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
         - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 1, label: "y" }
+          row: { id: 1, label: "y" }
           validFrom: "2024-04-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
@@ -130,16 +128,14 @@ when:
         - mutation: terminateUntil
           "on": 4
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 3 }
+          row: { id: 3 }
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
         - mutation: amendUntil
           "on": 4
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 3, label: z }
+          row: { id: 3, label: z }
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
@@ -149,8 +145,7 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 9, amount: 1, label: "n", memo: { note: new } }
+          row: { id: 9, amount: 1, label: "n", memo: { note: new } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
         - mutation: amend

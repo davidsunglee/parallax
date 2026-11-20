@@ -39,8 +39,7 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 31, orderId: 3, sku: C-300, quantity: 7 }
+          row: { id: 31, orderId: 3, sku: C-300, quantity: 7 }
       databaseCalls: 1
       note: commit an item for the very order whose `items` the view holds empty - an insert opens its key, so it owes no resolving read
       statements:

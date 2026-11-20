@@ -37,8 +37,7 @@ when:
     - write:
         - mutation: amendUntil
           entity: parallax.compatibility.Coverage
-          rows:
-            - { id: 20, amount: "999.00" }
+          row: { id: 20, amount: "999.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-07-01T00:00:00.000000Z"

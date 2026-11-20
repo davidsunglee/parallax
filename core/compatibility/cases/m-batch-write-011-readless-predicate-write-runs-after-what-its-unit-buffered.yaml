@@ -24,8 +24,7 @@ when:
       write:
         - mutation: delete
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 12 }
+          row: { id: 12 }
       databaseCalls: 0
       note: buffered before the predicate write, whose flush delivers it first rather than after every insert
     - uow: predicated
@@ -53,12 +52,10 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 13, orderId: 7, sku: N-13, quantity: 1 }
+          row: { id: 13, orderId: 7, sku: N-13, quantity: 1 }
         - mutation: insert
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 7, name: Barrier, sku: G-7, qty: 1, price: "1.00", active: true, orderedOn: "2024-09-01" }
+          row: { id: 7, name: Barrier, sku: G-7, qty: 1, price: "1.00", active: true, orderedOn: "2024-09-01" }
       databaseCalls: 2
       note: buffered after the predicate write and delivered by the pre-commit flush, parent Order before the line item that references it; the unit of work commits after this, its last step
       statements:

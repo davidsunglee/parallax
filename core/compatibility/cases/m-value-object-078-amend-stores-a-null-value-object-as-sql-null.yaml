@@ -8,10 +8,10 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Customer
-          rows:
-            - id: 304
-              name: Eir
-              address: { street: 4 Fjord Vei, city: Alesund, geo: { country: "NO" }, phones: [] }
+          row:
+            id: 304
+            name: Eir
+            address: { street: 4 Fjord Vei, city: Alesund, geo: { country: "NO" }, phones: [] }
       databaseCalls: 1
       statements:
         - sql:
@@ -24,8 +24,7 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.Customer
-          rows:
-            - { id: 304, address: null }
+          row: { id: 304, address: null }
       databaseCalls: 2
       statements:
         - sql:

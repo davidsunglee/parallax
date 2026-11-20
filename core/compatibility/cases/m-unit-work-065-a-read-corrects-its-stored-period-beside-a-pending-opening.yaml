@@ -16,8 +16,7 @@ when:
       write:
         - mutation: insertUntil
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 7, acctNum: K, value: "100.00" }
+          row: { id: 7, acctNum: K, value: "100.00" }
           validFrom: "2024-01-01T00:00:00.000000Z"
           until: "2024-06-01T00:00:00.000000Z"
           at: "2024-11-01T00:00:00.000000Z"
@@ -43,24 +42,21 @@ when:
       write:
         - mutation: insertUntil
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 7, acctNum: K, value: "300.00" }
+          row: { id: 7, acctNum: K, value: "300.00" }
           validFrom: "2024-08-01T00:00:00.000000Z"
           until: "2024-12-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
         - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 7, value: "150.00" }
+          row: { id: 7, value: "150.00" }
           validFrom: "2024-03-01T00:00:00.000000Z"
           until: "2024-05-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
         - mutation: amendUntil
           "on": "/scenario/2/write/0"
           entity: parallax.compatibility.Position
-          rows:
-            - { id: 7, value: "350.00" }
+          row: { id: 7, value: "350.00" }
           validFrom: "2024-08-01T00:00:00.000000Z"
           until: "2024-09-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"

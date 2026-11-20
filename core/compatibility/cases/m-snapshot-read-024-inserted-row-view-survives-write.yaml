@@ -19,12 +19,10 @@ when:
     - write:
         - mutation: insert
           entity: parallax.compatibility.Order
-          rows:
-            - { id: 6, name: Hopper, sku: F-600, qty: 2, price: "60.00", active: true, orderedOn: 2024-07-07 }
+          row: { id: 6, name: Hopper, sku: F-600, qty: 2, price: "60.00", active: true, orderedOn: 2024-07-07 }
         - mutation: insert
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 61, orderId: 6, sku: C-610, quantity: 4 }
+          row: { id: 61, orderId: 6, sku: C-610, quantity: 4 }
       databaseCalls: 2
       note: create the order and the line item this scenario's graph is made of - two inserts, each opening its own key, so neither owes a resolving read
       statements:
@@ -57,8 +55,7 @@ when:
     - write:
         - mutation: amend
           entity: parallax.compatibility.OrderItem
-          rows:
-            - { id: 61, sku: Rewritten }
+          row: { id: 61, sku: Rewritten }
       databaseCalls: 2
       note: rewrite the very row the loaded `items` view holds - one DML statement plus the resolving read the keyed update owes
       statements:

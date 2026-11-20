@@ -79,8 +79,7 @@ when:
         - mutation: amendUntil
           "on": 1
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 2, label: o }
+          row: { id: 2, label: o }
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-04-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
@@ -96,8 +95,7 @@ when:
         - mutation: amendUntil
           "on": 2
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 2, label: p }
+          row: { id: 2, label: p }
           validFrom: "2024-06-01T00:00:00.000000Z"
           until: "2024-08-01T00:00:00.000000Z"
           at: "2024-11-02T00:00:00.000000Z"
@@ -141,8 +139,7 @@ when:
         - mutation: amendUntil
           "on": 4
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 3, label: z }
+          row: { id: 3, label: z }
           validFrom: "2024-02-01T00:00:00.000000Z"
           until: "2024-03-01T00:00:00.000000Z"
           at: "2024-11-03T00:00:00.000000Z"
@@ -151,8 +148,7 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 5, amount: 100, label: e, memo: { note: n5 } }
+          row: { id: 5, amount: 100, label: e, memo: { note: n5 } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
         - mutation: amend
@@ -167,14 +163,12 @@ when:
         - mutation: terminate
           "on": "/scenario/6/write/0"
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 5 }
+          row: { id: 5 }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
         - mutation: insert
           entity: parallax.compatibility.SequenceSpan
-          rows:
-            - { id: 5, amount: 200, label: f, memo: { note: n5b } }
+          row: { id: 5, amount: 200, label: f, memo: { note: n5b } }
           validFrom: "2024-01-01T00:00:00.000000Z"
           at: "2024-11-04T00:00:00.000000Z"
       note: "an opening, the predicate write that executes it, its whole removal, then a fresh opening of the key"

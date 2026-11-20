@@ -118,7 +118,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
     (instruction,) = write["write"]
     assert instruction["mutation"] == "amend"
     assert instruction["entity"] == "parallax.compatibility.Account"
-    assert instruction["rows"] == [{"id": 1, "balance": "175.00"}]
+    assert instruction["row"] == {"id": 1, "balance": "175.00"}
     assert "statements" not in write and write["databaseCalls"] == 0
     assert find["flush"][0]["sql"]["postgres"].startswith("update px.account set")
     assert "objectQuery" in find
@@ -140,7 +140,7 @@ def test_read_your_own_writes_delete_scenario_observes_absence(corpus_case) -> N
     (instruction,) = write["write"]
     assert instruction["mutation"] == "delete"
     assert instruction["entity"] == "parallax.compatibility.Account"
-    assert instruction["rows"] == [{"id": 3}]
+    assert instruction["row"] == {"id": 3}
     assert "statements" not in write and write["databaseCalls"] == 0
     assert (
         find["flush"][0]["sql"]["postgres"] == "delete from px.account where id = ? and version = ?"
@@ -339,7 +339,7 @@ def _reaching(key: int) -> tuple[dict, list[dict]]:
         "mutation": "amend",
         "on": 0,
         "entity": "parallax.compatibility.Position",
-        "rows": [{"id": key, "value": "150.00"}],
+        "row": {"id": key, "value": "150.00"},
         "validFrom": "2024-03-01T00:00:00.000000Z",
         "at": _AT,
     }
@@ -363,7 +363,7 @@ def _covered(key: int) -> tuple[dict, list[dict]]:
         "mutation": "amendUntil",
         "on": 0,
         "entity": "parallax.compatibility.Position",
-        "rows": [{"id": key, "value": "150.00"}],
+        "row": {"id": key, "value": "150.00"},
         "validFrom": "2024-03-01T00:00:00.000000Z",
         "until": "2024-05-01T00:00:00.000000Z",
         "at": _AT,
@@ -395,7 +395,7 @@ def _empty(key: int) -> tuple[dict, list[dict]]:
     entry = {
         "mutation": "amend",
         "entity": "parallax.compatibility.Position",
-        "rows": [{"id": key}],
+        "row": {"id": key},
         "validFrom": "2024-03-01T00:00:00.000000Z",
         "at": _AT,
     }

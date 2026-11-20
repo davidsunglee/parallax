@@ -16,8 +16,7 @@ when:
       write:
         - mutation: insert
           entity: parallax.compatibility.Wallet
-          rows:
-            - { id: 4, owner: Turing, balance: "50.00" }
+          row: { id: 4, owner: Turing, balance: "50.00" }
       databaseCalls: 0
       note: buffer an insert; nothing reads it back, so nothing flushes yet
     - uow: counted

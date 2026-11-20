@@ -356,7 +356,7 @@ def is_predicate_write_step(raw_write: object) -> bool:
     ``m-batch-write-005``) rather than the keyed-write entry LIST
     (`m-case-format`'s buffered-keyed-write shape) this engine's keyed path
     lowers. A predicate write's `target` names its entity/predicate; a keyed
-    write is a plain list of ``{mutation, entity, rows}`` entries — the SHAPE
+    write is a plain list of ``{mutation, entity, row}`` entries — the SHAPE
     signal (a bare mapping vs. a list) is structural, never inferred from a
     ``KeyError``; this shape routes to the readless predicate-write translation
     instead — see :func:`_lower_predicate_write_step` /
@@ -418,14 +418,10 @@ def _build_instructions(
 ) -> list[_ResolvedWrite]:
     _keyed_entry_entity(entry)
     parsed = read_submissions(model, [entry]) if submissions is None else submissions
-    if "row" in entry:
-        return [_ResolvedWrite(prepare(parsed[0].instruction), None)]
-    result: list[_ResolvedWrite] = []
-    for submission in parsed:
-        prepared = prepare(submission.instruction)
-        assert isinstance(prepared, PreparedKeyedInstruction)
-        result.append(_ResolvedWrite(prepared, submission.declared_observation))
-    return result
+    return [
+        _ResolvedWrite(prepare(submission.instruction), submission.declared_observation)
+        for submission in parsed
+    ]
 
 
 def _keyed_entry_entity(entry: Mapping[str, object]) -> str:

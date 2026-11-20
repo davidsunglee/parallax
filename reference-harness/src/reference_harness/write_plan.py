@@ -36,7 +36,7 @@ from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
-from .case import Case, Entity
+from .case import Case, Entity, write_entry_rows
 from .case_assertions import CaseFailure, write_value_equal
 from .database_binding import PhysicalTable
 from .document_codec import encode_collection, encode_document, encode_leaf
@@ -101,7 +101,7 @@ def _entry_object_keys(case: Case, entry: dict[str, Any]) -> list[tuple[str, tup
     names = [a["name"] for a in entity.attributes if a.get("primaryKey")]
     return [
         (entity.canonical_name, tuple(repr(row.get(name)) for name in names))
-        for row in entry.get("rows", [])
+        for row in write_entry_rows(entry)
     ]
 
 
@@ -244,9 +244,10 @@ def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:
     *Target writes*)."""
     if entry.get("mutation") not in ("amend", "amendUntil"):
         return False
-    rows = entry["rows"] if "rows" in entry else [entry.get("row") or {}]
     keyed = {a["name"] for a in entity.attributes if a.get("primaryKey")}
-    return all(set(row) <= keyed | {_VERSION_OBSERVATION_KEY} for row in rows)
+    return all(
+        set(row) <= keyed | {_VERSION_OBSERVATION_KEY} for row in write_entry_rows(entry) or [{}]
+    )
 
 
 def _settled_objects(

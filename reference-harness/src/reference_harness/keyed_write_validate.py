@@ -19,7 +19,7 @@ read as saying something different:
   executing its golden DML
   (:func:`~reference_harness.case_runner._assert_write_input_columns`); and
 * a settled scenario write's entry, on the way to the one row the find it names
-  handed over (:func:`~reference_harness.unit_work_scenario.judge._sole_settled_row`).
+  handed over (:func:`~reference_harness.unit_work_scenario.judge._settled_row`).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
-from .case import Entity
+from .case import Entity, write_entry_rows
 from .inheritance import tag_of
 from .portable_literal import decode_timestamp
 from .temporality import temporal_axes
@@ -56,9 +56,8 @@ def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> li
     row the instruction carries; this function only spreads it over them, so a row
     is judged the same whether an instruction or a bare `when.write` carries it.
     """
-    rows = instruction.get("rows")
     unknown: set[str] = set()
-    for row in rows if isinstance(rows, list) else ():
+    for row in write_entry_rows(instruction):
         if isinstance(row, Mapping):
             unknown |= set(undeclared_members(entity, row))
     return sorted(unknown)
@@ -149,10 +148,7 @@ def validate_keyed_write(
     itself around those judgments.
     """
     validate_keyed_write_shape(entity, instruction)
-    rows = instruction.get("rows")
-    if not isinstance(rows, list):
-        return
     mutation = instruction.get("mutation")
-    for row in rows:
+    for row in write_entry_rows(instruction):
         if isinstance(row, Mapping):
             validate_keyed_assignment_members(entity, str(mutation), row)

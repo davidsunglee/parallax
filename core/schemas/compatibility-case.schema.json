@@ -272,7 +272,7 @@
       }
     },
     {
-      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions, each keyed submission writing one row. A step carries only the members such a step is run by or graded on, beside an ungraded `databaseCalls` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
+      "description": "A state-graded case is a scenario carrying no golden SQL anywhere (m-case-format *State-graded scenarios*): no step lists `statements` or `referenceSql`, and `then` states no `executionLifecycle`, whose events index golden statements. Its steps are finds and buffers of submissions. A step carries only the members such a step is run by or graded on, beside an ungraded `databaseCalls` and `note`, and a write step states no `expectRows`: an action, a golden, a graph or identity observable, or a step-level `on` or `expectError` (a submission's own) is something nothing its run reports could grade. It states the complete final `then.tableState` and every group's fate in `then.units`, and is run-only, since no golden exists for a compile lane to compare against.",
       "if": { "required": ["grading"] },
       "then": {
         "required": ["compileEligibility", "then"],
@@ -286,13 +286,7 @@
                     "enum": ["objectQuery", "equivalentEncodings", "stream", "write", "uow", "databaseCalls", "expectRows", "note"]
                   },
                   "if": { "required": ["write"] },
-                  "then": { "not": { "required": ["expectRows"] } },
-                  "properties": {
-                    "write": {
-                      "type": "array",
-                      "items": { "properties": { "rows": { "maxItems": 1 } } }
-                    }
-                  }
+                  "then": { "not": { "required": ["expectRows"] } }
                 }
               }
             }
@@ -324,12 +318,26 @@
                           "not": { "required": ["expectError"] },
                           "anyOf": [
                             {
-                              "required": ["rows"],
+                              "required": ["row"],
+                              "not": {
+                                "anyOf": [
+                                  { "required": ["target"] },
+                                  { "required": ["ifVersion"] },
+                                  { "required": ["ifTxStart"] }
+                                ]
+                              },
                               "properties": {
                                 "mutation": { "not": { "enum": ["replace", "replaceUntil"] } }
                               }
                             },
-                            { "required": ["row"] }
+                            {
+                              "required": ["row"],
+                              "anyOf": [
+                                { "required": ["target"] },
+                                { "required": ["ifVersion"] },
+                                { "required": ["ifTxStart"] }
+                              ]
+                            }
                           ]
                         }
                       }
@@ -3013,19 +3021,14 @@
       ]
     },
     "keyedWrite": {
-      "description": "A keyed submission inside a buffered scenario. `validFrom` and `until` are Valid-Time bounds; `at` is Clock-supplied Transaction-Time context. Flush-only observations are not durable row members. `on` names the value an observed write is handed, and `expectError` the refusal its verb raises at the call.",
+      "description": "A keyed submission inside a buffered scenario: one `write-instruction.schema.json` `keyedWriteInstruction` — `mutation`, `entity`, its one `row`, and `validFrom` / `until`, the Valid-Time bounds — beside the case context `at`, the Clock-supplied Transaction-Time instant, `on`, the value an observed write is handed, and `expectError`, the refusal its verb raises at the call. Flush-only observations are not durable row members.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mutation", "entity", "rows"],
+      "required": ["mutation", "entity", "row"],
       "properties": {
         "mutation": { "$ref": "write-instruction.schema.json#/$defs/keyedMutation" },
         "entity": { "$ref": "write-instruction.schema.json#/$defs/entityName" },
-        "rows": {
-          "description": "The buffered submission's rows, each the canonical durable shape (`write-instruction.schema.json#/$defs/writeRow`) of one keyed instruction's `row`; an entry's rows are submitted in order within its one choreography unit.",
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "write-instruction.schema.json#/$defs/writeRow" }
-        },
+        "row": { "$ref": "write-instruction.schema.json#/$defs/writeRow" },
         "validFrom": {
           "description": "The Valid-Time lower bound of a temporal keyed write (`from_z`).",
           "type": "string",
@@ -3110,7 +3113,7 @@
       ]
     },
     "submission": {
-      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` one keyed instruction per row, `row` a target one, and `target` a predicate write, which executes at its submission after a Flush of the entries before it (state-graded cases only, as are target submissions whose cost the document does not state). Each references the canonical write-instruction vocabulary; a keyed or target entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
+      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the members it carries as write-instruction serde dispatches a document: `target` a predicate write, a `row` stating a revision (`ifVersion` or `ifTxStart`) a target one, and a `row` stating none a keyed one. A predicate write executes at its submission after a Flush of the entries before it (state-graded cases only, as are target submissions whose cost the document does not state). Each references the canonical write-instruction vocabulary; a keyed or target entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
       "oneOf": [
         { "$ref": "#/$defs/keyedWrite" },
         { "$ref": "#/$defs/targetSubmission" },
