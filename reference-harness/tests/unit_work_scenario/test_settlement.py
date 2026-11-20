@@ -358,6 +358,25 @@ def test_a_transaction_time_only_target_settles_against_its_named_find() -> None
         assert_unit_work_scenario(_transaction_time_only_settled_case(on=1), RefusingProvider())
 
 
+# --- a collapsed write beside a settled one ---------------------------------
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_collapsed_write_reaches_only_the_keys_its_membership_binds(dialect: str) -> None:
+    # The membership's trailing tag guard binds the subtype's tagValue `leaf`,
+    # which is also the settled entry's key; a tag names no object.
+    assert_judged(_settled_leaf_beside_collapsed_deletes(dialect, ["other-A", "other-B"]), dialect)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_collapsed_write_whose_membership_binds_a_settled_key_belongs_to_it(
+    dialect: str,
+) -> None:
+    case = _settled_leaf_beside_collapsed_deletes(dialect, ["leaf", "other-B"])
+    with pytest.raises(CaseFailure, match="StringLeaf pk 'leaf' through no bound key equality"):
+        assert_judged(case, dialect)
+
+
 # --- the cases the corpus does not carry ------------------------------------
 
 
@@ -793,3 +812,72 @@ def _balance_find(pk: int, tx_start: str, tx_end: Any, value: str) -> dict[str, 
             }
         ],
     }
+
+
+_STRING_LEAF_FIND = (
+    "select t0.id, not t0.payload is null, t0.payload from px.string_family t0 where t0.kind = ?"
+)
+_COLLAPSED_LEAF_DELETES = {
+    "postgres": "delete from px.string_family where id = any(cast(? as text[])) and kind = ?",
+    "mariadb": "delete from px.string_family where id in (?, ?) and kind = ?",
+}
+
+
+def _settled_leaf_beside_collapsed_deletes(dialect: str, deleted: list[str]) -> Case:
+    """A `uow` group settling an amendment of the table-per-hierarchy StringLeaf
+    `leaf` against its find, beside two keyed deletes its flush collapses into
+    one membership delete of *deleted*, tag-guarded like a single key."""
+    delete_binds: list[Any] = [deleted, "leaf"] if dialect == "postgres" else [*deleted, "leaf"]
+    raw: dict[str, Any] = {
+        "model": "models/identifier-tph-document.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "uow": "g",
+                    "objectQuery": {"target": "parallax.compatibility.StringLeaf"},
+                    "databaseCalls": 1,
+                    "statements": [{"sql": {dialect: _STRING_LEAF_FIND}, "binds": ["leaf"]}],
+                    "expectRows": [
+                        {"id": "leaf", "label": "old", "_type": "parallax.compatibility.StringLeaf"}
+                    ],
+                },
+                {
+                    "uow": "g",
+                    "write": [
+                        {
+                            "on": 0,
+                            "mutation": "amend",
+                            "entity": "parallax.compatibility.StringLeaf",
+                            "row": {"id": "leaf", "label": "new"},
+                        },
+                        {
+                            "mutation": "delete",
+                            "entity": "parallax.compatibility.StringLeaf",
+                            "row": {"id": "other-A"},
+                        },
+                        {
+                            "mutation": "delete",
+                            "entity": "parallax.compatibility.StringLeaf",
+                            "row": {"id": "other-B"},
+                        },
+                    ],
+                    "databaseCalls": 2,
+                    "statements": [
+                        {
+                            "sql": {
+                                dialect: "update px.string_family set payload = ? "
+                                "where id = ? and kind = ?"
+                            },
+                            "binds": ['{"label":"new"}', "leaf", "leaf"],
+                        },
+                        {"sql": {dialect: _COLLAPSED_LEAF_DELETES[dialect]}, "binds": delete_binds},
+                    ],
+                },
+            ]
+        },
+        "then": {"databaseCalls": 3},
+    }
+    model = load_model(COMPATIBILITY_ROOT, raw["model"])
+    return _case(raw, model, "m-unit-work-990-synthetic")
