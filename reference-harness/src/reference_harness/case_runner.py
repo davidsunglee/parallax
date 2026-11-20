@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, Final, NamedTuple
 
 import sqlglot
+from jsonschema.exceptions import best_match
 from sqlglot import exp
 
 from . import errors, serde
@@ -69,6 +70,7 @@ from .case import (
     entry_bind_values,
     entry_pairs,
     entry_statements,
+    states_revision,
 )
 from .case_assertions import (
     CaseFailure,
@@ -112,7 +114,6 @@ from .object_query_oracle import assert_case_read
 from .object_query_oracle import row as object_query_row
 from .object_query_oracle.includes import refuse_path_past_back_reference
 from .object_query_validate import validate_object_query
-from .paths import schemas_dir
 from .pk_gen import (
     KEY_SEQUENCE,
     SEQUENCE_EXHAUSTION,
@@ -127,7 +128,7 @@ from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
 from .relationship import validate_relationship_declarations, validate_relationship_types
-from .schemas import load_json
+from .schemas import registry_for, validator_for
 from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
 from .sql_tables import physical_table_of
@@ -760,9 +761,8 @@ def _assert_rejected(case: Case) -> None:
     model's default write root. Both discriminators are RESERVED from a bare row at this position
     (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
     can never be mistaken for one and this dispatch cannot re-read a row as an
-    instruction. Membership can decide the form only for an OBJECT carrying only
-    its form's members, so :func:`_rejected_write_input` refuses anything else
-    before dispatch. Inline
+    instruction. :func:`_rejected_write_input` dispatches the form and validates
+    each explicit one whole against its own definition before any judgement. Inline
     models run the foundational resolver oracles (``validate_foundations``) before
     the semantic rule sets — Primary-Key Generation's shared-allocator rule,
     Inheritance's ``validate_family``, and Storage Layout’s
@@ -788,18 +788,18 @@ def _assert_rejected(case: Case) -> None:
             validate_object_query(case.model.entity(query["target"]), query)
             refuse_path_past_back_reference(case.model, query)
         elif "write" in case.when:
-            write = _rejected_write_input(case)
-            if "target" in write:
+            form, write = _rejected_write_input(case)
+            if form == "predicateWriteInstruction":
                 _validate_rejected_predicate_write(case, write)
                 raise CaseFailure(
                     f"{case.path.name}: predicate write did not match its pre-SQL refusal"
                 )
-            if "row" in write and _REVISION_MEMBERS.isdisjoint(write):
+            if form == "keyedWriteInstruction":
                 _validate_rejected_keyed_write(case, write)
                 raise CaseFailure(
                     f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
                 )
-            if "row" in write:
+            if form == "targetWriteInstruction":
                 _validate_rejected_target_write(case, write)
                 raise CaseFailure(
                     f"{case.path.name}: target instruction did not match its pre-SQL refusal"
@@ -960,19 +960,25 @@ def _assert_bare_row_members_declared(case: Case, entity: Entity, row: dict[str,
         )
 
 
-def _rejected_write_input(case: Case) -> dict[str, Any]:
-    """The ONE ``when.write`` document a rejected case puts under test.
+def _rejected_write_input(case: Case) -> tuple[str | None, dict[str, Any]]:
+    """The ONE ``when.write`` document a rejected case puts under test, with the
+    ``write-instruction.schema.json`` definition its members dispatch it to —
+    ``None`` for the bare neutral write row.
 
-    Each of the four rejected write forms is an object whose members name it, so
-    a document that is not one reaches :func:`_assert_rejected`'s dispatch with
-    nothing to dispatch ON, and one carrying two forms' carriers would be graded as
-    whichever form the dispatch reached first. The multi-key ARRAY the shared ``when.write``
-    vocabulary also admits is the conflict lane's form alone
-    (`compatibility-case.schema.json`): it states a collapsed statement's
-    aggregate affected-row count, which a pre-SQL rejection asserts nothing about.
-    Refused here rather than normalized: reading a one-element array as its row and
-    a longer one as nothing would, in both directions, grade a document no rejected
-    lane defines.
+    The members dispatch it in order, as write-instruction serde does: a
+    ``target`` names a predicate-selected instruction, otherwise a ``row`` names
+    a target instruction when it states a revision and a keyed one when it
+    states none. Each explicit form is then validated whole against its own
+    definition (`m-case-format` Rejected cases), so a document mixing two forms'
+    members, or missing one its form requires, is a case-authoring failure
+    rather than graded as whichever form the dispatch reached first.
+
+    The multi-key ARRAY the shared ``when.write`` vocabulary also admits is the
+    conflict lane's form alone (`compatibility-case.schema.json`): it states a
+    collapsed statement's aggregate affected-row count, which a pre-SQL
+    rejection asserts nothing about. Refused here rather than normalized: reading
+    a one-element array as its row and a longer one as nothing would, in both
+    directions, grade a document no rejected lane defines.
     """
     write = case.when.get("write")
     if not isinstance(write, dict):
@@ -982,38 +988,36 @@ def _rejected_write_input(case: Case) -> dict[str, Any]:
             f"decide which. {type(write).__name__} is the conflict lane's multi-key form, which "
             f"asserts an aggregate affected-row count no rejected case emits SQL to produce."
         )
-    form, members = (
-        ("predicate-selected", _PREDICATE_MEMBERS)
+    form = (
+        "predicateWriteInstruction"
         if "target" in write
-        else ("keyed or target", _KEYED_OR_TARGET_MEMBERS)
+        else ("targetWriteInstruction" if states_revision(write) else "keyedWriteInstruction")
         if "row" in write
-        else (None, frozenset[str]())
+        else None
     )
-    foreign = sorted(set(write) - members) if form is not None else []
-    if foreign:
-        raise CaseFailure(
-            f"{case.path.name}: a rejected {form} `when.write` also carries {foreign}, which "
-            f"no one instruction form states together with it (m-case-format Rejected cases)."
-        )
-    return write
+    if form is not None:
+        error = best_match(_INSTRUCTION_VALIDATORS[form].iter_errors(write))
+        if error is not None:
+            location = "/".join(str(part) for part in error.absolute_path) or "<root>"
+            raise CaseFailure(
+                f"{case.path.name}: a rejected `when.write` dispatched to `{form}` is not a "
+                f"whole `{form}` (m-case-format Rejected cases): at {location}: {error.message}"
+            )
+    return form, write
 
 
-# The members each write-instruction document form may carry, read from the
-# closed definitions of `write-instruction.schema.json`.
-_WRITE_INSTRUCTION_DEFS: Final = load_json(
-    schemas_dir(Path(__file__)) / "write-instruction.schema.json"
-)["$defs"]
-
-
-def _instruction_members(definition: str) -> frozenset[str]:
-    return frozenset(_WRITE_INSTRUCTION_DEFS[definition]["properties"])
-
-
-_KEYED_MEMBERS: Final = _instruction_members("keyedWriteInstruction")
-_TARGET_MEMBERS: Final = _instruction_members("targetWriteInstruction")
-_PREDICATE_MEMBERS: Final = _instruction_members("predicateWriteInstruction")
-_KEYED_OR_TARGET_MEMBERS: Final = _KEYED_MEMBERS | _TARGET_MEMBERS
-_REVISION_MEMBERS: Final = _TARGET_MEMBERS - _KEYED_MEMBERS
+_SCHEMAS, _SCHEMA_REGISTRY = registry_for(Path(__file__))
+_WRITE_INSTRUCTION_ID: Final = _SCHEMAS["write-instruction.schema.json"]["$id"]
+_INSTRUCTION_VALIDATORS: Final = {
+    definition: validator_for(
+        {"$ref": f"{_WRITE_INSTRUCTION_ID}#/$defs/{definition}"}, _SCHEMA_REGISTRY
+    )
+    for definition in (
+        "keyedWriteInstruction",
+        "targetWriteInstruction",
+        "predicateWriteInstruction",
+    )
+}
 
 
 def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
@@ -1045,17 +1049,16 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
         validate_keyed_write_shape(entity, write)
     except KeyedWriteApplicabilityError as exc:
         raise CaseFailure(f"{case.path.name}: {exc}") from exc
-    row = write.get("row")
-    if isinstance(row, dict):
-        validate_subtype_write(entity, case.model.entity_defs, row)
-        validate_keyed_assignment_members(entity, str(write.get("mutation")), row)
-        unknown = undeclared_members(entity, row)
-        if unknown:
-            raise CaseFailure(
-                f"{case.path.name}: keyed instruction's row names {unknown}, which are not "
-                f"attributes or value objects of {entity.name}"
-            )
-        validate_keyed_row_values(entity, str(write.get("mutation")), row)
+    row = write["row"]
+    validate_subtype_write(entity, case.model.entity_defs, row)
+    validate_keyed_assignment_members(entity, write["mutation"], row)
+    unknown = undeclared_members(entity, row)
+    if unknown:
+        raise CaseFailure(
+            f"{case.path.name}: keyed instruction's row names {unknown}, which are not "
+            f"attributes or value objects of {entity.name}"
+        )
+    validate_keyed_row_values(entity, write["mutation"], row)
 
 
 def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
@@ -1077,8 +1080,6 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
             f"case's model does not declare"
         ) from exc
     validate_write_persistence(entity)
-    if not isinstance(write.get("row"), dict):
-        raise CaseFailure(f"{case.path.name}: a target instruction's `row` must be an object")
     violation = target_write_violation(entity, write)
     if violation is not None:
         raise CaseFailure(f"{case.path.name}: {violation}")

@@ -1298,7 +1298,6 @@ def test_a_read_write_target_instruction_accepted_fails_the_rejected_case() -> N
             {"mutation": "amend", "entity": "Car", "row": {"id": 1, "bogus": 1}, "ifVersion": 1},
             "names no assignable",
         ),
-        ({"mutation": "amend", "entity": "Car", "row": 1, "ifVersion": 1}, "must be an object"),
         ({"mutation": "amend", "entity": "Bus", "row": {"id": 1}, "ifVersion": 1}, "Bus"),
     ],
     ids=[
@@ -1306,7 +1305,6 @@ def test_a_read_write_target_instruction_accepted_fails_the_rejected_case() -> N
         "inapplicable-verb",
         "absent-key-before-inapplicable-verb",
         "undeclared-member",
-        "non-object-row",
         "entity",
     ],
 )
@@ -1318,31 +1316,60 @@ def test_an_unclassified_target_defect_is_a_case_authoring_failure(
 
 
 @pytest.mark.parametrize(
-    "write",
+    ("write", "form"),
     [
-        {
-            "mutation": "amend",
-            "entity": "Magazine",
-            "rows": [{"id": 1}],
-            "row": {"id": 1},
-            "ifVersion": 1,
-        },
-        {
-            "mutation": "amend",
-            "target": {"entity": "Magazine", "predicate": {"true": {}}},
-            "assignments": [],
-            "rows": [{"id": 1}],
-        },
+        (
+            {
+                "mutation": "amend",
+                "entity": "Magazine",
+                "rows": [{"id": 1}],
+                "row": {"id": 1},
+                "ifVersion": 1,
+            },
+            "targetWriteInstruction",
+        ),
+        (
+            {
+                "mutation": "amend",
+                "target": {"entity": "Magazine", "predicate": {"true": {}}},
+                "assignments": [],
+                "rows": [{"id": 1}],
+            },
+            "predicateWriteInstruction",
+        ),
+        ({"entity": "Magazine", "row": {"id": 1}}, "keyedWriteInstruction"),
+        ({"entity": "Magazine", "row": {"id": 1}, "ifVersion": 1}, "targetWriteInstruction"),
+        (
+            {"mutation": "amend", "entity": "Magazine", "row": 1, "ifVersion": 1},
+            "targetWriteInstruction",
+        ),
     ],
-    ids=["rows-and-row", "target-and-rows"],
+    ids=[
+        "rows-and-row",
+        "target-and-rows",
+        "keyed-without-mutation",
+        "target-without-mutation",
+        "non-object-row",
+    ],
 )
-def test_a_mixture_of_instruction_carriers_is_refused_before_any_judgement(
-    write: dict[str, Any],
+def test_an_instruction_not_whole_against_its_form_is_refused_before_any_judgement(
+    write: dict[str, Any], form: str
 ) -> None:
     # Each is a write to a read-only family, so grading whichever form the dispatch
-    # reached first would report the very rule the case names.
-    with pytest.raises(CaseFailure, match="no one instruction form states together"):
+    # reached, or the members it happened to carry, would report the very rule the
+    # case names.
+    with pytest.raises(CaseFailure, match=f"is not a whole `{form}`"):
         run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+def test_a_corpus_keyed_instruction_missing_its_mutation_fails_its_run() -> None:
+    # The corpus schema sweep refuses this document too; the run refuses it without it.
+    path = _COMPATIBILITY_ROOT / "cases" / "m-unit-work-066-rejected-read-only-keyed-insert.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    del raw["when"]["write"]["mutation"]
+    case = Case(path=path, raw=raw, model=load_model(_COMPATIBILITY_ROOT, raw["model"]))
+    with pytest.raises(CaseFailure, match="is not a whole `keyedWriteInstruction`"):
+        run_case(case, None)
 
 
 def test_a_member_named_row_inside_an_instruction_keeps_its_meaning() -> None:
