@@ -113,6 +113,23 @@ def test_a_step_declares_the_reads_its_targets_owe(
         assert_judged(case)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [_OPTIMISTIC, _LOCKING, _TERMINATED, _LOCKING_TERMINATED],
+    ids=[
+        "optimistic-amendments-share-one-read",
+        "locking-acquires-each-row",
+        "optimistic-terminations-read-nothing",
+        "locking-terminations-acquire-each-row",
+    ],
+)
+def test_an_ungrouped_target_write_resolves_no_source(damaged_case: CaseLoader, name: str) -> None:
+    case = damaged_case(name)
+    (step,) = case.when["scenario"]
+    del step["uow"]
+    assert_judged(case)
+
+
 def test_a_write_through_a_pending_insert_composes_with_it_and_reads_nothing(
     damaged_case: CaseLoader,
 ) -> None:

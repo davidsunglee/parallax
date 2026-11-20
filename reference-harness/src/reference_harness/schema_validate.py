@@ -389,7 +389,9 @@ def _valid_keyed_entry_entity(
         return None
     try:
         condition = (
-            target_write_violation(entity, instruction) if states_revision(instruction) else None
+            target_write_violation(entity, instruction)
+            if states_revision(instruction) and isinstance(instruction.get("row"), dict)
+            else None  # the case schema owns a target entry's missing or malformed row
         )
     except RejectionError as exc:
         condition = f"a target write of {entity.name} — {exc}"

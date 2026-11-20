@@ -1332,9 +1332,11 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     (:func:`_native_allocation`).
 
     ① is REQUIRED on every writeSequence step (the permanent Family A + Family B
-    contract, enforced in the schema), so there is no presence-tolerance here: a step
-    without ``rows`` never reaches the gate. Family C — scenario write steps and
-    boundary cases — carries no writeSequence, so it is exempt by construction.
+    contract, enforced in the schema): a keyed step authors ``rows`` and a target
+    step its one ``row``, which :attr:`~reference_harness.case.Case.write_sequence`
+    states as the keyed update's ``rows``, so there is no presence-tolerance here.
+    Family C — scenario write steps and boundary cases — carries no writeSequence,
+    so it is exempt by construction.
     """
     statements = case.golden_statements(dialect)
     written = [index for index in range(len(statements)) if index not in case.reservations]
@@ -1364,9 +1366,10 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
             for row in rows
         ]
-        # A writeSequence step carries keyed instructions' own members
-        # (`mutation` / `entity` / `rows`), so it is judged through the SAME
-        # validator the buffered scenario write reaches.
+        # A writeSequence step carries write instructions' own members
+        # (`mutation` / `entity` / `rows`, or a target step's `row`), so its
+        # authored form is judged through the SAME validator the buffered
+        # scenario write reaches.
         try:
             validate_keyed_write(entity, authored)
         except (RejectionError, KeyedWriteApplicabilityError) as exc:

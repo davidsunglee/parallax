@@ -13,11 +13,11 @@ The structural half (one-or-more keyed entries, no predicate entry) is the JSON
 Schema's; the model-aware rules JSON Schema cannot express, such as member-name
 honesty, are the harness validator's. These DB-free probes pin both halves: the
 general keyed shapes — a single write, a mixed multi-object flush, a buffer over
-different entities / different keys, a temporal entry of several rows, and the
-three same-transaction coalescing witnesses — are ACCEPTED; a predicate entry is
-REJECTED in a golden-graded case (schema), and a materializing one outside a
-state-graded case (harness); and a row naming a non-member is REJECTED
-(harness).
+different entities / different keys, and the three same-transaction coalescing
+witnesses — are ACCEPTED; a predicate entry is REJECTED in a golden-graded case
+(schema), and a materializing one outside a state-graded case (harness); a keyed
+entry carrying plural `rows` is REJECTED (schema); and a row naming a non-member
+is REJECTED (harness).
 """
 
 from __future__ import annotations
@@ -469,6 +469,26 @@ def test_a_target_submission_stating_another_condition_is_refused(
     errors: list[str] = []
     _validate_buffered_write([entry], entity_defs, _OP, "probe", errors)
     assert any("target write" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param(
+            {key: value for key, value in _ACCOUNT_TARGET.items() if key != "row"}
+            | {"ifVersion": 1},
+            id="without-a-row",
+        ),
+        pytest.param({**_ACCOUNT_TARGET, "row": None, "ifVersion": 1}, id="with-a-null-row"),
+    ],
+)
+def test_a_target_submission_with_a_malformed_row_is_left_to_the_case_schema(
+    entry: dict[str, Any],
+) -> None:
+    errors: list[str] = []
+    _validate_buffered_write([entry], _SEQUENCE, _OP, "probe", errors)
+    assert errors == []
+    assert not _accepted([entry], _SEQUENCE)
 
 
 # --- a row naming a non-member is REJECTED (member honesty, harness) -------------
