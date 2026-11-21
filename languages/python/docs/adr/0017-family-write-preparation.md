@@ -35,16 +35,18 @@ No production caller names the codec's lane index. There is no third
 representation: conformance prepares case writes as a Wire caller, so a case
 payload is judged exactly as a real Wire payload is.
 
-Model-aware judgment has one owner. The instructions module keeps only the
-Write Instruction document form: the mutation vocabulary, the instruction
-records, the rejection codes, the observation-key guard that document
-constructors and Wire adapters apply before preparation, and
-`serialize`/`deserialize`. The preparation module holds the payloads,
-representations, per-Entity preparation, the four entries, every model-aware
-judgment step, and the prepared results with their private factories.
-Preparation imports the document vocabulary, never the reverse, so a reader
-finds every rule that judges a write against its model in one place and no
-record exists only so core can unpack it. Prepared results remain frozen
+Model-aware judgment has one owner, apart from one adapter check: a
+predicate-selected replacement's Typed and Wire adapters refuse an instance or
+published node of an Entity other than the selected target before building its
+payload. The instructions module keeps only the Write Instruction document
+form: the mutation vocabulary, the instruction records, the rejection codes,
+the observation-key guard that document constructors and Wire adapters apply
+before preparation, and `serialize`/`deserialize`. The preparation module holds
+the payloads, representations, per-Entity preparation, the four entries, every
+other model-aware judgment step, and the prepared results with their private
+factories. Preparation imports the document vocabulary, never the reverse, so a
+reader finds every other rule that judges a write against its model in one
+place and no record exists only so core can unpack it. Prepared results remain frozen
 `init=False` records built only by that module's factories, so holding one
 still proves the write was judged.
 
