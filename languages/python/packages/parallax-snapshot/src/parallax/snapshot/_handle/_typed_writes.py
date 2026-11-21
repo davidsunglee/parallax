@@ -357,7 +357,7 @@ class TypedPredicateWriteAdapter:
     a spelling for such a clause. A replacement's instance is then used only as
     data, as a caller-conditioned replacement's is, and must be one of the
     queried Entity. Everything else the write states is judged by
-    :func:`~parallax.core._execution._unit_work.write_preparation.prepare_predicate_write`.
+    :func:`~parallax.core._execution._unit_work.preparation.prepare_predicate_write`.
     """
 
     __slots__ = ("_payload", "_query")
