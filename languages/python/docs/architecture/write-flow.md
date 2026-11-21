@@ -233,8 +233,9 @@ everything it opened is removed, or a later insertion of the object supersedes i
               │ persistence; a target write's absent or null key, verb and
               │ window, then revision; a keyed write's verb and window; a
               │ predicate write's readless eligibility, predicate and family.
-              │ Then the payload's names, a keyed or target payload's key,
-              │ and its other values
+              │ Then the payload's names, then its values: a keyed or
+              │ target payload's key first, except an opening's, which
+              │ keeps declaration order throughout
               ▼
  PREPARED   PreparedKeyedInstruction | PreparedTargetInstruction
               | PreparedPredicateInstruction: exact target, owned managed rows, judged

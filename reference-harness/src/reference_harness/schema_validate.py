@@ -59,7 +59,6 @@ from .keyed_write_validate import (
     KeyedWriteApplicabilityError,
     undeclared_row_members,
     validate_keyed_write,
-    validate_keyed_write_shape,
 )
 from .metamodel import validate_foundations
 from .pk_gen import validate_shared_allocators
@@ -366,7 +365,11 @@ def _valid_keyed_entry_entity(
 ) -> Entity | None:
     """The Entity a keyed buffered entry writes once its members and its
     instruction rules hold; ``None`` when they do not, or when the case schema
-    owns the entry's malformed Entity."""
+    owns the entry's malformed Entity.
+
+    A target entry is judged by :func:`target_write_violation` alone, which
+    owns its whole sequence; any other keyed entry by
+    :func:`validate_keyed_write`, then member honesty."""
     entity_name = instruction.get("entity")
     if not isinstance(entity_name, str):
         return None  # the case schema owns the missing/malformed entity error
@@ -374,11 +377,21 @@ def _valid_keyed_entry_entity(
     if entity is None:
         errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
         return None
+    if states_revision(instruction):
+        if not isinstance(instruction.get("row"), dict):
+            return None  # the case schema owns a target entry's missing or malformed row
+        try:
+            condition = target_write_violation(entity, entity_defs, instruction)
+        except RejectionError as exc:
+            condition = f"a target write of {entity.name} — {exc}"
+        if condition is not None:
+            errors.append(f"{entry_label}: {condition}")
+            return None
+        return entity
     try:
-        validate_keyed_write_shape(entity, instruction)
+        validate_keyed_write(entity, instruction)
     except (RejectionError, KeyedWriteApplicabilityError) as exc:
-        surface = "target write" if states_revision(instruction) else "keyed write"
-        errors.append(f"{entry_label}: {surface}: {exc}")
+        errors.append(f"{entry_label}: keyed write: {exc}")
         return None
     unknown = undeclared_row_members(entity, instruction)
     if unknown:
@@ -386,22 +399,6 @@ def _valid_keyed_entry_entity(
             f"{entry_label}: keyed write row names {unknown} which are not "
             f"attributes or value objects of {entity_name}"
         )
-        return None
-    try:
-        condition = (
-            target_write_violation(entity, instruction)
-            if states_revision(instruction) and isinstance(instruction.get("row"), dict)
-            else None  # the case schema owns a target entry's missing or malformed row
-        )
-    except RejectionError as exc:
-        condition = f"a target write of {entity.name} — {exc}"
-    if condition is not None:
-        errors.append(f"{entry_label}: {condition}")
-        return None
-    try:
-        validate_keyed_write(entity, instruction)
-    except (RejectionError, KeyedWriteApplicabilityError) as exc:
-        errors.append(f"{entry_label}: {exc}")
         return None
     return entity
 

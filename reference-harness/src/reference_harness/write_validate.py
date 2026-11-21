@@ -59,7 +59,7 @@ from .inheritance import (
     is_abstract,
     tag_of,
 )
-from .portable_literal import decode_timestamp
+from .portable_literal import PortableLiteralError, decode
 from .storage_layout import is_scalar_collection
 from .temporality import temporal_axes
 from .value_object_resolve import (
@@ -167,16 +167,21 @@ def assignment_violation(
     )
 
 
-def _window_bound(instruction: Mapping[str, Any], name: str) -> dt.datetime | None:
-    value = instruction[name]
-    return decode_timestamp(value) if isinstance(value, str) else None
+def _instant(instruction: Mapping[str, Any], name: str) -> dt.datetime | None:
+    """The instant *instruction*'s own timestamp member *name* spells, decoded
+    by `m-wire`'s ``timestamp`` codec, or ``None`` when that codec refuses it."""
+    try:
+        return decode(instruction[name], "timestamp")
+    except PortableLiteralError:
+        return None
 
 
 def window_violation(entity: Entity, instruction: Mapping[str, Any]) -> str | None:
     """Why a keyed or target instruction's window does not fit *entity*, or
     ``None`` (`m-unit-work`): a Bitemporal target states ``validFrom``, and
-    ``until`` exactly where its verb is bounded, each a finite timestamp and
-    ``validFrom`` before ``until``; any other target states no window."""
+    ``until`` exactly where its verb is bounded, each a canonical finite
+    timestamp and ``validFrom`` before ``until``; any other target states no
+    window."""
     mutation = str(instruction.get("mutation"))
     bounded = mutation.endswith("Until")
     bitemporal = any(axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts))
@@ -190,14 +195,14 @@ def window_violation(entity: Entity, instruction: Mapping[str, Any]) -> str | No
         )
     if not has_start:
         return None
-    start = _window_bound(instruction, "validFrom")
+    start = _instant(instruction, "validFrom")
     if start is None:
-        return "validFrom must state a finite timestamp"
+        return "validFrom must state a canonical finite timestamp"
     if not has_end:
         return None
-    end = _window_bound(instruction, "until")
+    end = _instant(instruction, "until")
     if end is None:
-        return "until must state a finite timestamp"
+        return "until must state a canonical finite timestamp"
     if start >= end:
         return f"{entity.name}: validFrom must precede until"
     return None
@@ -288,17 +293,21 @@ def target_row_violation(entity: Entity, row: dict[str, Any], *, replaces: bool)
     return None
 
 
-def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> str | None:
+def target_write_violation(
+    entity: Entity, entity_defs: list[dict[str, Any]], instruction: Mapping[str, Any]
+) -> str | None:
     """Why a target instruction's key, verb, row, revision or window does
     not fit its target, or ``None`` (`m-unit-work` *Target writes*).
 
-    The model decides all five, which the case schema cannot see: a key absent
-    or null is refused first (:func:`_target_key_violation`); a temporal target
-    is deleted by no target write and a Non-Temporal one is terminated by none;
-    the window is judged as every keyed one is (:func:`window_violation`); a
-    temporal target states ``ifTxStart`` and a versioned Non-Temporal one
-    ``ifVersion``, while an unversioned one has no revision and takes no target
-    write. Only then is the row judged: its member names
+    The model decides all five, which the case schema cannot see, in one
+    sequence: a key absent or null is refused first
+    (:func:`_target_key_violation`); a temporal target is deleted by no target
+    write and a Non-Temporal one is terminated by none; the window is judged
+    as every keyed one is (:func:`window_violation`); a temporal target states
+    a canonical ``ifTxStart`` and a versioned Non-Temporal one ``ifVersion``,
+    while an unversioned one has no revision and takes no target write. Only
+    then is the row judged: its concrete-subtype shape
+    (:func:`validate_subtype_write`), its other member names
     (:func:`_target_name_violation`), a destructive write's naming the key
     alone, its key's value, then the rest as :func:`target_row_violation`
     judges it.
@@ -324,6 +333,11 @@ def target_write_violation(entity: Entity, instruction: Mapping[str, Any]) -> st
             f"a target write of {entity.name} states {stated or 'no revision'}, "
             f"but its target takes `{revision}`"
         )
+    if revision == "ifTxStart" and _instant(instruction, revision) is None:
+        return (
+            f"a target write of {entity.name} — ifTxStart must state a canonical finite timestamp"
+        )
+    validate_subtype_write(entity, entity_defs, row)
     names = _target_name_violation(entity, row)
     if names is not None:
         return f"a target write of {entity.name} — {names}"

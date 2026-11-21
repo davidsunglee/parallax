@@ -20,6 +20,7 @@ from parallax.core.internal.metamodel import (
 from parallax.core.internal.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.internal.planned_step import ObjectKey, VersionObservation
 from parallax.core.internal.unit_work import (
+    DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
     KeyedWriteInstruction,
     PredicateWriteInstruction,
@@ -657,6 +658,12 @@ def _buffer_wire_keyed(
     key = _instruction_key(instruction, model)
     identity = dict(key.primary_key) if key is not None else {}
     changes = {name: value for name, value in instruction.row.items() if name not in identity}
+    if instruction.mutation in DESTRUCTIVE_MUTATIONS and changes:
+        raise UsageError(
+            instructions.WRITE_INSTRUCTION_INVALID,
+            f"{instruction.entity}: a keyed {instruction.mutation!r} names its object by its "
+            f"primary key alone, and this row also states {sorted(changes)}",
+        )
     until = instruction.until
     match instruction.mutation:
         case "amend":

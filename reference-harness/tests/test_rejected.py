@@ -1370,6 +1370,35 @@ def test_a_target_name_or_window_defect_precedes_its_key_literal(
         run_case(_rejected_write_case(model(), write, NEUTRAL_LITERAL_TYPE_MISMATCH), None)
 
 
+@pytest.mark.parametrize(
+    "member", ["validFrom", "until", "ifTxStart"], ids=["valid-from", "until", "if-tx-start"]
+)
+def test_a_target_instant_its_codec_refuses_precedes_its_key_literal(member: str) -> None:
+    write = {
+        "mutation": "amendUntil",
+        "entity": "Position",
+        "row": {"id": "k"},
+        "ifTxStart": "2024-01-01T00:00:00Z",
+        "validFrom": "2024-03-01T00:00:00Z",
+        "until": "2024-06-01T00:00:00Z",
+    }
+    write[member] = write[member].replace("Z", "+00:00")
+    with pytest.raises(CaseFailure, match=f"{member} must state a canonical finite timestamp"):
+        run_case(_rejected_write_case(_position(), write, NEUTRAL_LITERAL_TYPE_MISMATCH), None)
+
+
+def test_a_target_write_of_an_abstract_root_precedes_its_key_literal() -> None:
+    model = load_model(_COMPATIBILITY_ROOT, "models/rate.yaml")
+    write = {
+        "mutation": "amend",
+        "entity": "Rate",
+        "row": {"id": "bad-key"},
+        "ifTxStart": "2024-01-01T00:00:00Z",
+        "validFrom": "2024-03-01T00:00:00Z",
+    }
+    run_case(_rejected_write_case(model, write, ABSTRACT_WRITE_TARGET), None)
+
+
 def test_a_target_window_precedes_its_revision() -> None:
     write = {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "validFrom": "x"}
     with pytest.raises(CaseFailure, match="takes no Valid-Time window"):

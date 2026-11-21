@@ -1075,10 +1075,10 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
     Persistence admission precedes them (`m-unit-work` "Writes to a ReadOnly
     family"). The key, verb, window, revision, and row are then judged by the
     one :func:`~reference_harness.write_validate.target_write_violation` static
-    case validation also asks. A null key and a key literal its type does not
-    decode are the judgements raising a rule of the closed vocabulary; every
-    other one carries none, so its detail is a case-authoring failure, never a
-    graded refusal.
+    case validation also asks. A null key, the row's concrete-subtype shape,
+    and a key literal its type does not decode are the judgements raising a
+    rule of the closed vocabulary; every other one carries none, so its detail
+    is a case-authoring failure, never a graded refusal.
     """
     entity_name = write.get("entity")
     try:
@@ -1089,7 +1089,7 @@ def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
             f"case's model does not declare"
         ) from exc
     validate_write_persistence(entity)
-    violation = target_write_violation(entity, write)
+    violation = target_write_violation(entity, case.model.entity_defs, write)
     if violation is not None:
         raise CaseFailure(f"{case.path.name}: {violation}")
 
