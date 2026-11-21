@@ -387,6 +387,27 @@ _BALANCE_TARGET = {"mutation": "amend", "entity": "Balance", "row": {"id": 1, "v
             _SEQUENCE,
             id="a-replacement-omitting-only-nullable-members",
         ),
+        pytest.param(
+            {
+                "mutation": "amend",
+                "entity": "parallax.compatibility.DepositRate",
+                "row": {"id": 1, "grade": "A"},
+                "validFrom": _T0,
+                "ifTxStart": _T0,
+            },
+            [
+                *_defs("models/rate.yaml"),
+                {
+                    "name": "DepositRate",
+                    "table": "plain_deposit_rate",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "parallax.compatibility.Rate",
+                    },
+                },
+            ],
+            id="a-qualified-subtype-beside-an-unnamespaced-namesake",
+        ),
     ],
 )
 def test_a_target_submission_states_the_condition_its_target_takes(
