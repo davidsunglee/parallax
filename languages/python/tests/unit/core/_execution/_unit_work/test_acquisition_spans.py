@@ -37,10 +37,10 @@ from parallax.core._execution._unit_work.effects import (
     WritePreconditionError,
 )
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,

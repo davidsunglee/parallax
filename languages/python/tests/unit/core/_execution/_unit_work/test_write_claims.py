@@ -26,11 +26,11 @@ from parallax.core._execution._unit_work.claims import (
     settled_evidence,
 )
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorized,
     LicensedWrite,

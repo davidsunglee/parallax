@@ -10,13 +10,13 @@ import pytest
 from parallax.conformance import models
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
-    prepare_insert,
 )
 from parallax.core._execution._unit_work.preparation import (
     TYPED,
     WIRE,
     CompletePayload,
     WriteRepresentation,
+    prepare_insert,
 )
 from parallax.core.internal.base import UsageError
 from tests._support.write_preparation import (

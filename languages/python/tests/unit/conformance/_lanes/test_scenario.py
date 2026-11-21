@@ -32,7 +32,7 @@ from parallax.conformance._mechanism.envelope import UnclassifiedEngineError
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.core import ConflictError
 from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
 )

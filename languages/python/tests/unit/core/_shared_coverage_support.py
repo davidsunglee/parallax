@@ -16,10 +16,10 @@ from typing import Final, cast
 
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     LicensedWrite,

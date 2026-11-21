@@ -11,7 +11,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import ExecutionLifecycleProvider
 from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import KeyedInsert

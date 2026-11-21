@@ -27,10 +27,10 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     WRITE_INSTRUCTION_INVALID,
     KeyedMutation,
-    PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.preparation import (
+    PreparedKeyedInstruction,
     TargetRevisionArguments,
     WritePreparation,
 )

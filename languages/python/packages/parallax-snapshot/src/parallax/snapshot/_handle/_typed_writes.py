@@ -13,14 +13,13 @@ from parallax.core._execution._keyed_writes import (
 from parallax.core._execution._publication import SelectedWriteModel
 from parallax.core._execution._transaction._attempt import TargetWriteInput, TxnAttempt
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work import preparation as write_preparation
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     REPLACE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
     TargetMutation,
     WriteAssignment,
 )
@@ -29,6 +28,8 @@ from parallax.core._execution._unit_work.preparation import (
     CompletePayload,
     EntityPreparation,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     WritePreparation,
 )
 from parallax.core.internal.base import UsageError
@@ -188,7 +189,7 @@ class TypedKeyedWriteSource:
             and resolved.insertion is None
             and not states_key(model, entity, value)
         ):
-            raise instructions.key_absent_refusal(entity.identity, mutation)
+            raise write_preparation.key_absent_refusal(entity.identity, mutation)
         if self._assignments and value.__parallax_edit_history__():
             raise UsageError(
                 instructions.WRITE_INSTRUCTION_INVALID,
@@ -224,7 +225,7 @@ class TypedKeyedWriteSource:
         entity = resolved.entity
         prepared = preparation.entity(entity.identity)
         if mutation in REPLACE_MUTATIONS:
-            return instructions.prepare_keyed_write(
+            return write_preparation.prepare_keyed_write(
                 preparation,
                 TYPED,
                 mutation,
@@ -246,7 +247,7 @@ class TypedKeyedWriteSource:
             if authored is None
             else PartialPayload(authored, judged_at_edit=True)
         )
-        return instructions.prepare_keyed_write(
+        return write_preparation.prepare_keyed_write(
             preparation,
             TYPED,
             mutation,
@@ -320,7 +321,7 @@ class TypedKeyedInsertSource[E: EntityBase]:
         and the selection composed no class to answer the allocated value in."""
         entity = resolved.entity
         prepared = preparation.entity(entity.identity)
-        instruction = instructions.prepare_insert(
+        instruction = write_preparation.prepare_insert(
             preparation,
             TYPED,
             mutation,
@@ -356,7 +357,7 @@ class TypedPredicateWriteAdapter:
     a spelling for such a clause. A replacement's instance is then used only as
     data, as a caller-conditioned replacement's is, and must be one of the
     queried Entity. Everything else the write states is judged by
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_predicate_write`.
+    :func:`~parallax.core._execution._unit_work.write_preparation.prepare_predicate_write`.
     """
 
     __slots__ = ("_payload", "_query")
@@ -373,10 +374,10 @@ class TypedPredicateWriteAdapter:
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateInstruction:
         selection = typed_selection(self._query, write_model)
-        target = instructions.resolve_target(write_model.model.meta, selection.entity)
+        target = write_preparation.resolve_target(write_model.model.meta, selection.entity)
         payload = self._payload
         if mutation in REPLACE_MUTATIONS:
-            return instructions.prepare_predicate_write(
+            return write_preparation.prepare_predicate_write(
                 write_model.preparation,
                 TYPED,
                 mutation,
@@ -384,7 +385,7 @@ class TypedPredicateWriteAdapter:
                 selection.predicate,
                 _replacement_payload(write_model, target, cast("EntityBase", payload)),
             )
-        return instructions.prepare_predicate_write(
+        return write_preparation.prepare_predicate_write(
             write_model.preparation,
             TYPED,
             mutation,

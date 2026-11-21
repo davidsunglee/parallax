@@ -30,11 +30,11 @@ from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
 from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     CoverageReadRequest,
     RowConsumer,

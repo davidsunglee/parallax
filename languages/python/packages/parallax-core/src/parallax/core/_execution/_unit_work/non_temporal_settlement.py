@@ -6,7 +6,9 @@ from typing import Final
 
 from parallax.core._execution._unit_work._errors import VERSION_UNOBSERVED
 from parallax.core._execution._unit_work.flush_facts import FlushFacts
-from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
+from parallax.core._execution._unit_work.preparation import (
+    PreparedKeyedInstruction,
+)
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     InsertBatch,

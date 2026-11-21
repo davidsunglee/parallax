@@ -26,10 +26,10 @@ from parallax.core._execution._transaction._lifetime import (
 from parallax.core._execution._unit_work._write_ownership import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import InsertionIdentity
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core.internal.base import INFINITY
 from parallax.core.internal.dialect import POSTGRES

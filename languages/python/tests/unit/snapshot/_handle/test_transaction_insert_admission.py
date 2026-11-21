@@ -19,12 +19,16 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work import preparation
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
-    PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import TYPED, WIRE, WriteRepresentation
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
+    WIRE,
+    PreparedKeyedInstruction,
+    WriteRepresentation,
+)
 from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.planned_step.managed_row import ManagedRow
@@ -96,7 +100,7 @@ def _buffered(write: Callable[[TxnContext], object], model: DomainModel = _MODEL
         return record
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(instructions, "prepare_insert", recorded(instructions.prepare_insert))
+        patch.setattr(preparation, "prepare_insert", recorded(preparation.prepare_insert))
         db_for(model, ScriptedAdapter(Transact(Write()))).transact(write)
     ((row,),) = (instruction.rows for instruction in prepared)
     return row

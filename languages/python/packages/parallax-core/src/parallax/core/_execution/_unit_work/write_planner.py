@@ -10,9 +10,11 @@ from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.flush_facts import FlushFacts
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
-    PreparedPredicateInstruction,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import NonTemporalSettlement
+from parallax.core._execution._unit_work.preparation import (
+    PreparedPredicateInstruction,
+)
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,

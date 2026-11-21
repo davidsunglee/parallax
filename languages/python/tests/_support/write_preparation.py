@@ -10,25 +10,25 @@ from parallax.core._execution._unit_work.instructions import (
     REPLACE_MUTATIONS,
     KeyedWriteInstruction,
     PredicateWriteInstruction,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
-    PreparedTargetInstruction,
     TargetWriteInstruction,
     WriteInstruction,
-    prepare_insert,
-    prepare_keyed_write,
-    prepare_predicate_write,
-    prepare_target_write,
-    resolve_target,
 )
 from parallax.core._execution._unit_work.preparation import (
     TYPED,
     WIRE,
     CompletePayload,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     TargetRevisionArguments,
     WritePreparation,
     WriteRepresentation,
+    prepare_insert,
+    prepare_keyed_write,
+    prepare_predicate_write,
+    prepare_target_write,
+    resolve_target,
 )
 from parallax.core.internal.metamodel import Metamodel
 

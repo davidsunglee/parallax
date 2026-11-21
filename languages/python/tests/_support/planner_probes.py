@@ -20,6 +20,8 @@ from parallax.core._execution._unit_work.evidence import (
 )
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.ranges import DeferredRange

@@ -40,9 +40,11 @@ import pytest
 
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
-from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work import preparation
 from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
-from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
+from parallax.core._execution._unit_work.preparation import (
+    PreparedKeyedInstruction,
+)
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.internal.base import detach_json_container
@@ -263,7 +265,7 @@ def test_a_seeded_retained_duplicate_of_every_prepared_row_trips_the_retained_ga
     # high-water mark it also raises is not what this seed is proved on.
     with pytest.MonkeyPatch.context() as patched:
         for entry in PREPARATION_ENTRIES:
-            patched.setattr(instructions, entry, _duplicating(getattr(instructions, entry)))
+            patched.setattr(preparation, entry, _duplicating(getattr(preparation, entry)))
         for workload in DUPLICATED_CASES:
             kept = len(_REGISTRY.kept)
             reading = _Reading(workload)

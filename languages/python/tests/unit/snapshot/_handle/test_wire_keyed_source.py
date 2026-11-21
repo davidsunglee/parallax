@@ -21,7 +21,9 @@ from decimal import Decimal
 from typing import Final, cast
 
 from parallax.core import DomainModel
-from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
+from parallax.core._execution._unit_work.preparation import (
+    PreparedKeyedInstruction,
+)
 from parallax.core.internal.base import INFINITY, SQL_NULL, UsageError
 from parallax.core.internal.db_port import MappingRow
 from parallax.core.internal.metamodel import Metamodel

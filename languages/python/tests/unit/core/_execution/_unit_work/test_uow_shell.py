@@ -39,13 +39,15 @@ from parallax.core._execution._unit_work._write_ownership import (
 )
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
+    TargetWriteInstruction,
+)
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    TargetWriteInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CoverageReadRequest,

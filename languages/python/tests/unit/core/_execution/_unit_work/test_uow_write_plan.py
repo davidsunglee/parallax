@@ -41,12 +41,12 @@ from parallax.core._execution._unit_work.acquisition_spans import (
     write_groups,
 )
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     CompletionRequest,

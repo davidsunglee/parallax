@@ -32,10 +32,10 @@ from parallax.core._execution._unit_work._write_ownership import (
 )
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     KeyedInsert,

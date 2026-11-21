@@ -19,11 +19,11 @@ import parallax.core._execution._planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import acquisition_spans as spans_module
 from parallax.core._execution._unit_work.acquisition_spans import SpanWriteGroups
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,

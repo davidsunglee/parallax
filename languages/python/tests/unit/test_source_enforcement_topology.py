@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from typing import get_type_hints
 
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
@@ -643,21 +643,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._case_ingress",
         "parallax.core._execution._unit_work.instructions",
-    ): frozenset(
-        {
-            "INSERT_MUTATIONS",
-            "REPLACE_MUTATIONS",
-            "PreparedKeyedInstruction",
-            "PreparedPredicateInstruction",
-            "PreparedTargetInstruction",
-            "WriteInstruction",
-            "prepare_insert",
-            "prepare_keyed_write",
-            "prepare_predicate_write",
-            "prepare_target_write",
-            "resolve_target",
-        }
-    ),
+    ): frozenset({"INSERT_MUTATIONS", "REPLACE_MUTATIONS", "WriteInstruction"}),
     (
         "parallax.conformance._case_ingress",
         "parallax.core._execution._unit_work.preparation",
@@ -667,23 +653,28 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "CompletePayload",
             "EntityPreparation",
             "PartialPayload",
+            "PreparedKeyedInstruction",
+            "PreparedPredicateInstruction",
+            "PreparedTargetInstruction",
             "TargetRevisionArguments",
             "WritePreparation",
+            "prepare_insert",
+            "prepare_keyed_write",
+            "prepare_predicate_write",
+            "prepare_target_write",
+            "resolve_target",
         }
     ),
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.preparation",
-    ): frozenset({"WritePreparation"}),
-    (
-        "parallax.conformance._lanes.scenario",
-        "parallax.core._execution._unit_work.instructions",
     ): frozenset(
         {
             "PreparedKeyedInstruction",
             "PreparedPredicateInstruction",
             "PreparedTargetInstruction",
             "PreparedInstruction",
+            "WritePreparation",
         }
     ),
     (

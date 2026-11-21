@@ -13,10 +13,10 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition_spans import AcquisitionSpan
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,

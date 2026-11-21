@@ -15,11 +15,13 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.flush_facts import FlushFacts
 from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetInstruction,
     TargetWriteInstruction,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import NonTemporalSettlement
-from parallax.core._execution._unit_work.preparation import WIRE
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
+    PreparedTargetInstruction,
+)
 from parallax.core._execution._unit_work.strategy import (
     AuditDecoration,
     AuditStrategy,

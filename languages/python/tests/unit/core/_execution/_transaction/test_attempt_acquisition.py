@@ -28,11 +28,11 @@ from parallax.core import (
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,
     CoverageReadKey,

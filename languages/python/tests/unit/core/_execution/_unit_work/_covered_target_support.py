@@ -6,10 +6,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 from parallax.core import Bitemporal
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     LicensedWrite,
