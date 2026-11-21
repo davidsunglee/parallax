@@ -30,7 +30,11 @@ from parallax.core._execution._unit_work.preparation import (
     WIRE,
     CompletePayload,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     WriteRepresentation,
+    prepare_keyed_write,
 )
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import Int32, InvalidValueError
@@ -102,10 +106,10 @@ def _predicate(row: Mapping[str, object]) -> wi.WriteInstruction:
 
 
 def _row(prepared: object) -> ManagedRow:
-    if isinstance(prepared, wi.PreparedKeyedInstruction):
+    if isinstance(prepared, PreparedKeyedInstruction):
         (row,) = prepared.rows
         return row
-    assert isinstance(prepared, wi.PreparedTargetInstruction | wi.PreparedPredicateInstruction)
+    assert isinstance(prepared, PreparedTargetInstruction | PreparedPredicateInstruction)
     return prepared.row
 
 
@@ -237,7 +241,7 @@ def test_a_typed_keyed_replacement_reads_a_held_read_only_collection_as_unstated
         entry.selection.members.shape, target.identity
     )
 
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         preparation, TYPED, "replace", target, CompletePayload(values), valid_from=None, until=None
     )
 
@@ -275,7 +279,7 @@ def test_a_typed_keyed_replacement_of_a_subtype_states_its_whole_family_state() 
         entry.selection.members.shape, target.identity
     )
 
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         preparation, TYPED, "replace", target, CompletePayload(values), valid_from=None, until=None
     )
 
@@ -287,7 +291,7 @@ def test_a_typed_keyed_amendment_of_a_subtype_judges_its_explicit_assignments() 
     target = _gauge_target()
     key = preparation.entity(target.identity).key_position
 
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         preparation,
         TYPED,
         "amend",
@@ -303,7 +307,7 @@ def test_a_typed_keyed_amendment_of_a_subtype_judges_its_explicit_assignments() 
 
 def test_a_typed_keyed_write_of_an_existing_object_opens_no_row() -> None:
     with pytest.raises(ValueError, match="opens a row"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             write_preparation_of(_FAMILY),
             TYPED,
             "insert",

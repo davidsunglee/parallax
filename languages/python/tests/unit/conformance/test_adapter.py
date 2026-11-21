@@ -25,10 +25,12 @@ from parallax.conformance.provision import Provisioner
 from parallax.core._execution._planning import build_write_preparation
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
+    WriteInstruction,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedInstruction,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
-    WriteInstruction,
 )
 from parallax.core.internal.base import (
     INFINITY,

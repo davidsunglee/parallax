@@ -8,6 +8,8 @@ from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     KeyedMutation,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core.internal.concurrency import ConcurrencyFacet

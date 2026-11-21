@@ -903,7 +903,7 @@ def test_an_inherited_positions_window_is_judged_by_its_family_shape(
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering — the   #
 # ONE window judgment of write preparation                                    #
-# (`parallax.core._execution._unit_work.instructions`).                       #
+# (`parallax.core._execution._unit_work.preparation`).                        #
 # --------------------------------------------------------------------------- #
 def test_a_bounded_keyed_update_rejects_an_equal_window_bound() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))

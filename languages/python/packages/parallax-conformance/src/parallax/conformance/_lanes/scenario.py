@@ -53,13 +53,13 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._planning import build_write_planner, build_write_preparation
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.effects import CARDINALITY_CORRUPTION
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedInstruction,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
+    WritePreparation,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.execution_lifecycle import (
     CausedFailure,
     DatabaseCallFinished,

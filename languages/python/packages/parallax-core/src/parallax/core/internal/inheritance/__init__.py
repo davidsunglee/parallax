@@ -205,7 +205,7 @@ def reject_predicate_write(entity: CompiledEntity) -> None:
     synthesizes a fake keyless row just to trigger
     :func:`validate_subtype_write`'s own branch. Its caller is the one
     predicate-write preparation every ingress reaches,
-    :func:`~parallax.core._execution._unit_work.instructions.prepare_predicate_write`, so no
+    :func:`~parallax.core._execution._unit_work.preparation.prepare_predicate_write`, so no
     ingress can classify an inheritance-family predicate write differently and
     no prepared product names one. A
     no-op for a non-participant ``entity`` (every entity outside an

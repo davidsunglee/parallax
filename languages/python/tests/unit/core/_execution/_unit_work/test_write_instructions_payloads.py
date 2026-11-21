@@ -11,6 +11,7 @@ import pytest
 
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._execution._unit_work import instructions as wi
+from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core._execution._unit_work.preparation import (
     TYPED,
     UNSTATED,
@@ -19,6 +20,10 @@ from parallax.core._execution._unit_work.preparation import (
     PartialPayload,
     TargetRevisionArguments,
     WriteRepresentation,
+    prepare_insert,
+    prepare_keyed_write,
+    prepare_predicate_write,
+    prepare_target_write,
 )
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import Int32, InvalidValueError, UsageError
@@ -66,7 +71,7 @@ def _once(*values: object) -> Iterator[object]:
 
 
 def test_a_typed_opening_reads_a_one_shot_payload_once() -> None:
-    prepared = wi.prepare_insert(
+    prepared = prepare_insert(
         _PREPARATION,
         TYPED,
         "insert",
@@ -83,21 +88,21 @@ def test_a_typed_replacement_reads_a_one_shot_payload_once_past_a_later_key(
     family: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     splits: list[object] = []
-    split = wi._split_key  # pyright: ignore[reportPrivateUsage]
+    split = preparation_module._split_key  # pyright: ignore[reportPrivateUsage]
 
     def counted(*args: Any) -> tuple[object, Iterable[object]]:
         splits.append(args)
         return split(*args)
 
-    monkeypatch.setattr(wi, "_split_key", counted)
+    monkeypatch.setattr(preparation_module, "_split_key", counted)
     payload = CompletePayload(_once("L", 7, Decimal("1.00"), 3))
     if family == "keyed":
-        prepared = wi.prepare_keyed_write(
+        prepared = prepare_keyed_write(
             _PREPARATION, TYPED, "replace", _GADGET, payload, valid_from=None, until=None
         )
         (row,) = prepared.rows
     else:
-        row = wi.prepare_target_write(
+        row = prepare_target_write(
             _PREPARATION,
             TYPED,
             "replace",
@@ -116,7 +121,7 @@ def test_a_wire_complete_payload_names_an_owned_member_before_an_earlier_invalid
     mutation: wi.KeyedMutation,
 ) -> None:
     payload = CompletePayload(("L", 7, "not-a-price", 3))
-    prepare = wi.prepare_insert if mutation == "insert" else wi.prepare_keyed_write
+    prepare = prepare_insert if mutation == "insert" else prepare_keyed_write
     with raises_code(UsageError, "framework-owned-member-assigned", match=r"Gadget\.version"):
         prepare(_PREPARATION, WIRE, mutation, _GADGET, payload, valid_from=None, until=None)
 
@@ -132,7 +137,7 @@ def test_an_addressed_key_is_converted_once_and_placed_in_its_row(
         return scalar(plan, base, position, raw)
 
     monkeypatch.setattr(AuthoringPlan, "_top_level_scalar", counted)
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         _PREPARATION,
         WIRE,
         "amend",
@@ -149,7 +154,7 @@ def test_an_addressed_key_is_converted_once_and_placed_in_its_row(
 def test_a_restated_key_naming_the_same_object_is_judged_and_set_aside(
     representation: WriteRepresentation,
 ) -> None:
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         _PREPARATION,
         representation,
         "amend",
@@ -164,7 +169,7 @@ def test_a_restated_key_naming_the_same_object_is_judged_and_set_aside(
 
 def test_a_restated_key_naming_another_object_is_refused_before_any_other_value() -> None:
     with raises_code(UsageError, "write-instruction-invalid", match=r"Gadget\.id: the document"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             WIRE,
             "amend",
@@ -178,7 +183,7 @@ def test_a_restated_key_naming_another_object_is_refused_before_any_other_value(
 
 def test_a_restated_key_that_is_no_key_is_refused_as_its_literal() -> None:
     with raises_code(UsageError, "neutral-literal-type-mismatch", match=r"Gadget\.id"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             WIRE,
             "amend",
@@ -191,7 +196,7 @@ def test_a_restated_key_that_is_no_key_is_refused_as_its_literal() -> None:
 
 
 def test_an_unstated_restatement_restates_nothing() -> None:
-    prepared = wi.prepare_keyed_write(
+    prepared = prepare_keyed_write(
         _PREPARATION,
         WIRE,
         "delete",
@@ -206,7 +211,7 @@ def test_an_unstated_restatement_restates_nothing() -> None:
 
 def test_a_keyed_destructive_payload_states_its_key_alone() -> None:
     with raises_code(UsageError, "write-instruction-invalid", match="primary key alone"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             WIRE,
             "delete",
@@ -219,7 +224,7 @@ def test_a_keyed_destructive_payload_states_its_key_alone() -> None:
 
 def test_a_wire_target_key_carrying_several_values_is_refused_as_its_literal() -> None:
     with raises_code(UsageError, "neutral-literal-type-mismatch", match=r"Gadget\.id"):
-        wi.prepare_target_write(
+        prepare_target_write(
             _PREPARATION,
             WIRE,
             "delete",
@@ -236,7 +241,7 @@ _ALL: Final = predicate_algebra.TrueNode()
 
 @REPRESENTATIONS
 def test_a_predicate_replacement_may_omit_its_key(representation: WriteRepresentation) -> None:
-    prepared = wi.prepare_predicate_write(
+    prepared = prepare_predicate_write(
         _PREPARATION,
         representation,
         "replace",
@@ -249,10 +254,10 @@ def test_a_predicate_replacement_may_omit_its_key(representation: WriteRepresent
 
 def test_a_predicate_replacement_judges_and_drops_a_stated_key() -> None:
     with raises_code(UsageError, "neutral-literal-type-mismatch", match=r"Plain\.id"):
-        wi.prepare_predicate_write(
+        prepare_predicate_write(
             _PREPARATION, WIRE, "replace", _PLAIN, _ALL, CompletePayload(("L", "seven"))
         )
-    prepared = wi.prepare_predicate_write(
+    prepared = prepare_predicate_write(
         _PREPARATION, WIRE, "replace", _PLAIN, _ALL, CompletePayload(("L", 7))
     )
     assert named_members(prepared.row) == {"label": "L"}
@@ -261,11 +266,11 @@ def test_a_predicate_replacement_judges_and_drops_a_stated_key() -> None:
 def test_a_predicate_replacement_judges_its_key_in_member_order() -> None:
     payload = (_ABSENT, "seven")
     with raises_code(InvalidValueError, "write-required-attribute-missing", match=r"Plain\.label"):
-        wi.prepare_predicate_write(
+        prepare_predicate_write(
             _PREPARATION, WIRE, "replace", _PLAIN, _ALL, CompletePayload(payload)
         )
     with raises_code(UsageError, "neutral-literal-type-mismatch", match=r"Plain\.id"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             WIRE,
             "replace",
@@ -280,7 +285,7 @@ def test_a_predicate_amendment_stating_the_key_is_refused() -> None:
     with raises_code(
         UsageError, "write-instruction-invalid", match="primary-key fields may not be assigned"
     ):
-        wi.prepare_predicate_write(
+        prepare_predicate_write(
             _PREPARATION, WIRE, "amend", _PLAIN, _ALL, PartialPayload(((0, "L"), (1, 7)))
         )
 
@@ -296,14 +301,14 @@ def test_a_payload_of_the_wrong_shape_for_its_verb_is_a_programming_error(
     mutation: wi.KeyedMutation, payload: CompletePayload | PartialPayload
 ) -> None:
     with pytest.raises(ValueError, match="payload is not"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION, WIRE, mutation, _GADGET, payload, valid_from=None, until=None
         )
 
 
 def test_assignments_join_no_complete_payload() -> None:
     with pytest.raises(ValueError, match="payload is not"):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             TYPED,
             "replace",

@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_plan import WritePlan

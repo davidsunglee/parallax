@@ -19,15 +19,15 @@ from parallax.core._execution._transaction._attempt import (
     WriteVerb,
 )
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work import preparation as write_preparation
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     REPLACE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
     PredicateSelection,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
     TargetMutation,
+    refuse_observation_keys,
 )
 from parallax.core._execution._unit_work.preparation import (
     UNSTATED,
@@ -35,8 +35,9 @@ from parallax.core._execution._unit_work.preparation import (
     CompletePayload,
     EntityPreparation,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     WritePreparation,
-    refuse_observation_keys,
 )
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.internal import predicate as predicate_algebra
@@ -226,15 +227,15 @@ class WirePredicateWriteAdapter:
         payload = self._payload
         if mutation in REPLACE_MUTATIONS and isinstance(payload, WireEntity):
             entity = published_entity(meta, payload, "`replace_where`")
-            target = instructions.resolve_target(meta, selection.entity)
+            target = write_preparation.resolve_target(meta, selection.entity)
             document = _published_replacement(meta, target, entity, payload)
         else:
             document = _authored_changes(mutation, payload)
             if mutation in REPLACE_MUTATIONS:
                 refuse_observation_keys(document)
-            target = instructions.resolve_target(meta, selection.entity)
+            target = write_preparation.resolve_target(meta, selection.entity)
         prepared = write_model.preparation.entity(target.identity)
-        return instructions.prepare_predicate_write(
+        return write_preparation.prepare_predicate_write(
             write_model.preparation,
             WIRE,
             mutation,
@@ -301,7 +302,7 @@ class WireTargetWriteAdapter:
                 )
             described = f"a Wire `{mutation}`'s {_target_document(mutation)}"
             row = _authored_document(document, described)
-            entity = instructions.resolve_target(meta, target)
+            entity = write_preparation.resolve_target(meta, target)
         elif isinstance(target, WireEntity) and mutation in REPLACE_MUTATIONS:
             if not isinstance(document, Omitted):
                 raise UsageError(
@@ -472,7 +473,7 @@ class WireKeyedWriteSource:
             refuse_observation_keys(authored)
             document = authored
             restated_key = authored.get(key_name, UNSTATED)
-        return instructions.prepare_keyed_write(
+        return write_preparation.prepare_keyed_write(
             preparation,
             WIRE,
             mutation,
@@ -521,7 +522,7 @@ class WireKeyedInsertSource:
 
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         return resolve_keyed_insert(
-            instructions.resolve_target(model, self._entity_name), self._data
+            write_preparation.resolve_target(model, self._entity_name), self._data
         )
 
     def prepare(
@@ -540,7 +541,7 @@ class WireKeyedInsertSource:
         version is derived."""
         refuse_observation_keys(self._payload)
         entity = resolved.entity
-        return instructions.prepare_insert(
+        return write_preparation.prepare_insert(
             preparation,
             WIRE,
             mutation,

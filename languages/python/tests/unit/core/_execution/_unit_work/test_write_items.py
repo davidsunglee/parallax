@@ -18,12 +18,12 @@ from parallax.core._execution._unit_work.evidence import (
     ParticipationToken,
     ReadEvidence,
 )
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,

@@ -30,9 +30,11 @@ from parallax.core._execution._unit_work.evidence import (
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     KeyedWriteInstruction,
-    PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
+from parallax.core._execution._unit_work.preparation import (
+    PreparedKeyedInstruction,
+    WritePreparation,
+)
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.internal.entity._model import model_of
 from parallax.core.internal.metamodel import (

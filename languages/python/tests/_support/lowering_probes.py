@@ -18,10 +18,12 @@ from typing import cast
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
+    WriteInstruction,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedInstruction,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
-    WriteInstruction,
 )
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.internal.concurrency import ConcurrencyPreference

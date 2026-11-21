@@ -10,23 +10,23 @@ from parallax.conformance._case_literal import normalize_case_bound, normalize_c
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     REPLACE_MUTATIONS,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
-    PreparedTargetInstruction,
     WriteInstruction,
-    prepare_insert,
-    prepare_keyed_write,
-    prepare_predicate_write,
-    prepare_target_write,
-    resolve_target,
 )
 from parallax.core._execution._unit_work.preparation import (
     WIRE,
     CompletePayload,
     EntityPreparation,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     TargetRevisionArguments,
     WritePreparation,
+    prepare_insert,
+    prepare_keyed_write,
+    prepare_predicate_write,
+    prepare_target_write,
+    resolve_target,
 )
 from parallax.core.internal import inheritance, predicate, relationship, temporal_read
 from parallax.core.internal.base import (

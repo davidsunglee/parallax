@@ -24,10 +24,12 @@ import pytest
 
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
+)
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
     prepare_keyed_write,
     resolve_target,
 )
-from parallax.core._execution._unit_work.preparation import TYPED
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import (
     BOOLEAN,

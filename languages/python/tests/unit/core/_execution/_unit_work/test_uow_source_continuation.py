@@ -33,11 +33,13 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateSelection,
     PredicateWriteInstruction,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+)
 from parallax.core._execution._unit_work.write_items import StateObserved, is_licensed_by
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY

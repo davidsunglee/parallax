@@ -39,7 +39,16 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work import instructions as wi
-from parallax.core._execution._unit_work.preparation import TYPED, WIRE
+from parallax.core._execution._unit_work.preparation import (
+    TYPED,
+    WIRE,
+    PreparedInstruction,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
+    derive_keyed_instruction,
+    keyed_instruction_from_target,
+)
 from parallax.core.internal import inheritance
 from parallax.core.internal import predicate as predicate_algebra
 from parallax.core.internal.base import INFINITY, InvalidValueError, UsageError
@@ -56,13 +65,13 @@ _SCHEMAS = REPO_ROOT / "core" / "schemas"
 
 def _prepare_typed(
     instruction: wi.WriteInstruction, model: AcceptedMetamodel
-) -> wi.PreparedInstruction | wi.PreparedTargetInstruction:
+) -> PreparedInstruction | PreparedTargetInstruction:
     return prepare_instruction(instruction, write_preparation_of(model), TYPED)
 
 
 def _prepare_wire(
     instruction: wi.WriteInstruction, model: AcceptedMetamodel
-) -> wi.PreparedInstruction | wi.PreparedTargetInstruction:
+) -> PreparedInstruction | PreparedTargetInstruction:
     return prepare_instruction(instruction, write_preparation_of(model), WIRE)
 
 
@@ -716,8 +725,8 @@ def test_a_derived_keyed_write_keeps_its_assigns_unless_composition_states_anoth
     prepared = prepare_instruction(
         wi.KeyedWriteInstruction("amend", "Account", {"id": 1}), write_preparation_of(_ACCOUNT)
     )
-    assert wi.derive_keyed_instruction(prepared, prepared.rows).assigns is False
-    assert wi.derive_keyed_instruction(prepared, prepared.rows, assigns=True).assigns is True
+    assert derive_keyed_instruction(prepared, prepared.rows).assigns is False
+    assert derive_keyed_instruction(prepared, prepared.rows, assigns=True).assigns is True
 
 
 @pytest.mark.parametrize(
@@ -897,11 +906,11 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
         {"id": 9, "name": "Ada", "address": address},
     )
     prepared = prepare_instruction(instruction, write_preparation_of(_MODELS["customer"]))
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     retained = named_members(prepared.rows[0])["address"]
     address["city"] = "Oslo"
     assert cast("Mapping[str, object]", retained)["city"] == "Berlin"
-    derived = wi.derive_keyed_instruction(prepared, prepared.rows)
+    derived = derive_keyed_instruction(prepared, prepared.rows)
     assert derived.rows[0] is prepared.rows[0]
 
 
@@ -915,7 +924,7 @@ def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_p
         ),
         write_preparation_of(_MODELS["customer"]),
     )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     # Each declared member is looked up once, the omitted ones included.
     assert address.reads == {"street": 1, "city": 1, "geo": 1, "phones": 1}
 
@@ -929,7 +938,7 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
         valid_from=stated,
     )
     prepared = prepare_instruction(instruction, write_preparation_of(_POSITION))
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC), INFINITY
     )
@@ -942,7 +951,7 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
         write_preparation_of(_POSITION),
         WIRE,
     )
-    assert isinstance(wire_prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(wire_prepared, PreparedKeyedInstruction)
     assert wire_prepared.valid_time_window == prepared.valid_time_window
 
 
@@ -1252,15 +1261,15 @@ def test_a_prepared_instruction_has_no_field_constructor() -> None:
     prepared = prepare_instruction(
         wi.KeyedWriteInstruction("delete", "Account", {"id": 1}), write_preparation_of(_ACCOUNT)
     )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     with pytest.raises(TypeError):
-        cast("Any", wi.PreparedKeyedInstruction)(
+        cast("Any", PreparedKeyedInstruction)(
             prepared.mutation, prepared.target, prepared.rows, prepared.valid_time_window
         )
     with pytest.raises(TypeError):
-        cast("Any", wi.PreparedPredicateInstruction)("delete", None, ())
+        cast("Any", PreparedPredicateInstruction)("delete", None, ())
     other = prepared.rows[0].with_cell(0, 2)
-    derived = wi.derive_keyed_instruction(prepared, (other,))
+    derived = derive_keyed_instruction(prepared, (other,))
     assert (derived.mutation, derived.target, derived.valid_time_window) == (
         prepared.mutation,
         prepared.target,
@@ -1431,10 +1440,10 @@ def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -
         ),
         write_preparation_of(_POSITION),
     )
-    assert isinstance(prepared, wi.PreparedKeyedInstruction)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     window = prepared.valid_time_window
     assert window is not None
-    assert wi.derive_keyed_instruction(prepared, prepared.rows).valid_time_window is window
+    assert derive_keyed_instruction(prepared, prepared.rows).valid_time_window is window
 
 
 @pytest.mark.parametrize(
@@ -1454,8 +1463,8 @@ def test_a_target_executes_as_the_keyed_update_its_shared_window_names(
         ),
         write_preparation_of(_POSITION),
     )
-    assert isinstance(prepared, wi.PreparedTargetInstruction)
-    keyed = wi.keyed_instruction_from_target(prepared)
+    assert isinstance(prepared, PreparedTargetInstruction)
+    keyed = keyed_instruction_from_target(prepared)
     assert keyed.mutation == mutation
     assert keyed.valid_time_window is prepared.valid_time_window
 
@@ -1529,7 +1538,7 @@ def test_a_predicate_deletion_prepares_no_row(prepare: Any) -> None:
     prepared = prepare(
         wi.PredicateWriteInstruction("delete", wi.PredicateSelection("Wallet", _ALL)), _WALLET
     )
-    assert isinstance(prepared, wi.PreparedPredicateInstruction)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     assert named_members(prepared.row) == {}
     assert not prepared.assigns
 

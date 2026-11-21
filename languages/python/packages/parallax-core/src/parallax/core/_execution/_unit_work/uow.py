@@ -15,10 +15,12 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
+)
+from parallax.core._execution._unit_work.lifetime import AttemptLifetime
+from parallax.core._execution._unit_work.preparation import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.row_acquisition import (
     AcquireRows,
     RetainedStartingRow,

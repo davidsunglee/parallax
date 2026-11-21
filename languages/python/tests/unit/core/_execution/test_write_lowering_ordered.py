@@ -21,7 +21,7 @@ import pytest
 from parallax.conformance import adapter, case_format
 from parallax.core._execution import _write_lowering
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )

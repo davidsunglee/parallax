@@ -21,13 +21,15 @@ from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
     REPLACE_MUTATIONS,
+)
+from parallax.core._execution._unit_work.keys import resolve_object_key
+from parallax.core._execution._unit_work.preparation import (
     ExpectedTxStart,
     ExpectedVersion,
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     keyed_instruction_from_target,
 )
-from parallax.core._execution._unit_work.keys import resolve_object_key
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core.internal import inheritance
 from parallax.core.internal.base import INFINITY, TemporalBound

@@ -43,7 +43,7 @@ from itertools import pairwise
 from typing import Final
 
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import ComposedWrite, KeyedInsert

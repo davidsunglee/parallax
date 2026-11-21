@@ -28,6 +28,8 @@ from parallax.core._execution._unit_work.evidence import InsertionIdentity, Reta
 from parallax.core._execution._unit_work.instructions import (
     DESTRUCTIVE_MUTATIONS,
     REPLACE_MUTATIONS,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
     derive_keyed_instruction,
 )

@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from parallax.conformance import models
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedPredicateInstruction,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity

@@ -11,6 +11,7 @@ from parallax.core._execution._unit_work.preparation import (
     WIRE,
     PartialPayload,
     WriteRepresentation,
+    prepare_keyed_write,
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.internal.base import INT32, STRING, TIMESTAMP, UsageError
@@ -195,7 +196,7 @@ def test_typed_partial_payloads_refuse_framework_owned_assignments(
     assert position is not None
     identity_pair = (entry.key_position, 1)
     with raises_code(UsageError, _RULE):
-        wi.prepare_keyed_write(
+        prepare_keyed_write(
             _PREPARATION,
             TYPED,
             "amend",

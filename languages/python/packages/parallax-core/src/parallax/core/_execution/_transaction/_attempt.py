@@ -34,17 +34,17 @@ from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
-    PreparedKeyedInstruction,
-    PreparedPredicateInstruction,
     TargetMutation,
     WriteAssignment,
-    derive_keyed_instruction,
-    prepare_target_write,
 )
 from parallax.core._execution._unit_work.preparation import (
     CompletePayload,
     PartialPayload,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     WriteRepresentation,
+    derive_keyed_instruction,
+    prepare_target_write,
 )
 from parallax.core._execution._unit_work.row_acquisition import (
     CompletionRequest,

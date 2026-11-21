@@ -34,10 +34,12 @@ from parallax.core._execution._unit_work.evidence import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedInstruction,
     TargetMutation,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
+    PreparedKeyedInstruction,
+)
 from parallax.core._execution._unit_work.row_acquisition import RetainedStartingRow
 from parallax.core._execution._unit_work.source_registry import SourceRegistry
 from parallax.core._execution._unit_work.write_items import (

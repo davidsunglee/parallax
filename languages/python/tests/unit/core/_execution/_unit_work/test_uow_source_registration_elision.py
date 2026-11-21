@@ -29,6 +29,8 @@ from parallax.core._execution._retention import ReadEvidenceByFetchedRow
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
 )
 from parallax.core.internal.base import UsageError

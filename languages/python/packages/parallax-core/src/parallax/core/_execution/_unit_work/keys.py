@@ -5,9 +5,11 @@ from typing import Final
 
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
+    WriteInstruction,
+)
+from parallax.core._execution._unit_work.preparation import (
     PreparedInstruction,
     PreparedKeyedInstruction,
-    WriteInstruction,
 )
 from parallax.core.internal import inheritance
 from parallax.core.internal.metamodel import (

@@ -20,10 +20,12 @@ from parallax.core._execution._unit_work.evidence import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedInstruction,
     TargetMutation,
 )
-from parallax.core._execution._unit_work.preparation import WIRE
+from parallax.core._execution._unit_work.preparation import (
+    WIRE,
+    PreparedKeyedInstruction,
+)
 from parallax.core._execution._unit_work.ranges import DeferredRange
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,

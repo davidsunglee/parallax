@@ -29,7 +29,7 @@ from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
 from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
-from parallax.core._execution._unit_work.instructions import (
+from parallax.core._execution._unit_work.preparation import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     derive_keyed_instruction,

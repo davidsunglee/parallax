@@ -1,5 +1,8 @@
 # Prepared writes are the sole admissibility judgment
 
+> Superseded by [ADR 0017](0017-family-write-preparation.md): one preparation
+> entry per write family replaces the two producers below.
+
 Every write ingress — the Typed keyed and `_where` verbs, their `tx.wire`
 peers, and the conformance engine's case ingress — reaches the Unit of Work
 through `prepare_typed_write` or `prepare_wire_write`, and those two producers
