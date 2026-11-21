@@ -116,6 +116,18 @@ def test_keyed_verbs_submit_against_the_units_own_read(mutation: str, declared: 
     assert port.writes[0][1][-1] == 1
 
 
+def test_a_keyed_delete_stating_a_member_beside_its_key_is_refused_before_its_verb() -> None:
+    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> object:
+        entry = _entry("delete", {"id": 1, "owner": "Noether"})
+        return submitter.submit_unit(read_submissions(model, [entry]))
+
+    with raises_code(UsageError, WRITE_INSTRUCTION_INVALID):
+        _run("account", port, body)
+    assert port.writes == []
+
+
 @pytest.mark.parametrize("on,expected", [(None, 2), (0, 1), (1, 2)])
 @pytest.mark.parametrize("declared", [None, 1, 2])
 def test_named_find_and_latest_read_keep_distinct_generations(

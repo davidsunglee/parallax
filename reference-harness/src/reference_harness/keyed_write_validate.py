@@ -100,10 +100,11 @@ def validate_keyed_identity(entity: Entity, mutation: str, row: Mapping[str, Any
     ``observedVersion`` names no member."""
     if mutation not in _DESTRUCTIVE_MUTATIONS:
         return
-    members = {attribute["name"] for attribute in entity.attributes}
-    members.update(value_object["name"] for value_object in entity.value_objects)
-    keys = {attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")}
-    beside = sorted(name for name in row if name in members - keys)
+    beside_key = {
+        attribute["name"] for attribute in entity.attributes if not attribute.get("primaryKey")
+    }
+    beside_key.update(value_object["name"] for value_object in entity.value_objects)
+    beside = sorted(beside_key.intersection(row))
     if beside:
         raise KeyedWriteApplicabilityError(
             f"{entity.name}: a keyed {mutation!r} names its object by its key alone, and its "
