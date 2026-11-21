@@ -200,7 +200,7 @@ def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(stem: str, 
 # mandated shapes (typed/serialized reject/accept) but declares no             #
 # non-nullable NESTED value object or `cardinality: many` member, so this      #
 # synthetic model -- the SAME "hand-built model" convention                    #
-# `test_write_instructions_refusals.py`'s `_WIDGET` uses for its scalar walk   #
+# `test_preparation_refusals.py`'s `_WIDGET` uses for its scalar walk          #
 # reaches every remaining shared-walk violation reason (`not-a-list`,          #
 # `attribute-missing`, `value-object-missing`, a nested `many` element's own   #
 # bracket-indexed path) directly against `judge_assignment`, never through    #
