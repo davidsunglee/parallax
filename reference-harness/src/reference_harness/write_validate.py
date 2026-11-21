@@ -567,13 +567,13 @@ def validate_subtype_write(
 
     A no-op unless *target* participates in an inheritance family (value-object write
     validation, above, owns a non-inheritance entity). Raises :class:`RejectionError`
-    with one of the Phase-7 subtype-write rules; used ONLY for ``rejected`` cases.
+    with one of the Phase-7 subtype-write rules.
     """
     if inheritance_of(target.definition) is None:
         return
     defs = [d for d in entity_defs if isinstance(d, dict)]
     family = Family(defs)
-    name = target.name
+    name = target.canonical_name
 
     # The framework-owned metadata a payload MUST NOT carry: the tag column (its value
     # is derived from the concrete subtype's tagValue), plus the `tag` / `tagValue` /

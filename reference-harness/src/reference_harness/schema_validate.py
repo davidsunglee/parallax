@@ -337,6 +337,9 @@ def _validate_buffered_write(
       shape and assignment-name judgments the `rejected` lane's keyed `when.write`
       asks one by one around its row's subtype shape, so a buffer entry and a
       rejected instruction cannot be judged differently.
+    * **target entries** — an entry stating a revision takes neither check above;
+      :func:`~reference_harness.write_validate.target_write_violation`, which the
+      `rejected` lane's target `when.write` also asks, judges it whole.
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
     multi-object flush, an abort pair over distinct objects). Coalescing correctness is
